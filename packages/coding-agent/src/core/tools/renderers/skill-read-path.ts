@@ -7,7 +7,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 
 /** Transcript projection asks on every frame, so each directory is probed at most once per cwd. */
@@ -21,6 +21,11 @@ function isSameOrInside(parent: string, child: string): boolean {
 
 function findSkillRoot(absolutePath: string, cwd: string): string | undefined {
 	const home = homedir();
+	// senpi#4405: a SKILL.md above the OS temp root (a runner's per-job root, a dev machine's tmp) is not a
+	// skill root for files inside the temp tree; the walk never rises above the temp root, as it never
+	// rises above the account home.
+	const tempRoot = resolvePath(tmpdir());
+	const insideTemp = isSameOrInside(tempRoot, resolvePath(absolutePath));
 	const visited: string[] = [];
 	let skillRoot: string | null = null;
 	for (let directory = dirname(absolutePath); ; directory = dirname(directory)) {
@@ -30,7 +35,13 @@ function findSkillRoot(absolutePath: string, cwd: string): string | undefined {
 			skillRoot = cached;
 			break;
 		}
-		if (directory === dirname(directory) || directory === home || isSameOrInside(directory, cwd)) break;
+		if (
+			directory === dirname(directory) ||
+			directory === home ||
+			isSameOrInside(directory, cwd) ||
+			(insideTemp && !isSameOrInside(tempRoot, directory))
+		)
+			break;
 		visited.push(key);
 		if (existsSync(join(directory, "SKILL.md"))) {
 			skillRoot = directory;
