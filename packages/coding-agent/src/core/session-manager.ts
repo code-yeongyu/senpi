@@ -15,7 +15,9 @@ import { randomBytes, randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
+	constants,
 	existsSync,
+	fstatSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
@@ -1077,6 +1079,24 @@ function readSessionHeader(filePath: string): SessionHeader | null {
 	}
 }
 
+/** A second manager may have published just the minted header. Never adopt an existing conversation. */
+function openMatchingHeader(path: string, id: string, collision: unknown): { fd: number; header: SessionHeader } {
+	const fd = openSync(path, constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+	try {
+		const stat = fstatSync(fd);
+		if (!stat.isFile() || !stat.size || stat.size > MAX_SESSION_HEADER_SCAN_BYTES) throw collision;
+		const bytes = Buffer.alloc(stat.size);
+		if (readSync(fd, bytes, 0, bytes.length, 0) !== bytes.length || bytes.indexOf(10) !== bytes.length - 1)
+			throw collision;
+		const header = parseSessionHeaderCandidate(bytes.toString("utf8"));
+		if (header?.id !== id) throw collision;
+		return { fd, header };
+	} catch (error) {
+		closeSync(fd);
+		throw error;
+	}
+}
+
 function readSessionHeaderForDiscovery(filePath: string): SessionHeader | null {
 	try {
 		return readSessionHeader(filePath);
@@ -1224,6 +1244,8 @@ export class SessionManager {
 	private readonly pendingRecoveries: SessionRecovery[] = [];
 	private recoveryListener: ((recovery: SessionRecovery) => void) | undefined;
 	private fileEntries: FileEntry[] = [];
+	// After a partial adoption, only the setup entries not yet on disk are owed by this transcript.
+	private readonly unflushedSetup = new WeakMap<FileEntry[], FileEntry[]>();
 	private byId: Map<string, SessionEntry> = new Map();
 	// Runtime-only identity tracking lets AgentSession compare messages to a
 	// compaction boundary by append order rather than provider timestamps.
@@ -2046,6 +2068,14 @@ export class SessionManager {
 			}
 			const bytes = bound?.line ?? this._transcriptEntryBytes(entry);
 			try {
+				const pending = this.unflushedSetup.get(this.fileEntries);
+				if (pending) {
+					while (pending.length) {
+						appendFileSync(this.sessionFile, `${this._transcriptEntryBytes(pending[0])}\n`);
+						pending.shift();
+					}
+					this.unflushedSetup.delete(this.fileEntries);
+				}
 				appendFileSync(this.sessionFile, `${bytes}\n`);
 			} catch (error) {
 				this.tailMayBeTorn = true;
@@ -2077,22 +2107,38 @@ export class SessionManager {
 		// An asynchronous header write owns the file until it finishes, and appends this entry.
 		if (this.headerWrite) return;
 		let fd: number;
+		let existingHeader: SessionHeader | undefined;
 		try {
 			fd = openSync(this.sessionFile, "wx");
 		} catch (error) {
-			if (!durable) throw error;
-			this.flushed = true;
-			durable.projectionFailed(this.sessionFile, error);
-			return this._transcriptEntryBytes(entry);
+			if (durable) {
+				this.flushed = true;
+				durable.projectionFailed(this.sessionFile, error);
+				return this._transcriptEntryBytes(entry);
+			}
+			if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+			({ fd, header: existingHeader } = openMatchingHeader(this.sessionFile, this.sessionId, error));
 		}
 		let bytes: string | undefined;
+		let setupWritten = 0;
 		try {
 			for (const e of [...this.fileEntries, entry]) {
+				if (existingHeader && e.type === "session") continue;
 				const serialized = this._transcriptEntryBytes(e);
 				writeFileSync(fd, `${serialized}\n`);
 				if (e === entry) bytes = serialized;
+				else if (existingHeader) setupWritten++;
 			}
 		} catch (error) {
+			if (existingHeader) {
+				this.fileEntries[0] = existingHeader;
+				this.unflushedSetup.set(this.fileEntries, this.fileEntries.slice(1 + setupWritten));
+				this.flushed = true;
+				this.tailMayBeTorn = true;
+				this.tornTailCause = sessionRecoveryCause(error);
+				closeSync(fd);
+				throw error;
+			}
 			if (!durable) discardFailedFirstFlush(this.sessionFile, fd, error);
 			// Bound: the store holds every entry, so the half-written file is discarded and the failure is a warning.
 			let failure: unknown = error;
@@ -2105,12 +2151,13 @@ export class SessionManager {
 			durable.projectionFailed(this.sessionFile, failure);
 			return this._transcriptEntryBytes(entry);
 		}
+		if (existingHeader) this.fileEntries[0] = existingHeader;
 		if (this.capturesTranscriptBase) this._captureTranscriptBase(captureAndCloseFileIdentity(fd, this.sessionFile));
 		else closeSync(fd);
 		this.flushed = true;
 		if (!this.capturesTranscriptBase) this.transcriptBytes = new WeakMap();
 		// Lifecycle bookkeeping created this file before any conversation, so an empty session can still discard it.
-		if (!isConversationEntry(entry) && !this._hasConversation()) this.ownedHeaderFile = this.sessionFile;
+		if (!existingHeader && !isConversationEntry(entry) && !this._hasConversation()) this.ownedHeaderFile = this.sessionFile;
 		durable?.recordWhole(this.sessionFile);
 		return bytes;
 	}

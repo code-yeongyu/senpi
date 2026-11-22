@@ -110,6 +110,23 @@ function expectCompleteLinesMatchingMemory(session: SessionManager, file: string
 }
 
 describe("SessionManager after a write that failed part-way", () => {
+	it.each([1, 2])("keeps an adopted header and its buffered setup after partial write %i", (failedWrite) => {
+		const session = newSession();
+		const file = session.getSessionFile();
+		if (!file) throw new Error("test setup: persisted session has no file");
+		SessionManager.open(file);
+		const header = readFileSync(file, "utf8");
+		session.appendCustomEntry("setup", { n: 0 });
+		fault.writeFailAtCall = failedWrite;
+		expect(captureError(() => session.appendMessage({ role: "user", content: "lost", timestamp: 1 }))).toMatchObject({
+			code: "ENOSPC",
+		});
+		expect(readFileSync(file, "utf8").startsWith(header)).toBe(true);
+		session.appendMessage({ role: "user", content: "retry", timestamp: 2 });
+		expectCompleteLinesMatchingMemory(session, file);
+		expect(session.getEntries().map((entry) => entry.type)).toEqual(["custom", "message"]);
+	});
+
 	it("cuts the partial line an interrupted append left before appending the next entry", () => {
 		// Given a flushed transcript
 		const session = newSession();
