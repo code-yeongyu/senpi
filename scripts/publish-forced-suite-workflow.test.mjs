@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// senpi#6642: with force_tests the release's suite runs as matrix jobs in publish-npm.yml (prepare, coding-agent shards
-// 1..N, rest) on the prepared commit, and the publishing release job is gated on all of them. Release and publish
+// senpi#6642: with force_tests the release's suite runs as matrix jobs in publish-npm.yml (coding-agent shards 1..N,
+// rest) on the commit the first-minute preflight resolved, and the publishing release job is gated on all of them. Release and publish
 // identity contract: npm trusted publishing binds this workflow file and its release job.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -12,7 +12,7 @@ import { FORCED_SHARD_JOBS } from "./release-forced-test-suite.mjs";
 import { evaluateExpression, isTruthy, jobExpression, jobStep, jobSteps, workflowJob } from "./workflow-text.test-support.mjs";
 
 const workflow = readFileSync(new URL("../.github/workflows/publish-npm.yml", import.meta.url), "utf8");
-const MATRIX_JOBS = ["prepare", "forced-rest", "forced-shard"];
+const MATRIX_JOBS = ["preflight", "forced-rest", "forced-shard"];
 const TESTED_JOBS = ["forced-rest", "forced-shard"];
 const SHARED_SETUP = [
 	"Check out the tested commit",
@@ -27,7 +27,7 @@ const SHARED_SETUP = [
 	"Cache Rust",
 	"Build native grep addon",
 ];
-const PREPARE_SETUP = ["Setup Node.js"];
+const PREFLIGHT_SETUP = ["Setup Node.js"];
 
 /** The shard indices of the forced-shard matrix, read from a workflow's text. */
 function shardMatrix(text) {
@@ -53,15 +53,15 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		assert.throws(() => assertExactShards(dropped));
 	});
 
-	it("checks out the prepare job's base_sha in every shard job and the release job, never github.sha or the dispatched ref", () => {
+	it("checks out the preflight job's base_sha in every shard job and the release job, never github.sha or the dispatched ref", () => {
 		for (const name of TESTED_JOBS) {
 			const job = workflowJob(workflow, name);
 			assert.doesNotMatch(job, /github\.sha|github\.ref|inputs\.sha/, `${name} reads the dispatched commit`);
-			assert.match(jobStep(job, "Checkout"), /ref: \$\{\{ needs\.prepare\.outputs\.base_sha \}\}/);
+			assert.match(jobStep(job, "Checkout"), /ref: \$\{\{ needs\.preflight\.outputs\.base_sha \}\}/);
 		}
 		for (const name of [...TESTED_JOBS, "release"]) {
 			const step = jobStep(workflowJob(workflow, name), "Check out the tested commit");
-			assert.match(step, /TESTED_SHA: \$\{\{ needs\.prepare\.outputs\.base_sha \}\}/);
+			assert.match(step, /TESTED_SHA: \$\{\{ needs\.preflight\.outputs\.base_sha \}\}/);
 			assert.match(step, /git checkout -B main "\$TESTED_SHA"/);
 		}
 		const release = workflowJob(workflow, "release");
@@ -70,7 +70,7 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 			"the release job installs and builds the tested commit",
 		);
 		const run = jobStep(release, "Run release");
-		assert.match(run, /TESTED_SHA: \$\{\{ needs\.prepare\.outputs\.base_sha \}\}/);
+		assert.match(run, /TESTED_SHA: \$\{\{ needs\.preflight\.outputs\.base_sha \}\}/);
 		assert.match(run, /--sha "\$TESTED_SHA" --shard-results "\$FORCED_SUITE_RESULTS"/);
 		assert.doesNotMatch(run, /--force-tests/);
 	});
@@ -107,39 +107,49 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		}
 	});
 
-	it("gates the release job on exact success of prepare, rest and every shard only when force_tests is set", () => {
+	it("gates the release job on the preflight outside publish-only, and on rest and every shard only when force_tests is set", () => {
 		const condition = jobExpression(workflowJob(workflow, "release"), "if");
-		const runs = ({ publishOnly = false, forceTests = false, ready = "", prepare = "skipped", rest = "skipped", shard = "skipped" }) =>
+		const runs = ({ publishOnly = false, forceTests = false, ready = "", preflight = "success", rest = "skipped", shard = "skipped" }) =>
 			isTruthy(
 				evaluateExpression(condition, {
 					inputs: { "publish-only": publishOnly, force_tests: forceTests },
 					needs: {
 						"native-prebuilds": { result: publishOnly ? "success" : "skipped", outputs: { ready } },
-						prepare: { result: prepare, outputs: {} },
+						preflight: { result: preflight, outputs: {} },
 						"forced-rest": { result: rest, outputs: {} },
 						"forced-shard": { result: shard, outputs: {} },
 					},
 				}),
 			);
 		assert.equal(runs({}), true, "a release without force_tests must still run with the matrix skipped");
-		assert.equal(runs({ publishOnly: true, ready: "true" }), true, "publish-only must still run");
-		assert.equal(runs({ publishOnly: true, ready: "true", forceTests: true }), true, "publish-only ignores force_tests");
-		assert.equal(runs({ publishOnly: true, ready: "" }), false);
-		const green = { forceTests: true, prepare: "success", rest: "success", shard: "success" };
+		for (const result of ["failure", "cancelled", "skipped"]) {
+			assert.equal(runs({ preflight: result }), false, `the release ran with preflight ${result}`);
+		}
+		assert.equal(runs({ publishOnly: true, ready: "true", preflight: "skipped" }), true, "publish-only must still run");
+		assert.equal(runs({ publishOnly: true, ready: "true", preflight: "skipped", forceTests: true }), true, "publish-only ignores force_tests");
+		assert.equal(runs({ publishOnly: true, ready: "", preflight: "skipped" }), false);
+		const green = { forceTests: true, rest: "success", shard: "success" };
 		assert.equal(runs(green), true);
-		for (const job of ["prepare", "rest", "shard"]) {
+		for (const job of ["preflight", "rest", "shard"]) {
 			for (const result of ["failure", "cancelled", "skipped"]) {
 				assert.equal(runs({ ...green, [job]: result }), false, `the release ran with ${job} ${result}`);
 			}
 		}
-		assert.match(workflowJob(workflow, "release"), /\n    needs: \[native-prebuilds, prepare, forced-rest, forced-shard\]\n/);
-		const prepareRuns = (forceTests, publishOnly) =>
-			isTruthy(evaluateExpression(jobExpression(workflowJob(workflow, "prepare"), "if"), { inputs: { force_tests: forceTests, "publish-only": publishOnly } }));
+		assert.match(workflowJob(workflow, "release"), /\n    needs: \[native-prebuilds, preflight, forced-rest, forced-shard\]\n/);
+		const jobRuns = (name, forceTests, publishOnly) =>
+			isTruthy(evaluateExpression(jobExpression(workflowJob(workflow, name), "if"), { inputs: { force_tests: forceTests, "publish-only": publishOnly } }));
 		assert.deepEqual(
-			[prepareRuns(true, false), prepareRuns(false, false), prepareRuns(true, true), prepareRuns(false, true)],
-			[true, false, false, false],
-			"prepare (and with it the matrix) runs only for force_tests outside publish-only",
+			[jobRuns("preflight", true, false), jobRuns("preflight", false, false), jobRuns("preflight", true, true), jobRuns("preflight", false, true)],
+			[true, true, false, false],
+			"preflight runs for every dispatch but publish-only",
 		);
+		for (const name of TESTED_JOBS) {
+			assert.deepEqual(
+				[jobRuns(name, true, false), jobRuns(name, false, false), jobRuns(name, true, true), jobRuns(name, false, true)],
+				[true, false, false, false],
+				`${name} runs only for force_tests outside publish-only`,
+			);
+		}
 	});
 
 	it("keeps the publishing release job and its identity in publish-npm.yml", () => {
@@ -152,12 +162,19 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		for (const name of MATRIX_JOBS) assert.doesNotMatch(workflowJob(workflow, name), /scripts\/publish\.mjs|npm publish/);
 	});
 
-	it("gives the new jobs, and require-version (it only checks an input), read-only contents permission and no secrets", () => {
-		for (const name of [...MATRIX_JOBS, "require-version"]) {
+	it("gives the matrix jobs and require-version read-only contents permission and no secrets", () => {
+		for (const name of [...TESTED_JOBS, "require-version"]) {
 			const job = workflowJob(workflow, name);
 			assert.match(job, /\n    permissions:\n      contents: read\n(?! {6}\S)/, `${name} must have exactly contents: read`);
 			assert.doesNotMatch(job, /id-token|: write|secrets\./, `${name} must not get write access or secrets`);
 		}
+	});
+
+	it("gives the preflight read-only permissions and only whether the push token is set, never its value", () => {
+		const job = workflowJob(workflow, "preflight");
+		assert.match(job, /\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n(?! {6}\S)/);
+		assert.doesNotMatch(job, /id-token|: write/);
+		assert.deepEqual(job.match(/secrets\.[^}]*/g), ["secrets.UPSTREAM_AUTOMATION_TOKEN != '' "]);
 	});
 
 	it("runs every shard to the end (fail-fast false), at about 40 min each and 110 min end to end", () => {
@@ -171,11 +188,11 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		assert.equal(releaseMinutes({ force_tests: false, "publish-only": false }), 60, "the default release timeout changed");
 		assert.equal(releaseMinutes({ force_tests: false, "publish-only": true }), 60, "the publish-only timeout changed");
 		assert.equal(releaseMinutes({ force_tests: true, "publish-only": true }), 180, "the publish-only timeout changed");
-		const total = minutes("prepare") + Math.max(...TESTED_JOBS.map(minutes)) + releaseMinutes({ force_tests: true, "publish-only": false });
+		const total = minutes("preflight") + Math.max(...TESTED_JOBS.map(minutes)) + releaseMinutes({ force_tests: true, "publish-only": false });
 		assert.ok(total <= 110, `a forced release can run ${total} min`);
 	});
 
-	it("sets up the shard, rest and prepare jobs from the release job's own step definitions (no drift)", () => {
+	it("sets up the shard, rest and preflight jobs from the release job's own step definitions (no drift)", () => {
 		const release = workflowJob(workflow, "release");
 		const releaseStep = (name) => jobStep(release, name);
 		for (const name of TESTED_JOBS) {
@@ -184,13 +201,13 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 			const order = jobSteps(job).map((step) => step.name).filter((step) => SHARED_SETUP.includes(step));
 			assert.deepEqual(order, SHARED_SETUP, `${name} runs the shared setup out of order`);
 		}
-		const prepare = workflowJob(workflow, "prepare");
-		for (const step of PREPARE_SETUP) assert.equal(jobStep(prepare, step), releaseStep(step), `prepare: ${step} drifted`);
+		const preflight = workflowJob(workflow, "preflight");
+		for (const step of PREFLIGHT_SETUP) assert.equal(jobStep(preflight, step), releaseStep(step), `preflight: ${step} drifted`);
 	});
 
-	// Release-train ruling on senpi#6642: with force_tests the release takes its base only from prepare's base_sha
+	// Release-train ruling on senpi#6642: with force_tests the release takes its base only from preflight's base_sha
 	// output, even when the dispatch named a sha; without force_tests the dispatched sha passes through as before.
-	it("passes release.mjs prepare's base_sha as --sha under force_tests, and the dispatched sha otherwise", () => {
+	it("passes release.mjs preflight's base_sha as --sha under force_tests, and the dispatched sha otherwise", () => {
 		const step = jobStep(workflowJob(workflow, "release"), "Run release");
 		const script = step.match(/run: \|\n([\s\S]*)/)?.[1].replace(/^ {10}/gm, "");
 		assert.ok(script, "expected the Run release script");
@@ -287,7 +304,8 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		const token = (ref) => evaluateExpression(tokenExpression, { github: { ref }, secrets: { UPSTREAM_AUTOMATION_TOKEN: "PAT" } });
 		assert.equal(token("refs/heads/main"), "PAT");
 		for (const ref of ["refs/heads/ci/6642-forced-suite-matrix", "refs/tags/v2026.11.13"]) assert.equal(isTruthy(token(ref)), false, ref);
-		assert.equal((workflow.match(/secrets\.UPSTREAM_AUTOMATION_TOKEN/g) ?? []).length, 1, "the push token appears anywhere else");
+		// The preflight's `!= ''` presence check is the only other mention, and it yields a boolean, never the token.
+		assert.equal((workflow.match(/secrets\.UPSTREAM_AUTOMATION_TOKEN(?! != '')/g) ?? []).length, 1, "the push token appears anywhere else");
 
 		const script = step.match(/run: \|\n([\s\S]*)/)?.[1].replace(/^ {10}/gm, "");
 		assert.ok(script);
@@ -330,7 +348,7 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 	});
 
 	// Review finding 6 on senpi#6645: under force_tests the summary names the commit the matrix tested and the release
-	// tags (prepare's base_sha); otherwise the dispatched sha input, else the run's commit.
+	// tags (preflight's base_sha); otherwise the dispatched sha input, else the run's commit.
 	it("reports the tested commit in the workflow summary under force_tests", () => {
 		const summary = jobStep(workflowJob(workflow, "release"), "Workflow summary");
 		const expression = summary.match(/commit="\$\{\{ (.*) \}\}"/)?.[1];
@@ -338,13 +356,13 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		const commit = (forceTests, testedSha, sha) =>
 			evaluateExpression(expression, {
 				inputs: { force_tests: forceTests, sha },
-				needs: { prepare: { outputs: { base_sha: testedSha } } },
+				needs: { preflight: { outputs: { base_sha: testedSha } } },
 				github: { sha: "GITHUBSHA" },
 			});
 		assert.equal(commit(true, "TESTED", ""), "TESTED");
 		assert.equal(commit(true, "TESTED", "PINNED"), "TESTED");
 		assert.equal(commit(false, "", "PINNED"), "PINNED");
 		assert.equal(commit(false, "", ""), "GITHUBSHA");
-		assert.equal(commit(true, "", ""), "GITHUBSHA", "a failed prepare falls back to the run's commit");
+		assert.equal(commit(true, "", ""), "GITHUBSHA", "a failed preflight falls back to the run's commit");
 	});
 });
