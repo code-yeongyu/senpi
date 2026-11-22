@@ -196,7 +196,7 @@ describe("constrained tool sampling", () => {
 	});
 
 	// #7092: a root union with a boolean branch is valid JSON Schema, but Responses rejects any root combinator.
-	it("sends a plain object root for root unions with boolean branches", () => {
+	it("sends a plain object root for root unions with boolean or impossible branches", () => {
 		const branchesOf = (anyOf: unknown[]): Record<string, unknown> => {
 			const [converted] = convertResponsesTools([
 				makeTool({
@@ -221,6 +221,13 @@ describe("constrained tool sampling", () => {
 		const closed = branchesOf([{ required: ["code"] }, false]);
 		expect(closed).not.toHaveProperty("anyOf");
 		expect(closed.required).toEqual(["code"]);
+
+		// A scalar-typed branch can never match an object input, so it is pruned like `false`.
+		for (const impossible of [{ type: "string" }, { type: "null" }, { type: ["array", "number"] }]) {
+			const pruned = branchesOf([{ required: ["code"] }, impossible]);
+			expect(pruned, JSON.stringify(impossible)).not.toHaveProperty("anyOf");
+			expect(pruned.required).toEqual(["code"]);
+		}
 	});
 
 	it("replays grammar calls as custom Responses items", () => {
