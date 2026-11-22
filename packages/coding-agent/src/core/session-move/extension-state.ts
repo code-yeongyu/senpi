@@ -108,6 +108,20 @@ export async function pendingMovedState(
 	return (await pathExists(dir)) ? { moveId: id, dir } : undefined;
 }
 
+/**
+ * With nothing pending, every delivery folder of this session is dead: a handler that outlived its attempt may have
+ * recreated a copy there after the state was restored. Only this session's folders go; `.move-state` is shared by
+ * every session in the directory (senpi#3987).
+ */
+async function removeDeadDeliveries(sessionFile: string): Promise<void> {
+	const root = join(dirname(sessionFile), MOVE_STATE, "delivery");
+	if (!(await pathExists(root))) return;
+	const prefix = `${basename(sessionFile, ".jsonl")}.`;
+	for (const name of await readdir(root)) {
+		if (name.startsWith(prefix)) await rm(join(root, name), { recursive: true, force: true });
+	}
+}
+
 /** Delivery bookkeeping for one pending folder: the `delivered` marker and each delivery's own copy. */
 const deliveryDir = (pendingDir: string): string =>
 	join(dirname(dirname(pendingDir)), "delivery", basename(pendingDir));
@@ -132,7 +146,7 @@ export async function restoreMovedState(
 	const sessionFile = sessionManager.getSessionFile();
 	if (sessionFile === undefined) return;
 	const pending = await pendingMovedState(sessionFile);
-	if (pending === undefined) return;
+	if (pending === undefined) return removeDeadDeliveries(sessionFile);
 	const bookkeeping = deliveryDir(pending.dir);
 	const marker = join(bookkeeping, DELIVERED_MARKER);
 	const redelivered = await pathExists(marker);
@@ -142,9 +156,15 @@ export async function restoreMovedState(
 		}
 	}
 	await mkdir(bookkeeping, { recursive: true });
-	await writeFile(marker, "");
 	const copy = join(bookkeeping, `${DELIVERY_COPY}${newAttempt()}`);
-	await cp(pending.dir, copy, { recursive: true });
+	try {
+		await cp(pending.dir, copy, { recursive: true });
+	} catch (error) {
+		await rm(copy, { recursive: true, force: true });
+		throw error;
+	}
+	// Only a copy a handler can actually see counts as a delivery (senpi#3987).
+	await writeFile(marker, "");
 	let restored: boolean;
 	try {
 		restored = await deliver({ moveId: pending.moveId, dir: copy, redelivered });
