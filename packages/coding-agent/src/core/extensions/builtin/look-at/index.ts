@@ -1,6 +1,8 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { LOOK_AT_PARAMETERS, normalizeLookAtArgs, prepareLookAtArguments, validateLookAtArgs } from "./arguments.ts";
 import { registerLookAtCommand } from "./commands.ts";
+import { replaceImagesNamingTool } from "./image-placeholder.ts";
 import { resolveVisionModel } from "./model-selector.ts";
 import { LOOK_AT_DESCRIPTION, LOOK_AT_PROMPT_SNIPPET } from "./prompts.ts";
 import { type LookAtToolDetails, renderLookAtCall, renderLookAtResult } from "./render.ts";
@@ -55,6 +57,27 @@ export default function lookAtExtension(pi: ExtensionAPI): void {
 	pi.on("model_select", async (_event, ctx) => {
 		syncToolActivation(ctx);
 	});
+
+	// The tool is named only while the model can call it. With images blocked the transport
+	// replaces them itself and look_at refuses every input.
+	function describesImagesFor(ctx: ExtensionContext): ctx is ExtensionContext & { model: Model<Api> } {
+		return (
+			ctx.model !== undefined &&
+			!ctx.model.input.includes("image") &&
+			!ctx.getImageSettings().blockImages &&
+			pi.getActiveTools().includes(TOOL_NAME)
+		);
+	}
+
+	pi.on(
+		"context_with_system",
+		(event, ctx) => {
+			if (!describesImagesFor(ctx)) return undefined;
+			const messages = replaceImagesNamingTool(event.messages, ctx.model, TOOL_NAME);
+			return messages === event.messages ? undefined : { messages };
+		},
+		{ mutatesMessages: false },
+	);
 
 	registerLookAtCommand(pi, {
 		store,
