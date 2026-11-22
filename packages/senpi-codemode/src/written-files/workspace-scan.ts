@@ -3,9 +3,9 @@ import type { FileSignature, GitOutcome, RunGit, ScanFs } from "./scan-boundarie
 import { excludedDirectories, isSourcePath, SOURCE_FILE_MAX_BYTES } from "./source-file.ts";
 
 /** One git process of a scan is killed at this deadline. */
-export const SCAN_TIMEOUT_MS = 500;
+const SCAN_TIMEOUT_MS = 500;
 /** A scan that would stat more changed or untracked paths than this is abandoned. */
-export const SCAN_PATH_LIMIT = 5_000;
+const SCAN_PATH_LIMIT = 5_000;
 
 const STAT_BATCH = 64;
 const INITIAL_HEAD = "(initial)";
