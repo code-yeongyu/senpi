@@ -1293,7 +1293,13 @@ export class ExtensionRunner {
 		const off = this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
 			handler(data as ExtensionRpcEvent);
 		});
-		this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, undefined);
+		// A replay belongs only to this subscription; a bus listener must not keep a live client callback.
+		let replay: typeof handler | undefined = handler;
+		try {
+			this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, (event: ExtensionRpcEvent) => replay?.(event));
+		} finally {
+			replay = undefined;
+		}
 		return off;
 	}
 
