@@ -16,7 +16,14 @@ import type {
 	OAuthCredential,
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
-import { findEnvKeys, getEnvApiKey, legacyProviderIdsFor, normalizeProviderId, readByProviderId, refreshOAuthCredential } from "@earendil-works/pi-ai";
+import {
+	findEnvKeys,
+	getEnvApiKey,
+	legacyProviderIdsFor,
+	normalizeProviderId,
+	readByProviderId,
+	refreshOAuthCredential,
+} from "@earendil-works/pi-ai";
 import { type CredentialKind, slotKind, unusedSlotKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
 import { stampLogin } from "@earendil-works/pi-ai/auth/pool/login-id";
 import {
