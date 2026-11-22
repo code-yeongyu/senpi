@@ -18,6 +18,7 @@ import {
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 	summarizationMaxDurationMs,
 } from "../../../compaction/stream-watchdog.ts";
+import { streamInternalModel } from "../../../internal-model-request.ts";
 import { convertToLlm } from "../../../messages.ts";
 import { getSessionContextEntryId } from "../../../session-manager.ts";
 import type { buildPrompt } from "./prompts.ts";
@@ -182,7 +183,15 @@ function summarizationStream(
 ): AssistantMessageEventStream {
 	const runtime = context.modelRegistry?.modelRuntime;
 	const scoped = { ...options, cwd: context.cwd };
-	return runtime ? runtime.stream(model, requestContext, scoped) : stream(model, requestContext, scoped);
+	if (!runtime) return stream(model, requestContext, scoped);
+	if (context.agentDir === undefined) return runtime.stream(model, requestContext, scoped);
+	return streamInternalModel(runtime, model, requestContext, scoped, {
+		source: "speculative compaction",
+		agentDir: context.agentDir,
+		settings: context.sessionSettings,
+		streamFn: (streamModel, streamContext, streamOptions) =>
+			runtime.stream(streamModel, streamContext, streamOptions),
+	});
 }
 
 export async function generateSummaryMessage(options: {

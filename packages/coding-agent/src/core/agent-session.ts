@@ -35,6 +35,7 @@ import type {
 	InternalAgentChannel,
 	PreparedAgentToolCall,
 	PrepareNextTurnContext,
+	StreamFn,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import {
@@ -309,6 +310,7 @@ import { holdsKeepingPeerDelivery } from "./peer-delivery-hold.ts";
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf } from "./input-origin.ts";
+import { type InternalModelFallbackEvent, streamInternalModel } from "./internal-model-request.ts";
 import {
 	type ConnectionOrigin,
 	copyInputTurnMark,
@@ -839,6 +841,7 @@ export type AgentSessionEvent =
 			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
 			cause?: "fallback-unusable";
 	  }
+	| InternalModelFallbackEvent
 	| {
 			type: "retry_fallback_exhausted";
 			chainKey: string;
@@ -7295,7 +7298,7 @@ export class AgentSession {
 				baseOptions: this._buildSessionTitleBaseOptions(),
 				retry: sessionTitleRetryPolicy(this.settingsManager.getRetrySettings()),
 				signal: abortController.signal,
-				streamFn: this.agent.streamFunction,
+				streamFn: this._internalStreamFn("title"),
 			});
 			if (abortController.signal.aborted) {
 				return;
@@ -7349,6 +7352,19 @@ export class AgentSession {
 			timeoutMs: this.agent.timeoutMs,
 			maxRetryDelayMs: this.agent.maxRetryDelayMs,
 		};
+	}
+
+	/** An auxiliary request's stream: the session's own stream function, following the session's fallback chain on failure. */
+	private _internalStreamFn(source: string): StreamFn {
+		return (model, context, options) =>
+			streamInternalModel(this._modelRuntime, model, context, options ?? {}, {
+				source,
+				agentDir: this._agentDir,
+				settings: this.settingsManager,
+				streamFn: (sameModel, _sameContext, sameOptions) =>
+					this.agent.streamFunction(sameModel, context, sameOptions),
+				notify: (event) => this._emit(event),
+			});
 	}
 
 	/**
@@ -10741,7 +10757,7 @@ export class AgentSession {
 			extraBody,
 			// The routed thinking level under a virtual selection, the session's otherwise.
 			thinkingLevel,
-			this.agent.streamFunction,
+			this._internalStreamFn("compaction"),
 			env,
 			this.agent.transformContext,
 			this.settingsManager.getRetrySettings(),
@@ -14630,7 +14646,7 @@ export class AgentSession {
 					customInstructions,
 					replaceInstructions,
 					reserveTokens: branchSummarySettings.reserveTokens,
-					streamFn: this.agent.streamFunction,
+					streamFn: this._internalStreamFn("branch summary"),
 					retry: this.settingsManager.getRetrySettings(),
 					callbacks: this._summarizationRetryCallbacks({
 						source: "branchSummary",

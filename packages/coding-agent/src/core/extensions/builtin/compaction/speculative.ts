@@ -34,7 +34,12 @@ import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../..
 import { convertToLlm } from "../../../messages.ts";
 import type { ModelRegistry, ResolvedRequestAuth } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
-import type { ApplyCompactionResult, ContextUsage, ProviderRequestPreparation } from "../../types.ts";
+import type {
+	ApplyCompactionResult,
+	ContextUsage,
+	ExtensionSessionSettings,
+	ProviderRequestPreparation,
+} from "../../types.ts";
 import { pruneToolResults } from "./emergency-prune.ts";
 import {
 	allowOverflowRetry,
@@ -81,6 +86,9 @@ export interface SpeculativeCompactionContext {
 	model: Model<any> | undefined;
 	sessionManager: ReadonlySessionManager;
 	modelRegistry?: ModelRegistry;
+	/** With `sessionSettings`: the summary request follows the session's model-fallback chain. */
+	agentDir?: string;
+	sessionSettings?: Pick<ExtensionSessionSettings, "getRetryFallbackSettings">;
 	getContextUsage(): ContextUsage | undefined;
 	getCompactionSettings?(): CompactionPreparation["settings"];
 	getCompactionModel?(): Model<any> | undefined;

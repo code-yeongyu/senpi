@@ -6038,6 +6038,14 @@ export class InteractiveMode {
 				break;
 			}
 
+			case "internal_model_fallback":
+				this.showNoticeBox({
+					title: `⇄ Model fallback · ${event.source} · ${event.from} → ${event.to}`,
+					tone: "warning",
+					why: `The ${event.source} request switched models (${event.reason}); the session model is unchanged.`,
+				});
+				break;
+
 			case "retry_fallback_succeeded":
 				this.showNoticeBox({
 					title: `✓ Fallback model responded · ${event.model}`,
