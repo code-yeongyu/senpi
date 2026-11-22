@@ -14,6 +14,8 @@ import type { PackagesInstallEnvironments } from "../environments/packages-insta
 import { KERNEL_TOOLS_CAPABILITIES, type KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import { sandboxCellExecutor, sandboxRuntimeInfo } from "../kernels/sandbox/sandbox-cell.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
+import { withWrittenFiles } from "../written-files/report.ts";
+import { settleWrittenFiles } from "../written-files/written-files.ts";
 import { bindBridgeCell } from "./bridge-cell-binding.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
@@ -211,6 +213,8 @@ async function executeCell(
 		void pending.catch((error: unknown) => execution.cancel(error));
 	};
 	let releaseCellKernelTools: (() => void) | undefined;
+	// Opened first so the scan of the workspace's state before the cell overlaps kernel acquisition (senpi#7232).
+	const written = options.writtenFiles?.open(invocation.ctx);
 	try {
 		const kernel = await execution.wait(options.kernelManager.getKernel(invocation.input.language, onMessage));
 		// Computed before the handler so its construction-time snapshot captures this cell's capability.
@@ -297,6 +301,7 @@ async function executeCell(
 			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
 			const jsEnvironments = invocation.input.language === "js" ? options.jsEnvironments : undefined;
 			const packageRoot = jsEnvironments === undefined ? undefined : () => jsEnvironments.packageRoot;
+			if (written !== undefined) await execution.wait(written.ready);
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
@@ -320,6 +325,9 @@ async function executeCell(
 			);
 			if (result.ok && state.pendingBridgeCalls.length > 0)
 				await execution.wait(Promise.all(state.pendingBridgeCalls));
+			const writtenFiles = await execution.wait(
+				settleWrittenFiles(written, state.signal, [execution, cell.deadlines]),
+			);
 			if (
 				!result.ok &&
 				result.error.code === "js_cell_parse_error" &&
@@ -327,9 +335,12 @@ async function executeCell(
 				magic.kind === "ordinary"
 			) {
 				const message = jsCellParseMessage(invocation.input.code, result.error.message);
-				return await handler.finalize({ ...result, error: { ...result.error, message } });
+				return withWrittenFiles(
+					await handler.finalize({ ...result, error: { ...result.error, message } }),
+					writtenFiles,
+				);
 			}
-			return await handler.finalize(result);
+			return withWrittenFiles(await handler.finalize(result), writtenFiles);
 		};
 		return kernelTools ? await kernelToolsStorage.run(kernelTools, runBound) : await runBound();
 	} catch (error) {
@@ -350,6 +361,7 @@ async function executeCell(
 	} finally {
 		// First, so nothing below can skip it: from here on a host call carrying this run's secret gets no kernel tools.
 		releaseCellKernelTools?.();
+		written?.close();
 		state.active = false;
 		bridgeAbortController.abort();
 		execution.finish();

@@ -30,6 +30,9 @@ task-tool names are known.
   pending-call counts, and bounded per-tool aggregates.
 - Bounded streaming output with head/tail previews, column clamping, and
   session-adjacent spill files for large streams.
+- Source files a cell writes on its own (the `write()` helper, `fs`, a child
+  process, any kernel) go through the hooks a `write` call triggers when the
+  cell settles, and the result lists them; see "Files a cell writes".
 - TUI and HTML-export rendering for syntax-highlighted cells, status rows,
   task progress, structured display values, truncation warnings, and image
   fallbacks. A JavaScript cell sent as dense one-line code is previewed broken
@@ -606,6 +609,47 @@ bytes. With a session file such as `/path/session.jsonl`, artifacts live in
 directory. A truncated result tells the model so in its text: the kept and
 original sizes, then a plain-path notice such as
 `[Full output: /absolute/path/eval-….log]`.
+
+## Files a cell writes
+
+A cell can change workspace files without a `write` or `edit` call: through the
+`write()` helper, `fs`, `Bun.write`, a child process, or a Python, Ruby or Julia
+cell. When a cell settles with a kernel result, the source files that changed in
+the workspace while it ran go through the `tool_result` handlers a `write` call
+triggers, and the result gains one text block: the list of those files, then
+whatever the handlers appended for each (diagnostics, for example).
+`EvalToolDetails.writtenFiles` carries the same list for RPC consumers. A cell
+that changed no source file gets no block. A detached cell delivers the block in
+its completion notification.
+
+- **Source file**: a regular file inside the session cwd, outside `.git`,
+  `node_modules` and the session's own artifacts directory, that the workspace
+  does not ignore, at most 1 MiB, whose first 8 KiB are UTF-8 text. The definition lives in `src/written-files/source-file.ts`.
+- **Detection** compares the workspace before and after the cell, so it covers
+  every way of writing. In a git repository it reads `git status` (files that
+  differ from HEAD or are untracked, plus files committed while the cell ran);
+  elsewhere it lists the workspace through an empty repository kept in the
+  session artifacts, so the workspace's own ignore files still apply. It needs
+  `git`; without it the first cell says the check is off.
+- **Cost**: one scan before the first live cell starts and one at each
+  settlement. A scan is one `git` process killed at 500 ms that may stat at most
+  5,000 changed or untracked paths. Three scans in a row that fail or run over
+  that budget turn the check off for the session, and the cell says so.
+- **Hooks**: only `tool_result` handlers run, with `toolName: "write"`,
+  `input: { path, content }` (absolute path, the content on disk) and
+  `parentToolCallId` set to the eval call. No tool runs, so nothing is written
+  again, no permission is asked and no write guard can block it. A handler that
+  fails is named in the block; the cell still succeeds.
+- **Once**: a file a `write` or `edit` call took through the hooks, from the cell
+  or from the model while a detached cell was running, is not sent again unless
+  it was rewritten afterwards.
+- **Limits**: the first 20 files are listed and hooked and the rest are counted;
+  hook output is capped at 2,000 code points per file and 12,000 per cell.
+
+Not covered: a cell that is cancelled, times out or is killed (it has no kernel
+result); deleted files; files inside submodules and nested repositories. Cells
+that run at the same time share one comparison, so a change is reported once, by
+the first of them to settle.
 
 ## Deliberate differences from oh-my-pi
 
