@@ -17,6 +17,12 @@ import { join } from "node:path";
 import { providerCredentialEnvNames } from "@earendil-works/pi-ai";
 import { envSlotVarNames } from "../../core/credential-pool/env-slots.ts";
 import type { HostDaemonPaths } from "./host-daemon-paths.ts";
+import {
+	HOST_HANDOFF_ENV_NAMES,
+	HOST_STARTUP_EVENTS_ENV,
+	isHostHandoffEnvName,
+	ORIGIN_HOST_INSTANCE_ENV,
+} from "./host-identity-env.ts";
 import { parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
 
 /** Names a daemon may inherit from the process that ensures it. */
@@ -81,24 +87,15 @@ const TRANSIENT_ENV_NAMES = new Set([
 	"OMO_BROWSER_ENGINE",
 	"PI_PROMPT_CACHE_SAFE_WAIT_SECONDS",
 	"SENPI_PY_KERNEL_PARENT_PID",
-	"SENPI_RPC_HOST_WATCH_FD",
-	"SENPI_RPC_HOST_WATCH_PPID",
-	"SENPI_RPC_HOST_SCRATCH_DIR",
-	"SENPI_RPC_HOST_CLEANUP_PATHS",
-	"SENPI_RPC_HOST_PUBLIC_SOCKET",
-	"SENPI_RPC_HOST_INSTANCE_ID",
-	"SENPI_RPC_HOST_GENERATION",
-	"SENPI_RPC_HOST_DAEMON_DIR",
-	"SENPI_RPC_HOST_EXPECTED_RUNTIME_BUILD_ID",
-	"SENPI_RPC_HOST_STARTUP_EVENTS",
-	// The rest of a supervisor's hand-off to its own host child. A daemon ensured BY a host child
-	// would otherwise inherit its parent's lane: with the key sentinel set and no key on its stdin,
-	// the new daemon exits "internal_key_unavailable" before it ever listens (senpi#4528).
-	"SENPI_RPC_INTERNAL_KEY_STDIN",
-	"SENPI_RPC_HOST_WATCH_PSTART",
-	"SENPI_RPC_HOST_WATCH_PSTART_TICKS",
-	"SENPI_RPC_HOST_LIFETIME_FIFO",
-	"SENPI_RPC_SOCKET_SECRET_FILE",
+	// A supervisor's whole hand-off to its own host child, from the one list its other readers share
+	// (senpi#5635). A daemon ensured BY a host child would otherwise inherit its parent's lane: with the
+	// key sentinel set and no key on its stdin, it exits "internal_key_unavailable" before it listens
+	// (senpi#4528). The origin attribution names the ensuring host, which a separate daemon is not.
+	...HOST_HANDOFF_ENV_NAMES,
+	ORIGIN_HOST_INSTANCE_ENV,
+	// A coordinated launch's startup-event binding (senpi#4602): it names one attempt's pipe, which a
+	// separately ensured daemon does not report on.
+	HOST_STARTUP_EVENTS_ENV,
 	// Engine trust launch plumbing: a daemon gets the generation only through its forced hand-off.
 	"SENPI_ENGINE_TRUST",
 	"SENPI_ENGINE_TRUST_HOP",
@@ -111,7 +108,8 @@ export function isTransientDaemonEnvName(name: string): boolean {
 
 export function daemonEnvIsAllowed(name: string, platform: NodeJS.Platform = process.platform): boolean {
 	const upper = name.toUpperCase();
-	if (TRANSIENT_ENV_NAMES.has(platform === "win32" ? upper : name)) return false;
+	if (TRANSIENT_ENV_NAMES.has(platform === "win32" ? upper : name) || isHostHandoffEnvName(name, platform))
+		return false;
 	if (platform !== "win32") {
 		return PROVIDER_CREDENTIAL_ENV_NAMES.has(name) || ALLOWED_ENV_NAMES.some((pattern) => pattern.test(name));
 	}

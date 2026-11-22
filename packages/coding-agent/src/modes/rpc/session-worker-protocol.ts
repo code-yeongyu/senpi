@@ -3,6 +3,7 @@ import type { DelegationDescriptor } from "./delegation-record.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { McpFormInput, McpFormOutcome } from "../../core/mcp-form-types.ts";
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { MirroredLimits } from "../../core/subscription-limits/limit-store.ts";
@@ -79,6 +80,9 @@ export interface WorkerSnapshot {
 	streaming: boolean;
 	/** The session file's archived flag, read in the isolate that owns the file. */
 	archived: boolean;
+	/** The session file's Done flag and how it was reached, read like `archived`. */
+	settled: boolean;
+	settledBy?: ThreadSettledBy;
 }
 
 import type { AdmissionReplyScope } from "./compact-admission-reply.ts";

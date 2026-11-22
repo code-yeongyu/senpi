@@ -105,6 +105,8 @@ export interface ToolDispatcherOptions {
 
 export interface ToolDispatcher {
 	readonly kind: ToolRuntimeKind;
+	/** Tool bodies dispatched through `run` that have not settled yet, wherever they run. */
+	readonly executing: number;
 	run<TDetails = unknown>(
 		call: ToolDispatchCall<TDetails>,
 	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>>;
@@ -136,7 +138,22 @@ export function resolveToolPlacement(
 abstract class BaseToolDispatcher implements ToolDispatcher {
 	abstract readonly kind: ToolRuntimeKind;
 
-	abstract run<TDetails>(
+	#executing = 0;
+
+	get executing(): number {
+		return this.#executing;
+	}
+
+	async run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
+		this.#executing++;
+		try {
+			return await this.dispatch(call);
+		} finally {
+			this.#executing--;
+		}
+	}
+
+	protected abstract dispatch<TDetails>(
 		call: ToolDispatchCall<TDetails>,
 	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>>;
 
@@ -216,7 +233,7 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 		await Promise.all([...this.#live].map((run) => run.close()));
 	}
 
-	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
+	protected dispatch<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
 		return this.runOnServer(call);
 	}
 
@@ -256,7 +273,9 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 		this.#kindRunner = kindRunner;
 	}
 
-	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
+	protected dispatch<TDetails>(
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
 		if (this.placementFor(call.definition) === "server") {
 			return this.runOnServer(call);
 		}

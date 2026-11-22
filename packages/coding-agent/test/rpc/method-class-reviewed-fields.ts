@@ -42,6 +42,7 @@ export const REVIEWED_FIELDS = {
 			"clientMessageId",
 			"clientTurnId",
 			"expandPromptTemplates",
+			"expectedLeafId",
 			"expectedTurnId",
 			"id",
 			"images",
@@ -140,6 +141,7 @@ export const REVIEWED_FIELDS = {
 	set_label: { fields: ["admissionId", "entryId", "id", "label", "sessionId", "type"] },
 	set_session_name: { fields: ["admissionId", "id", "name", "sessionId", "type"] },
 	set_session_archived: { fields: ["admissionId", "archived", "id", "sessionId", "type"] },
+	set_session_settled: { fields: ["admissionId", "by", "id", "sessionId", "settled", "type"] },
 	set_thinking_level: { version: 1, fields: ["admissionId", "effectId", "id", "level", "scope", "sessionId", "type"] },
 	set_model: {
 		version: 1,
@@ -224,12 +226,30 @@ export const REVIEWED_FIELDS = {
 			"type",
 		],
 	},
-	resume_session: { fields: ["admissionId", "effectId", "expectedSeq", "id", "message", "mode", "sessionId", "type"] },
+	resume_session: {
+		fields: ["admissionId", "effectId", "expectedSeq", "id", "message", "mode", "sessionId", "type", "unlessStopped"],
+	},
 	fork: { fields: ["admissionId", "entryId", "id", "position", "sessionId", "type"] },
 	clone: { fields: ["admissionId", "id", "sessionId", "type"] },
 	close_session: { fields: ["admissionId", "id", "sessionId", "type"] },
 	unload_session: {
-		fields: ["admissionId", "children", "clearQueue", "effectId", "force", "id", "interrupt", "sessionId", "type"],
+		// `deliveries` (senpi#7004) only chooses whether a busy session's unwritten deliveries refuse the unload: no path,
+		// credential or process, so the class stays `thread`. `graceful` and `waitMs` (oh-my-openagent#14313) only choose to
+		// wait for the turn instead of refusing or interrupting it, bounded: the same session end, so still `thread`.
+		fields: [
+			"admissionId",
+			"children",
+			"clearQueue",
+			"deliveries",
+			"effectId",
+			"force",
+			"graceful",
+			"id",
+			"interrupt",
+			"sessionId",
+			"type",
+			"waitMs",
+		],
 	},
 	set_session_context: { fields: ["admissionId", "id", "patch", "sessionId", "type"] },
 	attach_session: {

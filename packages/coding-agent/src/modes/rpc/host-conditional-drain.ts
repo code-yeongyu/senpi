@@ -1,7 +1,7 @@
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
 import { selectDrainVerdicts } from "./session-drain.ts";
-import { holdUnattendedTurns } from "./session-drain-hold.ts";
+import { holdDrainedTurns } from "./session-drain-hold.ts";
 import type { RouterContext } from "./session-router-context.ts";
 
 export interface ConditionalDrainCommand {
@@ -60,6 +60,6 @@ export function closeIdleDrainAdmission(host: RouterContext, instanceId: string)
 	if (rows.some((row) => host.registry.peek(row.sessionId)?.worker !== undefined)) return refuse("drain_unsupported");
 	host.conditionalDrain = true;
 	host.draining = true;
-	holdUnattendedTurns(host);
+	holdDrainedTurns(host);
 	return { action: "drained" };
 }

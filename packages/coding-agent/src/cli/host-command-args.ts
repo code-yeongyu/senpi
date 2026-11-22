@@ -36,6 +36,8 @@ export interface ParsedHostArgs {
 	/** Endpoint credentials only: where the public endpoint's key records live; the profile is unchanged. */
 	readonly keyRoot?: string;
 	readonly handover?: IdleHandoverTerms;
+	/** `handoff --allow-downgrade`: hand the running host over even to an older engine (senpi#7018). */
+	readonly allowDowngrade?: boolean;
 }
 
 /** Parses the command line, or answers with the message that says why it could not. */
@@ -63,6 +65,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	let keyRoot: string | undefined;
 	let presenterBootstrapFd: number | undefined;
 	let mcpPresenterEnforcement: boolean | undefined;
+	let allowDowngrade = false;
 	const handover: Record<string, string> = {};
 	for (let index = 0; index < rest.length; index++) {
 		const flag = rest[index];
@@ -75,6 +78,8 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		} else if (flag === "--rpc-key-root" && value !== undefined && !value.startsWith("--")) {
 			keyRoot = resolve(value);
 			index++;
+		} else if (flag === "--allow-downgrade" && subcommand === "handoff") {
+			allowDowngrade = true;
 		} else if (flag === "--json") {
 			json = true;
 		} else if (flag === "--include-workers") {
@@ -164,7 +169,8 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		...(root !== undefined && { root }),
 		...(agentDir !== undefined && { agentDir }),
 		...(keyRoot !== undefined && { keyRoot }),
-		...(terms !== undefined && { handover: terms }),
+		...(terms !== undefined && { handover: allowDowngrade ? { ...terms, allowDowngrade } : terms }),
+		...(allowDowngrade && { allowDowngrade }),
 	};
 }
 

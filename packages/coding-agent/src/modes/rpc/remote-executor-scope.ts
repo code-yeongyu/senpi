@@ -1,5 +1,11 @@
 import { isAbsolute } from "node:path";
-import type { AgentToolResult, ExecutionScope, HandScope, OpenHandScope } from "@earendil-works/pi-agent-core";
+import type {
+	AgentToolResult,
+	ExecutionScope,
+	HandCall,
+	HandScope,
+	OpenHandScope,
+} from "@earendil-works/pi-agent-core";
 import type { JsonValue } from "@earendil-works/pi-ai";
 import type { HandWake } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
@@ -10,12 +16,20 @@ import { loadFlock } from "./hand-flock-binding.ts";
 import type { HandRunContext } from "./hand-run-allowlist.ts";
 import { grantLooplessExecuteToRemoteExecutor } from "./loopless-execute-grant.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
-import { createLooplessRuntimeFactory, type LooplessRuntime } from "./runtime-factory-loopless.ts";
+import type { LooplessCallFacts } from "./loopless-brain-calls.ts";
+import type { LooplessRuntime } from "./loopless-runtime.ts";
+import { createLooplessRuntimeFactory } from "./runtime-factory-loopless.ts";
 
 const handRun: { readonly context: HandRunContext; readonly flock: ReturnType<typeof loadFlock> } = {
 	context: { uid: process.getuid?.() ?? -1, platform: process.platform, ownEnv: process.env },
 	flock: loadFlock(),
 };
+
+/** What the issuing session sent with a call; an unknown surface is dropped, never read as another one. */
+function callFacts(call: HandCall): LooplessCallFacts {
+	const surface = call.promptSurface;
+	return surface === "terminal" || surface === "app" || surface === "chat" ? { promptSurface: surface } : {};
+}
 
 function notFound(name: string): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text: `Tool ${name} not found` }], details: {}, isError: true };
@@ -122,7 +136,14 @@ export function createLooplessHand(
 			return {
 				run: (call) =>
 					runtime.definitions.has(call.name)
-						? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested)
+						? runtime.execute(
+								call.name,
+								call.toolCallId,
+								call.arguments,
+								call.signal,
+								call.nested,
+								callFacts(call),
+							)
 						: Promise.resolve(notFound(call.name)),
 				isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
 				...(runtime.fileGuards === undefined

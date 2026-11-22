@@ -34,8 +34,10 @@ afterEach(async () => {
 	await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): CreateAgentSessionRuntimeResult {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+async function runtime(
+	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
+): Promise<CreateAgentSessionRuntimeResult> {
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
 			...fakeSessionBase(options),

@@ -46,6 +46,7 @@ import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
 import { stopOutcome } from "./host-stop-outcome.ts";
+import { hostUnitPayload } from "./host-unit-placement.ts";
 import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
@@ -100,6 +101,8 @@ export type HostRequest =
 			readonly spec: ResolvedHostLaunchSpec;
 			/** The conditional form (`--when idle`): the running host hands over at its next safe idle point. */
 			readonly handover?: IdleHandoverTerms;
+			/** `--allow-downgrade`: the caller consents to handing a newer host down to this engine (senpi#7018). */
+			readonly allowDowngrade?: boolean;
 	  }
 	/** Removes endpoint state under `agentDir` only on the three-part evidence (`host-gc.ts`). */
 	| { readonly action: "gc"; readonly agentDir: string }
@@ -146,7 +149,7 @@ async function runHostRequestInKeyRoot(
 			return stopOutcome(request);
 		case "handoff":
 			return request.handover === undefined
-				? handoffOutcome(request.target, request.spec, presenterBootstrap, mcpPresenterEnforcement)
+				? handoffOutcome(request, presenterBootstrap, mcpPresenterEnforcement)
 				: idleHandoverOutcome(request.target, request.spec, request.handover, mcpPresenterEnforcement);
 		case "shard_path":
 			return shardPathOutcome(request.kind, request.owner, request.root);
@@ -205,6 +208,7 @@ async function ensureOutcome(
 		payload: {
 			action: ensureAction(ensured.reused, before, host),
 			...identityPayload(target.socket, ensured.pid, host),
+			...(await hostUnitPayload(ensured.pid, host?.instanceId)),
 			clientRuntimeBuildId: await clientRuntimeBuildId(spec),
 			reused: ensured.reused,
 		},
@@ -243,11 +247,11 @@ function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOut
 }
 
 async function handoffOutcome(
-	target: HostTarget,
-	spec: ResolvedHostLaunchSpec,
+	request: Extract<HostRequest, { action: "handoff" }>,
 	presenterBootstrap?: Duplex,
 	mcpPresenterEnforcement?: boolean,
 ): Promise<HostOutcome> {
+	const { target, spec } = request;
 	const before = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	const result = await handoffHost({
 		socket: target.socket,
@@ -257,6 +261,7 @@ async function handoffOutcome(
 		hostArgs: spec.hostArgs,
 		env: daemonEnvOverrides(process.env, spec.env),
 		policy: spec.policy,
+		...(request.allowDowngrade === true && { allowDowngrade: true }),
 	});
 	if (result.action === "refuse") {
 		return refusal("refuse", before, {
@@ -273,6 +278,7 @@ async function handoffOutcome(
 		payload: {
 			action: "handoff",
 			...identityPayload(target.socket, result.pid, host),
+			...(await hostUnitPayload(result.pid, host?.instanceId)),
 			clientRuntimeBuildId: await clientRuntimeBuildId(spec),
 			reused: false,
 		},

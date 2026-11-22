@@ -105,6 +105,9 @@ export class RpcSessionRegistry {
 	get size(): number {
 		return [...this.entries.values()].filter((entry) => !entry.speculative).length;
 	}
+	reserveHandle(): string {
+		return `rpc-${++this.nextHandle}`;
+	}
 
 	/** Commit the ledger's exclusive claim after its existing runtime has acquired a persistent file. */
 	async claimPark(handle: string, retainOnDisconnect: boolean): Promise<OpenRpcSession> {
@@ -151,7 +154,7 @@ export class RpcSessionRegistry {
 				teardownHost: this.teardownHost,
 				closeGraceMs: this.closeGraceMs,
 				now: this.now,
-				nextHandle: () => `rpc-${++this.nextHandle}`,
+				nextHandle: () => this.reserveHandle(),
 				validateProfile: (profile) => this.validateProfile(profile),
 				syncRuntimeMetadata: () => this.syncRuntimeMetadata(),
 			},

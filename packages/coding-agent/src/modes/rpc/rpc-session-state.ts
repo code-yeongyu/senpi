@@ -68,6 +68,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		pause: session.pauseView,
 		isCompacting: session.isCompacting,
 		retryAttempt: session.retryAttempt,
+		...(session.retryWait === undefined ? {} : { retryWait: session.retryWait }),
 		isBashRunning: session.isBashRunning,
 		steeringMode: session.steeringMode,
 		followUpMode: session.followUpMode,

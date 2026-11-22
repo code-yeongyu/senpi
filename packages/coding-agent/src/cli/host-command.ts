@@ -49,9 +49,10 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
   status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
   stop        [--drain [--instance <id>] [--wait-ms <n>] [--if-idle]] [--force] [--expected-generation <json>] [--socket <path>]
               (--if-idle requires --drain and --instance; busy or attached generations refuse)
-  handoff     [--launch-spec <file>] [--socket <path>]
+  handoff     [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
               [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
               (--when idle: the running host hands over to THIS runtime at its next safe idle point)
+              (a host on a newer engine is refused older_engine unless --allow-downgrade)
   shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
   gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
   session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
@@ -118,6 +119,7 @@ async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
 				target,
 				spec: await launchSpec(parsed.specPath),
 				...(parsed.handover !== undefined && { handover: parsed.handover }),
+				...(parsed.allowDowngrade === true && { allowDowngrade: true }),
 			};
 		case "shard-path":
 			return {
