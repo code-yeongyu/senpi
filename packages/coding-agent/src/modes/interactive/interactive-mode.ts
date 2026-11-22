@@ -4,6 +4,8 @@
  */
 
 import * as fs from "node:fs";
+import { resolveSecretInputTimeout } from "../../core/extensions/secret-input.ts";
+import type { ExtensionUIInputOptions } from "../../core/extensions/types.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -34,6 +36,7 @@ import {
 	type Component,
 	Container,
 	decodeKittyPrintable,
+	encodeProgramStatus,
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
@@ -41,6 +44,7 @@ import {
 	Markdown,
 	matchesKey,
 	outerKittyGraphicsMode,
+	type ProgramStatus,
 	SelectList,
 	Spacer,
 	sanitizeTerminalLabel,
@@ -95,6 +99,13 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { subscribeProviderAccountEvents } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import {
+	getSessionClaudeAccountPin,
+	resolveClaudeAccountPin,
+} from "../../core/extensions/builtin/anthropic-subscription/account-command.ts";
+import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "../../core/extensions/builtin/anthropic-subscription/settings.ts";
+import { formatAccountFailoverNotice } from "./account-failover-notice.ts";
 import {
 	askUserAnswerDisplayText,
 	formatUserMessage,
@@ -119,7 +130,14 @@ import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/ext
 import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
 import { emitUserActivity } from "../../core/extensions/user-activity.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-import { sessionHolderWarning } from "../../core/foreign-session-holders.ts";
+import {
+	checkSessionHolders,
+	describeSessionHolders,
+	SESSION_HOLDER_LOOKUP_FAILED,
+	sessionHolderWarning,
+	stopSessionHolders,
+	takeOverRefusal,
+} from "../../core/foreign-session-holders.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
@@ -127,8 +145,9 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.t
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { registerMcpMrtrPresentation } from "../../core/mcp-mrtr-presentations.ts";
-import { markMcpFormPresented, type McpFormBinding } from "../../core/mcp-form-types.ts";
-import { registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
+import { markMcpFormPresented } from "../../core/mcp-form-types.ts";
+import { type LocalMcpPresenter, registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
+import { raceTerminalSecretInput } from "./terminal-sealed-secrets.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -144,6 +163,7 @@ import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
 import { failureAlreadyDescribed, headNoticeShownElsewhere } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
+import { describeFallbackExhaustion } from "../../core/retry-fallback/exhaustion.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
@@ -294,17 +314,21 @@ import {
 import { getModelSearchText } from "./model-search.ts";
 import { PAUSE_STATUS_KEY, pauseFooterText, resumeCommandTarget } from "./pause-footer.ts";
 import {
+	episodeOwnsFailure,
 	isNetworkProviderError,
-	isNetworkProviderMessage,
 	isRetryableProviderError,
+	isRetryableProviderMessage,
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
+import { providerErrorReason } from "./provider-error-reason.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
+import { interactiveErrorText } from "./required-compaction-wording.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
 import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
 import type { TuiControlContext } from "./session-control-lifecycle.ts";
+import type { PresenterAccountAuthority } from "../rpc/mcp-presenter-account.ts";
 import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
@@ -370,6 +394,21 @@ interface WorkingStatusEditor extends EditorComponent {
 function adoptDefaultEditorActions(defaultEditor: CustomEditor, editor: EditorComponent): void {
 	if (editor === defaultEditor || !("actionHandlers" in editor) || !(editor.actionHandlers instanceof Map)) return;
 	for (const [action, handler] of defaultEditor.actionHandlers) editor.actionHandlers.set(action, handler);
+}
+
+/**
+ * Run a submission parked during startup once the real submit path is installed (senpi#5731). The person
+ * already pressed Enter, so the parked text is submitted unless they edited it since. A free function, like
+ * `adoptDefaultEditorActions`, so `init()` gains no new `this` dependency.
+ */
+export function replayStartupSubmission(
+	parked: { readonly text: string; readonly details?: EditorSubmitDetails } | undefined,
+	editor: Pick<EditorComponent, "getText" | "setText">,
+	defaultEditor: { onSubmit?: (text: string, details?: EditorSubmitDetails) => void | Promise<void> } | undefined,
+): void {
+	if (parked === undefined || editor.getText() !== parked.text) return;
+	editor.setText("");
+	void defaultEditor?.onSubmit?.(parked.text, parked.details);
 }
 
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
@@ -599,10 +638,6 @@ export function formatCrashExtensionHint(extensionMatches: readonly string[] | u
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
-
-function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
-	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
-}
 
 function isUnknownModel(model: Model<any> | undefined): boolean {
 	return !!model && model.provider === "unknown" && model.id === "unknown" && model.api === "unknown";
@@ -883,6 +918,8 @@ async function attachClipboardImage(
 export interface InteractiveModeOptions {
 	/** Opt in to host-issued MCP form authority; ordinary terminal forms remain the default. */
 	mcpPresenterEnforcement?: boolean;
+	/** Lets same-account devices enroll as form presenters on this terminal; injected by the distribution (D11 S3-6b). */
+	presenterAccountAuthority?: PresenterAccountAuthority;
 	/** Renderer mode for the interactive terminal. */
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
@@ -1022,6 +1059,7 @@ export class InteractiveMode {
 	 * ordinary submission that never references it.
 	 */
 	private preResolvedSubmissionImages?: ImageContent[];
+	private startupParkedSubmission: { readonly text: string; readonly details?: EditorSubmitDetails } | undefined;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -1039,6 +1077,9 @@ export class InteractiveMode {
 	private hookStatusIntervalId: NodeJS.Timeout | undefined = undefined;
 	private activeToolTerminalTitle: string | undefined = undefined;
 	private extensionTerminalTitle: string | undefined = undefined;
+	/** The OSC 7501 report last written while a status is active; undefined once cleared. */
+	private programStatusSequence: string | undefined = undefined;
+	private programStatusClosed = false;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -1136,6 +1177,7 @@ export class InteractiveMode {
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
+	private secretInputCleanup: (() => void) | undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
 	private askUserQuestion: AskUserQuestionComponent | undefined = undefined;
 	private pendingQuestions = new Map<string, AsyncQuestionState>();
@@ -1281,7 +1323,18 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = this.chrome
 			? this.chrome.createFooter(this.session, this.footerDataProvider)
-			: new FooterComponent(this.session, this.footerDataProvider);
+			: new FooterComponent(this.session, this.footerDataProvider, {
+					// CLI > settings > stored pin, resolved per render so a
+					// mid-session /claude-account pin or settings change is
+					// picked up (senpi#5983); the stored pin stays the
+					// fallback inside accountFooterSuffix.
+					resolveAccountPin: (sessionId) =>
+						resolveClaudeAccountPin(
+							getSessionClaudeAccountPin(sessionId),
+							loadAnthropicSubscriptionProviderSettingsFromDisk(this.sessionManager.getCwd()).pinnedAccount,
+							undefined,
+						),
+				});
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
@@ -1683,7 +1736,7 @@ export class InteractiveMode {
 		if (this.defaultEditor) {
 			this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 			this.defaultEditor.onCtrlD = () => this.handleCtrlD();
-			this.defaultEditor.onSubmit = (text) => this.handleStartupSubmit(text);
+			this.defaultEditor.onSubmit = (text, details) => this.handleStartupSubmit(text, details);
 		}
 		this.ui.setFocus(this.editor);
 
@@ -1811,8 +1864,11 @@ export class InteractiveMode {
 		// submit accepted earlier painted its echo above the history that startup appended afterwards.
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
-		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.hasComposerDraft());
 		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		const parkedSubmission = this.startupParkedSubmission;
+		this.startupParkedSubmission = undefined;
+		replayStartupSubmission(parkedSubmission, this.editor, this.defaultEditor);
 		this.ui.requestRender();
 		time("keyHandlers", "tui");
 
@@ -1857,6 +1913,15 @@ export class InteractiveMode {
 
 	private updateTerminalTitle(): void {
 		this.applyTerminalTitle();
+	}
+
+	private setProgramStatus(status: ProgramStatus | undefined): void {
+		if (this.programStatusClosed) return;
+		const sequence = encodeProgramStatus(status, APP_COMMAND);
+		if (status === undefined ? this.programStatusSequence === undefined : sequence === this.programStatusSequence)
+			return;
+		this.programStatusSequence = status === undefined ? undefined : sequence;
+		if (process.stdout.isTTY) this.ui.terminal.write(sequence);
 	}
 
 	/**
@@ -2768,7 +2833,7 @@ export class InteractiveMode {
 	private detachMcpGrantPresentation?: () => void;
 	/** A presentation is optional until extension UI is created; shutdown may precede it. */
 	private mcpMrtrPresentationLifetime?: AbortController;
-	private mcpLocalPresenter?: McpFormBinding;
+	private mcpLocalPresenter?: LocalMcpPresenter;
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		this.mcpMrtrPresentationLifetime?.abort();
 		this.mcpMrtrPresentationLifetime = new AbortController();
@@ -3111,7 +3176,9 @@ export class InteractiveMode {
 			if (opts.signal?.aborted) return undefined as T;
 			return await show();
 		}
-		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
+		// A dialog about a tool call is a permission request (ExtensionUIDialogOptions.toolCallId).
+		const kind = opts?.toolCallId === undefined ? {} : { kind: "permission" as const };
+		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id, ...kind });
 		try {
 			return await show();
 		} finally {
@@ -3704,7 +3771,7 @@ export class InteractiveMode {
 	): () => void {
 		const subscription = {
 			handler,
-			unsubscribe: this.ui.addInputListener(handler),
+			unsubscribe: this.ui.addInputListener((data) => (this.extensionInput?.secret ? undefined : handler(data))),
 		};
 		this.extensionTerminalInputSubscriptions.add(subscription);
 		return () => {
@@ -3716,7 +3783,9 @@ export class InteractiveMode {
 	private rebindExtensionTerminalInputListeners(): void {
 		for (const subscription of this.extensionTerminalInputSubscriptions) {
 			subscription.unsubscribe();
-			subscription.unsubscribe = this.ui.addInputListener(subscription.handler);
+			subscription.unsubscribe = this.ui.addInputListener((data) =>
+				this.extensionInput?.secret ? undefined : subscription.handler(data),
+			);
 		}
 	}
 
@@ -3747,6 +3816,7 @@ export class InteractiveMode {
 		this.mcpMrtrPresentationLifetime ??= new AbortController();
 		if (this.isShuttingDown) this.mcpMrtrPresentationLifetime.abort();
 		const context: ExtensionUIContext = {
+			capabilities: { secretInput: true },
 			select: (title, options, opts) =>
 				this.withBlockedHostDialog(
 					crypto.randomUUID(),
@@ -3765,8 +3835,15 @@ export class InteractiveMode {
 				this.withBlockedHostDialog(
 					crypto.randomUUID(),
 					title,
-					() => this.showExtensionInput(title, placeholder, opts),
-					opts,
+					() =>
+						raceTerminalSecretInput(
+							this.mcpLocalPresenter?.sealed,
+							(local) => this.showExtensionInput(title, placeholder, local),
+							title,
+							placeholder,
+							opts,
+						),
+					opts?.secret ? { ...opts, ephemeral: true } : opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the
 			// widget only resolves the question, so the model sees exactly one
@@ -3801,6 +3878,7 @@ export class InteractiveMode {
 				this.extensionTerminalTitle = title;
 				this.applyTerminalTitle();
 			},
+			setProgramStatus: (status) => this.setProgramStatus(status),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => insertProgrammaticComposerInput(this.editor, `\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
@@ -3936,8 +4014,10 @@ export class InteractiveMode {
 	private showExtensionInput(
 		title: string,
 		placeholder?: string,
-		opts?: ExtensionUIDialogOptions,
+		opts?: ExtensionUIInputOptions,
 	): Promise<string | undefined> {
+		const timeout = opts?.secret && !opts.signal?.aborted ? resolveSecretInputTimeout(opts) : opts?.timeout;
+		if (this.extensionInput?.secret) this.hideExtensionInput();
 		return new Promise((resolve) => {
 			if (opts?.signal?.aborted) {
 				resolve(undefined);
@@ -3945,6 +4025,7 @@ export class InteractiveMode {
 			}
 
 			const onAbort = () => {
+				this.secretInputCleanup = undefined;
 				this.hideExtensionInput();
 				resolve(undefined);
 			};
@@ -3956,18 +4037,25 @@ export class InteractiveMode {
 				(value) => {
 					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
+					this.secretInputCleanup = undefined;
 					this.hideExtensionInput();
 					resolve(value);
 				},
 				() => {
 					opts?.signal?.removeEventListener("abort", onAbort);
+					this.secretInputCleanup = undefined;
 					this.hideExtensionInput();
 					resolve(undefined);
 				},
-				{ tui: this.ui, timeout: opts?.timeout },
+				{ tui: this.ui, timeout, secret: opts?.secret },
 			);
 
 			this.disposeActiveSelector();
+			if (opts?.secret)
+				this.secretInputCleanup = () => {
+					opts.signal?.removeEventListener("abort", onAbort);
+					resolve(undefined);
+				};
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.extensionInput);
 			this.ui.setFocus(this.extensionInput);
@@ -3979,7 +4067,10 @@ export class InteractiveMode {
 	 * Hide the extension input.
 	 */
 	private hideExtensionInput(): void {
+		const cleanup = this.secretInputCleanup;
+		this.secretInputCleanup = undefined;
 		this.extensionInput?.dispose();
+		cleanup?.();
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
 		this.extensionInput = undefined;
@@ -4155,11 +4246,16 @@ export class InteractiveMode {
 	}
 
 	private sessionControlContext(): Omit<TuiControlContext, "editorRevision"> {
+		const account = this.options?.presenterAccountAuthority;
 		return {
+			...(this.mcpLocalPresenter && {
+				mcpPresenter: { local: this.mcpLocalPresenter, ...(account && { account }) },
+			}),
 			session: this.session,
 			agentDir: this.session.agentDir,
 			surface: {
-				draftHold: () => (this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold()),
+				submissionInFlight: () => this.sessionControlHost.submissionInFlight(),
+				hasDraft: () => this.hasComposerDraft(),
 				blockingQuestion: () => this.askUserQuestion !== undefined,
 				pendingQuestionIds: () => [...this.pendingQuestions.keys()],
 				pendingQuestion: (requestId) => this.pendingQuestions.get(requestId)?.request,
@@ -4174,14 +4270,15 @@ export class InteractiveMode {
 				interruptTurn: async () => {
 					await this.abortAndFireQueuedMessages();
 				},
+				// After the close's answer is on its way: the quit path disposes the endpoint that sends it.
+				closeSession: () => setImmediate(() => void this.shutdown()),
 			},
 		};
 	}
 
-	/** What the user is composing, if anything: a held external delivery waits for it. */
-	private composerHold(): "attachment" | "draft" | undefined {
-		if (this.pendingImages.size > 0) return "attachment";
-		return this.editor.getText().trim() === "" ? undefined : "draft";
+	/** Whether the user is composing (non-blank text or pending images); a delivery never waits for it (senpi#7043). */
+	private hasComposerDraft(): boolean {
+		return this.pendingImages.size > 0 || this.editor.getText().trim() !== "";
 	}
 
 	/** Only the visible surface ticks; extension deadlines remain authoritative. */
@@ -4929,7 +5026,7 @@ export class InteractiveMode {
 		return this.sessionLogger;
 	}
 
-	private handleStartupSubmit(text: string): void {
+	private handleStartupSubmit(text: string, details?: EditorSubmitDetails): void {
 		// Quit is a control action, not a prompt: honor it even while managed-tool setup
 		// is still running. Parking it in the editor would also disable the Ctrl+D quit
 		// escape, which CustomEditor only forwards while the editor is empty.
@@ -4938,6 +5035,7 @@ export class InteractiveMode {
 			void this.shutdown();
 			return;
 		}
+		this.startupParkedSubmission = { text, ...(details === undefined ? {} : { details }) };
 		this.editor.setText(text);
 		this.showStatus("Startup is still in progress");
 	}
@@ -5415,6 +5513,13 @@ export class InteractiveMode {
 			case "model_change_pending":
 				this.showWarning(event.notice);
 				this.footer.invalidate();
+				this.ui.requestRender();
+				break;
+
+			case "model_change_cancelled":
+				// The footer carried the held target (senpi#6092); a hold that ends without landing takes it back off.
+				this.footer.invalidate();
+				this.ui.requestRender();
 				break;
 
 			case "high_reasoning_warning":
@@ -5526,7 +5631,7 @@ export class InteractiveMode {
 						this.session.retryAttempt,
 						this.session.currentAbortSource,
 					);
-					if (isNetworkProviderMessage(renderedMessage)) {
+					if (isRetryableProviderMessage(renderedMessage, this.session)) {
 						this.getProviderErrors().record(renderedMessage.errorMessage ?? "", this.toolOutputExpanded);
 					} else if (renderedMessage.stopReason === "stop" || renderedMessage.stopReason === "toolUse") {
 						this.providerErrors?.clear();
@@ -5644,7 +5749,13 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
-				if (event.failure !== undefined && !event.willRetry && !failureAlreadyDescribed(event.messages))
+				// A failure the quiet episode owns gets its one final notice when the episode finishes (senpi#6012).
+				if (
+					event.failure !== undefined &&
+					!event.willRetry &&
+					!failureAlreadyDescribed(event.messages) &&
+					!episodeOwnsFailure(event.messages, this.providerErrors, this.session)
+				)
 					this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
@@ -5947,19 +6058,34 @@ export class InteractiveMode {
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
 
-			case "retry_fallback_exhausted":
-				if (isRetryableProviderError(event.lastError)) {
+			case "retry_fallback_exhausted": {
+				if (event.refusals !== undefined && event.refusals.length > 0) {
+					this.showNoticeBox({
+						title: `✕ Fallback refused for context budget · ${event.chainKey}`,
+						tone: "error",
+						why: [describeFallbackExhaustion(event), ...event.refusals.map((refusal) => refusal.detail)].join(
+							"\n",
+						),
+					});
+					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
+					break;
+				}
+				// A walk that started on another failure must lead with it, not the last rung's (senpi#4084).
+				const startedElsewhere = (event.failures?.length ?? 0) > 1;
+				if (isRetryableProviderError(event.lastError) && !startedElsewhere) {
 					this.getProviderErrors().finish(event.lastError);
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 					break;
 				}
+				if (isRetryableProviderError(event.lastError)) this.getProviderErrors().clear();
 				this.showNoticeBox({
 					title: `✕ Fallback chain exhausted · ${event.chainKey}`,
 					tone: "error",
-					why: event.lastError,
+					why: describeFallbackExhaustion(event),
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
+			}
 
 			case "server_fallback_aborted":
 				this.showNoticeBox({
@@ -6103,6 +6229,7 @@ export class InteractiveMode {
 				event.delayMs,
 				indicator,
 				isRetryableProviderError(event.errorMessage),
+				providerErrorReason(event.errorMessage),
 			),
 		);
 		this.ui.requestRender();
@@ -6340,7 +6467,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
-				if (isNetworkProviderMessage(message)) {
+				if (isRetryableProviderMessage(message, this.session)) {
 					this.getProviderErrors().record(message.errorMessage ?? "", this.toolOutputExpanded);
 					this.providerErrors?.finish();
 				} else if (message.stopReason === "stop" || message.stopReason === "toolUse") {
@@ -6355,7 +6482,7 @@ export class InteractiveMode {
 					this.getMarkdownTransformers(),
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
-				assistantComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
+				assistantComponent.setProviderErrorOwned(isRetryableProviderMessage(message, this.session));
 				if (options?.replayOwnsTurnNotice === true) assistantComponent.setOwnsTurnNotice(true);
 				if (options?.replayOwnsTurnNotice === false) assistantComponent.setProviderErrorOwned(true);
 				this.chatContainer.addChild(assistantComponent);
@@ -6378,7 +6505,7 @@ export class InteractiveMode {
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
 		this.streamingComponent.setProviderErrorOwned(
-			isNetworkProviderMessage(message) || headNoticeShownElsewhere(message),
+			isRetryableProviderMessage(message, this.session) || headNoticeShownElsewhere(message),
 		);
 		const head = assistantStreamingHeadMessage(message);
 		// Single writer: while smooth streaming paces the head (no toolCall block),
@@ -6410,7 +6537,7 @@ export class InteractiveMode {
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
 			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
-			const errorShownElsewhere = isNetworkProviderMessage(message) || index < content.length;
+			const errorShownElsewhere = isRetryableProviderMessage(message, this.session) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
 				existing.setProviderErrorOwned(errorShownElsewhere);
@@ -6853,7 +6980,7 @@ export class InteractiveMode {
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose({ processExit: true });
+			await this.runtimeHost.dispose({ processExit: true, endActiveRun: true });
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
@@ -6871,7 +6998,7 @@ export class InteractiveMode {
 		this.stop({ restoreStderr: false });
 		try {
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose({ processExit: true });
+			await this.runtimeHost.dispose({ processExit: true, endActiveRun: true });
 		} finally {
 			restoreInteractiveStderr();
 		}
@@ -7048,6 +7175,12 @@ export class InteractiveMode {
 		markModeCrashHandler(unhandledRejectionHandler);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
+
+		this.signalCleanupHandlers.push(
+			subscribeProviderAccountEvents((event) => {
+				if (event.type === "failover") this.showStatus(formatAccountFailoverNotice(event));
+			}),
+		);
 
 		// Surface Inspector rejections that the early bootstrap seam recovered before this
 		// handler (and the TUI warning surface) existed.
@@ -7349,7 +7482,11 @@ export class InteractiveMode {
 		}
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(
-			new ThemedText(() => theme.fg("error", `Error: ${sanitizeTuiErrorMessage(errorMessage)}`), 1, 0),
+			new ThemedText(
+				() => theme.fg("error", `Error: ${sanitizeTuiErrorMessage(interactiveErrorText(errorMessage))}`),
+				1,
+				0,
+			),
 		);
 		this.ui.requestRender();
 	}
@@ -7817,6 +7954,7 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private disposeActiveSelector(): void {
+		if (this.secretInputCleanup) this.hideExtensionInput();
 		const dispose = this.activeSelectorDispose;
 		this.activeSelectorToken = undefined;
 		this.activeSelectorDispose = undefined;
@@ -8294,11 +8432,16 @@ export class InteractiveMode {
 		const systemPromptStr = systemPromptChange?.systemPromptName
 			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
 			: "";
-		mode.showStatus(
-			persistDefault
-				? `Model: ${model.id}${systemPromptStr} · now the default model for new sessions`
-				: `Model: ${model.id}${systemPromptStr}`,
-		);
+		const held = mode.session.pendingModelSwitch?.model;
+		const isHeld = held !== undefined && held.provider === model.provider && held.id === model.id;
+		const tail = isHeld
+			? persistDefault
+				? " · after the next compaction, then the default model for new sessions"
+				: " · after the next compaction"
+			: persistDefault
+				? " · now the default model for new sessions"
+				: "";
+		mode.showStatus(`Model: ${model.id}${systemPromptStr}${tail}`);
 		mode.showRiskyMainModelWarning(model);
 		void mode.maybeWarnAboutAnthropicSubscriptionAuth(model);
 		mode.checkDaxnutsEasterEgg(model);
@@ -8398,13 +8541,7 @@ export class InteractiveMode {
 		}
 
 		try {
-			if ((await this.session.modelRuntime.checkAuth("anthropic"))?.type === "oauth") {
-				this.anthropicSubscriptionWarningShown = true;
-				this.showWarning(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
-				return;
-			}
-			const apiKey = (await this.session.modelRuntime.getAuth(model.provider))?.auth.apiKey;
-			if (!isAnthropicSubscriptionAuthKey(apiKey)) {
+			if ((await this.session.modelRuntime.checkAuth("anthropic"))?.type !== "oauth") {
 				return;
 			}
 			this.anthropicSubscriptionWarningShown = true;
@@ -8414,7 +8551,7 @@ export class InteractiveMode {
 		}
 	}
 
-	private maybeSaveImplicitProjectTrustAfterReload(): boolean {
+	private async maybeSaveImplicitProjectTrustAfterReload(): Promise<boolean> {
 		const cwd = this.sessionManager.getCwd();
 		if (this.autoTrustOnReloadCwd !== cwd) {
 			return false;
@@ -8429,7 +8566,7 @@ export class InteractiveMode {
 				this.autoTrustOnReloadCwd = undefined;
 				return false;
 			}
-			trustStore.set(cwd, true);
+			await trustStore.set(cwd, true);
 			this.autoTrustOnReloadCwd = undefined;
 			return true;
 		} catch (error) {
@@ -8450,10 +8587,16 @@ export class InteractiveMode {
 				savedDecision,
 				projectTrusted: this.settingsManager.isProjectTrusted(),
 				onSelect: (selection) => {
-					trustStore.setMany(selection.updates);
 					done();
-					this.showStatus(
-						`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+					trustStore.setMany(selection.updates).then(
+						() =>
+							this.showStatus(
+								`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+							),
+						(error: unknown) =>
+							this.showWarning(
+								`Could not save trust decision: ${error instanceof Error ? error.message : String(error)}`,
+							),
 					);
 				},
 				onCancel: () => {
@@ -8988,6 +9131,36 @@ export class InteractiveMode {
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
+		// A session another live process holds must not get a second writer here (senpi#5744): the restored
+		// lifecycle would read that process's live run as interrupted and the next input would run it again.
+		const holderCheck = await checkSessionHolders(sessionPath);
+		if ("holders" in holderCheck && holderCheck.holders.length > 0) {
+			const takeOver = "Take over (stop it there)";
+			const refusal = takeOverRefusal(holderCheck.holders);
+			const choice = await this.showExtensionSelector(
+				`This session is open in another process (${describeSessionHolders(holderCheck.holders)}).\nResuming it here while it runs would start a second run of the same session.${refusal === undefined ? "" : `\n${refusal}`}`,
+				refusal === undefined ? ["Cancel", takeOver] : ["Cancel"],
+			);
+			if (choice !== takeOver) {
+				this.showStatus("Not resumed: the session is open in another process");
+				return { cancelled: true };
+			}
+			let stopped: boolean;
+			try {
+				stopped = await stopSessionHolders(sessionPath, holderCheck.holders);
+			} catch (error: unknown) {
+				this.showWarning(
+					`Not resumed: could not stop the other process (${error instanceof Error ? error.message : String(error)}).`,
+				);
+				return { cancelled: true };
+			}
+			if (!stopped) {
+				this.showWarning(
+					"Not resumed: the session is still open in another process; quit it there, then /resume again.",
+				);
+				return { cancelled: true };
+			}
+		}
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,
@@ -8996,10 +9169,10 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return result;
 			}
-			const warning = await sessionHolderWarning(
-				this.sessionManager.getSessionFile(),
-				this.sessionManager.getSessionId(),
-			);
+			const warning =
+				"lookupFailed" in holderCheck
+					? SESSION_HOLDER_LOOKUP_FAILED
+					: await sessionHolderWarning(this.sessionManager.getSessionFile(), this.sessionManager.getSessionId());
 			if (warning !== undefined) this.showWarning(warning);
 			const switchTimings = formatTimings("switch");
 			this.showStatus(
@@ -9021,10 +9194,13 @@ export class InteractiveMode {
 				if (result.cancelled) {
 					return result;
 				}
-				const warning = await sessionHolderWarning(
-					this.sessionManager.getSessionFile(),
-					this.sessionManager.getSessionId(),
-				);
+				const warning =
+					"lookupFailed" in holderCheck
+						? SESSION_HOLDER_LOOKUP_FAILED
+						: await sessionHolderWarning(
+								this.sessionManager.getSessionFile(),
+								this.sessionManager.getSessionId(),
+							);
 				if (warning !== undefined) this.showWarning(warning);
 				this.showStatus("Resumed session in current cwd");
 				return result;
@@ -9267,7 +9443,7 @@ export class InteractiveMode {
 					}
 
 					try {
-						const { notices } = await this.session.modelRuntime.logoutProvider(providerOption.id, {
+						const { notices, revocation } = await this.session.modelRuntime.logoutProvider(providerOption.id, {
 							signal: AbortSignal.timeout(15_000),
 						});
 						this.updateAvailableProviderCount();
@@ -9275,7 +9451,11 @@ export class InteractiveMode {
 							providerOption.authType === "oauth"
 								? `Logged out of ${providerOption.name}`
 								: `Removed stored API key for ${providerOption.name}. Environment variables and models.json config are unchanged.`;
-						this.showStatus([message, ...notices].join(" "));
+						const revocationNotice =
+							revocation?.status === "remote_revocation_unconfirmed"
+								? ["Remote revocation was not confirmed; disconnect the app in ChatGPT Settings."]
+								: [];
+						this.showStatus([message, ...notices, ...revocationNotice].join(" "));
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : String(error);
 						this.showError(
@@ -9502,6 +9682,21 @@ export class InteractiveMode {
 	}
 
 	private async showAuthPrompt(dialog: LoginDialogComponent, prompt: AuthPrompt): Promise<string> {
+		if (prompt.type === "secret") {
+			try {
+				const value = await this.showExtensionInput(prompt.message, prompt.placeholder, {
+					secret: true,
+					signal: prompt.signal,
+				});
+				if (value === undefined) throw new Error("Login cancelled");
+				return value;
+			} finally {
+				this.editorContainer.clear();
+				this.editorContainer.addChild(dialog);
+				this.ui.setFocus(dialog);
+				this.ui.requestRender();
+			}
+		}
 		let response: Promise<string>;
 		if (prompt.type === "select") {
 			response = this.showAuthSelect(dialog, prompt);
@@ -9693,7 +9888,7 @@ export class InteractiveMode {
 				force: false,
 				showDiagnosticsWhenQuiet: true,
 			});
-			const savedImplicitProjectTrust = this.maybeSaveImplicitProjectTrustAfterReload();
+			const savedImplicitProjectTrust = await this.maybeSaveImplicitProjectTrustAfterReload();
 			const modelsJsonError = this.session.modelRuntime.getError();
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
@@ -10377,6 +10572,9 @@ export class InteractiveMode {
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
+		// The terminal drops working/blocked records only when the process exits; clear before handing it back.
+		this.setProgramStatus(undefined);
+		this.programStatusClosed = true;
 		this.clearStatusIndicator();
 		this.clearPendingTools();
 		this.stopChatToolAnimations();

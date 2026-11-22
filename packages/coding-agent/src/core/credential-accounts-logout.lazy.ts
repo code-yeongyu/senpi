@@ -13,8 +13,9 @@ export async function signOutClaudeCliSlotsForLogout(
 	provider: string,
 	env: NodeJS.ProcessEnv,
 	signal?: AbortSignal,
+	slotName?: string,
 ): Promise<readonly string[]> {
 	if (normalizeProviderId(provider) !== "anthropic-subscription") return [];
 	const accounts = await import("./credential-accounts.ts");
-	return accounts.signOutClaudeCliSlotsForLogout(storage, provider, env, signal);
+	return accounts.signOutClaudeCliSlotsForLogout(storage, provider, env, signal, slotName);
 }

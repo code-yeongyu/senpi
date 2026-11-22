@@ -67,7 +67,7 @@ export interface CreateEvalToolOptions {
 	readonly hostLine?: string;
 	/** Display identity of each language's runtime, shown in headers and details; `js` also selects the prompt's runtime line. */
 	readonly runtimes?: EvalRuntimes;
-	/** Absolute path of the active bun-1-4 skill; the prompt names it as MUST READ on a bun kernel. */
+	/** Absolute path of the active bun skill; the prompt names it as MUST READ on a bun kernel. */
 	readonly bunSkillPath?: string;
 	/** Kernel globals of the tools active when a cell is submitted; read once per cell. */
 	readonly kernelPreludes?: () => readonly KernelPreludeContribution[];
@@ -77,6 +77,8 @@ export interface CreateEvalToolOptions {
 	readonly jsEnvironments?: JsEnvironments;
 	/** Contributions whose documentation lines the description lists; snapshot taken when the tool is (re)registered. */
 	readonly promptKernelPreludes?: readonly KernelPreludeContribution[];
+	/** Tools the session reaches only through eval; the description names them. Snapshot taken at (re)registration. */
+	readonly evalOnlyTools?: readonly string[];
 }
 
 export interface EvalCellInvocation {

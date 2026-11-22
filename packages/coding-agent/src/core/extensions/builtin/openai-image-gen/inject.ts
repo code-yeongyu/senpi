@@ -1,4 +1,4 @@
-import { DEFAULT_IMAGE_MODEL } from "../imagegen/params.ts";
+import { NATIVE_IMAGE_MODEL } from "../imagegen/params.ts";
 import { GENERATE_IMAGE_TOOL_NAME } from "../imagegen/tool.ts";
 
 /** Which image-generation surface owns the current request. */
@@ -53,5 +53,5 @@ export function applyImageGenerationTools(payload: unknown, mode: ImageGenMode):
 		return removed ? { ...payload, tools: kept } : payload;
 	}
 
-	return { ...payload, tools: [...kept, { type: NATIVE_IMAGE_GEN_TOOL_TYPE, model: DEFAULT_IMAGE_MODEL }] };
+	return { ...payload, tools: [...kept, { type: NATIVE_IMAGE_GEN_TOOL_TYPE, model: NATIVE_IMAGE_MODEL }] };
 }

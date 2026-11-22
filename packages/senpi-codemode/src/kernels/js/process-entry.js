@@ -14,6 +14,7 @@
 // Lifetime: the kernel exits the moment its control channel reaches end-of-file (the host closed it, exited or was
 // killed). A watchdog thread also checks the parent pid and kills this process when the host is gone, so a cell
 // that never yields (a busy loop, a blocking call) cannot keep the kernel alive past its host.
+import "./power-throttling-startup.js";
 import { closeSync, createReadStream, openSync, writeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
@@ -25,6 +26,8 @@ import { scanDrainText } from "./process-drain-scan.js";
 const stringify = JSON.stringify;
 const writeBytes = writeSync;
 const exit = process.exit.bind(process);
+// The kernel stops itself with the original: the kill guard later wraps the cell-visible process.kill.
+const signalSelf = process.kill.bind(process);
 const fromString = (text) => Buffer.from(text, "utf8");
 
 // The host refuses a frame over 10 MiB; text is split well below it (a char can escape to 6 bytes of JSON).
@@ -376,7 +379,7 @@ function writeAll(bytes) {
 		} catch (error) {
 			if (error && error.code === "EAGAIN") { Atomics.wait(pause, 0, 0, 2); continue; }
 			// The host is gone. process.exit would end only this thread, leaving the frame lock held.
-			process.kill(process.pid, "SIGKILL");
+			signalSelf(process.pid, "SIGKILL");
 		}
 	}
 }
@@ -437,7 +440,7 @@ function reportCrash(error) {
 	try {
 		writeBytes(2, fromString(`\nsenpi-kernel-crash ${frameToken} ${stringify(cause)}\n`));
 	} finally {
-		process.kill(process.pid, "SIGKILL");
+		signalSelf(process.pid, "SIGKILL");
 	}
 }
 process.on("uncaughtException", reportCrash);

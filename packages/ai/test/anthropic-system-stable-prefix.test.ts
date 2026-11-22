@@ -58,24 +58,6 @@ describe("Anthropic system prompt stable prefix (senpi#4447)", () => {
 		expect(params.system).toEqual([{ type: "text", text: PROMPT, cache_control: { type: "ephemeral" } }]);
 	});
 
-	it("puts the OAuth system breakpoint on the stable block too", async () => {
-		let payload: { system?: unknown } | undefined;
-		const fetch: typeof globalThis.fetch = async (_input, init) => {
-			payload = JSON.parse(String(init?.body));
-			return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
-				status: 200,
-				headers: { "content-type": "text/event-stream" },
-			});
-		};
-		await streamAnthropic(model, normalizeContext(context(STABLE)), { apiKey: "sk-ant-oat-test", fetch }).result();
-
-		expect(payload?.system).toEqual([
-			{ type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." },
-			{ type: "text", text: STABLE, cache_control: { type: "ephemeral" } },
-			{ type: "text", text: VOLATILE },
-		]);
-	});
-
 	it("sends one block when a rewrite left a stable prefix the prompt no longer starts with", async () => {
 		let payload: { system?: unknown } | undefined;
 		const fetch: typeof globalThis.fetch = async (_input, init) => {

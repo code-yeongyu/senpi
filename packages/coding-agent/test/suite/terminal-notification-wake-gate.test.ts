@@ -11,7 +11,7 @@ import { FakeScheduler, line } from "./terminal-monitor-notify-harness.ts";
 
 type Sent = {
 	readonly message: { customType: string; content: string; display: boolean; details?: unknown };
-	readonly options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" };
+	readonly options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" | "nextTurn" };
 };
 
 function setup() {

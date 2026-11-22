@@ -1,0 +1,61 @@
+{
+	"id": "gen-openrouter-grounded",
+	"model": "anthropic/claude-sonnet-4.5",
+	"choices": [
+		{
+			"message": {
+				"role": "assistant",
+				"content": "TypeScript 4.9 added the `satisfies` operator ([typescriptlang.org](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html)). The announcement post covers the same release ([devblogs.microsoft.com](https://devblogs.microsoft.com/typescript/announcing-typescript-4-9/)). [This link](https://uncited.example.com/page) was written in the answer text only.",
+				"annotations": [
+					{
+						"type": "url_citation",
+						"url_citation": {
+							"url": "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+							"title": "Documentation - TypeScript 4.9",
+							"content": "The satisfies operator validates that an expression matches a type without changing the resulting type.",
+							"start_index": 34,
+							"end_index": 154
+						}
+					},
+					{
+						"type": "url_citation",
+						"url_citation": {
+							"url": "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9/",
+							"title": "Announcing TypeScript 4.9",
+							"content": "satisfies makes sure an expression's type matches a type without widening it.",
+							"start_index": 208,
+							"end_index": 329
+						}
+					},
+					{
+						"type": "url_citation",
+						"url_citation": {
+							"url": "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+							"title": "Documentation - TypeScript 4.9",
+							"content": "A second span of the same page cited again.",
+							"start_index": 386,
+							"end_index": 424
+						}
+					},
+					{ "type": "file_citation", "file_citation": { "file_id": "file-0000000000" } },
+					{
+						"type": "url_citation",
+						"url_citation": {
+							"title": "An annotation without a url",
+							"content": "Dropped because a result needs a resolvable link."
+						}
+					},
+					{
+						"type": "url_citation",
+						"url_citation": {
+							"url": "javascript:alert(1)",
+							"title": "Not an http(s) link",
+							"content": "Dropped because the scheme is not fetchable."
+						}
+					}
+				]
+			}
+		}
+	],
+	"usage": { "prompt_tokens": 1204, "completion_tokens": 96, "total_tokens": 1300 }
+}

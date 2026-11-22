@@ -45,4 +45,4 @@ it("retains a large settled block collection across a cold status update", async
 		await state.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

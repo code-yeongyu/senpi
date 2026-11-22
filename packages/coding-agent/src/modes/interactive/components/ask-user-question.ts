@@ -143,7 +143,7 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 
 	set focused(value: boolean) {
 		this._focused = value;
-		this.applyFocusFlags();
+		this.updateAll();
 	}
 
 	handleInput(data: string): void {
@@ -251,7 +251,10 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 		);
 
 		this.listContainer.clear();
-		const lines = this.state.focus === "submit" ? renderSubmitSummary(this.state) : renderQuestionList(this.state);
+		const lines =
+			this.state.focus === "submit"
+				? renderSubmitSummary(this.state)
+				: renderQuestionList(this.state, this._focused);
 		let optionIndex = 0;
 		let description = false;
 		for (const line of lines) {

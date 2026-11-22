@@ -2,13 +2,18 @@ import { closeSync, createReadStream, fstatSync, write } from "node:fs";
 import { Socket } from "node:net";
 import { Duplex } from "node:stream";
 
+/** Windows can report FIFO mode bits while Stats.isFIFO() returns false, so pipes are recognised by mode. */
+export function isFifoMode(mode: number): boolean {
+	return (mode & 0o170000) === 0o010000;
+}
+
 /** One stream owns a verified inherited pipe/socket, including Bun's file-stream adoption path. */
 export function inheritedDuplex(fd: number | readonly [number, number]): Duplex | undefined {
 	const readFd = typeof fd === "number" ? fd : fd[0];
 	const writeFd = typeof fd === "number" ? fd : fd[1];
 	try {
 		const stat = fstatSync(readFd);
-		if (!stat.isSocket() && !stat.isFIFO()) return undefined;
+		if (!stat.isSocket() && !isFifoMode(stat.mode)) return undefined;
 		if (typeof fd === "number" && stat.isSocket() && !process.versions.bun)
 			return new Socket({ fd, readable: true, writable: true });
 	} catch {

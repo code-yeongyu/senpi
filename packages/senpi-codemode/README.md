@@ -42,7 +42,7 @@ task-tool names are known.
   JS runtime (`node`/`bun`).
 - JavaScript import rewriting for supported local modules and package imports
   in the persistent JS worker (Bun when senpi runs on bun, Node.js otherwise).
-- On a Bun >= 1.4 kernel the eval prompt names the bundled `bun-1-4` skill as
+- On a Bun >= 1.4 kernel the eval prompt names the bundled `bun` skill as
   MUST READ before the first js cell; node kernels keep the Node.js wording.
 - GPT models receive a terse `eval` prompt dialect that prioritizes composing
   active tools through `tool.<name>(args)` and documents detach-on-timeout.
@@ -61,13 +61,29 @@ schema; it is not an installation failure.
 
 ### JavaScript process isolation
 
-By default the JavaScript kernel runs as a worker thread on the host's own
-runtime (`isolation.js: "worker"`). Setting `isolation.js: "process"` (or
-`SENPI_CODEMODE_JS_ISOLATION=process`, which wins over the file) runs each
-JavaScript kernel in its own subprocess instead, so a kernel crash (a native
-`SIGSEGV`, an out-of-memory, `process.exit`, an uncaught error) cannot take down
-the host session. The next cell runs on a replacement child, and its result
-carries the restart notice and names the crash.
+The JavaScript kernel runs either as a worker thread on the host's own runtime
+(`isolation.js: "worker"`) or in its own subprocess (`isolation.js: "process"`),
+where a kernel crash (a native `SIGSEGV` or `SIGBUS`, an out-of-memory,
+`process.exit`, an uncaught error) cannot take down the host session. The next
+cell runs on a replacement child, and its result carries the restart notice and
+names the crash. Without a setting, the default follows the host's executable:
+
+- A macOS or Linux host whose executable is `bun` (an npm or bun install of
+  senpi or omo run through `bun`) defaults to `"process"`. A Bun 1.4.4 `Worker`
+  thread can corrupt the JavaScriptCore heap and kill the whole host with
+  `SIGBUS` or `SIGTRAP` (open upstream class; the symptom behind omo#12369),
+  and a kernel in its own process cannot.
+- A Node.js host and a compiled binary (the desktop engine) default to
+  `"worker"`. A compiled executable cannot run the kernel child itself, so
+  process mode there needs a `bun` or `node` on `PATH`, which only an explicit
+  setting asks for.
+- A Windows bun host also defaults to `"worker"`: the crash evidence is
+  macOS, and the process kernel's Windows channel is not covered by CI, so
+  there the mode stays opt-in.
+
+`SENPI_CODEMODE_JS_ISOLATION` wins over the file, and the file wins over the
+host default, in both directions: `isolation.js: "worker"` restores the thread
+on a bun host.
 
 **Trust model.** Process mode isolates crashes, not hostile code. A cell runs in
 the same process that talks to the host, so it can reach everything that process
@@ -121,7 +137,7 @@ How it works:
   runtime (`Install bun or node, or use isolation.js: "worker"`). The result's
   memory reading is the child's process footprint.
 
-The default stays `"worker"`, and worker-mode behaviour is unchanged.
+Worker-mode behaviour is unchanged.
 
 To run the `environments` suites with bun children (the runtime the product
 uses), run them under bun: `SENPI_CODEMODE_JS_ISOLATION=process bunx --bun vitest
@@ -328,7 +344,7 @@ Configuration is loaded in this order:
 | `environments.autoProvision` | `true` | Lets installs provision a managed environment. `false` makes installs refuse with `environment_installer_unavailable`. |
 | `environments.js.installer` | `auto` | Installer for the managed JavaScript environment: `auto`, `bun` or `npm`. |
 | `environments.py.installer` | `pip` | Installer for the managed Python environment. |
-| `isolation.js` | `worker` | JavaScript kernel isolation: `worker` (today's worker thread) or `process`. Env override: `SENPI_CODEMODE_JS_ISOLATION`. |
+| `isolation.js` | `process` on a macOS or Linux host whose executable is `bun`, else `worker` | JavaScript kernel isolation: `worker` (a worker thread) or `process` (its own subprocess; a kernel crash cannot kill the session). Env override: `SENPI_CODEMODE_JS_ISOLATION`. |
 | `sandbox.enabled` | `false` | Allows sandbox cells. While `false` the sandbox option is neither accepted nor advertised. |
 | `sandbox.memoryMb` | `64` | Memory cap (MiB) for a sandbox cell. Env override: `SENPI_CODEMODE_SANDBOX_MEMORY_MB` (a positive integer wins). |
 | `sandbox.timeoutSeconds` | `300` | Time limit for a sandbox cell. |
@@ -364,7 +380,7 @@ options object and asynchronous helpers are `await`-able.
 | `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
 | `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
 | `packages.install(manager, requirements, {timeout?})` (js, py) | The `%pip install` (py, manager `"pip"`) or `%bun add` / `%npm add` (js, `"bun"` / `"npm"`) installer as a call: same session environment, receipt (`py`: manager, mode, root, revision, requested, resolved, changed; `js`: installer, mode, revision, added, shadowed), cancellation by `stop` and `environment_install_*` codes; `timeout` defaults to 600 seconds and fails with `environment_install_timeout`. Python: `packages.install("pip", [...], timeout=...)`. |
-| `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. Five virtual entries document codemode itself on demand and are never listed: `eval:wait`, `eval:helpers`, `eval:kernel-tools`, `eval:environments` (the `%pip`, `%bun`/`%npm`, `%environment` and `%load` magics, their results and error codes) and `eval:isolation` (`isolate: true` cells, their limits and error codes). |
+| `tool_schema(name?)` | Returns `{ name, description, parameters }` for a tool without calling it; omit `name` to get `{ tools: [every tool name] }`. Five virtual entries document codemode itself on demand and are never listed: `eval:wait`, `eval:helpers`, `eval:kernel-tools`, `eval:environments` (the `%pip`, `%bun`/`%npm`, `%environment` and `%load` magics, their results and error codes) and `eval:isolation` (`isolate: true` cells, their limits and error codes). |
 | `require(specifier)`, `createRequire(path)` (js) | CommonJS loading inside a cell, resolved like `import`: builtins (with or without `node:`), relative files and JSON from the cell's directory, bare packages from the session's project and then its managed package environment (`%bun add`/`%npm add`). A missing module raises the runtime's own `MODULE_NOT_FOUND` error. Like Node's `require`, it carries `require.resolve` (the same lookup the call uses, so both name the same copy; builtins resolve to the runtime's own id), `require.resolve.paths` and `require.cache` (the runtime's CommonJS cache). |
 | `tool(fn, metadata?)` (js) | Registers a named function as a kernel tool for in-process children. `metadata.name` registers it under that name instead of the function's; arguments are still passed in the function's parameter order. |
 | `tool.defined()` / `tool.undefine(name)` (js) | List the kernel tools this kernel defines (sorted), and remove one (`true` if it existed). A descriptor taken before `undefine` can no longer be invoked. Both names are reserved: a kernel tool can't be registered as `defined` or `undefine` (`reserved_tool_name`), and a host tool with either name is shadowed in the `tool` namespace, so it can't be called from a JavaScript cell. |

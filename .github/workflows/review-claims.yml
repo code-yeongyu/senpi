@@ -53,6 +53,11 @@ jobs:
             }
       - name: Workflow summary
         if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
         shell: bash
         run: |
           {
@@ -60,9 +65,9 @@ jobs:
             echo
             echo "| Field | Value |"
             echo "| --- | --- |"
-            echo "| Job status | ${{ job.status }} |"
-            echo "| PR | #${{ github.event.pull_request.number }} |"
-            echo "| Event | ${{ github.event_name }} / ${{ github.event.action }} |"
+            echo "| Job status | ${JOB_STATUS} |"
+            echo "| PR | #${PR_NUMBER} |"
+            echo "| Event | ${EVENT_NAME} / ${EVENT_ACTION} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   claim:
@@ -103,6 +108,11 @@ jobs:
             core.info(`Requested review from claimer ${claimer}.`);
       - name: Workflow summary
         if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          CLAIMER: ${{ github.event.sender.login }}
         shell: bash
         run: |
           {
@@ -110,10 +120,10 @@ jobs:
             echo
             echo "| Field | Value |"
             echo "| --- | --- |"
-            echo "| Job status | ${{ job.status }} |"
-            echo "| PR | #${{ github.event.pull_request.number }} |"
-            echo "| Label | ${{ github.event.label.name }} |"
-            echo "| Claimer | ${{ github.event.sender.login }} |"
+            echo "| Job status | ${JOB_STATUS} |"
+            echo "| PR | #${PR_NUMBER} |"
+            echo "| Label | ${LABEL_NAME} |"
+            echo "| Claimer | ${CLAIMER} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   release-claim:
@@ -181,6 +191,11 @@ jobs:
             }
       - name: Workflow summary
         if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEWER: ${{ github.event.review.user.login }}
+          REVIEW_STATE: ${{ github.event.review.state }}
         shell: bash
         run: |
           {
@@ -188,10 +203,10 @@ jobs:
             echo
             echo "| Field | Value |"
             echo "| --- | --- |"
-            echo "| Job status | ${{ job.status }} |"
-            echo "| PR | #${{ github.event.pull_request.number }} |"
-            echo "| Reviewer | ${{ github.event.review.user.login }} |"
-            echo "| Review state | ${{ github.event.review.state }} |"
+            echo "| Job status | ${JOB_STATUS} |"
+            echo "| PR | #${PR_NUMBER} |"
+            echo "| Reviewer | ${REVIEWER} |"
+            echo "| Review state | ${REVIEW_STATE} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   stale-sweep:
@@ -264,6 +279,9 @@ jobs:
             }
       - name: Workflow summary
         if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           {
@@ -271,6 +289,6 @@ jobs:
             echo
             echo "| Field | Value |"
             echo "| --- | --- |"
-            echo "| Job status | ${{ job.status }} |"
-            echo "| Trigger | ${{ github.event_name }} |"
+            echo "| Job status | ${JOB_STATUS} |"
+            echo "| Trigger | ${EVENT_NAME} |"
           } >> "$GITHUB_STEP_SUMMARY"

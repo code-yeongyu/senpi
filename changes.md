@@ -1,5 +1,243 @@
 # changes — senpi-monorepo root
 
+## 2026-11-13 - The root test script runs coding-agent alongside the other workspaces (senpi#6649)
+
+### What changed
+
+- `package.json`: root `test` is `npm run test:scripts && node scripts/run-workspaces.mjs --if-present --alongside packages/coding-agent test`; the new `test:serial` keeps the previous strictly sequential command (`... run-workspaces.mjs --if-present test`) as the reference run.
+
+### Why
+
+- A local whole-suite run took about 59 minutes on 8 cores, and the other workspaces' roughly 500 s ran while no coding-agent test ran. Running them next to coding-agent uses the cores coding-agent's own pool leaves idle (senpi#6646).
+
+### Why an extension could not handle it
+
+- The root `test` script is repository tooling, not runtime behavior; no extension hook runs the test suite.
+
+### Expected merge conflict zones
+
+- LOW: the `test` / `test:serial` lines of the root `package.json` `scripts` block.
+
+## 2026-11-15 - Vitest resolves the pi-agent-core read-folders subpath from source (senpi#6740)
+
+### What changed
+
+- `vitest.base.ts`: `agentReadFolders` source path and the `@earendil-works/pi-agent-core/read-folders` alias.
+
+### Why
+
+- The new subpath is imported by coding-agent source that tests load.
+
+### Why an extension could not handle it
+
+- Root test resolution is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the `workspaceSourcePaths` list and the alias list.
+
+## 2026-11-13 - The hono and @hono/node-server overrides move past their npm audit advisories (senpi#6624)
+
+### What changed
+
+- `package.json` `overrides`: `hono` 4.13.11 -> 4.13.18 and `@hono/node-server` 2.1.3 -> 2.1.8. The lockfiles (`package-lock.json`, `bun.lock`) are regenerated to match.
+
+### Why
+
+- hono <=4.13.15 carries GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq, GHSA-3gg2-335m-rxc6 (low), GHSA-46wx-v44x-9hh2 and GHSA-4h7h-rv7c-7m2v (first fixes in 4.13.16). 4.13.17 additionally sits inside four medium advisories published in the hono repository's own security advisories on 2026-11-11 and named in the v4.13.18 release notes: GHSA-h25j-2p75-qj33 (>=4.13.16 <=4.13.17; mount forwards a wrong path with a custom getPath), GHSA-74fm-fwc7-3fwp (>=4.13.11 <=4.13.17; serveStatic with allowPercentInPath decodes twice), GHSA-39q9-qp46-w8xg (>=4.12.16 <=4.13.17; bodyLimit keeps every transfer chunk) and GHSA-92p4-j3wq-jmqx (>=4.5.1 <=4.13.17; validator skips on Content-Type parameter formatting). All four are patched in 4.13.18, which is past `min-release-age=2` (published 2026-11-11T08:54:02Z). These ids are not yet in the GitHub global advisory database, so `npm audit` is silent on 4.13.17 today; the same database lag turned GHSA-4m76-xfj5-7975 red 11 days after its repo publication, so the scheduled audit would flag 4.13.17 within days. `@hono/node-server` <2.1.6 carries GHSA-qv5m-9pm6-hqp3 and GHSA-jpvv-r467-5p4w (fixed in 2.1.6), and >=2.1.3 <2.1.7 carries GHSA-fj57-4f93-cfw6 (serveStatic with allowPercentInPath decodes the path twice; published in the node-server repository's advisories on 2026-11-11), so the floor is 2.1.7+ and the override takes 2.1.8. Both were flagged by the scheduled npm audit workflow; the overrides pinned the vulnerable versions exactly, so `npm audit fix` could not move them.
+
+### Why an extension could not handle it
+
+- Dependency resolution for the monorepo is set by the root manifest.
+
+### Expected merge conflict zones
+
+- LOW: the two override lines in `package.json`; the lockfiles regenerate on any conflict.
+
+## 2026-11-12 - Root overrides pin the MCP SDK's zod to 4.6.7 in every lockfile (senpi#6497)
+
+### What changed
+
+- Root `package.json` `overrides`: `@modelcontextprotocol/sdk` takes `zod` 4.6.7. `package-lock.json` is refreshed under that override (`npm update zod --package-lock-only`, which `npm install --package-lock-only` alone did not apply to an existing lockfile): zod 4.6.7 is the hoisted root copy, `@anthropic-ai/sandbox-runtime` keeps its 3.25.76 nested, and the knip and coding-agent nested copies dedupe into the root. `bun.lock` already had this layout; `packages/coding-agent/install-lock/package-lock.json` is regenerated from the root lockfile.
+
+### Why
+
+- `npm ci` (CI shards, the standalone binaries' `scripts/build-binaries.sh`) and the npm release install resolve the MCP SDK's `zod/v4` through this lockfile; with the root copy at 3.25.76 every one of them reached a 4.0.0 core. The refreshed lockfile gives npm and bun installs the same zod for the MCP SDK, so the esbuild bundle, the `bun build --compile` binaries and a developer's `npm ci` tree all carry one 4.6.7.
+
+### Why an extension could not handle it
+
+- Install resolution is repo-level.
+
+### Expected merge conflict zones
+
+- LOW: the root `overrides` block; the `node_modules/zod` entries in `package-lock.json`.
+
+## 2026-11-11 - Workspace wiring for the realm-registry helper and the realm census check (omo#12965)
+
+### What changed
+
+- `package.json`: adds `check:realm-census` and runs it at the end of `check`.
+- `tsconfig.json`, `vitest.base.ts`: map `@earendil-works/pi-realm-registry` to its source for type checks and tests.
+- `packages/realm-registry/tsconfig.build.json` (new): the build configuration of the helper package, the same shape as the other leaf packages'.
+
+### Why
+
+- The helper is a new workspace package every engine package imports, and the census has to run wherever `bun run check` runs.
+
+### Why an extension could not handle it
+
+- Root build and check configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script chain in `package.json` and the alias lists.
+
+## 2026-11-11 - The node-forge override moves to 1.4.3 (senpi#6402)
+
+### What changed
+
+- `package.json` `overrides`: node-forge 1.4.2 -> 1.4.3 for both `@earendil-works/gondolin` and `@anthropic-ai/sandbox-runtime`. The lockfiles are regenerated to match.
+
+### Why
+
+- node-forge <=1.4.2 carries GHSA-6889-vf6x-f3g5, GHSA-w4xr-hqv8-ch44, GHSA-6cv4-p8m7-4r25 and GHSA-j8rw-jp99-435v, all patched in 1.4.3 (published 2026-11-04, past `min-release-age=2`). npm reported no fix only because the override pinned 1.4.2 exactly.
+
+### Why an extension could not handle it
+
+- Dependency resolution for the monorepo is set by the root manifest.
+
+### Expected merge conflict zones
+
+- LOW: the two node-forge lines in the `overrides` block; the lockfiles regenerate on any conflict.
+
+## 2026-11-11 - Root overrides move to the patched qs, fast-uri, ip-address, express-rate-limit and body-parser (senpi#6395)
+
+### What changed
+
+- `package.json` `overrides`: qs 6.16.0 -> 6.16.2, fast-uri 3.1.8 -> 3.1.9, ip-address 10.7.2 -> 10.7.6, express-rate-limit 8.7.0 -> 8.7.3, and a new body-parser 2.4.0 override. `package-lock.json`, `bun.lock` and `packages/coding-agent/install-lock` are regenerated to match.
+
+### Why
+
+- `npm audit --omit=dev --audit-level=moderate` failed on main (GHSA-27r3-jxmh-p828, GHSA-6pq8-jhm2-2vcw, four fast-uri advisories, GHSA-rxp7-6hxx-x8q5). The overrides pinned the vulnerable versions exactly, so `npm audit fix` could not move them. Each target is the smallest fixed version inside its current major that the repo's `min-release-age=2` allows (express-rate-limit 8.7.4 is too new; 8.7.3 is enough, because it was flagged only via ip-address).
+
+### Why an extension could not handle it
+
+- Dependency resolution for the whole monorepo is set by the root manifest and its lockfiles.
+
+### Expected merge conflict zones
+
+- LOW: the `overrides` block in `package.json`; the lockfiles regenerate on any conflict.
+
+## 2026-11-09 - The sqlite-bun package carries the complete bun:sqlite declaration (senpi#6255)
+
+### What changed
+
+- `packages/session-backends/sqlite-bun/src/bun-sqlite.d.ts`: the `bun:sqlite` `Database` class is now declared here, exactly once, with the full surface the workspace uses (constructor, `exec`/`close`, `prepare`, `query`, `transaction`); the file previously only merged in the query/transaction members. `prepare` is carried over from the declaration this move replaces, which upstream's endpoint-reservation store uses.
+- `packages/session-backends/sqlite-bun/src/index.ts`: references `./bun-sqlite.d.ts` so the ambient declaration ships with the package entry point and a standalone consumer type-checks an import of the package.
+
+### Why
+
+- The class lived in `packages/coding-agent/src/modes/rpc/bun-sqlite.d.ts`, which is not part of the published tarball, so a temp project installing only the packed tarball (+ TypeScript) failed with `TS2307: Cannot find module 'bun:sqlite'` from the package's own sources (senpi#5996).
+
+### Why an extension could not handle it
+
+- The declaration is a compile-time property of the published package's own sources; no extension event sees it.
+
+### Expected merge conflict zones
+
+- LOW: `bun-sqlite.d.ts` (the single `bun:sqlite` declaration) and the `/// <reference>` line in `src/index.ts`.
+
+## 2026-11-10 - Remove stale OAuth export audit entries (senpi#2861)
+
+### What changed
+
+- `knip.jsonc`: remove the obsolete `oauth-provider.ts` mapping for `freezeGrantAttribution` and `tokenExpiresAt`, together with its associated comment.
+
+### Why
+
+- `knip.jsonc`: the OAuth helper extraction removed these exports from the provider, so retaining their old unused-export entries fails the existing audit.
+
+### Why an extension could not handle it
+
+- `knip.jsonc`: the export audit is repository tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the removed OAuth provider mapping and its comment in `knip.jsonc`.
+
+## 2026-11-03 - Type checking and vitest resolve the machine-ops workspace from source (senpi#5592)
+
+### What changed
+
+- `tsconfig.json`: paths for `@code-yeongyu/senpi-machine-ops`, `/in-process-holder` and `/conformance` to the package sources.
+- `vitest.base.ts`: the same three aliases, so every package's tests load the sources.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- Root type-check and test resolution are repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the `paths` block in `tsconfig.json`; `workspaceSourcePaths` and the alias list in `vitest.base.ts`.
+
+## 2026-11-01 - Fixed node-forge and undici in the sandbox and gondolin example extensions (part of senpi#4820)
+
+### What changed
+
+- `package.json` `overrides`: `@earendil-works/gondolin` now pins `node-forge` 1.4.2 beside `undici` 6.29.1 (was 6.28.1), and a new `@anthropic-ai/sandbox-runtime` entry pins `node-forge` 1.4.2. `package-lock.json`, `bun.lock` and the two examples' own `package-lock.json` files resolve node-forge 1.4.2 and gondolin's undici 6.29.1.
+
+### Why
+
+- The private `pi-extension-sandbox` and `pi-extension-gondolin` workspaces pulled node-forge 1.4.0 (GHSA-86w9-cpqp-85rv and eleven more) and undici 6.28.1 (eight advisories), which the root `npm audit --omit=dev` counts in the scheduled audit job. Both parents accept the fixed releases (node-forge `^1.4.0` / `^1.3.3`, undici `^6.21.0`).
+
+### Why an extension could not handle it
+
+- Dependency overrides are root workspace configuration outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `@earendil-works/gondolin` and `@anthropic-ai/sandbox-runtime` entries in the root `overrides` block, and the lockfile hunks for node-forge and gondolin's nested undici.
+
+## 2026-11-03 - Format with bun fmt instead of oxfmt (senpi#5573)
+
+### What changed
+
+- `package.json`: `fmt` and `fmt:check` run `node scripts/bun-fmt.mjs` (`bun fmt --no-script`, with `--check` for the gate) in place of `oxfmt`; the `oxfmt` devDependency is removed.
+
+### Why
+
+- Bun 1.4.4, already pinned in CI, formats with the same `.oxfmtrc.json` and produced byte-identical output on all 7,965 files, 2.4x faster (senpi#5572).
+
+### Why an extension could not handle it
+
+- Repository scripts and dev dependencies are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the `fmt` / `fmt:check` script lines and the devDependencies block of the root `package.json`.
+
+## 2026-10-31 - Drop findSlot from knip's pre-existing unused exports (part of senpi#4600)
+
+### What changed
+
+- `knip.jsonc`: `findSlot` leaves the `preprocessorOptions.preExistingExports` entry for `packages/ai/src/auth/pool/slots.ts` and its comment; the other four names stay.
+
+### Why
+
+- Since senpi#4603, `packages/coding-agent/src/core/credential-account-unblock.ts` imports `findSlot`, so knip no longer reports it and `scripts/knip-preexisting-exports.test.mjs` failed on main.
+
+### Why an extension could not handle it
+
+- The knip configuration is repository tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `packages/ai/src/auth/pool/slots.ts` line and its comment in `knip.jsonc`.
+
 ## 2026-10-29 - Use Bun for no-emit type checking (senpi#4770)
 
 ### What changed

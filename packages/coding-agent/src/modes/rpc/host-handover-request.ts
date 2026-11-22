@@ -15,11 +15,11 @@
  * Exit 1 `handover_reply_lost`: the host did not answer and the socket does not serve the target, so
  * the operation's fate is unknown until `host status` is read again.
  */
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { daemonEnvironment, daemonEnvOverrides } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
-import { HANDOFF_LOCK_HOLD_MS } from "./host-handoff.ts";
 import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { BEGIN_HANDOVER_COMMAND } from "./host-handover-wire.ts";
 import { defaultHostLaunch } from "./host-launch.ts";
@@ -33,6 +33,8 @@ import {
 	refusal,
 } from "./host-outcome.ts";
 import { probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
+import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
+import { startupEnvelope } from "./host-startup-policy.ts";
 import { RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./runtime-build-id.ts";
 
 export interface IdleHandoverTerms {
@@ -40,12 +42,11 @@ export interface IdleHandoverTerms {
 	readonly ifInstanceId: string;
 	readonly ifGeneration: number;
 	readonly targetRuntimeBuildId: string;
+	/** `--allow-downgrade`: the host may hand over even when this CLI's engine is older than its own (senpi#7018). */
+	readonly allowDowngrade?: boolean;
 }
 
 const PROBE_TIMEOUT_MS = 10_000;
-
-/** A host idle at once hands over before answering: its ensure-lock wait plus the handoff itself. */
-const BEGIN_HANDOVER_TIMEOUT_MS = 2 * HANDOFF_LOCK_HOLD_MS + 20_000;
 
 export async function idleHandoverOutcome(
 	target: { readonly socket: string; readonly agentDir: string },
@@ -82,7 +83,9 @@ export async function idleHandoverOutcome(
 	const reply = await requestOnSocket(
 		socket,
 		beginHandoverCommand(target, spec, terms, mcpPresenterEnforcement),
-		BEGIN_HANDOVER_TIMEOUT_MS,
+		// I: a host idle at once hands over before answering, so the reply covers its lock wait W, the
+		// handoff it then holds (H) and a reply margin (senpi#4602).
+		startupEnvelope(childStalledStopMaxMs()).handoverReply,
 	);
 	if (!isRecord(reply)) return reconcileLostReply(target, terms, before);
 	if (typeof reply.refused === "string") {
@@ -116,8 +119,11 @@ function beginHandoverCommand(
 		if_instance_id: terms.ifInstanceId,
 		if_generation: terms.ifGeneration,
 		target_runtime_build_id: terms.targetRuntimeBuildId,
+		// The successor runs THIS CLI's runtime, so this CLI's engine is the one the host judges (senpi#7018).
+		target_engine: { text: engineBuildIdentity().text, ordinal: engineBuildIdentity().ordinal },
+		...(terms.allowDowngrade === true && { allow_downgrade: true }),
 		agent_dir: target.agentDir,
-		launch: { command: launch.command, args: launch.args },
+		launch: { command: launch.command, args: launch.args, reports_startup: true },
 		host_args: spec.hostArgs,
 		env,
 		...(mcpPresenterEnforcement === true && { mcp_presenter_enforcement: true }),

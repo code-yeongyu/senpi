@@ -1,8 +1,13 @@
+import { appendFileSync } from "node:fs";
 import type { MessagePort } from "node:worker_threads";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { retireBunChrome } from "../../coding-agent/src/core/webview/bun-chrome.ts";
 import { mainThreadWebViewClass, type NativeWebViewClass } from "../../coding-agent/src/core/webview/native-webview.ts";
-import type { AttachDeadline, ReadinessEvent } from "../../coding-agent/src/core/webview/webview-readiness.ts";
+import {
+	type AttachDeadline,
+	type ReadinessEvent,
+	readinessLogFromEnvironment,
+} from "../../coding-agent/src/core/webview/webview-readiness.ts";
 import { type WebViewClientGrant, WebViewService } from "../../coding-agent/src/core/webview/webview-service.ts";
 import {
 	bunChromeChildren,
@@ -110,10 +115,51 @@ async function greetingAfterNavigate(port: MessagePort, viewId: string): Promise
 	return read.value;
 }
 
+// senpi#3440: the first Chrome a run starts and attaches, and the first retirement (on Windows a
+// PowerShell process listing), cost far more than any later one. On windows-latest the first case of
+// this file took 13-50 s across 24 passing main runs and ran past its 60 s budget in others, while
+// each sibling, doing the same launches and retirements later, took 2-10 s. A user's first
+// Chrome-backed view pays that cost too, so it is not hidden: the file pays it once here under the
+// product's own readiness policy (a bounded attach, one relaunch). Like the product, the warm-up
+// tolerates one stalled launch; that stall, the attach that served the view, and the retire time
+// all go to the readiness log, and a create that fails every launch fails here with its phase.
+// Two bounded launches, their retirements and the fixture navigation fit this hook budget.
+const WARM_UP_TIMEOUT_MS = 120_000;
+
+async function warmUpChrome(): Promise<void> {
+	const log = readinessLogFromEnvironment();
+	const events: ReadinessEvent[] = [];
+	const service = new WebViewService(nativeClass(), {
+		onReadiness: (event) => {
+			events.push(event);
+			log?.(event);
+		},
+	});
+	const port = connect(service);
+	let retireMs = 0;
+	try {
+		const reply = await create(port, "warm-up");
+		if (!reply.ok)
+			throw new Error(`warm-up create failed: ${JSON.stringify(reply)}; events ${JSON.stringify(events)}`);
+		if (!events.some((event) => event.type === "ready"))
+			throw new Error(`warm-up view never became ready: ${JSON.stringify(events)}`);
+		expect(await greetingAfterNavigate(port, "warm-up")).toBe("hello from the fixture");
+	} finally {
+		const retireStartedAt = performance.now();
+		await Promise.allSettled(grants.splice(0).map(({ service, grant }) => service.release(grant.clientId, owner)));
+		retireMs = Math.round(performance.now() - retireStartedAt);
+	}
+	const path = process.env.SENPI_WEBVIEW_READINESS_LOG;
+	if (path)
+		appendFileSync(path, `${new Date().toISOString()} pid=${process.pid} webview warm-up retireMs=${retireMs}\n`);
+	expect(await bunChromeChildren()).toEqual([]);
+}
+
 describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready", { timeout: 60_000 }, () => {
 	beforeAll(async () => {
 		page = await serveFixturePage();
-	});
+		await warmUpChrome();
+	}, WARM_UP_TIMEOUT_MS);
 
 	// Release resolves once the service's Chrome retirement ended; anything left is a leak.
 	afterEach(async () => {
@@ -190,5 +236,64 @@ describe.skipIf(!bunWebViewAvailable)("a Chrome launch that never becomes ready"
 		expect(launches()).toBe(1);
 		expect(await bunChromeChildren()).toEqual([]);
 		expect(service.viewCount).toBe(0);
+	});
+
+	// senpi#5936: a kernel's close ends its worker before releasing it, so the port-close drop starts first.
+	it("resolves a release that follows a port-close drop only after the in-flight launch's Chrome retired", async () => {
+		let launches = 0;
+		const keptClosed = Promise.withResolvers<void>();
+		const webViewClass = new Proxy(nativeClass(), {
+			construct(target, args) {
+				launches += 1;
+				const view: { close(): void } = Reflect.construct(target, args);
+				if (launches === 1) {
+					const close = view.close.bind(view);
+					Object.defineProperty(view, "close", {
+						value: () => {
+							close();
+							keptClosed.resolve();
+						},
+					});
+				}
+				return view;
+			},
+		});
+		let deadlines = 0;
+		const stalled = Promise.withResolvers<void>();
+		const bound = Promise.withResolvers<void>();
+		const attachDeadline = (): AttachDeadline => {
+			deadlines += 1;
+			if (deadlines === 1) return { reached: new Promise(() => {}), cancel: () => {} };
+			stalled.resolve();
+			return { reached: bound.promise, cancel: () => {} };
+		};
+		const order: string[] = [];
+		const service = new WebViewService(webViewClass, {
+			attachDeadline,
+			retireChrome: async (chrome) => {
+				await retireBunChrome(chrome);
+				order.push("retired");
+			},
+		});
+		const grant = service.connect(owner);
+		grants.push({ service, grant });
+		expect(await create(grant.port, "kept")).toMatchObject({ ok: true });
+		grant.port.postMessage({
+			kind: "create",
+			id: 0,
+			viewId: "in-flight",
+			options: { backend: "chrome" },
+			captureConsole: false,
+		});
+		await stalled.promise;
+		// The worker dies with the launch in flight: the port-close drop closes the kept view first.
+		grant.port.close();
+		await keptClosed.promise;
+		const released = service.release(grant.clientId, owner).then(() => order.push("released"));
+		bound.resolve();
+		await released;
+		expect(order).toEqual(["retired", "released"]);
+		expect(await bunChromeChildren()).toEqual([]);
+		expect(launches).toBe(2);
 	});
 });

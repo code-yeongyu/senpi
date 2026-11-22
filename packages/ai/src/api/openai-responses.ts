@@ -13,6 +13,10 @@ import {
 } from "../models.ts";
 import { supportsAllowedToolChoice } from "../openai-responses-compat.ts";
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
+import {
+	isSharedSubscriptionItemLimitMessage,
+	sharedSubscriptionItemLimitMessage,
+} from "./subscription-sharing-items.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -40,9 +44,11 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import {
 	awaitProviderTransport,
 	openAICompatibleProviderDiagnosticFromError,
+	siwcProviderDiagnosticFromError,
 } from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { isSiwcMissingResponsesScope, SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE } from "../utils/siwc-errors.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
@@ -61,6 +67,7 @@ import {
 import {
 	findPromptCacheComparisonResponseId,
 	type OpenAIPromptCacheOptionsPayload,
+	supportsOpenAIResponsesExplicitPromptCacheMode,
 	withPromptCacheComparison,
 } from "./openai-responses-prompt-cache.ts";
 import {
@@ -69,6 +76,7 @@ import {
 	processResponsesStream,
 	resolveResponsesDeferredToolsMode,
 	resolveResponsesToolPlacement,
+	ULTRAFAST_DOCUMENTED_MODEL_IDS,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions, clampMaxForOpenAI, OPENAI_RESPONSES_RESERVED_BODY_KEYS } from "./simple-options.ts";
 import { startWebSocketLiveness } from "./websocket-liveness.ts";
@@ -137,6 +145,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Required<OpenAIResponsesCompat> {
 	const isNativeEndpoint = isOpenAIResponsesNativeEndpoint(model, env);
 	return {
+		siwc: model.compat?.siwc ?? false,
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
@@ -149,8 +158,8 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
-		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
-		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
+		supportsToolSearch: !model.compat?.siwc && (model.compat?.supportsToolSearch ?? false),
+		supportsExplicitPromptCacheMode: supportsOpenAIResponsesExplicitPromptCacheMode(model),
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,
@@ -182,7 +191,7 @@ function getPromptCacheOptions(
 ): OpenAIPromptCacheOptionsPayload | undefined {
 	if (!compat.supportsExplicitPromptCacheMode) return undefined;
 	if (cacheRetention === "none") return { mode: "explicit" };
-	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "30m" };
+	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "12h" };
 	return undefined;
 }
 
@@ -245,15 +254,106 @@ function sanitizeUnsupportedNativeTools(
 	return sanitized ? (sanitized as ResponseCreateParamsStreaming) : params;
 }
 
-function formatOpenAIResponsesError(error: unknown, provider: string): string {
-	const errorMessage = formatProviderError(
+function formatOpenAIResponsesError(error: unknown, provider: string, siwc = false): string {
+	let errorMessage = formatProviderError(
 		normalizeProviderError(error),
 		`${provider === "openai" ? "OpenAI" : provider} API error`,
 	);
+	if (isSharedSubscriptionItemLimitMessage(errorMessage)) {
+		errorMessage = sharedSubscriptionItemLimitMessage(provider, errorMessage);
+	}
+	if (siwc && error instanceof Error && Reflect.get(error, "code") === "subscription_sharing_unsupported_capability") {
+		const param = Reflect.get(error, "param");
+		if (typeof param === "string") errorMessage += `\nUnsupported parameter: ${param}`;
+	}
+	if (siwc && isSiwcMissingResponsesScope(errorMessage)) {
+		errorMessage += `\n${SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE}`;
+	}
 	// Sign in with ChatGPT shares the subscription's usage limit with other apps.
 	return errorMessage.includes("subscription_sharing_usage_limit_exceeded")
 		? `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`
 		: errorMessage;
+}
+
+/**
+ * SIWC preview restrictions apply after hooks and sampling overrides too.
+ * https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations
+ */
+function shapeSiwcRequest(params: MutableResponsesPayload): MutableResponsesPayload {
+	const body: MutableResponsesPayload & Record<string, unknown> = { ...params, store: false, stream: true };
+	for (const key of [
+		"background",
+		"conversation",
+		"max_output_tokens",
+		"max_tool_calls",
+		"metadata",
+		"moderation",
+		"multi_agent",
+		"prompt",
+		"prompt_cache_retention",
+		"safety_identifier",
+		"temperature",
+		"top_logprobs",
+		"top_p",
+		"truncation",
+		"user",
+		"previous_response_id",
+		"prompt_cache_options",
+	])
+		delete body[key];
+	body.input =
+		typeof body.input === "string"
+			? [{ role: "user", content: body.input }]
+			: body.input?.map((item) =>
+					"role" in item && item.role === "system" ? { ...item, role: "developer" as const } : item,
+				);
+	const tools = body.tools
+		?.filter(
+			(tool) =>
+				tool.type === "function" ||
+				tool.type === "custom" ||
+				tool.type === "namespace" ||
+				tool.type === "web_search",
+		)
+		.map((tool) =>
+			tool.type === "namespace"
+				? {
+						...tool,
+						tools: tool.tools.filter((nested) => nested.type === "function" || nested.type === "custom"),
+					}
+				: tool,
+		);
+	// SIWC accepts local tools in namespaces or additional_tools, not flat top-level definitions.
+	const eagerTools = tools?.filter((tool) => tool.type === "function" || tool.type === "custom") ?? [];
+	body.tools = tools?.filter((tool) => tool.type !== "function" && tool.type !== "custom");
+	if (eagerTools.length > 0) {
+		Reflect.set(body, "input", [
+			{ type: "additional_tools", role: "developer", tools: eagerTools },
+			...(body.input ?? []),
+		]);
+	}
+	const choice: unknown = body.tool_choice;
+	if (isRecord(choice)) {
+		if (choice.type === "allowed_tools" && Array.isArray(choice.tools)) {
+			const tools = choice.tools.filter(
+				(tool) =>
+					isRecord(tool) && (tool.type === "function" || tool.type === "custom" || tool.type === "web_search"),
+			);
+			Reflect.set(
+				body,
+				"tool_choice",
+				tools.length > 0
+					? {
+							...choice,
+							tools,
+						}
+					: "none",
+			);
+		} else if (choice.type !== "function" && choice.type !== "custom" && choice.type !== "web_search") {
+			delete body.tool_choice;
+		}
+	}
+	return body;
 }
 
 // OpenAI Responses-specific options
@@ -332,7 +432,8 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				params = { ...params, tools: limitedTools.tools };
 				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
 			}
-			const transport = options?.transport ?? "sse";
+			if (compat.siwc) params = shapeSiwcRequest(params);
+			const transport = compat.siwc ? "sse" : (options?.transport ?? "sse");
 			let refusedAllowedToolsOverWebSocket = false;
 			if (transport !== "sse" && compat.supportsWebSocket) {
 				let websocketStarted = false;
@@ -393,10 +494,10 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					acceptsForcedToolChoice: compat.supportsForcedToolChoice,
 					isForced: isForcedOpenAIResponsesToolChoice,
 					send: (request: MutableResponsesPayload) =>
-						model.provider === "github-copilot"
+						model.provider === "github-copilot" || compat.siwc
 							? awaitProviderTransport(
 									() => client.responses.create(request, requestOptions).withResponse(),
-									openAICompatibleProviderDiagnosticFromError,
+									compat.siwc ? siwcProviderDiagnosticFromError : openAICompatibleProviderDiagnosticFromError,
 								)
 							: client.responses.create(request, requestOptions).withResponse(),
 				});
@@ -428,6 +529,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			if (!refusedAllowedToolsOverWebSocket) stream.push({ type: "start", partial: output });
 
 			await processResponsesStream(openaiStream, output, stream, model, {
+				siwc: compat.siwc,
 				onProviderStreamEvent: options?.onProviderStreamEvent,
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
@@ -456,12 +558,18 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			const providerDiagnostic =
-				model.provider === "github-copilot" && output.stopReason === "error"
-					? (readProviderDiagnostic(error) ?? openAICompatibleProviderDiagnosticFromError(error))
+				(model.provider === "github-copilot" || model.compat?.siwc) && output.stopReason === "error"
+					? (readProviderDiagnostic(error) ??
+						(model.compat?.siwc
+							? siwcProviderDiagnosticFromError(error)
+							: openAICompatibleProviderDiagnosticFromError(error)))
 					: undefined;
 			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			output.errorMessage = withGitHubCopilotFailureNote(
-				formatGitHubCopilotToolLimitError(output, formatOpenAIResponsesError(error, model.provider)),
+				formatGitHubCopilotToolLimitError(
+					output,
+					formatOpenAIResponsesError(error, model.provider, model.compat?.siwc),
+				),
 				model.provider,
 				error,
 			);
@@ -514,6 +622,7 @@ export async function warmOpenAIResponsesPromptCache(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): Promise<{ usage: Usage; usageRaw: unknown }> {
+	if (model.compat?.siwc) throw new Error("SIWC requires streaming inference; prompt-cache prewarm is unsupported");
 	const prefix = normalizeContext({ ...context, messages: [] });
 	const resolved = resolveSimpleOptions(model, prefix, options);
 	const clientAuth = resolveOpenAIClientAuth(model.provider, resolved.apiKey, resolved.headers);
@@ -572,6 +681,16 @@ export async function warmOpenAIResponsesPromptCache(
 	return { usage, usageRaw };
 }
 
+/** The SDK discards nonstandard admission bodies when it selects errorResponse.error. */
+class SiwcOpenAI extends OpenAI {
+	protected override makeStatusError(status: number, body: object, message: string | undefined, headers: Headers) {
+		if (isRecord(body) && Object.hasOwn(body, "detail") && !Object.hasOwn(body, "error")) {
+			return new OpenAI.APIError(status, body, message, headers);
+		}
+		return super.makeStatusError(status, body, message, headers);
+	}
+}
+
 function createClient(
 	model: Model<"openai-responses">,
 	context: TranscriptContext,
@@ -608,7 +727,8 @@ function createClient(
 		Object.assign(headers, optionsHeaders);
 	}
 
-	return new OpenAI({
+	const Client = compat.siwc ? SiwcOpenAI : OpenAI;
+	return new Client({
 		apiKey,
 		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model, env) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
@@ -631,7 +751,18 @@ function buildParams(
 		context.messages,
 		resolveResponsesDeferredToolsMode(compat) !== undefined,
 	);
-	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
+	// Sign in with ChatGPT rejects configuration_update items (senpi#6607), so the newest one, the level in
+	// force, becomes the request effort instead of the cache baseline the session sends, as upstream does.
+	const configuredEffort =
+		compat.siwc && compat.supportsConfigurationUpdate
+			? context.messages.findLast((message) => message.role === "configurationUpdate")?.effort
+			: undefined;
+	const requestedReasoningEffort =
+		configuredEffort === undefined
+			? (options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined))
+			: configuredEffort === "off"
+				? undefined
+				: (configuredEffort as NonNullable<OpenAIResponsesOptions["reasoningEffort"]>);
 	const thinkingLevelMap = inferOpenAIThinkingLevelMap(model);
 	const mappedReasoningEffort =
 		requestedReasoningEffort === undefined ? undefined : thinkingLevelMap?.[requestedReasoningEffort];
@@ -1029,6 +1160,7 @@ async function processWebSocketStream(
 		await options?.onResponse?.({ status: 101, headers: {} }, model);
 		stream.push({ type: "start", partial: output });
 		await processResponsesStream(parseWebSocket(socket, options?.signal), output, stream, model, {
+			siwc: model.compat?.siwc,
 			serviceTier: options?.serviceTier,
 			grammarToolInputProperties,
 			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
@@ -1106,7 +1238,7 @@ function getServiceTierCostMultiplier(
 		case "ultrafast":
 			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
 			// token class and context tier. Any other model keeps its base rate.
-			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 6 : 1;
+			return ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.upstreamModelId ?? model.id) ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":

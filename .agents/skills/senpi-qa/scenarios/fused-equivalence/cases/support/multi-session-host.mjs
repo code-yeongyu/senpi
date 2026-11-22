@@ -9,7 +9,11 @@ import { RpcClient } from "../../../../scripts/lib/rpc-client.mjs";
 
 const OPEN_TIMEOUT_MS = 120_000;
 
-/** Start the host for this run; resolves with its socket once it listens. The run's cleanups stop it. */
+/**
+ * Start the host for this run; resolves with its socket once it listens. The run's cleanups stop it, and
+ * `run.stopMultiSessionHost()` stops it earlier: a case that reopens the session headless (O8) must stop the host first,
+ * because the host keeps the session open after its connections close and a reopen would race its release (senpi#6721).
+ */
 export function startMultiSessionHost(run) {
 	const socketDir = mkdtempSync(join(tmpdir(), "eqh-"));
 	const socket = join(socketDir, "h.sock");
@@ -25,14 +29,20 @@ export function startMultiSessionHost(run) {
 			"--no-context-files",
 			...run.args,
 		],
-		{ env: run.env, cwd: run.box.cwd },
+		// The host's endpoint fence (senpi#4602) keeps durable lock files under `<tmpdir>/senpi-rpc-host-locks/`. This
+		// throwaway host is the only writer on its socket, so its temp root is the directory this run owns and removes.
+		{ env: { ...run.env, TMPDIR: socketDir, TEMP: socketDir, TMP: socketDir }, cwd: run.box.cwd },
 	);
-	run.cleanups.push(async () => {
+	const stopHost = async () => {
 		if (host.exitCode === null && host.signalCode === null) {
 			const closed = new Promise((resolve) => host.once("close", resolve));
 			host.kill("SIGTERM");
 			await closed;
 		}
+	};
+	run.stopMultiSessionHost = stopHost;
+	run.cleanups.push(async () => {
+		await stopHost();
 		rmSync(socketDir, { recursive: true, force: true });
 	});
 	return new Promise((resolve, reject) => {

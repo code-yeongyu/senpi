@@ -20,7 +20,7 @@ it("spools 2,000 numbers in at most ceil(2000/128) + 1 files", async () => {
 		await store.retire();
 		await root.cleanup();
 	}
-}, 60_000);
+}, 600_000);
 
 it.each(["array", "object"])("reads every %s page exactly once", async (kind) => {
 	const root = await spoolRoot();

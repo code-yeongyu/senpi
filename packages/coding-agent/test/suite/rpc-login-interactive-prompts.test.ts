@@ -111,6 +111,57 @@ describe("RPC interactive login prompts", () => {
 		await handler.dispose();
 	});
 
+	// senpi#5108: AuthStorage must preserve the discriminator through its legacy callback adapter.
+	it.each([false, true])("typed-secret login is private with negotiated support=%s", async (supported) => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const sentinel = crypto.randomUUID();
+		let observed: string | undefined;
+		registerScriptedProvider(harness, async (interaction) => {
+			observed = await interaction.prompt({ type: "secret", message: "Synthetic credential", placeholder: "hint" });
+			return oauthCredential("synthetic-independent-token");
+		});
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		try {
+			await handler.ready;
+			await handler.handleInputLine(
+				JSON.stringify({
+					type: "set_client_info",
+					width: 80,
+					capabilities: ["interactive_user", ...(supported ? ["secret_input_v1"] : [])],
+				}),
+			);
+			const ended = collected.waitFor((r) => r.type === "auth_login_end");
+			await handler.handleInputLine(JSON.stringify({ type: "login_start", provider: PROVIDER }));
+			if (supported) {
+				const request = await collected.waitFor((r) => r.type === "extension_ui_request" && r.method === "input");
+				expect(request).toMatchObject({ secret: true, placeholder: "hint" });
+				await handler.handleInputLine(
+					JSON.stringify({
+						type: "extension_ui_response",
+						id: "secret-answer",
+						uiRequestId: request.id,
+						answerId: "secret-answer",
+						secret: true,
+						value: sentinel,
+					}),
+				);
+				expect((await ended).success).toBe(true);
+				expect(observed === sentinel).toBe(true);
+			} else {
+				expect(await ended).toMatchObject({
+					success: false,
+					error: expect.stringContaining("use the TUI or the host's settings route"),
+				});
+				expect(collected.messages().some((r) => r.method === "input")).toBe(false);
+			}
+			expect(JSON.stringify(collected.messages()).includes(sentinel)).toBe(false);
+		} finally {
+			await handler.dispose();
+		}
+	});
+
 	it("keeps the login alive when the prompt is left unanswered and the callback path completes", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);

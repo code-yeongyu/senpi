@@ -31,6 +31,34 @@ describe("SessionWorkerRequests open deadline", () => {
 		}
 	});
 
+	// senpi#6452 review M1: the same 0 ms timer, reached by a request sent after the open on a session
+	// that sat quiet (an attach's prompt_surface / browser_engine / permission_preset). The worker owed
+	// nothing while it was quiet, so that silence is not a stall.
+	it("does not start a request already expired when the session sat quiet after its open", () => {
+		vi.useFakeTimers();
+		try {
+			const timeout = vi.fn();
+			const sent: Array<{ request: number }> = [];
+			const queue = new SessionWorkerRequests((message) => sent.push(message), timeout);
+			void queue.request({ type: "commit" });
+			const commit = sent[0];
+			if (!commit) throw new Error("Commit was not dispatched");
+			// The worker answers the open; its reply is progress, as SessionWorkerClient.receive reports it.
+			queue.noteProgress();
+			queue.receive({ type: "result", request: commit.request });
+
+			vi.advanceTimersByTime(SESSION_WORKER_LIMITS.openMs + 5_000);
+			void queue.request({ type: "prompt_surface", surface: "app" });
+
+			vi.advanceTimersByTime(1);
+			expect(timeout).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(SESSION_WORKER_LIMITS.openMs);
+			expect(timeout).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("still bounds an open that genuinely stalls", () => {
 		vi.useFakeTimers();
 		try {

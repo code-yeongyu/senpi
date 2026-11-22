@@ -93,7 +93,9 @@ export default function btwExtension(pi: ExtensionAPI) {
 				});
 			}
 
-			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model, {
+				sessionId: ctx.sessionManager.getSessionId(),
+			});
 			if (!auth.ok) {
 				if (active !== entry) return;
 				dismiss(ctx, { abort: false });

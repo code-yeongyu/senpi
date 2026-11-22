@@ -1,3 +1,230 @@
+## 2026-11-12 - The process boot instant comes from the kernel's boot record (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts`: `processBootAtMs()` reads the kernel's recorded boot instant (`btime` in `/proc/stat` on Linux, `kern.boottime` from `/usr/sbin/sysctl`, by absolute path, on macOS) instead of rounding `now - os.uptime()`; elsewhere it still computes from uptime. The read is asynchronous (`fs.promises.readFile`, and an async `execFile` of `sysctl` on macOS) so a session never blocks the shared host on it, and it is cached once per process as a promise: every later call awaits that promise and does no I/O. A read that found no value is dropped, so the next call retries it, and the uptime fallback is never memoized. Callers keep their 120 s `sameBoot` tolerance.
+- The kernel's recorded boot instant moves with a wall-clock step, so a cached value can go stale. `sameBootAsOwn` (used by the lease, reclaim-lock, orphan-reaper and schedule-runner checks) re-reads the record fresh, uncached, once before a 'different boot' verdict stands, and the fresh read replaces the cache; the probes take an optional `{ fresh: true }` for this (`OwnBootReader`, default `ownBootAtMs`). A live peer that recorded the moved instant is no longer called stale.
+- `processBootAtMs()` is now async, and so are `holdSessionFile`, `currentResidentWriter` and the `bootAtMs` probe of `WriterProbes` and the orphan reaper. `AgentSessionRuntime`'s constructor no longer takes the session hold: `createAgentSessionRuntime` and the multi-session switch take it with the new `holdRuntimeSession` and pass it in, releasing it if construction throws. `TerminalRuntimeSession` takes the boot instant from its async creator. Each writer fence resolves the boot instant before its check-then-write, so nothing yields between the check and the write it guards.
+
+### Why
+
+- `os.uptime()` counts whole seconds, so two reads that straddled an uptime tick computed boot instants a second apart (senpi#3152, senpi#4301). Caching one read instead would break agreement between processes after a wall-clock step; the kernel's record moves for every reader alike.
+
+### Why an extension could not handle it
+
+- The boot instant is read by the builtin terminal and schedule lease code itself.
+
+### Expected merge conflict zones
+
+- LOW: `processBootAtMs` in `process-identity.ts`.
+- MEDIUM: callers of `holdSessionFile`, `processBootAtMs`, `currentResidentWriter`, and `new AgentSessionRuntime(...)` / `new TerminalRuntimeSession(...)` (both take one more argument).
+
+## 2026-11-14 - An interrupt's stop names a session the manager no longer holds
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`: `stopForInterrupt` fails with `the terminal manager has no session <id> to stop` when `manager.stop` found no registry entry, and keeps `<id> was still running after the stop (TERM, then KILL)` for a session the stop did not end, as the auto-reap reports them.
+
+### Why
+
+- Both cases were reported as still running after a TERM and a KILL that were never sent for the first one.
+
+### Why an extension could not handle it
+
+- This is the terminal builtin; the change is inside it.
+
+### Expected merge conflict zones
+
+- LOW: `stopForInterrupt` in `session-bundle.ts`.
+
+## 2026-11-19 - A graceful close leaves nothing to restore (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/terminal-manifest.ts`: `recordClosed()` drops every monitor, background job and pending checkpoint, and the manifest file goes away with the last entry.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/restore-session.ts`, `extension.ts`: a `session_shutdown` with `closed: true` records `recordClosed()` instead of `recordShutdown()`.
+
+### Why
+
+- oh-my-openagent#14313 (and senpi#7033's shape): a restored monitor that fires on reopen opens a run the restore sweep then marks interrupted. A session closed on purpose has nothing to restore.
+
+### Why an extension could not handle it
+
+- This is the terminal builtin's own manifest.
+
+### Expected merge conflict zones
+
+- LOW: `stopPersistence` in `restore-session.ts`.
+
+## 2026-11-15 - Terminal notices from a hand (senpi#6763, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: `bindNotifiers` builds the completion and monitor notifiers at load as well as at every `session_start`, so a hand (which never gets `session_start` for builtins) has them. They send through `pi.sendMessage`; `createTerminalExtension({ sendMessage })` (S14) is removed.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts`: `TerminalNotifierDeps.loopRemote`; on a hand the session guards (mode, model) are the receiving loop's (agent-core's `deliverHandWake` applies them), so they are skipped here.
+
+### Why
+
+- A background command's exit notice and monitor events on a hand were dropped without a trace.
+
+### Why an extension could not handle it
+
+- The notifier guards live inside the terminal builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `session_start` notifier block of `extension.ts`.
+
+## 2026-11-14 - The monitor prompt names the `<device>/<session>` target (senpi#6674)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: the rpc `target` line of the diet section and of the full section name `<device>/<session>` for a session on another device, with one example.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-schema.ts`: the `target` parameter description names the same form.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: `rpc-monitor-targets.ts` already parses `<device>/<session>`, but no prompt or schema text taught it, so an agent could not discover a cross-device watch (senpi#6674).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: this builtin owns the terminal prompt and the monitor tool schema (`tools/monitor-schema.ts`).
+
+### Expected merge conflict zones
+
+- LOW: the rpc `target` line in `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts` and the `target` description in `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-schema.ts`.
+
+## 2026-11-14 - Background sessions belong to the turn that started them
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: every background session (`run_in_background` or auto-detached) is recorded with `ctx.registerRunBackgroundJob` as a `bash` job whose stop is the bundle's.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`: `stopForInterrupt(id, turnId)` tree-kills the session through `manager.stop` and fails typed when it lives on the tool child or is still running after the stop; `trackRunJob` holds the release, dropped at the session's exit or the bundle's teardown; the exit of a session an interrupt stopped carries `stoppedByInterrupt`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: `TerminalExitView.stoppedByInterrupt?: { turnId }`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts`: such an exit's notice reads `was stopped when turn <id> was interrupted` and is sent `nextTurn` with no `triggerTurn`, so it reaches the next turn and starts none; the notifier's `sendMessage` dependency accepts `deliverAs: "nextTurn"`.
+
+### Why
+
+- Stopping the interrupted turn's background bash must not itself wake the session: its exit notice is what woke it before.
+
+### Why an extension could not handle it
+
+- This is the terminal builtin; the change is inside it.
+
+### Expected merge conflict zones
+
+- LOW: `onBackgroundStart` in `extension-state.ts`, `notifyBackgroundExit` and `teardown` in `session-bundle.ts`, `buildNotice`/`deliverCompletion` in `notify.ts`.
+
+## 2026-11-08 - A still-running background session reports its age; auto-reap is opt-in (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/background-age.ts` (new): `BackgroundAgeSchedule` keeps one unref'd timer per session bundle, armed for the earliest due notice across every background session, and reports each session at 10 minutes and then every 30 minutes (10, 40, 70, ...). A late timer or a session registered after it started reports once for the milestones it missed, never a burst. `backgroundAgeEvent` builds the `TerminalBackgroundAgeEvent` payload.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`: `notifyBackgroundStart` takes the command and the auto-reap age and adds the session to the schedule; exit, teardown and the schedule's `remove`/`dispose` clear it. A new sink `onBackgroundAge` receives `running` notices, on an exit whose view says it was reaped one `reaped` notice, and from `notifyBackgroundReapFailed` one `reap_failed` notice carrying the reason while the session stays on the schedule. While parked only the newest notice per session is kept, and it is dropped when the session exits.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: the `onBackgroundAge` sink emits `terminal_background_age` on `pi.events` and `pi.rpc`, shows a TUI notice, and hands a `running` or `reap_failed` notice to the notifier; `onBackgroundReapFailed` reaches the bundle; `onBackgroundStart` forwards the command and the auto-reap age; the tool context exposes `backgroundAutoReapMinutes`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts`: `describeBackgroundAge` writes the notice (session id, command or label, age, the `kill_bash` call); `TerminalNotifier.notifyAge` delivers it like a completion notice; a completion notice of a reaped session says it was stopped automatically after N minutes.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/background-auto-reap.ts` (new): `trackBackgroundSession` announces a background session and, only when `auto_reap_minutes` or the setting asks for it, arms one unref'd timer that stops the session through `manager.stop` (TERM, then KILL to the group, as `kill_bash` does) at that age and marks its exit view `autoReapedAfterMinutes` only once that stop resolved and the session really exited (the exit report waits for the stop); a stop that rejects, finds no session, or leaves it running is logged as `bash_auto_reap_failed`, reported once through `onBackgroundReapFailed`, and never retried. The timer is cleared on exit. `resolveAutoReapMinutes` gives the call's value precedence and treats 0 as off.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: new `auto_reap_minutes` parameter; both background starts (`run_in_background` and the auto-detach) go through `trackBackgroundSession`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: `backgroundAutoReapMinutes`, the `autoReapMinutes` argument of `onBackgroundStart`, `onBackgroundReapFailed`, and `TerminalExitView.autoReapedAfterMinutes`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts`: the job args carry `backgroundAutoReapMinutes`; the child's start wake carries the command and the reap age, its exit wake the reap, and a `background_reap_failed` wake a failed reap, so the same notices work under `--tool-runtime child`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/settings.ts`: `terminal.backgroundAutoReapMinutes` resolves to a whole number of minutes >= 1, or undefined (off, the default).
+
+### Why
+
+- A background session that is still running keeps the agent in `waiting_background` for as long as it runs, and nothing told the agent, the user or an RPC driver (senpi#6201). Killing it on a timer would remove the capability of long sessions, so the default is a notice that names the session and the call that stops it; stopping at an age is opt-in.
+
+### Why an extension could not handle it
+
+- The terminal builtin owns the background sessions, their bundle and their stop path; this is fork-only code.
+
+### Expected merge conflict zones
+
+- LOW: `notifyBackgroundStart`/`notifyBackgroundExit`/`teardown` in `session-bundle.ts`, the sinks in `extension-state.ts`, the two background-start sites in `tools/bash.ts`.
+
+## 2026-11-07 - Monitor rpc targets on another device through an extension source (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-remote-source.ts` (new): the `RpcRemoteSource` seam (`open(target, { events, exclude, resumeFrom? }, { record, resynced, cursor, lost, ended })` resolving to `{ initial, stop }`) and its registry (`registerRpcRemoteSource`, latest registration wins).
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-remote.ts` (new): `RpcRemoteFeed`, the remote half of a watch. Records go through the watch's own render path with the device in the socket's place; a lost device is said once; a resync reports each status change, gone session and settled turn once; `agent_settled` is reported once per `turnId`; an ended access settles the monitor.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-targets.ts`: `RpcTarget` gains `{ kind: "remote", device, session }`. `<device>/<session>` and `<device>/*` (one `/`, no leading `/`, no `.jsonl` suffix, no drive letter) parse as remote while a source is registered and are refused without one. Every other target parses as before.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-watch.ts`: a remote target starts an `RpcRemoteFeed` instead of endpoint observers; the checkpoint carries `remote: { cursor?, settled }`, `diffSince` adds the turns that settled while detached, and `stop` stops the source.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-render.ts`: `detachedLabel(key)`, the label `diffSince` already used, shared with the remote feed.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-source.ts`: passes the remote source, the restored checkpoint and an `ended` hook (settles with reason `exit`) to the watch; a remote open that rejects leaves no record behind.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-rpc.ts`: a remote open the source refuses answers the call as an error naming the reason.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/terminal-manifest-model.ts`, `terminal-manifest-parse.ts`: the rpc checkpoint's optional `remote` block, parsed strictly.
+
+### Why
+
+- oh-my-openagent#12719: a session on a daemon-only host can be driven over the relay, but nothing woke the calling agent when it finished. `monitor` rpc is the one wake surface, so a remote session is one more target, served by the omo extension that owns the relay; senpi itself knows no relay.
+
+### Why an extension could not handle it
+
+- The target grammar, the watch, its checkpoint and its restore live in this builtin; an extension can supply the source but not the monitor branch that renders and persists it.
+
+### Expected merge conflict zones
+
+- LOW: `parseRpcTarget`, `RpcMonitorWatch.start`/`checkpoint`/`diffSince`/`stop`, `RpcMonitorSource.register`/`settle`, `createRpcMonitor`, the rpc checkpoint type and its parse.
+
+## 2026-11-03 - Full terminal section for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: `buildTerminalPromptSection` renders the pre-#5342 section for `sharedSections: "full"`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: passes `activeSharedSections(ctx)`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: the PTY bash tool's pre-#5342 guideline as `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the terminal section builder and its before_agent_start hook.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: `## Persistent terminal sessions` is rewritten shorter and now owns the bash timeout facts (kill deadline, default timeout, foreground auto-detach window) from the removed timeout policy section; every monitor branch keeps its own call shape, the git-fetch baseline recipe example is dropped, and `TerminalPromptOptions` gains `foregroundWindowSeconds` / `defaultTimeoutSeconds`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: passes the resolved foreground window and default timeout to the section.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: the PI_* guideline reads "PI_* environment variables carry the current model and session details."
+- Terse pass: `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts` and the PI_* guideline in `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` render the terse wording with every call shape unchanged.
+
+### Why
+
+- senpi#5335: the section was the largest prose block and repeated the monitor schema; the timeout policy section restated two of its facts.
+
+### Why an extension could not handle it
+
+- This extension owns the terminal prompt section.
+
+### Expected merge conflict zones
+
+- LOW: `buildTerminalPromptSection` body and its `before_agent_start` call.
+
+## 2026-10-29 - Terminal examples match monitor validation and bash capabilities (senpi#4792)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: include the required RPC monitor description; select long-job advice for PTY or native bash. Assembled-prompt tests parse every monitor call shape and exercise the monitor tool's schema and runtime argument validation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: the RPC example omitted a required argument, and native-bash sessions were told to use the PTY-only `run_in_background` parameter.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`: this builtin owns the terminal prompt and already receives the active bash capability.
+
+### Expected merge conflict zones
+
+- LOW: command deadline guidance and the RPC call shape in `packages/coding-agent/src/core/extensions/builtin/terminal/prompt.ts`.
+
 ## 2026-10-29 - Give monitor guidance one system-prompt owner (senpi#4767)
 
 ### What changed
