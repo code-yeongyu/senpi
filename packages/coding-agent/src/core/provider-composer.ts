@@ -30,6 +30,7 @@ import {
 	transformContext,
 	wrapStreamWithToolCallMiddleware,
 } from "@earendil-works/pi-ai";
+import { findBuiltinModelCompat } from "@earendil-works/pi-ai/providers/all";
 import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
@@ -314,6 +315,7 @@ function modelFromJson(
 	providerConfig: ModelsJsonProvider,
 	defaults: { api?: Api; baseUrl?: string } | undefined,
 	catalogCost: ModelCost | undefined,
+	baseModel: AnyModel | undefined,
 ): ModelWithConfigMetadata {
 	const api = definition.api ?? providerConfig.api ?? defaults?.api;
 	if (!api) {
@@ -329,6 +331,10 @@ function modelFromJson(
 	if (definition.maxTokens !== undefined && definition.maxTokens <= 0) {
 		throw new Error(`Provider ${providerId}, model ${definition.id}: invalid maxTokens`);
 	}
+	const catalogCompat =
+		baseModel && isModelType(baseModel, "chat") && baseModel.api === api
+			? baseModel.compat
+			: findBuiltinModelCompat(providerId, definition.id, api);
 	return {
 		id: definition.id,
 		name: definition.name ?? definition.id,
@@ -349,7 +355,7 @@ function modelFromJson(
 		samplingParams: definition.samplingParams,
 		headers: undefined,
 		cacheRetention: definition.cacheRetention ?? providerConfig.cacheRetention,
-		compat: mergeCompat(providerConfig.compat, definition.compat),
+		compat: mergeCompat(mergeCompat(catalogCompat, providerConfig.compat), definition.compat),
 	};
 }
 
@@ -458,6 +464,7 @@ function applyModelsJson(
 				baseUrl: extension?.baseUrl ?? defaults?.baseUrl,
 			},
 			existing?.cost,
+			configuredBaseModels[existingIndex],
 		);
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);

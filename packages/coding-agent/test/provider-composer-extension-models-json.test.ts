@@ -90,6 +90,56 @@ function modelById(provider: ReturnType<typeof composeModelProvider>, id: string
 }
 
 describe("models.json custom models under extension providers", () => {
+	const gatewayModelId = "deepseek/deepseek-v4.1-flash-ultrafast";
+	it.each([
+		{ name: "catalog flags", settings: {}, expected: { mixedStrictTools: false, supportsDeveloperRole: false } },
+		{
+			name: "provider overrides",
+			settings: { compat: { mixedStrictTools: true } },
+			expected: { mixedStrictTools: true, supportsDeveloperRole: false },
+		},
+		{
+			name: "model overrides",
+			settings: {
+				compat: { mixedStrictTools: true, supportsDeveloperRole: true },
+				models: [{ id: gatewayModelId, compat: { mixedStrictTools: false } }],
+			},
+			expected: { mixedStrictTools: false, supportsDeveloperRole: true, supportsStrictMode: true },
+		},
+	])("resolves $name for a custom gateway catalog model", ({ settings, expected }) => {
+		const config = configFor("gateway", [{ id: gatewayModelId }], {
+			api: "openai-completions",
+			baseUrl: "https://example.invalid",
+			apiKey: "test-key",
+			...settings,
+		});
+		expect(composeModelProvider("gateway", undefined, config, undefined).getModels()[0]?.compat).toMatchObject(
+			expected,
+		);
+	});
+
+	it("does not inherit catalog compat from a different api or id", () => {
+		const config = configFor("gateway", undefined, {
+			api: "openai-completions",
+			baseUrl: "https://example.invalid",
+			apiKey: "test-key",
+			models: [{ id: gatewayModelId, api: "openai-responses" }, { id: "unknown-gateway-model" }],
+		});
+		const models = composeModelProvider("gateway", undefined, config, undefined).getModels();
+		expect(models.map((model) => model.compat)).toEqual([undefined, undefined]);
+	});
+
+	it("inherits agreed flags but not route-specific flags for ids served by several catalogs", () => {
+		const config = configFor("gateway", [{ id: "gpt-4.1" }, { id: "gpt-5" }], {
+			api: "openai-responses",
+			baseUrl: "https://example.invalid",
+			apiKey: "test-key",
+		});
+		const [agreed, conflicting] = composeModelProvider("gateway", undefined, config, undefined).getModels();
+		expect(agreed?.compat).toMatchObject({ supportsStrictMode: true });
+		expect(conflicting?.compat ?? {}).not.toHaveProperty("supportsStrictMode");
+	});
+
 	it.each([
 		{ whitelist: ["paid"] },
 		{ blacklist: ["free-image", "free-classifier"] },

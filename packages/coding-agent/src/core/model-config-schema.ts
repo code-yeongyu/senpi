@@ -126,6 +126,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	vercelGatewayRouting: Type.Optional(VercelGatewayRoutingSchema),
 	zaiToolStream: Type.Optional(Type.Boolean()),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
+	mixedStrictTools: Type.Optional(Type.Boolean()),
 	toolCallFormat: Type.Optional(Type.String()),
 	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
 	deferredToolsMode: Type.Optional(Type.Literal("kimi")),
