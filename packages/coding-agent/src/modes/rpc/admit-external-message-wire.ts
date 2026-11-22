@@ -5,6 +5,7 @@
  * `get_state.currentTurnId`. The field checks run on the local connection and inside `validateRpcInboundRecord`, so
  * both paths refuse the same records.
  */
+import type { HoldKind } from "../../core/engine-turn-hold.ts";
 import type {
 	ExternalAdmissionKind,
 	ExternalDeliverAs,
@@ -35,6 +36,8 @@ export interface RpcAdmitExternalMessageReply {
 	kind: ExternalAdmissionKind;
 	/** The session's turn when the delivery was admitted, in `get_state.currentTurnId`'s form. */
 	turnId: string;
+	/** `held` only: the kinds of the holds that keep the delivery until a person releases them (senpi#6490). */
+	holds?: HoldKind[];
 }
 
 export interface RpcAdmitExternalMessageResponse {

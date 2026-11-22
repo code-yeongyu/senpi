@@ -6,6 +6,7 @@ import type { QueuedInput } from "../../core/agent-session.ts";
 import type { HoldKind } from "../../core/engine-turn-hold.ts";
 import type { PermissionMode } from "../../core/permission-mode.ts";
 import type { ProviderOrigin } from "../../core/provider-origin.ts";
+import type { RetryWait } from "../../core/retry-wait.ts";
 
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage } from "../../core/extensions/types.ts";
@@ -223,6 +224,7 @@ export interface RpcSessionState extends Partial<PermissionMode> {
 	usageTotals: UsageTotals;
 	contextUsage?: ContextUsage;
 	retryAttempt: number;
+	retryWait?: RetryWait;
 	isBashRunning: boolean;
 	/** Open question prompts awaiting an answer. Absent when none are pending. */
 	pendingQuestions?: RpcQuestionUiRequest[];

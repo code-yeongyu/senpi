@@ -171,6 +171,30 @@ export function resolveConfigValue(
 	config: ConfigValue,
 	env?: Record<string, string>,
 	context?: ConfigReferenceContext,
+	observation?: ConfigValueObservation,
+): Promise<string | undefined> {
+	const resolved = resolveConfigValueUnobserved(config, env, context);
+	if (observation === undefined) return resolved;
+	return resolved.then((value) => {
+		if (value !== undefined) observation.observer(observation.field, observation.providerId, value, observation.cwd);
+		return value;
+	});
+}
+
+/** Receives each value a credential field resolves to, with the provider, the field and the cwd it resolved in. */
+export type ConfigValueObserver = (field: string, providerId: string, value: string, cwd: string) => void;
+
+export interface ConfigValueObservation {
+	readonly observer: ConfigValueObserver;
+	readonly providerId: string;
+	readonly field: string;
+	readonly cwd: string;
+}
+
+function resolveConfigValueUnobserved(
+	config: ConfigValue,
+	env: Record<string, string> | undefined,
+	context: ConfigReferenceContext | undefined,
 ): Promise<string | undefined> {
 	if (typeof config !== "string") return resolveConfigReference(config, context, env);
 	const reference = parseConfigValueReference(config);

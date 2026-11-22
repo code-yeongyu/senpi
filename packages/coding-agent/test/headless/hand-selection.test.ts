@@ -170,9 +170,13 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		// teardown deletes it, so a select answered from peek installed a hand link on a session nothing was
 		// left to close (senpi#5949 review MEDIUM). Every other session command asks the command gate.
 		const closing = {
-			agent: { toolHost: undefined },
+			agent: { toolHost: undefined, subscribe: () => () => {} },
 			isStreaming: false,
-			sessionManager: { getEntries: () => [], appendCustomEntry: () => "unused" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => [],
+				appendCustomEntry: () => "unused",
+			},
 			sessionId: "s-closing",
 		};
 		const registry = {
@@ -239,7 +243,11 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		selection.restore("durable-1", {
 			agent,
 			isStreaming: false,
-			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "unused" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => entries,
+				appendCustomEntry: () => "unused",
+			},
 		});
 
 		expect(selection.selected("durable-1")).toBe("dev-b");
@@ -289,8 +297,9 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			},
 		});
 		const session = {
-			agent: { toolHost: own as ToolHost | undefined },
+			agent: { toolHost: own as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: { getEntries: () => [], appendCustomEntry: () => "e" },
 		};
 		selection.restore("s1", session);
@@ -321,8 +330,9 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const oldHost: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
 		const newHost: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
 		const before = {
-			agent: { toolHost: oldHost as ToolHost | undefined },
+			agent: { toolHost: oldHost as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: manager,
 		};
 		selection.restore("s1", before);
@@ -330,8 +340,9 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		selection.release("s1");
 
 		const after = {
-			agent: { toolHost: newHost as ToolHost | undefined },
+			agent: { toolHost: newHost as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: manager,
 		};
 		selection.restore("s1", after);
@@ -382,7 +393,11 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			selection.restore("s1", {
 				agent,
 				isStreaming: false,
-				sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+				promptSurface: "terminal" as const,
+				sessionManager: {
+					getEntries: () => entries,
+					appendCustomEntry: () => "e",
+				},
 			}),
 		).not.toThrow();
 		const texts = await runProbe(agent.toolHost, "/");
@@ -396,8 +411,9 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const entries: SessionEntry[] = [];
 		const session = {
 			sessionId: "s-ending",
-			agent: { toolHost: undefined as ToolHost | undefined },
+			agent: { toolHost: undefined as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => entries,
 				appendCustomEntry: () => "e",
@@ -441,9 +457,13 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			},
 		];
 		const session = {
-			agent: { toolHost: undefined as ToolHost | undefined },
+			agent: { toolHost: undefined as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
-			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => entries,
+				appendCustomEntry: () => "e",
+			},
 		};
 		selection.restore("s-back", session);
 		expect(links).toBe(0);
@@ -481,9 +501,13 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		};
 		const session = {
 			sessionId: "s-gated",
-			agent: { toolHost: undefined as ToolHost | undefined },
+			agent: { toolHost: undefined as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
-			sessionManager: { getEntries: () => [] as SessionEntry[], appendCustomEntry: () => "e" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => [] as SessionEntry[],
+				appendCustomEntry: () => "e",
+			},
 			dispose: () => {},
 		};
 		const options = headlessHostOptions({
@@ -510,9 +534,13 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		const entries: SessionEntry[] = [];
 		const own: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
 		const session = {
-			agent: { toolHost: own as ToolHost | undefined },
+			agent: { toolHost: own as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: true,
-			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+			promptSurface: "terminal" as const,
+			sessionManager: {
+				getEntries: () => entries,
+				appendCustomEntry: () => "e",
+			},
 		};
 		selection.restore("s-busy", session);
 
@@ -532,8 +560,9 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		});
 		const own: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
 		const session = {
-			agent: { toolHost: own as ToolHost | undefined },
+			agent: { toolHost: own as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
+			promptSurface: "terminal" as const,
 			sessionManager: {
 				getEntries: () => [] as SessionEntry[],
 				appendCustomEntry: (_type: string, data?: unknown) => {

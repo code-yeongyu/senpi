@@ -213,6 +213,7 @@ async function cancel(
 export function registerScheduleTool(pi: ExtensionAPI, deps: SchedulePromptDeps): void {
 	pi.registerTool({
 		name: SCHEDULE_PROMPT_TOOL,
+		sessionBound: true,
 		label: "Schedule Prompt",
 		description: SCHEDULE_PROMPT_DESCRIPTION,
 		parameters: schedulePromptSchema,
