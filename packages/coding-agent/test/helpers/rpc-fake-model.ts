@@ -10,11 +10,26 @@ export interface FakeModelRequest {
 	readonly model: string | undefined;
 	readonly apiKeyHeader: string | undefined;
 	readonly text: string;
+	/** The newest text block of the request's last message. */
+	readonly latest: string;
+	/** The text of the tool results the request's last message carries. */
+	readonly latestToolResult: string;
 }
 
 export interface FakeModelServer {
 	readonly origin: string;
 	readonly requests: readonly FakeModelRequest[];
+	/**
+	 * Resolves with the first request (already received or later) that matches; rejects after `timeoutMs`, or with
+	 * `signal`'s reason once it aborts (the wait's timer and subscription end with it).
+	 */
+	waitForRequest(
+		match: (request: FakeModelRequest, index: number) => boolean,
+		timeoutMs: number,
+		signal?: AbortSignal,
+	): Promise<FakeModelRequest>;
+	/** Answers every request `holdOnLastMessage` is holding, and holds none from here on. */
+	releaseHeld(): void;
 	close(): Promise<void>;
 }
 
@@ -135,8 +150,36 @@ function writeAnthropicToolUseSse(res: ServerResponse, model: string): void {
 	res.end();
 }
 
-export async function startFakeModelServer(options: { multiDelta?: boolean } = {}): Promise<FakeModelServer> {
+function latestToolResultText(body: unknown): string {
+	const last = isRecord(body) && Array.isArray(body.messages) ? body.messages.at(-1) : undefined;
+	const content = isRecord(last) ? last.content : undefined;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((part: unknown) => (isRecord(part) && part.type === "tool_result" ? textFromContent(part.content) : ""))
+		.join("\n");
+}
+
+/** The newest text block: consecutive user messages may arrive merged into one message with several blocks. */
+function latestText(body: unknown): string {
+	const last = isRecord(body) && Array.isArray(body.messages) ? body.messages.at(-1) : undefined;
+	const content = isRecord(last) ? last.content : undefined;
+	if (!Array.isArray(content)) return textFromContent(content);
+	return content.findLast(isTextContentBlock)?.text ?? "";
+}
+
+export async function startFakeModelServer(
+	options: {
+		multiDelta?: boolean;
+		/** Never answer a request whose newest text block contains this text (the turn stays open until close). */
+		holdOnLastMessage?: string;
+		/** Never answer a request this matches (the turn stays open until close or `releaseHeld`). */
+		holdWhen?: (request: FakeModelRequest) => boolean;
+	} = {},
+): Promise<FakeModelServer> {
 	const requests: FakeModelRequest[] = [];
+	const waiters = new Set<(request: FakeModelRequest) => void>();
+	const held: Array<() => void> = [];
+	let holding = options.holdOnLastMessage !== undefined || options.holdWhen !== undefined;
 	const server = createServer((req, res) => {
 		const chunks: Buffer[] = [];
 		req.on("data", (chunk: Buffer) => {
@@ -147,13 +190,28 @@ export async function startFakeModelServer(options: { multiDelta?: boolean } = {
 			const body: unknown = raw ? JSON.parse(raw) : {};
 			const model = isRecord(body) && typeof body.model === "string" ? body.model : undefined;
 			const text = requestText(body);
-			requests.push({
+			const request: FakeModelRequest = {
 				url: req.url,
 				model,
 				apiKeyHeader: typeof req.headers["x-api-key"] === "string" ? req.headers["x-api-key"] : undefined,
 				text,
-			});
+				latest: latestText(body),
+				latestToolResult: latestToolResultText(body),
+			};
+			requests.push(request);
+			for (const waiter of waiters) waiter(request);
 			if (req.url?.includes("/messages")) {
+				if (
+					holding &&
+					((options.holdOnLastMessage !== undefined && latestText(body).includes(options.holdOnLastMessage)) ||
+						options.holdWhen?.(request) === true)
+				) {
+					held.push(() => {
+						if (!res.destroyed)
+							writeAnthropicSse(res, responseTextFor(body), model ?? MOCK_MODEL, options.multiDelta);
+					});
+					return;
+				}
 				// Deterministic slow lane: prompts containing "hold-open-<ms>" keep the
 				// response (and therefore the session's streaming state) open for <ms>.
 				const holdOpenMs = /hold-open-(\d+)/.exec(requestText(body))?.[1];
@@ -182,6 +240,34 @@ export async function startFakeModelServer(options: { multiDelta?: boolean } = {
 	return {
 		origin: `http://127.0.0.1:${port}`,
 		requests,
+		waitForRequest: (match, timeoutMs, signal) => {
+			const seen = requests.find((request, index) => match(request, index));
+			if (seen !== undefined) return Promise.resolve(seen);
+			if (signal?.aborted) return Promise.reject(signal.reason);
+			return new Promise((resolve, reject) => {
+				const settle = (outcome: { request: FakeModelRequest } | { error: unknown }): void => {
+					clearTimeout(timer);
+					waiters.delete(waiter);
+					signal?.removeEventListener("abort", onAbort);
+					if ("error" in outcome) reject(outcome.error);
+					else resolve(outcome.request);
+				};
+				const timer = setTimeout(
+					() => settle({ error: new Error(`no model request matched within ${timeoutMs} ms`) }),
+					timeoutMs,
+				);
+				const onAbort = (): void => settle({ error: signal?.reason });
+				const waiter = (request: FakeModelRequest): void => {
+					if (match(request, requests.indexOf(request))) settle({ request });
+				};
+				waiters.add(waiter);
+				signal?.addEventListener("abort", onAbort, { once: true });
+			});
+		},
+		releaseHeld: () => {
+			holding = false;
+			for (const answer of held.splice(0)) answer();
+		},
 		close: () =>
 			new Promise<void>((resolveClose, rejectClose) => {
 				// `server.close()` waits for every open connection to end. The slow lane

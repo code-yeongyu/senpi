@@ -65,7 +65,10 @@ export function next(socket: Socket, type: string, signal: AbortSignal): Promise
 	});
 }
 
-/** A refused channel may reset with unread records; require close after either reset or EOF. */
+/**
+ * A refused channel may reset with unread records; require close after either reset or EOF. A write that races the
+ * host's close reports the same close as EPIPE instead of ECONNRESET (#6161), so both count as the host closing it.
+ */
 export function hostCloses(socket: Socket, what: string, signal: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const finish = (error?: Error) => {
@@ -77,7 +80,7 @@ export function hostCloses(socket: Socket, what: string, signal: AbortSignal): P
 		};
 		const closed = () => finish();
 		const failed = (cause: NodeJS.ErrnoException) => {
-			if (cause.code !== "ECONNRESET")
+			if (cause.code !== "ECONNRESET" && cause.code !== "EPIPE")
 				finish(new Error(`${what} failed before the host closed it: ${cause.message}`));
 		};
 		const unwatch = stillWaiting(

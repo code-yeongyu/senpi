@@ -42,6 +42,11 @@ type RpcCommandBody =
 			 */
 			expectedHostInstance?: string;
 			sessionPath?: string;
+			/**
+			 * The folder the session works in. Omitted, a `sessionPath` at which a session file exists opens where that
+			 * file's header says (capability `open_session_header_cwd`); a header folder that is not on this host refuses
+			 * the open. Any other open without it works in the host's own folder.
+			 */
 			cwd?: string;
 			provider?: string;
 			modelId?: string;
@@ -164,6 +169,22 @@ type RpcCommandBody =
 			clearQueue?: boolean;
 			children?: "refuse" | "detach";
 			force?: boolean;
+			/**
+			 * `"refuse"` (senpi#7004): a busy session holding admitted deliveries not yet written is refused
+			 * `work_pending` with their ids in `pending.deliveries`, with or without `interrupt`, and nothing is
+			 * interrupted. An idle session's are handed back either way. Absent: an interrupt hands them back
+			 * (`dropped.deliveries`). Capability `unload_refuse_deliveries`.
+			 */
+			deliveries?: "refuse";
+			/**
+			 * oh-my-openagent#14313: close without interrupting. New deliveries are refused `session_closing` at once,
+			 * queued input is handed back (`dropped`), the running turn ends on its own within `waitMs` (default 60 s,
+			 * at most 600 s), and monitors, loops and the goal stop cleanly instead of coming back on a reopen. A drain
+			 * that outlives `waitMs` is refused `turn_active` with `timed_out` and leaves the session open. Capability
+			 * `unload_graceful`; a terminal's control endpoint takes it too, and its terminal then exits.
+			 */
+			graceful?: boolean;
+			waitMs?: number;
 	  }
 	| {
 			id?: string;
@@ -182,6 +203,16 @@ type RpcCommandBody =
 	  }
 	| {
 			id?: string;
+			/**
+			 * Which session FILE of this host carries `durableSessionId`, for a client whose session is closed and
+			 * unlisted so its routing key names nothing (senpi#6429). A read: it opens, claims and changes nothing.
+			 * Capability `find_session`.
+			 */
+			type: "find_session";
+			durableSessionId: string;
+	  }
+	| {
+			id?: string;
 			type: "list_sessions";
 			/**
 			 * Include `kind: "worker"` rows, each with its `context` (default false). A
@@ -190,6 +221,20 @@ type RpcCommandBody =
 			include_workers?: boolean;
 			/** An observing read, as on `get_protocol_info`. */
 			observe?: boolean;
+	  }
+	| {
+			id?: string;
+			/** The hands a headless engine can run a session's tools on (R4); capability `hand_selection`. */
+			type: "list_hands";
+			/** Also answer this session's recorded hand as `selected` (`null` = local). */
+			sessionId?: string;
+	  }
+	| {
+			id?: string;
+			/** Records which hand runs this session's tools; `null` returns them to this process (R4). */
+			type: "select_hand";
+			sessionId: string;
+			device: string | null;
 	  }
 	| {
 			id?: string;
@@ -248,7 +293,22 @@ type RpcCommandBody =
 	  };
 
 /** Compact callers may identify their own admission on any correlated session request. */
-export type RpcCommand = RpcCommandBody & { readonly admissionId?: string };
+export type RpcCommand = (
+	| RpcCommandBody
+	| {
+			id?: string;
+			/** Build one invisible session for later claim; never an attachment. Requires `park_claim`. */
+			type: "park_session";
+			cwd: string;
+			kind?: SessionKind;
+			context?: Record<string, string>;
+	  }
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
+			type: "claim_session";
+			cwd: string;
+	  })
+) & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
 export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;

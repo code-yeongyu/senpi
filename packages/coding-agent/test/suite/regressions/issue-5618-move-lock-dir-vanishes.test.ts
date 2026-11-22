@@ -127,14 +127,14 @@ describe("issue #5618 move-lock directory removed by a finishing mover", () => {
 		expect(fsHooks.asyncMkdirs).toBe(2);
 	});
 
-	it("a holder whose record-directory mkdir loses that race still publishes its record", () => {
+	it("a holder whose record-directory mkdir loses that race still publishes its record", async () => {
 		const { source } = session();
 		fsHooks.onSyncMkdir = () => {
 			mkdirSync(fsHooks.dir, { recursive: true });
 			rmdirSync(fsHooks.dir);
 		};
 
-		const hold = holdSessionFile(source, SESSION_ID, { expectExisting: true });
+		const hold = await holdSessionFile(source, SESSION_ID, { expectExisting: true });
 		expect(existsSync(join(fsHooks.dir, `${process.pid}.json`))).toBe(true);
 		hold.release();
 		expect(existsSync(fsHooks.dir)).toBe(false);

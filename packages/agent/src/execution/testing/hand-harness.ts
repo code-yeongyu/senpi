@@ -56,16 +56,28 @@ export interface HandRig {
 
 const TICK_MS = 5;
 const LEASE_MS = 3_600_000;
-// One event-loop turn first: a store may confirm a write only after I/O (a Durable Object commit awaits
-// `storage.sync()`), and microtasks alone never let that write land between two clock steps. `setImmediate`
-// keeps the step cheap where the host has it; `setTimeout(0)` is the turn everywhere else.
+// A store may confirm a write only after I/O (a Durable Object commit awaits `storage.sync()`; the async-store
+// conformance run takes three `setTimeout(0)` hops per write), and microtasks alone never let that write land
+// between two clock steps. One event-loop turn per step is not enough either: a write that needs several hops
+// lands one hop per 5 ms tick while a fault profile's own timers keep re-arming ahead of it, and `settle` burns
+// its whole transport budget (senpi#6114). A step therefore takes a fixed number of event-loop turns. The count
+// is measured, not derived (an immediate turn and a timer hop are not one-to-one): on the FAULT-HAND cases over
+// the async store, 2 turns per step still fails, 4 passes every run, and 8 is 4 with the same margin again.
+// `setImmediate` is the turn: each one runs after the loop's timers and I/O phases, so a pending `setTimeout(0)`
+// hop lands between two of them, and it costs microseconds where `setTimeout(0)` costs its 1 ms clamp, which over
+// the 120,000 ticks of a 600 s transport budget is the difference between a 0.3 s and a 150 s case. Where the
+// host has no `setImmediate`, each turn is a timer turn. An adapter whose write takes more hops than this must
+// raise the count here; the rig cannot observe a quiet loop from inside it.
+const IO_TURNS_PER_STEP = 8;
 const ioTurn = (): Promise<void> =>
 	new Promise<void>((resolve) =>
 		typeof setImmediate === "function" ? void setImmediate(resolve) : void setTimeout(resolve, 0),
 	);
 const drain = async (): Promise<void> => {
-	await ioTurn();
-	for (let turn = 0; turn < 32; turn++) await Promise.resolve();
+	for (let io = 0; io < IO_TURNS_PER_STEP; io++) {
+		await ioTurn();
+		for (let turn = 0; turn < 32; turn++) await Promise.resolve();
+	}
 };
 
 export function call(id: string): AgentToolCall {

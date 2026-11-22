@@ -89,7 +89,26 @@ export {
 	shouldTerminateToolBatch,
 } from "./execution/tool-outcome-events.ts";
 export { createAdmissionLine } from "./durable/store-admission.ts";
-export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
+export type {
+	SessionHandle,
+	SessionHeader,
+	StoredEntry,
+	StoredSession,
+	SyncSessionHandle,
+} from "./durable/session-store.ts";
+export {
+	appendRecordWrites,
+	divergenceWrite,
+	manifestWrite,
+	openSessionStore,
+	openSyncSessionStore,
+	readSessionState,
+	rewriteRecordWrite,
+	SessionStoreError,
+	type SessionState,
+} from "./durable/session-store.ts";
+export type { SyncCommit, SyncCommitStore } from "./durable/store.ts";
+export { createMemoryStoreMedium, type MemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
 export { createBatchCoordinator } from "./execution/coordinator.ts";
 export type { BatchExecutor, BatchPlan } from "./execution/coordinator-types.ts";
 export { createExecutionLedger } from "./execution/ledger.ts";
@@ -133,6 +152,8 @@ export {
 	encodeBase64,
 	FILE_CHANNEL,
 	FILE_CHANNEL_MAX_BYTES,
+	isLocalDeviceFiles,
+	LOCAL_DEVICE_FILES,
 	RUN_CHANNEL,
 	fileOutcomeOf,
 } from "./execution/device-files.ts";
@@ -185,6 +206,56 @@ export {
 	type LoopHookRunner,
 	serveLoopHooks,
 } from "./execution/loop-hook-host-hand.ts";
+export {
+	type BrainWakeLink,
+	type BrainWakeLinkOptions,
+	createHandWakeLink,
+	decodeWakeLinkMessage,
+	encodeWakeLinkMessage,
+	HAND_WAKE_LANE,
+	type HandWakeLink,
+	type HandWakeLinkOptions,
+	serveHandWakes,
+	type WakeDrop,
+	type WakeLinkMessage,
+	WakeRefusedError,
+} from "./execution/wake-link.ts";
+export {
+	deliverHandDrop,
+	deliverHandWake,
+	type HandWakeDelivery,
+	type HandWakeMessage,
+	type HandWakeMessageOptions,
+	type HandWakeNoticeType,
+	type HandWakeOutcome,
+	type HandWakeSession,
+	type HandWakeUserMessageOptions,
+	MalformedHandWakeError,
+	ONE_SHOT_MODES,
+	parseHandWake,
+	scopeSessionCheck,
+} from "./execution/wake-delivery.ts";
+export {
+	createWakeInbox,
+	type WakeDeliveryFailure,
+	type WakeInbox,
+	type WakeInboxOptions,
+} from "./execution/wake-inbox.ts";
+export {
+	createWakeOutbox,
+	MalformedWakeError,
+	type WakeOutbox,
+	type WakeOutboxOptions,
+} from "./execution/wake-outbox.ts";
+export {
+	WAKE_DROPPED_SOURCE,
+	WAKE_RETENTION_MS,
+	type WakeDropReason,
+	type WakeEvent,
+	type WakeLimits,
+	type WakeReceipt,
+	type WakeRefusal,
+} from "./execution/wake-types.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { canonicalJson } from "./execution/canonical-digest.ts";
 export { toStoreValue } from "./execution/prepared/executor-freeze.ts";

@@ -1,6 +1,1072 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#7201": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/js-cell-parse-message.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/js-cell-parse-message.ts",
+				"legacyContracts/test/eval-js-parse-diagnostic.test.ts/locates malformed shell interpolation in the submitted JS cell without running it"
+			],
+			"reason": "senpi#7201 (8cd001c88b, merged as e1c67a3fef): a JS cell that fails to parse now reports the location in the submitted cell. The new module tool/js-cell-parse-message.ts enters the extension and first-kernel import scopes through tool/run-eval-cell.ts; its only import is @babel/parser, which both scopes already load, so no host runtime module enters either scope. The contract row is the new test that pins the diagnostic for malformed shell interpolation without running the cell. Main's codemode-gate went red on these as unreviewed additions after the merge (#7205); no existing cell changed.",
+			"changes": []
+		},
+		"senpi#6978": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/session-spawn-attestation.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/session-spawn-attestation.ts",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/eval kernel spawn attestation (#6972) a Bun.$ command in a process kernel resolves to the calling session, even with a forged PI_SESSION_ID",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/eval kernel spawn attestation (#6972) a child a worker kernel reports is attested to its session until it exits",
+				"legacyContracts/test/6972-kernel-spawn-attestation.test.ts/python kernel spawn attestation (#6972) a subprocess of the python kernel resolves to the calling session"
+			],
+			"reason": "senpi#6978 (e420af9aca, fixes #6972): kernels attest the processes they spawn to the calling session. The new kernel module kernels/shared/session-spawn-attestation.ts enters the extension and first-kernel import scopes; after the follow-up fix it carries only a type import of the host and a helper that calls the attester the extension injects, so no host runtime module enters either scope. The three contract rows are the new tests that pin the attestation from a Bun.$ command, a worker-reported child and a python subprocess. Main's codemode-gate went red on these as unreviewed additions after the merge; no existing cell changed.",
+			"changes": []
+		},
+		"senpi#6903": {
+			"additions": [
+				"legacyContracts/test/call-capture-details.test.ts/nested call details keeps a JSON copy of a tool result's details on the enriched summary",
+				"legacyContracts/test/call-capture-details.test.ts/nested call details drops details that are too large or not JSON",
+				"legacyContracts/test/eval-tool-call-capture.test.ts/nested call details are kept only for rows drawn by the tool read keeps details: false",
+				"legacyContracts/test/eval-tool-call-capture.test.ts/nested call details are kept only for rows drawn by the tool thread_list keeps details: true",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers draws the call with the tool's renderCall and the result with its renderResult",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers keeps the raw preview under the tool's call line when no details were captured",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers keeps a renderer's state across renders of one nested call, so its prefetch runs once",
+				"legacyContracts/test/tool-widgets.test.ts/nested calls of registered tools that bring their own renderers falls back to the generic row when the tool's renderer throws"
+			],
+			"reason": "senpi#6903 (d260c98fe0, 51e0f8dff7): a nested tool call of a registered tool that brings its own renderCall/renderResult is drawn by those renderers (raw preview kept when no details were captured, renderer state kept per nested call so a prefetch runs once, generic row when the renderer throws), and the capture keeps a bounded JSON copy of result.details only for tools whose rows the tool itself draws. Main's codemode-gate went red on these as unreviewed additions after the merge.",
+			"changes": []
+		},
+		"senpi#6906": {
+			"additions": [
+				"legacyContracts/test/eval-tool-call-capture.test.ts/eval tool-call capture capture: records a result-level isError: true as a failure and hands the kernel hasError"
+			],
+			"reason": "senpi#6906 (1e6a51d7d2, fixes #6904): a nested tool result with isError: true is recorded as a failed call (ok: false) and the kernel gets hasError. Main's codemode-gate went red on this as an unreviewed addition after the merge.",
+			"changes": []
+		},
+		"senpi#6887": {
+			"additions": [
+				"legacyContracts/test/eval-only-tools-prompt.test.ts/eval description names the session's eval-only tools lists every eval-only tool the session routes through eval",
+				"legacyContracts/test/eval-only-tools-prompt.test.ts/eval description names the session's eval-only tools adds no eval-only line when the session withholds nothing",
+				"legacyContracts/test/eval-only-tools-prompt.test.ts/eval description names the session's eval-only tools reads the eval-only set from the session's tool registry",
+				"legacyContracts/test/eval-only-tools-prompt.test.ts/tool_schema() documentation documents the key the no-argument call actually returns",
+				"legacyContracts/test/eval-prelude-contribution.test.ts/kernel prelude contribution in the eval prompt re-registers eval at the next turn when the eval-only tool set changes"
+			],
+			"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64.",
+			"changes": [
+				{
+					"key": "prompts/default/false/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/false/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/default/true/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/false/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/claude/true/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/false/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/codex/true/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/node",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/node/host",
+					"reason": "senpi#6887 (Fixes #6886): the eval description lists the session's eval-only tools (absent from the direct tool list, reachable only through eval) under the tool() helper, and tool_schema() documents what it returns: { name, description, parameters } of a tool, or { tools: [every tool name] } with no argument. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged. Recorded after the merge by senpi#6891, from the main CI measurement on linux x64."
+				}
+			]
+		},
+		"senpi#6854": {
+			"additions": [
+				"legacyContracts/test/js-kernel-shell-capture.test.ts/JS kernel shell output capture Given a session environment and no active cell when Bun.spawn runs without env then the worker view is still pinned"
+			],
+			"reason": "senpi#6854: main's codemode-gate is red on this one unreviewed addition, the contract title senpi#6828 (87b48698f6, credential injection proxy: Bun.spawn without env keeps the pinned worker view when no cell is active) added to test/js-kernel-shell-capture.test.ts without a baseline or allowlist entry. The baseline gains exactly this cell as passed, the value a clean Linux re-record of main writes; no prompt cell, schema or import moves.",
+			"changes": []
+		},
+		"senpi#6809": {
+			"additions": [
+				"legacyContracts/test/eval-notifier.test.ts/EvalNotifier on a hand, sends without a session context: the loop that receives the notice applies the session guards"
+			],
+			"reason": "senpi#6809: main's codemode-gate is red on this one unreviewed addition, the contract title senpi#6763 (407200e7f2, eval notifiers notify on a hand; the receiving loop applies the session guards) added to test/eval-notifier.test.ts without an allowlist entry. Read from main's own hosted gate log at 31686a24bd (the only unreviewed key it names); no prompt cell, schema or import moves and the baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#6406": {
+			"additions": [
+				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given nested calls of different heights sliding through the collapsed window, the running block never shrinks",
+				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given a completed cell, the block returns to its natural height",
+				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given the row is collapsed again after expanding, the floor from the expanded view does not stay",
+				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given a streaming call that is collapsed again after expanding, its row drops back to the collapsed height"
+			],
+			"reason": "senpi#6406 (Fixes #6390): a running eval row keeps a height floor so nested calls sliding through the collapsed window cannot shrink it. These are the three contract titles of the new test/eval-render-nested-height.test.ts; no prompt cell or import graph moves and the baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#6377": {
+			"additions": [
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.SplitResult",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.SplitResult.path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.unquote_plus",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect %00 in a mode key",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect %00 in the path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect memory and ro modes",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect %00 in a mode key",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect %00 in the path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect memory and ro modes",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect %00 in a mode key",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect %00 in the path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect memory and ro modes"
+			],
+			"reason": "senpi#6377 (Fixes #6376): the sqlite permission guard parses SQLite URIs itself (sqlite_uri.py) instead of reading urllib.parse helpers a cell can rebind. These are new contract cases in test/py-kernel-permissions.test.ts: three private-dependency rows (SplitResult, SplitResult.path, unquote_plus), and three short-named sqlite3.connect rows (a %00 inside a mode key, a %00 inside the path, memory plus ro modes) across the denied/allowed/inactive policies. No prompt cell moves and the baseline is unchanged."
+		},
+		"senpi#6334": {
+			"additions": [
+				"legacyContracts/test/js-kernel-host-registry-slot.test.ts/JavaScript kernel realm Given the host realm holds the redaction registry slot when a cell looks for it then the cell cannot see it"
+			],
+			"reason": "senpi#6334 (omo#12965 stopgap): the JavaScript kernel realm contract in test/js-kernel-host-registry-slot.test.ts pins that a cell cannot see the host realm's redaction registry slot. It is a new contract case and the only measured key this PR adds; no prompt cell moves and the baseline is unchanged."
+		},
+		"senpi#6259": {
+			"additions": [
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that settles many nested tool calls without printing (#6257 review) When each call settles, then the live view holds only the newest settled call's output"
+			],
+			"reason": "senpi#6257/#6259 review (MEDIUM): a settled nested call's text is held until the cell replaces it, and only the newest one is held, so a cell that settles many calls without printing cannot accumulate their output. This contract pins that bound. No prompt cell moves."
+		},
 		"senpi#5066": {
 			"additions": [
 				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) bounds a held decision when the host claims before-wait (#4709)",
@@ -6014,6 +7080,137 @@
 					"reason": "senpi#5998 (Fixes #5995): the eval description now says what the code does: the call detaches at the schema's detach point (30s by default), not at the foreground window; at the background-cell cap a cell that cannot detach is cancelled; parallel() runs at the fixed parallelPoolWidth (default 4), not the host core count. Only description, bytes and tokens move; promptSnippet, promptGuidelines and schemas are unchanged."
 				}
 			]
+		},
+		"senpi#6095": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/js/runtime-name.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/runtime-name.ts",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given no isolation setting when the host runs on a bun executable on macOS then the default isolation is { executable: 'bun', …(1) }",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given no isolation setting when the host runs on a bun executable on Linux then the default isolation is { executable: 'bun', platform: 'linux' }",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given no isolation setting when the host runs on a bun executable on Windows then the default isolation is { executable: 'bun', platform: 'win32' }",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given no isolation setting when the host runs on a node executable then the default isolation is { executable: 'node', …(1) }",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given no isolation setting when the host runs on a compiled binary then the default isolation is { executable: undefined, …(1) }",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given an explicit isolation setting when the host default differs then the setting wins on every host",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given the host executable /home/tester/.bun/bin/bun on linux when the isolation host is read then its executable is bun",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given the host executable /c/Users/tester/.bun/bin/bun.exe on win32 when the isolation host is read then its executable is bun",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given the host executable /usr/local/bin/node on darwin when the isolation host is read then its executable is node",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given the host executable /Applications/OmO.app/Contents/Resources/omo-runtime/darwin-arm64/omo on darwin when the isolation host is read then its executable is undefined",
+				"legacyContracts/test/feature-settings.test.ts/codemode feature settings Given the running test host when the isolation host is read then it names this process's own runtime and platform",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation Given a bun host with no isolation setting, when its kernel child dies of SIGBUS, then the host survives and the next cell says the kernel restarted"
+			],
+			"reason": "senpi#6095 (Fixes #6094): the JavaScript kernel defaults to process isolation when the host's executable is bun (Bun 1.4.4 Worker threads corrupt the JSC heap and kill the session with SIGBUS/SIGTRAP; upstream oven-sh/bun#41857, #43663 open). Reviewed additions only: ten new contract titles (feature-settings.test.ts: the host-dependent default table, explicit-setting precedence, currentJsIsolationHost on bun/.exe/node/compiled paths and the running host; js-process-kernel.test.ts: a bun host with no setting survives a SIGBUS of its kernel child) and the new module packages/senpi-codemode/src/kernels/js/runtime-name.ts (runtimeNameOf moved out of process-worker.ts so feature-settings.ts does not import the kernel graph) in the extension and firstKernel import maps. No prompt cell, schema, helper census or invariant moves; the frozen baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#6131": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/power-throttling-startup.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/power-throttling.js",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut loads nothing off Windows or with SENPI_KEEP_POWER_THROTTLING=1",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut opts the kernel process and every child of both launchers out with ControlMask=EXECUTION_SPEED, StateMask=0",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut never turns a launch into an exception when kernel32 throws"
+			],
+			"reason": "senpi#6131 (Fixes #6125): the JavaScript kernel entries (worker-entry.js, inline-worker-entry.js, process-entry.js) import power-throttling-startup.js first, which opts the kernel realm's children out of Windows EcoQoS throttling. Reviewed additions only: the two new modules in the firstKernel import graph (off Windows they import nothing and patch nothing) and the three contract titles of test/power-throttling.test.ts.",
+			"changes": []
+		},
+		"senpi#6181": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/cell-tool-updates.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/bridge-cell-binding.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/nested-tool-call.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/nested-tool-output.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/cell-tool-updates.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/bridge-cell-binding.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/nested-tool-call.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/nested-tool-output.ts",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the jl cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the js cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the py cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the rb cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged"
+			],
+			"reason": "senpi#6181 (follow-up to #6168): #6168 streamed nested tool partial results into the eval cell's live update and added four modules (src/extension/cell-tool-updates.ts, src/tool/bridge-cell-binding.ts, src/tool/nested-tool-call.ts, src/tool/nested-tool-output.ts, measured in the extension and firstKernel import graphs) plus the js/py/rb/jl contract titles of test/eval-nested-tool-updates.test.ts, without an allowlist node, so codemode-gate failed on main. Reviewed additions only; no prompt cell, schema or existing measurement moves.",
+			"changes": []
+		},
+		"senpi#6315": {
+			"additions": [
+				"legacyContracts/test/bun-skill-contribution.test.ts/bun skill assets qualifies process.execPath as a Bun launcher: standalone Bun only, PATH shim in a compiled host (omo#12569)"
+			],
+			"reason": "senpi#6315 (catch-up for #6232): #6232 added the bun-skill-contribution contract case ('bun skill assets qualifies process.execPath as a Bun launcher', omo#12569) without listing it here, so codemode-gate reported it as an unreviewed addition on every PR based on main at or after bb2a3ca52b. This lists that one reviewed case; the baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#6276": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/reachable-tools.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/reachable-tools.ts",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension factory keeps agent()/output() in the description when the task tool is eval-exposed and withheld from the model",
+				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell counts a registered eval-exposed tool the session withholds from the model",
+				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell reports an eval-exposed task tool available to agent()/output()",
+				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell falls back to the active list when the registry cannot be read yet",
+				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell keeps the kernel prelude of an eval-exposed tool while it is withheld"
+			],
+			"reason": "senpi#6276 (catch-up): #6276 kept eval-exposed tools reachable for agent(), output() and the kernel preludes, adding src/extension/reachable-tools.ts (loaded by the extension and the first kernel) and five contract cases (test/extension.test.ts, test/reachable-tools.test.ts) without listing them here, so codemode-gate failed on main from 749ae14d9b. This lists those 7 reviewed additions; the baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#6391": {
+			"additions": [
+				"legacyContracts/test/6391-show-html-page-top-level-only.test.ts/senpi#6391: show_html_page from an eval cell is refused before it runs, with an error that tells the model to call it directly",
+				"legacyContracts/test/6391-show-html-page-top-level-only.test.ts/senpi#6391: show_html_page from an eval cell leaves other tools callable from a cell"
+			],
+			"reason": "senpi#6391 (catch-up for #6393): #6393 made eval refuse show_html_page from a cell (the desktop never renders a page shown from inside eval) and added two contract cases in test/6391-show-html-page-top-level-only.test.ts without listing them here, so codemode-gate failed on main from c330760b63. This lists those 2 reviewed additions; the baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#6422": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/cell-authority-registry.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/cell-authority-registry.ts",
+				"imports/extension/packages/realm-registry/src/index.ts",
+				"imports/firstKernel/packages/realm-registry/src/index.ts",
+				"legacyContracts/test/js-kernel-host-registry-slot.test.ts/JavaScript kernel realm Given the host realm holds every engine registry when a cell looks for them then the cell sees none",
+				"legacyContracts/test/kernel-graph-source-resolution-bun.test.ts/the kernel graph under Bun in a tree that is installed but not built (omo#12965) resolves the realm-registry helper to its source",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-no-functions)",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-pending-not-a-promise)",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-dead-not-a-boolean)",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it can read as that handle reports it",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) refuses a cross-session kernel tool when the invoker's snapshots cannot be read",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) still serves the owner's own session without reading another session's state",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses a cross-session kernel tool whose invoker registered its deny rules through another copy",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) admits a cross-session kernel tool whose invoker another copy registered without deny rules",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) revokes and retires a session's kernels that another copy registered",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses a cross-session kernel tool when the invoker's registered state cannot be read, with no hook",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses a cross-session kernel tool when the invoker's registered state cannot be read, when the hook answers",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses to register a kernel it could not revoke",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses to register a kernel it could not retire",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) revokes and retires every kernel of a session when one of them throws in revoke, and leaves the session dead",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) revokes and retires every kernel of a session when one of them throws in retire, and leaves the session dead",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) shows a session another copy marked dead to a kernel that binds to it",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) takes the hook's answer over a registered kernel that enforces",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) leaves the answer to the registered kernels when the hook returns null",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) leaves the answer to the registered kernels when the hook returns undefined",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) lets an enforcing kernel win over one registered before it that does not enforce",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) keeps a session's newer registration when an older release closure is called again",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) keeps the id the dispatcher stamped when the hook's answer carries a session id",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) takes the first registered kernel when none enforces"
+			],
+			"reason": "senpi#6422 (omo#12965): the cross-session cell authority of every codemode copy in a realm lives in one realm registry. src/kernels/shared/cell-authority-registry.ts joins the extension and first-kernel import scopes (invocation-authority.ts and permission-sessions.ts import it), together with the source entry of the helper package it imports (packages/realm-registry/src/index.ts: this package's tsconfig maps the helper to its source, as it maps the engine, so Bun resolves it without a build), and the new contracts pin the two-copy cases, the payload rules for a registry another version created, the answer rule for a cross-session invoker, and that a cell sees no engine registry key. No prompt, schema, helper or invariant cell moves; the baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#7037": {
+			"additions": [
+				"legacyContracts/test/js-kernel-shell-class-pin.test.ts/issue #7034 the worker env pin covers Bun.$.Shell instances a new Bun.$.Shell() instance starts from the pinned view",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the worker-thread delta names exactly the dropped names and the origin it sets",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the Python interpreter spawns without the hand-off and with the origin and session values",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off the process-isolated JS kernel child spawns without the hand-off",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off a worker JS kernel's cells and their children see no hand-off while the host keeps it",
+				"legacyContracts/test/kernel-host-handoff-env.test.ts/issue #5635 kernel environments never carry the host's supervisor hand-off a inline JS kernel's cells and their children see no hand-off while the host keeps it"
+			],
+			"reason": "senpi#7037 (fixes #7034; re-lands #5653's reviewed core): contract tests that eval kernels and their children never inherit the RPC host's identity or launch-default client capabilities - the inline and worker JS kernels, the process-isolated JS child and the Python interpreter spawn without them while the host keeps them, the worker-thread delta names exactly the dropped names and the origin it sets, and a new Bun.$.Shell() in a pinning worker starts from the worker view. No prompt cell moves.",
+			"changes": []
+		},
+		"senpi#7032": {
+			"additions": [
+				"legacyContracts/test/eval-only-tools-prompt.test.ts/eval description names the session's eval-only tools names the eval-only tools within Claude Code's MCP description cap even when the description is longer"
+			],
+			"reason": "senpi#7032 (oh-my-openagent#14291): contract test that the eval description names the session's eval-only tools within Claude Code's 4096-char MCP description cap even when the rest of the description is longer, by putting that line right after the first sentence. It passed in main's CI measurement. No prompt cell moves (240/240 match the baseline).",
+			"changes": []
 		}
 	}
 }

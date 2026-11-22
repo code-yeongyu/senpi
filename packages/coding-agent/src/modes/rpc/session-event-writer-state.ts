@@ -2,6 +2,7 @@ import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { McpPresenterAuthority, McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
+import type { DelegationDescriptor } from "./delegation-record.ts";
 import type { ConnectionLocality } from "./raiser-notices.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import { SecretInputPresentations } from "./secret-input-presentations.ts";
@@ -34,7 +35,10 @@ export abstract class SessionEventWriterState {
 	protected readonly records = new SessionRecordAccounting();
 	protected readonly queues = new Map<string, RecordQueue>();
 	protected readonly fanout = new SessionEventFanout();
-	readonly connectionContext = new SessionConnectionContext((id) => this.fanout.get(id)?.owner);
+	readonly connectionContext = new SessionConnectionContext(
+		(id) => this.fanout.get(id)?.owner,
+		(id) => this.delegationDescriptorOf(id),
+	);
 	/** Set by the host wiring: the remote device a connection declared it speaks for (`set_client_info.remoteOrigin`). */
 	originOf?: (connection: string) => RpcRemoteOrigin | undefined;
 	protected readonly locality: ConnectionLocality = {
@@ -131,6 +135,9 @@ export abstract class SessionEventWriterState {
 
 	/** Delegated (senpi#5632) or declared remote: never a background route for a secret or grant select (D11 S3-5). */
 	protected abstract isRemoteConnection(connection: string): boolean;
+
+	/** The delegation a line of connection `id` captures at its start (omo-relay-daemon#307). */
+	protected abstract delegationDescriptorOf(id: string): DelegationDescriptor | undefined;
 
 	protected abstract requestFlush(): void;
 }

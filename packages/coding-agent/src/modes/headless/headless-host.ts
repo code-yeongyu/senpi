@@ -12,6 +12,12 @@ import type {
 import type { MultiSessionHostOptions } from "../rpc/multi-session-host.ts";
 import { resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
 import type { HeadlessPresence } from "./presence.ts";
+import {
+	createHandSelection,
+	type HandDirectory,
+	type HandSelection,
+	type HandSelectionOptions,
+} from "./hand-selection.ts";
 import { gatePresence } from "./presence-gates.ts";
 
 /** The headless engine's socket under `<agentDir>/rpc/`, apart from the shared host's `rpc.sock`. */
@@ -24,8 +30,13 @@ export interface HeadlessPresenceBinding {
 	readonly handsOf: (runtime: CreateAgentSessionRuntimeResult) => readonly string[];
 }
 
-export type HeadlessHostOptions = Omit<MultiSessionHostOptions, "sessionOwner" | "sessionPresence"> & {
+export type HeadlessHostOptions = Omit<
+	MultiSessionHostOptions,
+	"sessionOwner" | "sessionPresence" | "handSelection"
+> & {
 	readonly presence?: HeadlessPresenceBinding;
+	/** Off unless set: the hands a session's tools can run on (R4); each session's choice is recorded in its file. */
+	readonly hands?: HandDirectory;
 };
 
 export function headlessSocketPath(agentDir: string, platform: NodeJS.Platform = process.platform): string {
@@ -42,15 +53,77 @@ export function headlessEndpoint(
 }
 
 export function headlessHostOptions(options: HeadlessHostOptions): MultiSessionHostOptions {
-	const { presence, ...host } = options;
+	const { presence, hands, ...host } = options;
+	const runtimes = new Map<string, CreateAgentSessionRuntimeResult>();
+	const handSelection =
+		hands === undefined
+			? undefined
+			: createHandSelection(hands, presence === undefined ? {} : presenceHooks(presence, runtimes));
+	// Presence gates the session first; the hand selection then installs every host through the same gate, so a
+	// chosen hand's calls wait for presence and `null` gives back the gated host the session started with.
+	const gated = presence === undefined ? host.createRuntime : presenceRuntime(host.createRuntime, presence);
 	return {
 		...host,
 		sessionOwner: "machine",
 		listen: options.listen ?? `unix://${headlessSocketPath(options.agentDir)}`,
-		...(presence === undefined
-			? {}
-			: { sessionPresence: presence.presence, createRuntime: presenceRuntime(options.createRuntime, presence) }),
+		createRuntime: handSelection === undefined ? gated : handRuntime(gated, handSelection, runtimes),
+		...(presence === undefined ? {} : { sessionPresence: presence.presence }),
+		...(handSelection === undefined ? {} : { handSelection }),
 	};
+}
+
+/** The presence gate for a host the hand selection installs, and the hands presence tracks after each choice. */
+function presenceHooks(
+	binding: HeadlessPresenceBinding,
+	runtimes: ReadonlyMap<string, CreateAgentSessionRuntimeResult>,
+): HandSelectionOptions {
+	// The presence update for each session's latest choice: a tool batch waits for it before asking presence, so it
+	// is gated on the hand it will run on, and a failed update fails that batch instead of going unhandled.
+	const tracking = new Map<string, Promise<void>>();
+	return {
+		gate: (sessionId, host) => ({
+			execute: async (call, options) => {
+				await tracking.get(sessionId);
+				await binding.presence.ready(sessionId, "tools", options.signal);
+				return host.execute(call, options);
+			},
+		}),
+		onChange: (sessionId, device) => {
+			const runtime = runtimes.get(sessionId);
+			const sessionHands = device !== null ? [device] : runtime === undefined ? [] : binding.handsOf(runtime);
+			const update = binding.presence.track(sessionId, sessionHands);
+			update.catch(() => {});
+			tracking.set(sessionId, update);
+		},
+		onRelease: (sessionId) => {
+			tracking.delete(sessionId);
+		},
+	};
+}
+
+function handRuntime(
+	createRuntime: CreateAgentSessionRuntimeFactory,
+	selection: HandSelection,
+	runtimes: Map<string, CreateAgentSessionRuntimeResult>,
+): CreateAgentSessionRuntimeFactory {
+	const restored: CreateAgentSessionRuntimeFactory = async (input) => {
+		const runtime = await createRuntime(input);
+		const { session } = runtime;
+		const sessionId = session.sessionId;
+		runtimes.set(sessionId, runtime);
+		selection.restore(sessionId, session);
+		// A session that ends releases its link to the hand; a later runtime of the same id starts clean.
+		const dispose = session.dispose.bind(session);
+		session.dispose = () => {
+			if (runtimes.get(sessionId) === runtime) {
+				runtimes.delete(sessionId);
+				selection.release(sessionId);
+			}
+			dispose();
+		};
+		return runtime;
+	};
+	return Object.assign(restored, createRuntime);
 }
 
 function presenceRuntime(

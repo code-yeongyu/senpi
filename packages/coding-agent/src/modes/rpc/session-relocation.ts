@@ -91,6 +91,13 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 			// A run the user stopped takes its scheduled move with it: the user chose to stay here.
 			if (event.type === "agent_end" && deps.session.currentAbortSource === "user" && this.scheduled !== undefined)
 				this.scheduled = { ...this.scheduled, dropReason: "aborted" };
+			// A user abort can also join the agent_end boundary after agent_end was seen (senpi#4129): read it again here.
+			if (
+				event.type === "agent_settled" &&
+				this.scheduled !== undefined &&
+				deps.session.currentAbortSource === "user"
+			)
+				this.scheduled = { ...this.scheduled, dropReason: "aborted" };
 			// agent_end still streams: wait until settlement so the correction is appended, not parked.
 			if (event.type === "agent_settled" && this.scheduled?.dropReason !== undefined)
 				this.dropScheduled(this.scheduled.dropReason);

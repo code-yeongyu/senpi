@@ -131,21 +131,35 @@ function withoutNamespace(modelId: string): string {
 }
 
 /**
+ * The ids a model answers to as a family. Kimi Code serves the Moonshot models under bare
+ * ids (`k3.1-pro` is Moonshot's `kimi-k3.1-pro`), so a `kimi-` family reaches it too.
+ */
+function familyIds(model: Model<Api>): string[] {
+	const id = model.id.toLowerCase();
+	const ids = [id, withoutNamespace(id)];
+	return /^k\d/.test(id) ? [...ids, `kimi-${id}`] : ids;
+}
+
+/** A model's own id outranks the Kimi Code alias, which outranks a dash-suffixed variant. */
+function exactness(model: Model<Api>, family: string): number {
+	const id = model.id.toLowerCase();
+	if (id === family || withoutNamespace(id) === family) return 2;
+	return familyIds(model).includes(family) ? 1 : 0;
+}
+
+/**
  * Conservative family match. A bare id matches its exact model and dash-suffixed
  * variants (`k3` -> `k3-256k`) but never an arbitrary substring, so `claude-fable-5`
  * cannot capture `not-claude-fable-5`.
  */
 export function matchesFamily(model: Model<Api>, family: string): boolean {
-	const candidates = [model.id.toLowerCase(), withoutNamespace(model.id.toLowerCase())];
-	return candidates.some((id) => id === family || id.startsWith(`${family}-`));
+	return familyIds(model).some((id) => id === family || id.startsWith(`${family}-`));
 }
 
 /** Exact id wins, then the shortest variant, then alphabetical. */
 function pickVariant(models: readonly Model<Api>[], family: string): Model<Api> | undefined {
 	const ranked = [...models].sort((left, right) => {
-		const exact =
-			Number(withoutNamespace(right.id.toLowerCase()) === family) -
-			Number(withoutNamespace(left.id.toLowerCase()) === family);
+		const exact = exactness(right, family) - exactness(left, family);
 		if (exact !== 0) return exact;
 		if (left.id.length !== right.id.length) return left.id.length - right.id.length;
 		return left.id.localeCompare(right.id);

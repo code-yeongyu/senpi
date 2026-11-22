@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { prepareCompaction } from "../../src/core/compaction/index.ts";
 import { formatCompactionFailure } from "../../src/core/compaction-failure-text.ts";
 import { MAX_SUMMARIZATION_ATTEMPT_RETRIES } from "../../src/core/extensions/builtin/compaction/summarization-retry.ts";
 import {
@@ -76,6 +77,46 @@ describe("blocking compaction network-failure degradation", () => {
 			// another doomed summarization request.
 			expect(callsAfterTrip).toBe(3 * SUMMARIZATION_ATTEMPTS);
 			expect(harness.registration.state.callCount).toBe(callsAfterTrip);
+		});
+	});
+
+	// senpi#6760: the core route used to cancel a transient failure with a bare reason, which the
+	// session recorded as `cancelled-by-extension` and answered by refusing every automated send.
+	describe("Given the core route's summary request keeps failing on a transient provider error", () => {
+		it("Then it spends the bounded retries and rejects with the transient-failure cause", async () => {
+			const { sessionBeforeCompact } = createCompactionHandlers();
+			const harness = createBlockingContext({ usageTokens: 6_000 });
+			registrations.push(harness.registration);
+			const networkError = JSON.stringify({
+				type: "error",
+				error: { type: "api_error", message: "Network error or service unavailable" },
+			});
+			harness.registration.setResponses(
+				Array.from({ length: SUMMARIZATION_ATTEMPTS }, () =>
+					fauxAssistantMessage("", { stopReason: "error", errorMessage: networkError }),
+				),
+			);
+			const branchEntries = harness.ctx.sessionManager.getBranch();
+			const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+			if (!preparation) throw new Error("Expected a compaction preparation");
+
+			const result = await settleRetryBackoff(
+				sessionBeforeCompact(
+					{
+						type: "session_before_compact",
+						reason: "threshold",
+						willRetry: false,
+						requestId: "issue-6760-transient",
+						preparation,
+						branchEntries,
+						signal: new AbortController().signal,
+					},
+					harness.ctx,
+				),
+			);
+
+			expect(harness.registration.state.callCount).toBe(SUMMARIZATION_ATTEMPTS);
+			expect(result).toMatchObject({ cancel: true, rejectionCause: "transient-failure" });
 		});
 	});
 

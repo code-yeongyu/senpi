@@ -14,6 +14,7 @@ import { HerdrClient, type HerdrMethod } from "./herdr-client.ts";
 import {
 	initialHerdrState,
 	isHerdrBlockedEvent,
+	openEndedMonitors,
 	reduceHerdrState,
 	selectHerdrBlockedKind,
 	selectHerdrReport,
@@ -147,7 +148,11 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			subscriptions.push(
 				pi.events.on(TERMINAL_MONITOR_STATE_EVENT, (data) => {
 					if (stopped || !isTerminalMonitorStateEvent(data)) return;
-					state = reduceHerdrState(state, { type: "monitors", count: data.activeCount });
+					state = reduceHerdrState(state, {
+						type: "monitors",
+						count: data.activeCount,
+						openEnded: openEndedMonitors(data),
+					});
 					return publish();
 				}),
 			);

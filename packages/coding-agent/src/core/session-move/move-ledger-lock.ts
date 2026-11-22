@@ -5,7 +5,10 @@ import {
 	isLockError,
 } from "../lockfile-policy.ts";
 
-const LOCK_OPTIONS = { realpath: false, stale: 10_000, update: 2_000, retries: 0 } as const;
+/** A record lock nobody refreshed for this long is taken over by the next caller that wants it. */
+export const MOVE_RECORD_LOCK_STALE_MS = 10_000;
+
+const LOCK_OPTIONS = { realpath: false, stale: MOVE_RECORD_LOCK_STALE_MS, update: 2_000, retries: 0 } as const;
 const LOCK_WAIT_MS = 15_000;
 
 /** A move record write ran without this process holding that record's lock. */
