@@ -1,8 +1,11 @@
 import { Buffer } from "node:buffer";
 import { syncBuiltinESMExports } from "node:module";
 import { isAbsolute, resolve, sep } from "node:path";
-import { isMainThread } from "node:worker_threads";
 import { FS_PERMISSION_PATHS } from "./interpose-fs.js";
+
+// The CJS object, not `import ... from "node:worker_threads"`: under Bun a built-in's ESM namespace is fixed at its first
+// import, so importing it here, before cell ownership patches Worker, would hand every cell the unowned class (senpi#4527).
+const { isMainThread } = process.getBuiltinModule("node:worker_threads");
 
 // A worker thread cannot chdir (process.chdir throws ERR_WORKER_UNSUPPORTED_OPERATION under Node
 // and Bun), so every relative path a cell used resolved against the host process directory: in a
