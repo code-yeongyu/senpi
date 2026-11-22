@@ -1,7 +1,7 @@
 /**
  * Collapsed widget for a pending async (waitForAnswer=false) question: it
  * sits above the editor and shows the unanswered count with the idle
- * countdown, the first unanswered question with its options, and every way
+ * countdown, the first unanswered question (wrapped, never cut) with its options, and every way
  * into the full AskUserQuestionComponent. The response-building helpers here
  * are pure so interactive-mode can turn ordinary composer text into the
  * comment answer.
@@ -16,6 +16,7 @@ import {
 	type TuiMouseEventResult,
 	truncateToWidth,
 	visibleWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { QuestionRequest, QuestionResponse } from "../../../core/extensions/types.ts";
 import { theme } from "../theme/theme.ts";
@@ -222,14 +223,12 @@ export class AskUserAsyncWidget implements Component {
 		};
 		addAction(renderStatusLine(pending.length, this.countdownLabel, this.pendingCount), "expand");
 		if (shown) {
-			addAction(
-				renderQuestionLine({
-					...shown,
-					header: sanitizeTerminalLabel(shown.header),
-					question: sanitizeTerminalLabel(shown.question),
-				}),
-				"expand",
-			);
+			const question = renderQuestionLine({
+				...shown,
+				header: sanitizeTerminalLabel(shown.header),
+				question: sanitizeTerminalLabel(shown.question),
+			});
+			for (const row of wrapTextWithAnsi(question, width)) addAction(row, "expand");
 			let line = "";
 			const labels = [...shown.options.map((option) => sanitizeTerminalLabel(option.label)), "own answer…"];
 			for (const [index, label] of labels.entries()) {

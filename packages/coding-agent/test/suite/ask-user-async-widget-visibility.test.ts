@@ -121,7 +121,7 @@ describe("collapsed async ask-user widget content", () => {
 		expect(text).toContain("to answer");
 	});
 
-	it("keeps the question truncated and wraps every option between bounded buttons", () => {
+	it("wraps the whole question and every option between bounded buttons (#4331)", () => {
 		const question =
 			"Which of the many equally plausible database engines should this service standardize on? ".repeat(3);
 		const options = Array.from({ length: 30 }, (_, index) => ({ label: `Engine number ${index + 1}` }));
@@ -132,8 +132,14 @@ describe("collapsed async ask-user widget content", () => {
 		expect(lines.length).toBeGreaterThan(4);
 		for (const line of lines) expect(line.length).toBeLessThanOrEqual(WIDGET_WIDTH);
 		expect(lines[1]).toContain("Database - Which of the many equally plausible");
-		expect(lines[1]?.match(/standardize on\?/g)).toHaveLength(1);
-		expect(lines[2]).toContain("[ Engine number 1 ]  [ Engine number 2 ]");
+		const buttonsRow = lines.findIndex((line) => line.includes("[ Engine number 1 ]  [ Engine number 2 ]"));
+		expect(buttonsRow).toBeGreaterThan(2);
+		expect(
+			lines
+				.slice(1, buttonsRow)
+				.join(" ")
+				.match(/standardize on\?/g),
+		).toHaveLength(3);
 		for (let index = 1; index <= 30; index++) {
 			expect(lines.join("\n")).toContain(`[ Engine number ${index} ]`);
 		}
