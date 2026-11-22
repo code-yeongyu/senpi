@@ -2332,7 +2332,7 @@ def elapsed(start: float) -> int:
     return max(0, int((time.monotonic() - start) * 1000))
 
 
-def _install_kill_guard(port: int) -> None:
+def _install_kill_guard(port: int, token: str) -> None:
     # The host exports the protected pids only while the guard is on (`terminal.killGuard`); absent means off.
     protected = os.environ.get("SENPI_KILL_GUARD_PROTECTED")
     if protected is None:
@@ -2341,7 +2341,7 @@ def _install_kill_guard(port: int) -> None:
     _kill_guard_path = Path(__file__).with_name("kill_guard.py")
     namespace: dict[str, Any] = {"__builtins__": __builtins__, "__file__": str(_kill_guard_path)}
     exec(compile(_kill_guard_path.read_bytes(), str(_kill_guard_path), "exec"), namespace)
-    namespace["install"](port, [int(pid) for pid in protected.split(",") if pid.isdigit()])
+    namespace["install"](port, [int(pid) for pid in protected.split(",") if pid.isdigit()], token)
 
 
 def _handle_message(message: dict[str, Any]) -> bool:
@@ -2360,8 +2360,8 @@ def _handle_message(message: dict[str, Any]) -> bool:
         if KERNEL_MEMORY.thresholds is not None:
             KERNEL_MEMORY._footprint()
         if message.get("permission") is not None:
-            permission_context = initialize_permissions(message["permission"], connection["port"])
-        _install_kill_guard(connection["port"])
+            permission_context = initialize_permissions(message["permission"], connection["port"], connection["token"])
+        _install_kill_guard(connection["port"], connection["token"])
         emit({"type": "ready"})
         return True
     if message_type == "run":

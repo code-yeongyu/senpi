@@ -80,4 +80,26 @@ describe("Python permission retirement", () => {
 			await server.close();
 		}
 	});
+
+	// senpi#5359: the kernels' check routes need the bridge token like every other route.
+	it.each(["/permission_check", "/kill_guard_check"])("refuses %s without the bridge bearer", async (route) => {
+		const judged = vi.fn(() => ({ action: "allow" }));
+		const server = await startBridgeServer({
+			onCall: async () => null,
+			onCompletion: async () => null,
+			onEmit: async () => {},
+			onKillGuardCheck: judged,
+		});
+		try {
+			const response = await fetch(`http://127.0.0.1:${server.port}${route}`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ token: "unknown", nonce: "probe", call: { tool: "write", input: {} } }),
+			});
+			expect(response.status).toBe(401);
+			expect(judged).not.toHaveBeenCalled();
+		} finally {
+			await server.close();
+		}
+	});
 });
