@@ -28,7 +28,12 @@ afterEach(async () => {
 	for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-async function readOnlyWriteTurn(context: Record<string, string>, until: "agent_idle" | "permission_prompt") {
+/** `reopen`: the session is first opened with the label, closed, then reopened by its file with `context` (a wake after its process died). */
+async function readOnlyWriteTurn(
+	context: Record<string, string>,
+	until: "agent_idle" | "permission_prompt",
+	reopen = false,
+) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-omo-14649-"));
 	const cwd = join(scratch, "project");
 	const agentDir = join(scratch, "agent");
@@ -38,6 +43,7 @@ async function readOnlyWriteTurn(context: Record<string, string>, until: "agent_
 	const faux = fauxProvider({ api: "fauxperm14649", provider: "fauxperm14649" });
 	const model = faux.getModel();
 	faux.setResponses([
+		...(reopen ? [fauxAssistantMessage("first turn")] : []),
 		fauxAssistantMessage(fauxToolCall("write", { path: marker, content: "probe" }, { id: "call-write" }), {
 			stopReason: "toolUse",
 		}),
@@ -88,7 +94,32 @@ async function readOnlyWriteTurn(context: Record<string, string>, until: "agent_
 		return (direct as WireRecord | undefined) ?? records.find((record) => record.id === id);
 	};
 
-	const opened = await send({ type: "open_session", cwd, permissionPreset: "read-only", context });
+	let reopenFrom: string | undefined;
+	if (reopen) {
+		const first = await send({
+			type: "open_session",
+			cwd,
+			permissionPreset: "read-only",
+			context: { approvals: "refuse" },
+		});
+		const data = first?.data as { sessionId?: string; state?: { sessionFile?: string } } | undefined;
+		if (!data?.sessionId || !data.state?.sessionFile) throw new Error(`first open failed: ${JSON.stringify(first)}`);
+		const firstIdle = Promise.withResolvers<void>();
+		listeners.add((record) => {
+			if (record.type === "agent_idle" && record.sessionId === data.sessionId) firstIdle.resolve();
+		});
+		await send({ type: "prompt", sessionId: data.sessionId, message: "hello" });
+		await firstIdle.promise;
+		await send({ type: "close_session", sessionId: data.sessionId });
+		reopenFrom = data.state.sessionFile;
+	}
+	const opened = await send({
+		type: "open_session",
+		cwd,
+		permissionPreset: "read-only",
+		...(reopenFrom === undefined ? {} : { sessionPath: reopenFrom }),
+		...(Object.keys(context).length === 0 ? {} : { context }),
+	});
 	const sessionId = (opened?.data as { sessionId?: string } | undefined)?.sessionId;
 	if (!sessionId) throw new Error(`open_session failed: ${JSON.stringify(opened)}`);
 	const prompted = Promise.withResolvers<"prompted">();
@@ -115,6 +146,13 @@ async function readOnlyWriteTurn(context: Record<string, string>, until: "agent_
 describe("a session whose opener declared nobody answers its prompts refuses instead of asking (omo#14649)", () => {
 	it("read-only write with context approvals=refuse: refused with a readable reason, and the turn ends", async () => {
 		const { outcome, ended, wrote } = await readOnlyWriteTurn({ approvals: "refuse" }, "agent_idle");
+
+		expect({ outcome, isError: ended?.isError, wrote }).toEqual({ outcome: "idle", isError: true, wrote: false });
+		expect(JSON.stringify(ended?.result)).toContain("nobody answers this session's prompts");
+	});
+
+	it("a labelled session reopened by its file without the label still refuses (a wake after its process died)", async () => {
+		const { outcome, ended, wrote } = await readOnlyWriteTurn({}, "agent_idle", true);
 
 		expect({ outcome, isError: ended?.isError, wrote }).toEqual({ outcome: "idle", isError: true, wrote: false });
 		expect(JSON.stringify(ended?.result)).toContain("nobody answers this session's prompts");

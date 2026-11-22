@@ -6,6 +6,11 @@ import { DENIAL_IS_FINAL, type ReplyInput, type Request } from "../permission-sy
  */
 export const REFUSE_APPROVALS_CONTEXT_KEY = "approvals";
 export const REFUSE_APPROVALS_CONTEXT_VALUE = "refuse";
+/**
+ * The session entry a labelled session records on its first start: the session keeps refusing when a later open of its
+ * file carries no label (a wake after its process died, a handover, a reopen by path).
+ */
+export const REFUSE_APPROVALS_ENTRY_TYPE = "permission-approvals-refused";
 
 export interface NoUIOptions {
 	readonly emitEvent: (event: string, data: unknown) => void;
