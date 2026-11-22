@@ -8435,6 +8435,22 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#BY_TYPE": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#at": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#toolCall": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/assistant-stream-schema.ts#wireStreamEventSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/child-reaper.ts#orphanSyscalls": {
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
@@ -9082,6 +9098,34 @@
 			"class": "per-copy-safe",
 			"reason": "counter or id sequence for this copy's own objects; a split cannot collide across them"
 		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-compaction-events.ts#COMPACTION_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-lifecycle-events.ts#LIFECYCLE_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-message-events.ts#MESSAGE_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-provider-events.ts#PROVIDER_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-session-events.ts#SESSION_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-session-move.ts#SESSION_MOVE_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-turn-events.ts#TURN_LOOP_HOOKS": {
+			"class": "constant",
+			"reason": "parser table of a loop-hook event family, built at load from pure functions; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts#HEARTBEAT_EARLY_TOLERANCE_MS": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
@@ -9089,6 +9133,14 @@
 		"packages/coding-agent/src/modes/rpc/loopless-execute-grant.ts#issued": {
 			"class": "per-copy-safe",
 			"reason": "issued and checked inside one copy's RPC host; a split fails closed (design 3.3)"
+		},
+		"packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts#GATED_EVENTS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts#LOOP_HOOK_PARSERS": {
+			"class": "constant",
+			"reason": "lookup data literal merging the family parser tables; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/loopless-worker.ts#port": {
 			"class": "constant",
@@ -9345,6 +9397,10 @@
 		"packages/coding-agent/src/modes/rpc/method-classes.ts#RPC_METHOD_CLASSES_DIGEST": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/model-schema.ts#modelSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/pause-command-validation.ts#RUN_REF_KINDS": {
 			"class": "constant",
