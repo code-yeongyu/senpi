@@ -55,8 +55,8 @@ const TodoOperationSchema = Type.Union(
 );
 
 const TodoPhaseInputSchema = Type.Object({
-	phase: Type.String({ description: "Phase name" }),
-	items: Type.Array(Type.String({ description: "Task content" }), {
+	phase: Type.String({ description: "Phase name, in the language the user writes in" }),
+	items: Type.Array(Type.String({ description: "Task content, in the language the user writes in" }), {
 		description: "Tasks for this phase",
 		minItems: 1,
 	}),
@@ -70,7 +70,7 @@ export const TODO_PARAMS_SCHEMA = Type.Object({
 	// Keep this unconstrained at the schema boundary. init and append return
 	// operation-specific errors, while unrelated operations may ignore it.
 	items: Type.Optional(
-		Type.Array(Type.String({ description: "Task content" }), { description: "Task texts to append" }),
+		Type.Array(Type.String({ description: "Task content, in the language the user writes in" }), { description: "Task texts to append" }),
 	),
 });
 
