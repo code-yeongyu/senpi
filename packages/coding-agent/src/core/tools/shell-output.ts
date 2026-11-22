@@ -1,7 +1,7 @@
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { BashToolDetails } from "./bash-schema.ts";
-import { modelOnlyText } from "./model-only-text.ts";
+import { emptyOutputPlaceholder, modelOnlyText } from "./model-only-text.ts";
 import type { OutputAccumulator, OutputSnapshot } from "./output-accumulator-core.ts";
 import { SecretOutputRedactor } from "./secret-output-redactor.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "./truncate.ts";
@@ -152,9 +152,10 @@ export function createShellOutput(
 				notice = `[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${snapshot.fullOutputPath}]`;
 			}
 		}
-		// The empty placeholder is for the model only (senpi#7209): programmatic callers see no text.
 		const content: TextContent[] = [
-			snapshot.content ? { type: "text", text: notice === undefined ? text : `${text}\n` } : modelOnlyText(text),
+			snapshot.content
+				? { type: "text", text: notice === undefined ? text : `${text}\n` }
+				: emptyOutputPlaceholder(),
 		];
 		if (notice !== undefined) content.push(modelOnlyText(notice));
 		return { text: notice === undefined ? text : `${text}\n\n${notice}`, content, details };

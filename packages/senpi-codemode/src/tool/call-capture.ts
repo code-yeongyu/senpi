@@ -170,7 +170,8 @@ export function toolCallResultDetails(result: AgentToolResult<unknown>): unknown
 
 export function toolCallResultPreview(result: AgentToolResult<unknown>): string | undefined {
 	for (const part of result.content) {
-		if (part.type !== "text") continue;
+		// A preview is a UI line: model-only parts (placeholders, notices, injected context) stay out of it.
+		if (part.type !== "text" || part.audience === "model") continue;
 		const preview = sanitizeTerminalLabel(part.text).replace(/\s+/gu, " ").trim();
 		return preview.length === 0 ? undefined : capCodePoints(preview, MAX_RESULT_PREVIEW_CODE_POINTS);
 	}

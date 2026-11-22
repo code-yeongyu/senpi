@@ -1,9 +1,11 @@
-import type { AgentToolResult } from "@code-yeongyu/senpi";
+import { type AgentToolResult, isEmptyOutputPlaceholder } from "@code-yeongyu/senpi";
 
 export function marshalToolResult(result: AgentToolResult<unknown>) {
-	// Model-only parts (placeholders, truncation notices) are prompt text, not output: the renderer skips them too.
-	const texts = result.content
-		.flatMap((part) => (part.type === "text" && part.audience !== "model" ? [part.text] : []));
+	// The empty-output placeholder is not output (senpi#7209). Other model-only parts stay: a read's injected
+	// AGENTS.md and project rules are recorded as delivered, and the cell's text is how they reach the model.
+	const texts = result.content.flatMap((part) =>
+		part.type === "text" && !isEmptyOutputPlaceholder(part) ? [part.text] : [],
+	);
 	const images = result.content
 		.filter((part) => part.type === "image")
 		.map((part) => ({ mimeType: part.mimeType, dataBase64: part.data }));

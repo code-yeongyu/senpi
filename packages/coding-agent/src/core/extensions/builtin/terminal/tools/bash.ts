@@ -4,7 +4,7 @@ import { annotateShellTrust } from "../../../../../engine-trust/shell-trust.ts";
 import { createSessionLogger, type SessionLogger } from "../../../../session-log.ts";
 import { stallThresholdMs, watchForStall } from "../../../../stall-warning.ts";
 import type { AgentToolUpdateCallback } from "../../../types.ts";
-import { modelOnlyText } from "../../../../tools/model-only-text.ts";
+import { emptyOutputPlaceholder } from "../../../../tools/model-only-text.ts";
 import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import {
@@ -437,8 +437,7 @@ async function runForeground(
 		});
 	}
 	const details = { status, ...(formatted.truncated ? { truncation: formatted.truncation } : {}) };
-	// Providers need a non-empty block, but the placeholder is not output: programmatic callers see "".
-	if (!output) return { content: [modelOnlyText("(no output)")], details };
+	if (!output) return { content: [emptyOutputPlaceholder()], details };
 	return noticedResult(output, [formatted.marker], { details });
 }
 

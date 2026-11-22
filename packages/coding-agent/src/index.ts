@@ -475,6 +475,7 @@ export type {
 export { DeviceMachineConflictError } from "./core/extensions/types.ts";
 export { DeviceUnavailableError } from "./core/tools/bash.ts";
 export { createToolMachine, type ToolMachine, type ToolPathPolicy } from "./core/tools/machine.ts";
+export { isEmptyOutputPlaceholder } from "./core/tools/model-only-text.ts";
 // Tools
 export {
 	type BashOperations,
