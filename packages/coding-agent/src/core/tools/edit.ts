@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
+import { createLocalSyntaxChecker } from "./bun-script-parser.ts";
 import {
 	type CoreEditToolOptions,
 	createCoreEditToolDefinition,
@@ -37,6 +38,7 @@ export function createEditToolDefinition(
 			resolvePath: resolveToCwd,
 			withMutationQueue: withFileMutationQueue,
 			canonicalizePath: canonicalizeFilesystemPath,
+			checkSyntax: createLocalSyntaxChecker(),
 		}),
 		...editRenderers,
 	};
