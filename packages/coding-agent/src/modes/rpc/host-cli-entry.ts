@@ -3,11 +3,22 @@
  * runtime snapshot's declared bin). Split out of `host-lifecycle-launch.ts` (senpi#2566); it stays in
  * this directory so `import.meta.url` resolves relative paths exactly as before.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isBundledNode } from "../../config.ts";
+
+/** Whether this source module is the process entry, including a symlinked argv path. */
+export function isCliModuleEntry(moduleUrl: string): boolean {
+	const entry = process.argv[1];
+	if (!entry) return false;
+	try {
+		return fileURLToPath(moduleUrl) === realpathSync(entry);
+	} catch {
+		return false;
+	}
+}
 
 /**
  * Resolves the committed CLI entry this supervisor wraps (source tree or built dist).

@@ -44,6 +44,8 @@ function askLikeExtension(counter: { askLikeRuns: number }): ExtensionFactory {
 			label: "ask_like",
 			description: "Removes itself from the active tools when it runs",
 			promptSnippet: "Snippet for ask_like",
+			// Described tools get no snippet line (senpi#5335); this sentinel shows whether the prompt carries ask_like.
+			promptGuidelines: ["ASK_LIKE_GUIDELINE_SENTINEL"],
 			parameters: Type.Object({}),
 			execute: async () => {
 				counter.askLikeRuns++;
@@ -119,7 +121,7 @@ describe("allowed-tools stable tool declarations", () => {
 			expect(request.tools).toEqual(declared);
 			expect(request.systemPrompt).toBe(requests[0]?.systemPrompt);
 		}
-		expect(requests[0]?.systemPrompt).toContain("ask_like: Snippet for ask_like");
+		expect(requests[0]?.systemPrompt).toContain("ASK_LIKE_GUIDELINE_SENTINEL");
 		expect(requests[0]?.activeToolNames).toEqual(declared.length === TOOL_ORDER.length ? undefined : TOOL_ORDER);
 		expect(requests[1]?.activeToolNames).toEqual(["keep_read", "keep_write"]);
 		expect(requests[2]?.activeToolNames).toEqual(["keep_read", "keep_write"]);
@@ -147,8 +149,8 @@ describe("allowed-tools stable tool declarations", () => {
 			["keep_read", "keep_write", "ask_like"],
 		]);
 		expect(requests.every((request) => request.activeToolNames === undefined)).toBe(true);
-		expect(requests[0]?.systemPrompt).toContain("ask_like: Snippet for ask_like");
-		expect(requests[1]?.systemPrompt).not.toContain("ask_like: Snippet for ask_like");
+		expect(requests[0]?.systemPrompt).toContain("ASK_LIKE_GUIDELINE_SENTINEL");
+		expect(requests[1]?.systemPrompt).not.toContain("ASK_LIKE_GUIDELINE_SENTINEL");
 
 		expect(askLikeRuns).toBe(1);
 		expect(toolResults[1]?.isError).toBe(true);

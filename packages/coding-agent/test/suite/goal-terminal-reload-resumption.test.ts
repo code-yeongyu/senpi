@@ -78,6 +78,7 @@ function createGeneration(cwd: string, sessionId: string): Generation {
 		setActiveTools: (next: string[]) => {
 			activeTools = next;
 		},
+		isLoopRemote: () => false,
 	} as unknown as ExtensionAPI;
 
 	// Match builtin/index.ts: terminal registers before goal, so lifecycle handlers run in that order.

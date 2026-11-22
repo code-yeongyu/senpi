@@ -136,7 +136,11 @@ describe("wake on a host session", () => {
 		});
 		expect(host.registrant.wakes.at(-1)).toMatchObject({ reason: "command", delivery_ids: ["d2"] });
 		await idle;
-		const transcript = JSON.stringify(host.harness.sessionManager.getEntries());
+		const transcript = JSON.stringify(
+			host.harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type !== "custom" || entry.customType !== "work-custody"),
+		);
 		expect(transcript.match(/"delivery_id":"d2"/g)).toHaveLength(1);
 	});
 

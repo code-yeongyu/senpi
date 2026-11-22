@@ -16,6 +16,11 @@ export interface CachedReading {
 	readonly updatedAt: number;
 	/** Not asked again before this: the freshness window on success, the backoff on failure. */
 	readonly nextAt: number;
+	/**
+	 * No answer yet: there was nothing to ask with (a claude CLI account on macOS, an expired token). It only
+	 * schedules the next look and is never handed to the limit store, so it cannot blank windows a turn recorded.
+	 */
+	readonly pending?: true;
 }
 
 interface FetchClaim {
@@ -34,9 +39,16 @@ export function usageKey(provider: string, account: string): string {
 	return `${provider}/${account}`;
 }
 
-export function isDue(cache: UsageCacheFile, key: string, now: number): boolean {
+/**
+ * Due at its scheduled time, or, given `minAgeMs`, once a healthy reading is that old. A failed reading keeps its
+ * schedule, so an endpoint that asked to be left alone is never asked early. Never due while another claim is live.
+ */
+export function isDue(cache: UsageCacheFile, key: string, now: number, minAgeMs?: number): boolean {
 	const reading = cache.accounts[key];
-	if (reading !== undefined && now < reading.nextAt) return false;
+	const early = minAgeMs !== undefined && reading !== undefined && reading.error === undefined;
+	const nextAt =
+		reading === undefined ? 0 : early ? Math.min(reading.nextAt, reading.updatedAt + minAgeMs) : reading.nextAt;
+	if (now < nextAt) return false;
 	const claim = cache.fetching[key];
 	return claim === undefined || now - claim.claimedAt >= CLAIM_MS;
 }
@@ -64,7 +76,9 @@ export function withResults(
 		delete fetching[key];
 		const previous = accounts[key];
 		accounts[key] =
-			reading.error !== undefined && previous !== undefined ? { ...reading, windows: previous.windows } : reading;
+			reading.error !== undefined && previous !== undefined
+				? { ...reading, windows: previous.windows, plan: reading.plan ?? previous.plan }
+				: reading;
 	}
 	return { accounts, fetching };
 }
@@ -140,6 +154,7 @@ function sanitize(value: unknown): UsageCacheFile {
 			nextAt,
 			...(plan === undefined ? {} : { plan }),
 			...(error === undefined ? {} : { error }),
+			...(reading?.pending === true ? { pending: true as const } : {}),
 		};
 	}
 	const fetching: Record<string, FetchClaim> = {};

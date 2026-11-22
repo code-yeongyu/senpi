@@ -70,7 +70,7 @@ async function terminal(harness: Harness, rows: Map<string, string>, overrides: 
 		optimisticUserEchoes: inert({
 			promptOptions: () => ({ preflightResult: () => undefined, promptDisposition: () => undefined }),
 		}),
-		composerHold: () => undefined,
+		hasComposerDraft: () => false,
 		agentIdle: false,
 		...overrides,
 	};
@@ -249,16 +249,13 @@ async function harnessWithCommands() {
 }
 
 describe("commands that may submit text after an await hold admission until they did", () => {
-	it("draft held, Enter on /ask, the command sends after an await: the delivery lands after its text", async () => {
+	it("Enter on /ask, the command sends after an await: the delivery lands after its text", async () => {
 		const { harness, isExtensionCommand, entered, release } = await harnessWithCommands();
 		const rows = new Map<string, string>();
-		let draft: "draft" | undefined = "draft";
-		const tui = await terminal(harness, rows, { isExtensionCommand, composerHold: () => draft });
-		rows.set("d1", "remote-d1");
-		await controlData(tui.socket, { type: "wake" });
-		draft = undefined;
+		const tui = await terminal(harness, rows, { isExtensionCommand });
 		tui.submit("/ask why");
 		await entered;
+		rows.set("d1", "remote-d1");
 		await controlData(tui.socket, { type: "wake" });
 		const emitted = new Promise<void>((resolve) => harness.session.externalAdmission.onEmitted(() => resolve()));
 		release();
@@ -266,7 +263,7 @@ describe("commands that may submit text after an await hold admission until they
 		await harness.session.waitForIdle();
 		expect(transcript(harness)).toEqual(["user:asked: why", "delivery:d1"]);
 		expect(tui.admitted.slice(0, -1).every((entry) => entry.startsWith("d1:held_draft:"))).toBe(true);
-		expect(tui.admitted.length).toBeGreaterThanOrEqual(3);
+		expect(tui.admitted.length).toBeGreaterThanOrEqual(2);
 	});
 
 	it.each(["/noop", "/boom"])(

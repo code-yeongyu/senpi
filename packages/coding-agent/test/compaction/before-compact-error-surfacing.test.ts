@@ -92,6 +92,7 @@ function createHarness(options?: { withAuth?: boolean }): Harness {
 		cwd: process.cwd(),
 		isProjectTrusted: () => true,
 		sessionManager: {
+			getSessionId: () => "session-test",
 			getEntries: () => [],
 			getBranch: () => [],
 			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries([], reducer),
@@ -206,6 +207,7 @@ describe("session_before_compact error surfacing", () => {
 			budgetTokens: 111_616,
 			budgetExceeded: false,
 			candidatesChecked: 0,
+			rejectionCounts: {},
 		});
 	});
 

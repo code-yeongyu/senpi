@@ -46,6 +46,7 @@ import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
 import { staleStopGeneration, stopHost } from "./host-stop.ts";
+import { hostUnitPayload } from "./host-unit-placement.ts";
 import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
@@ -56,6 +57,9 @@ export {
 	HOST_EXIT_USAGE,
 	type HostOutcome,
 } from "./host-outcome.ts";
+import { hostRequestKeyRoot } from "./host-request-key-root.ts";
+import { withRpcKeyRoot } from "./rpc-auth-client.ts";
+import type { Duplex } from "node:stream";
 
 const PROBE_TIMEOUT_MS = 10_000;
 
@@ -96,12 +100,31 @@ export type HostRequest =
 			readonly spec: ResolvedHostLaunchSpec;
 			/** The conditional form (`--when idle`): the running host hands over at its next safe idle point. */
 			readonly handover?: IdleHandoverTerms;
+			/** `--allow-downgrade`: the caller consents to handing a newer host down to this engine (senpi#7018). */
+			readonly allowDowngrade?: boolean;
 	  }
 	/** Removes endpoint state under `agentDir` only on the three-part evidence (`host-gc.ts`). */
 	| { readonly action: "gc"; readonly agentDir: string }
 	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 
-export async function runHostRequest(request: HostRequest): Promise<HostOutcome> {
+export async function runHostRequest(
+	request: HostRequest,
+	options: {
+		readonly keyRoot?: string;
+		readonly presenterBootstrap?: Duplex;
+		readonly mcpPresenterEnforcement?: boolean;
+	} = {},
+): Promise<HostOutcome> {
+	return withRpcKeyRoot(hostRequestKeyRoot(request, options.keyRoot), () =>
+		runHostRequestInKeyRoot(request, options.presenterBootstrap, options.mcpPresenterEnforcement),
+	);
+}
+
+async function runHostRequestInKeyRoot(
+	request: HostRequest,
+	presenterBootstrap?: Duplex,
+	mcpPresenterEnforcement?: boolean,
+): Promise<HostOutcome> {
 	if (request.action === "ensure" || request.action === "handoff" || request.action === "stop") {
 		const { socket, agentDir } = request.target;
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
@@ -110,7 +133,13 @@ export async function runHostRequest(request: HostRequest): Promise<HostOutcome>
 	}
 	switch (request.action) {
 		case "ensure":
-			return ensureOutcome(request.target, request.spec, request.policy);
+			return ensureOutcome(
+				request.target,
+				request.spec,
+				request.policy,
+				presenterBootstrap,
+				mcpPresenterEnforcement,
+			);
 		case "status":
 			return request.all === true
 				? statusAllOutcome(request.target, request.includeWorkers)
@@ -119,8 +148,8 @@ export async function runHostRequest(request: HostRequest): Promise<HostOutcome>
 			return stopOutcome(request);
 		case "handoff":
 			return request.handover === undefined
-				? handoffOutcome(request.target, request.spec)
-				: idleHandoverOutcome(request.target, request.spec, request.handover);
+				? handoffOutcome(request, presenterBootstrap, mcpPresenterEnforcement)
+				: idleHandoverOutcome(request.target, request.spec, request.handover, mcpPresenterEnforcement);
 		case "shard_path":
 			return shardPathOutcome(request.kind, request.owner, request.root);
 		case "gc":
@@ -137,6 +166,8 @@ async function ensureOutcome(
 	target: HostTarget,
 	spec: ResolvedHostLaunchSpec,
 	policy: HostDecisionPolicy,
+	presenterBootstrap?: Duplex,
+	mcpPresenterEnforcement?: boolean,
 ): Promise<HostOutcome> {
 	const before = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	if (policy === "fallback") {
@@ -151,6 +182,8 @@ async function ensureOutcome(
 	try {
 		ensured = await ensureHost({
 			socket: target.socket,
+			presenterBootstrap,
+			mcpPresenterEnforcement,
 			agentDir: target.agentDir,
 			hostArgs: spec.hostArgs,
 			env: daemonEnvOverrides(process.env, spec.env),
@@ -174,6 +207,7 @@ async function ensureOutcome(
 		payload: {
 			action: ensureAction(ensured.reused, before, host),
 			...identityPayload(target.socket, ensured.pid, host),
+			...(await hostUnitPayload(ensured.pid, host?.instanceId)),
 			clientRuntimeBuildId: await clientRuntimeBuildId(spec),
 			reused: ensured.reused,
 		},
@@ -253,14 +287,22 @@ async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): P
 	};
 }
 
-async function handoffOutcome(target: HostTarget, spec: ResolvedHostLaunchSpec): Promise<HostOutcome> {
+async function handoffOutcome(
+	request: Extract<HostRequest, { action: "handoff" }>,
+	presenterBootstrap?: Duplex,
+	mcpPresenterEnforcement?: boolean,
+): Promise<HostOutcome> {
+	const { target, spec } = request;
 	const before = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	const result = await handoffHost({
 		socket: target.socket,
+		presenterBootstrap,
+		mcpPresenterEnforcement,
 		agentDir: target.agentDir,
 		hostArgs: spec.hostArgs,
 		env: daemonEnvOverrides(process.env, spec.env),
 		policy: spec.policy,
+		...(request.allowDowngrade === true && { allowDowngrade: true }),
 	});
 	if (result.action === "refuse") {
 		return refusal("refuse", before, {
@@ -277,6 +319,7 @@ async function handoffOutcome(target: HostTarget, spec: ResolvedHostLaunchSpec):
 		payload: {
 			action: "handoff",
 			...identityPayload(target.socket, result.pid, host),
+			...(await hostUnitPayload(result.pid, host?.instanceId)),
 			clientRuntimeBuildId: await clientRuntimeBuildId(spec),
 			reused: false,
 		},

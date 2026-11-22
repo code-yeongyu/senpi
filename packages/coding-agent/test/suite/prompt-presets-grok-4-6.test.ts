@@ -29,7 +29,7 @@ function hasGrok46CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getGrok46CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasGrok46CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasGrok46CatalogSignal));
 }
 
 describe("Grok 4.6 prompt preset", () => {

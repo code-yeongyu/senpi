@@ -92,6 +92,8 @@ interface UserMessage {
 
 A `message` entry holding a user message the session admitted through `prompt`, `steer` or `followUp` (including an extension's `sendUserMessage`) also carries `inputSource` on the entry itself: `"interactive"`, `"rpc"` or `"extension"`, the same value the message's `input` event reported. It is stored on the entry and never on the message, so it is not part of any provider request. Queued input restored after a host restart keeps the source its durable record carries. Input whose record has no source, input requeued by a session move, and edited input have no `inputSource`; treat an absent value as unknown origin, never as typed input.
 
+**Call keys (senpi#5374).** Every `toolCall` part of an assistant `message` entry carries `runtimeItemKey`, the opaque key of its call: `blk:<messageId>:<contentIndex>` for a block, or `exe:<uuid>` for a call whose execution started before its block streamed. A `toolResult` `message` entry carries `runtimeItemKey` on the entry itself when its `toolCallId` names exactly one toolCall part of the latest assistant entry before it that no earlier result closed. Every other toolResult entry carries `callUnknown: true` instead and no key: an id that assistant message holds on more than one part, a call an earlier result already closed, or an id with no keyed part. It never carries a guessed key, and an entry written since senpi#5374 never carries neither. Both are session-file data only: loading takes them out of the entries into a side table, so they never reach an in-memory message, a provider request or a legacy RPC answer, and every rewrite of the file (migration, branch) writes them back. A key is a string written once, never derived again from a stored id: a branch, a fork, a compaction, a migration and an export copy each key as it is, so no two toolCall parts of one session share a key, and a later message gets a fresh `messageId`. A reload reuses each persisted key. Sessions written before senpi#5374 have neither field and load unchanged with no migration; nothing mints a key for their parts, at load or on a rewrite, and a result appended to such a session for one of those calls carries `callUnknown: true`. A reader that does not know the fields ignores them: every session reader since v0.12.14 parses a line with plain `JSON.parse`.
+
 ```typescript
 
 interface AssistantMessage {
@@ -225,6 +227,37 @@ For sessions with a parent (created via `/fork`, `/clone`, or `newSession({ pare
 ```json
 {"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project","parentSession":"/path/to/original/session.jsonl"}
 ```
+
+Execution children additionally store `spawnedBy: { parentSessionId, rootSessionId,
+taskId }` in their header. Only `spawnedBy` establishes lifecycle role `child`;
+an ordinary fork with `parentSession` remains a root.
+
+Lifecycle persistence uses custom entries on the session that owes the work:
+
+- `session-lifecycle`: the wire snapshot plus session identity, sealed-epoch and
+  revision high-water marks, open synthetic attention occurrences, consuming run
+  identity, and any unsealed self-settle intent. It is appended before publication.
+- `work-custody`: obligation identity/key/kind and `open`, `queued`, `consumed`,
+  `settled`, `held`, `cancelled`, or `passive` state. Queued records retain a delivery
+  ticket and payload; consumed records name the run and transcript entry; held
+  records name the durable notice. The custom message itself carries `details.ticketId`.
+- `child-lifecycle`: the runner's latest task report, fenced by `runEpoch` and
+  `generation`, persisted before changing the parent's lifecycle.
+
+- `interrupted-run`: `{ ticketId, runId, status: "INTERRUPTED", reason: "host_restart", at }`,
+  appended on restore for a delivery its run had consumed when the host stopped. Each
+  tool call of that run without a result also gets a synthetic `toolResult` with
+  `isError: true` and `details.interrupted.reason: "host_restart"`; the tool is not re-run.
+
+These records are durable even before a first conversation message; a file that holds
+only them (and setup entries) is still discarded when the session closes unused. Reopening
+holds the restore barrier until producers rehydrate and custody recovery completes. A
+restored wake source whose producer does not publish again by then is retired.
+A delivery that leaves the queue unconsumed (cleared, or left queued by an abort for the
+person's next turn) is cancelled or turns passive, so it is never redelivered.
+Consumed but interrupted work is not redelivered; it requires human continuation
+(or remains held unattended). Unsealed self-settle requests are invalidated on
+restart, while a sealed decision and completion identity remain unchanged.
 
 ### SessionMessageEntry
 

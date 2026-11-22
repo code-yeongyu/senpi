@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { expect, it, vi } from "vitest";
-import { agentLoop } from "../src/agent-loop.ts";
+import { agentLoop } from "../src/index.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
 
 type Scenario =

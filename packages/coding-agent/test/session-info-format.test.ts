@@ -138,6 +138,6 @@ describe("formatSessionInfo", () => {
 		// then
 		expect(rendered).toContain("Context Window");
 		expect(rendered).toContain("200,000");
-		expect(rendered).toMatch(/—|unknown|\?/i);
+		expect(rendered).toContain("- / 200,000");
 	});
 });

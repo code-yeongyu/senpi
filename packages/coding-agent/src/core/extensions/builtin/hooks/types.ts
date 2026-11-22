@@ -136,6 +136,7 @@ export type HookInputWire =
 			readonly event: "UserPromptSubmit";
 			readonly prompt: string;
 			readonly cwd: string;
+			readonly hook_event_name?: "UserPromptSubmit";
 			readonly session_id?: string;
 			readonly permission_mode?: string;
 			readonly transcript_path?: string;

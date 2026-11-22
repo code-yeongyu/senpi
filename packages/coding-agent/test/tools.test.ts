@@ -12,7 +12,7 @@ import {
 	createLocalBashOperations,
 } from "../src/core/tools/bash.ts";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
-import { computeEditsDiff } from "../src/core/tools/edit-diff.ts";
+import { computeEditsDiff } from "../src/core/tools/edit-preview.ts";
 import { createFindToolDefinition } from "../src/core/tools/find.ts";
 import { createGrepToolDefinition } from "../src/core/tools/grep.ts";
 import { createLsToolDefinition } from "../src/core/tools/ls.ts";

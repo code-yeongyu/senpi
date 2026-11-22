@@ -24,6 +24,28 @@ export function hasGpt6FamilySignal(value: string): boolean {
 	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)?[._-](?:astra|sol|luna)(?:$|[/@:._-])/.test(normalizeModelId(value));
 }
 
+// GPT-6.2 Astra and Sol (2026-11-17) have their own guide and codex template, so they resolve to the
+// gpt-6.2 preset ahead of the family signal: gpt-6.2-sol, gpt-6.2-astra-fast, openai/gpt-6.2-sol,
+// Venice's dotless openai-gpt-62-astra, and the display names "GPT-6.2 Astra" / "GPT-6.2 Sol".
+export function hasGpt62Signal(value: string): boolean {
+	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]2|2)[._-](?:astra|sol)(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+export function isGpt62Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGpt62Signal(model.id) || (model.name !== undefined && hasGpt62Signal(model.name));
+}
+
+// The goal extension's audit-free continuation prompt follows the Astra tier of any GPT-6 point
+// release (senpi#6975): gpt-6-astra, gpt-6-astra-fast, gpt-6.2-astra, gpt-6.2-astra-ultrafast,
+// Venice's dotless openai-gpt-62-astra, and an effort decorator after a colon. Sol and Luna stay
+// out - they do not share Astra's over-verification - and so do unknown Astra siblings (previews,
+// dated snapshots): an unknown sibling keeps the full prompt until it earns its own decision.
+export function hasGpt6AstraSignal(value: string): boolean {
+	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)*[._-]astra(?:[._-](?:fast|ultrafast))?(?:$|:)/.test(
+		normalizeModelId(value),
+	);
+}
+
 export function isGpt6FamilyModel(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGpt6FamilySignal(model.id) || (model.name !== undefined && hasGpt6FamilySignal(model.name));
 }
@@ -81,6 +103,17 @@ export function hasKimiK28Signal(value: string): boolean {
 
 export function isKimiK28Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK28Signal(model.id) || (model.name !== undefined && hasKimiK28Signal(model.name));
+}
+
+// Kimi K3.1 ids: `k3.1-pro` / `k3.1-pro-highspeed` on Kimi Code, `kimi-k3.1-pro` / `kimi-k3.1-pro-highspeed` on the
+// Kimi API (kimi.com/code/docs models + platform.kimi.com K3.1 Pro quickstart, checked 2026-10-24), plus the
+// dotless `k3p1` spelling OpenCode-style catalogs use. Checked before K3: every K3.1 id also carries the K3 signal.
+export function hasKimiK31Signal(value: string): boolean {
+	return /(?:^|[/@._-])(?:kimi-)?k3(?:[._-]|p)1(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+export function isKimiK31Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasKimiK31Signal(model.id) || (model.name !== undefined && hasKimiK31Signal(model.name));
 }
 
 export function hasKimiK3Signal(value: string): boolean {
@@ -209,10 +242,17 @@ export function isGrok47Model(model: ModelWithPromptPresetMetadata): boolean {
 }
 
 // Claude Mythos shares each Fable release's prompting guide ("Prompting Claude
-// Fable 5.1" covers Fable 5.1 and Mythos 5.1; "Prompting Claude Fable 5"
-// covers Fable 5 and Mythos 5), so Mythos ids route to the matching Fable preset.
+// Fable 5.2" covers Fable 5.2 and Mythos 5.2, "Prompting Claude Fable 5.1" covers
+// Fable 5.1 and Mythos 5.1; "Prompting Claude Fable 5" covers Fable 5 and Mythos 5),
+// so Mythos ids route to the matching Fable preset.
+// The minor version must end at the 2: a dated Fable 5 id (claude-fable-5-20260601) also starts with "fable-5-2".
+const CLAUDE_FABLE_52_PATTERN = /(?:fable|mythos)-5[.-]2(?!\d)/;
 export const CLAUDE_FABLE_51_MARKERS = ["fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1"] as const;
 export const CLAUDE_FABLE_5_MARKERS = ["fable-5", "mythos-5"] as const;
+
+export function isClaudeFable52Model(modelId: string): boolean {
+	return CLAUDE_FABLE_52_PATTERN.test(normalizeModelId(modelId));
+}
 
 export function isClaudeFable51Model(modelId: string): boolean {
 	const normalized = normalizeModelId(modelId);

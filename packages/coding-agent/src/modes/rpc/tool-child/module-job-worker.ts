@@ -2,6 +2,7 @@
 // launch the module makes - at import time included - passes it. On Bun the module graph goes through the extension
 // importer with only the child_process redirect (never loader.ts, which pulls the session writers in).
 import { parentPort, workerData } from "node:worker_threads";
+import "../../../windows-power-throttling-startup.ts";
 import { createBunExtensionImporter } from "../../../core/extensions/bun-extension-importer.ts";
 import {
 	CHILD_PROCESS_REDIRECTS,

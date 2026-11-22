@@ -12,18 +12,24 @@
  * rather than trusted. The failure mode is therefore "a reopen waits ~2s for a live writer to
  * finish", never "a session file can never be opened again".
  *
- * Liveness alone was not enough evidence. A generation that lost the socket stays alive holding
- * retained sessions nobody is attached to, and its claims then refused every reopen of those files
- * for as long as the process existed (#1893). So a claim counts while its owner is the generation
- * the pointer names, or while the owner still has a client attached to that session - and a
- * superseded, attachment-less claim is reclaimable, because the generation that made it has been
- * asked to drain and parks that session as it settles.
+ * Liveness alone was not enough evidence for an older claim. A generation that lost the socket stayed
+ * alive holding retained sessions nobody was attached to, and its claims then refused every reopen of
+ * those files for as long as the process existed (#1893). So a claim without the strict-transfer
+ * contract counts while its owner is the generation the pointer names, or while the owner still has a
+ * client attached to that session.
+ *
+ * Attachments are no evidence that a session is quiet: a retained lane runs its turns with no client
+ * attached, and a drain parks every idle session at once, so what a draining generation still holds is
+ * exactly what it is still writing (senpi#7098). A claim this host publishes therefore carries
+ * `strict_transfer: true` and stands for as long as its owner runs; the owner removes it itself once
+ * the session parks or closes.
  */
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	processIsLive,
+	processIsRunning,
 	processStartTimeMs,
 	readProcessStartTime,
 	sameProcessStartMs,
@@ -52,6 +58,8 @@ export interface SessionPathOwner {
 	readonly attached?: boolean;
 	/** Whether the owner is the generation the pointer names. Answered on read, never stored. */
 	readonly current?: boolean;
+	/** The owner removes this claim itself when the session leaves it, so it stands while the owner runs. */
+	readonly strict_transfer?: true;
 }
 
 export interface SessionPathReservations {
@@ -131,6 +139,7 @@ export function createSessionPathReservations(options: {
 			processStartTime: await startTime,
 			sessionPath,
 			attached,
+			strict_transfer: true,
 		};
 		const file = reservationFile(dir, sessionPath);
 		await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -185,8 +194,9 @@ export function createSessionPathReservations(options: {
 							: undefined;
 					}
 					const current = await readProcessStartTime(pid, process.platform, 1_000).catch(() => undefined);
-					// Recorded identities may carry an explicit UTC tag (host-child.pid, #3054) while this probe
-					// reads the local form: compare the parsed instant, never the raw text.
+					// Recorded identities may carry an explicit UTC tag (host-child.pid, #3054); the probe
+					// reads in UTC too (senpi#3067 L1), and legacy local-format records still parse as
+					// local time: compare the parsed instant, never the raw text.
 					const observed = current === undefined ? undefined : processStartTimeMs(current);
 					return observed !== undefined &&
 						owners.some(
@@ -271,11 +281,13 @@ export async function readSessionPathClaims(dir: string): Promise<readonly Sessi
 /**
  * The claim that STANDS against a new open, or nothing when this path may be taken over.
  *
- * A claim is honored while its owner is the generation serving the socket, or while that owner
- * still has a client attached to the session - those are the two cases where somebody is really
- * writing the file. A superseded owner that published `attached: false` is draining (or should
- * be), so its claim is released rather than obeyed. A claim without the flag predates it and is
- * honored, so a running older generation is never reclaimed from.
+ * A strict-transfer claim is honored while its owner runs: its owner drops it when the session parks or
+ * closes, so a claim still on disk is a session that owner is still running (senpi#7098).
+ *
+ * An older claim is honored while its owner is the generation serving the socket, or while that owner
+ * still has a client attached to the session. A superseded older owner that published `attached: false`
+ * is draining (or should be), so its claim is released rather than obeyed. A claim without the flag
+ * predates it and is honored, so a running older generation is never reclaimed from.
  *
  * A superseded owner whose identity cannot be PROVEN - no start time was recorded, or none can be read
  * now - needs one more piece of evidence before it may block an open (#3652). On Windows a terminated
@@ -292,7 +304,9 @@ async function standingOwner(owner: SessionPathOwner, paths: HostDaemonDirectory
 	const current = (await currentInstanceId(paths.pointerFile)) === owner.instanceId;
 	if (!current && identity === "unproven" && (await heartbeatStopped(paths, owner.instanceId)))
 		return { kind: "presumed_done" };
-	return current || owner.attached !== false ? { kind: "stands", owner: { ...owner, current } } : { kind: "released" };
+	return current || owner.strict_transfer === true || owner.attached !== false
+		? { kind: "stands", owner: { ...owner, current } }
+		: { kind: "released" };
 }
 
 /**
@@ -326,7 +340,10 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { instanceId, pid, processStartTime, sessionPath, attached, host_socket } = parsed as Record<string, unknown>;
+	const { instanceId, pid, processStartTime, sessionPath, attached, host_socket, strict_transfer } = parsed as Record<
+		string,
+		unknown
+	>;
 	if (typeof instanceId !== "string" || typeof pid !== "number" || typeof sessionPath !== "string") return undefined;
 	return {
 		instanceId,
@@ -335,6 +352,7 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
 		sessionPath,
 		...(typeof host_socket === "string" ? { host_socket } : {}),
 		...(typeof attached === "boolean" ? { attached } : {}),
+		...(strict_transfer === true ? { strict_transfer } : {}),
 	};
 }
 
@@ -351,7 +369,8 @@ export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean
  * different start time. `unproven`: the pid runs but no start time was recorded or none can be read.
  */
 export async function claimOwnerIdentity(owner: SessionPathOwner): Promise<"proven" | "gone" | "unproven"> {
-	if (!processIsLive(owner.pid)) return "gone";
+	// An exited, unreaped owner (state Z) makes no more writes: the claim is gone (senpi#4119).
+	if (!processIsRunning(owner.pid)) return "gone";
 	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
 	if (recorded === undefined) {
 		logUnknownHostIdentity("session-path-claim", owner.pid);

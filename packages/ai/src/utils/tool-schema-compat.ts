@@ -4,6 +4,11 @@
  * subset that rejects a sibling `type` keyword on schemas that also declare
  * `anyOf` / `oneOf` / `allOf`. This helper removes that redundancy while
  * preserving the schema's semantics.
+ *
+ * This is provider wire adaptation, not an MCP schema conversion or argument
+ * validator. MCP supplies its full schema (boolean roots use the equivalent
+ * allOf container); the original schema and model arguments are never rewritten.
+ * Root-union conversion below is explicitly lossy for object-only providers.
  */
 
 export type ToolSchemaFlavor = "moonshot-mfjs";
@@ -157,14 +162,49 @@ function mergeRootObjectUnion(
 		]),
 	];
 
+	// A union's merged root drops each branch's own required names; keep them visible to the model (#5138).
+	const hints =
+		selected === "allOf"
+			? []
+			: objectBranches.flatMap((branch, index) => {
+					const own = [...(branchRequiredSets[index] ?? [])].filter((name) => !required.includes(name));
+					return own.length === 0 ? [] : [`REQUIRED for ${describeBranch(branch, index)}: ${own.join(", ")}.`];
+				});
+	const description =
+		hints.length === 0
+			? undefined
+			: [typeof schema.description === "string" ? schema.description : "", ...hints].filter(Boolean).join(" ");
+
 	const rest = { ...schema };
 	for (const key of combiner ? [combiner] : ["anyOf", "oneOf"]) delete rest[key];
 	return {
 		...rest,
+		...(description === undefined ? {} : { description }),
 		type: "object",
 		properties,
 		...(required.length > 0 ? { required } : {}),
 	};
+}
+
+/** Names a union branch by its first literal-valued property (`action=run`), else by position. */
+function describeBranch(branch: Record<string, unknown>, index: number): string {
+	if (isJsonObject(branch.properties)) {
+		for (const [name, propertySchema] of Object.entries(branch.properties)) {
+			const values = literalValues(propertySchema);
+			if (values.length > 0) return `${name}=${values.join("|")}`;
+		}
+	}
+	return `option ${index + 1}`;
+}
+
+function literalValues(schema: unknown): string[] {
+	if (!isJsonObject(schema)) return [];
+	if (Object.hasOwn(schema, "const")) return [String(schema.const)];
+	if (Array.isArray(schema.enum)) return schema.enum.map(String);
+	const branches = schema.anyOf;
+	if (!Array.isArray(branches)) return [];
+	const values = branches.map((branch) => literalValues(branch));
+	return values.every((value) => value.length === 1) ? values.flat() : [];
 }
 
 function normalizeNode(node: unknown, isRoot = false): unknown {

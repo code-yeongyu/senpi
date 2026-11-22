@@ -22,13 +22,15 @@ const WORKSPACE = {
 	"@earendil-works/chord": "packages/chord/src",
 	"@earendil-works/pi-ai": "packages/ai/src",
 	"@earendil-works/pi-agent-core": "packages/agent/src",
+	"@earendil-works/pi-realm-registry": "packages/realm-registry/src",
 	"@earendil-works/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
 };
 
 /**
  * Budgets are deliberate. `.` and `./node` are batteries-included entries and stay unbounded; every
- * narrow entry states the graph it is allowed to reach.
+ * narrow entry states the graph it is allowed to reach. A wildcard entry may name one expanded export in
+ * `overrides` with its own `maxFiles`, so one justified chain does not raise the budget of every sibling.
  */
 const BUDGETS = {
 	"packages/ai": {
@@ -37,13 +39,39 @@ const BUDGETS = {
 			// +1 (senpi#2893): utils/oauth-refresh-error.ts, the typed transient/permanent refresh classification auth/resolve.ts raises.
 			// +1 (senpi#3292): google-thinking-generation.ts, the type-only leaf inferring the level map of generation-4 rows.
 			// +1 (senpi#3378): model-cost.ts, the type-only leaf that picks the cost card in force for a request.
-			maxFiles: 24,
+			// +1 (senpi#3858): auth/credential-read.ts, the credential-store read auth/resolve.ts wraps in ModelsError.
+			// +1 (senpi#3858): utils/config-reference-error.ts, the typebox-free error a slot read raises for an unresolved reference.
+			// +1 (senpi#4272): utils/assistant-capture.ts, the type-only capture leaf utils/event-stream.ts imports (via api/lazy.ts).
+			// +1 (senpi#4282): utils/provider-error.ts, the redaction every provider stream applies at its boundary.
+			// +3 (senpi#4283): the one-pass token-wise redactor provider-error.ts runs, split by responsibility to stay under
+			// 250 pure LOC per file: utils/secret-redaction.ts (the state machine), utils/secret-classifier.ts (credential
+			// words, key prefixes, JWTs) and utils/secret-lexer.ts (token and delimiter units). Measured: 31 files.
+			// +2 (senpi#4272 S02c): assistant-capture-record.ts separates frozen-value construction to keep files
+			// below 250 pure LOC; assistant-seed-frontier.ts shares the producer/projector frontier contract.
+			// Both are browser-safe leaves without new runtime dependencies. Measured: 33 files.
+			// +1 (senpi#4099): auth/pool/login-id.ts, the one-function leaf that stamps a fresh loginId on a sign-in's
+			// credential so a re-login (never a token refresh) releases a billing-pinned fallback. Measured: 34 files.
+			// +3 (senpi#3975): api/lazy.ts keeps the diagnostic a credential pool attaches to its all-blocked refusal
+			// (a rate limit with the soonest unblock time), read through provider-diagnostic.ts, which validates it
+			// against utils/provider-diagnostic-vocabulary.ts from utils/provider-diagnostic-carrier.ts. All three are
+			// dependency-free leaves. Measured with senpi#4099 in the graph: 36 files.
+			maxFiles: 36,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
-		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
+		"./utils/*": {
+			maxFiles: 3,
+			// senpi#4283: every provider stream redacts its error at the boundary, so event-stream.ts reaches
+			// provider-error.ts and the three redactor modules (secret-redaction, secret-classifier, secret-lexer).
+			// S02c adds the two capture leaves described above. Measured: event-stream 8 files,
+			// provider-error 4; every other ./utils/* entry stays at 3.
+			overrides: { "./utils/event-stream": 8, "./utils/provider-error": 4 },
+			forbid: ["providers/", "api/", "index.ts"],
+		},
 	},
 	"packages/agent": {
 		"./harness/runtime/reducer": { maxFiles: 1 },
+		// The read folder a Worker-bundled tool host imports: no agent loop, no AI package (tools-core in coding-agent).
+		"./read-folders": { maxFiles: 10, forbid: ["packages/ai/", "agent-loop.ts", "harness/runtime/", "harness/env/"] },
 		"./harness/context": { maxFiles: 6, forbid: ["harness/runtime/", "harness/execution/", "packages/ai/"] },
 		// 6: windows-process-tree.ts, the leaf that plans Windows tree kills by creation time (senpi#2999).
 		"./harness/env/nodejs": { maxFiles: 6, forbid: ["packages/ai/", "harness/runtime/"] },
@@ -124,10 +152,11 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				continue;
 			}
 			const graph = [...walk(source)].map((file) => relative(ROOT, file));
-			console.log(`${pkgDir} export "${name}": ${graph.length} files (budget ${budget.maxFiles})`);
-			if (graph.length > budget.maxFiles) {
+			const maxFiles = budget.overrides?.[name] ?? budget.maxFiles;
+			console.log(`${pkgDir} export "${name}": ${graph.length} files (budget ${maxFiles})`);
+			if (graph.length > maxFiles) {
 				console.error(
-					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
+					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${maxFiles}\n` +
 						graph.map((file) => `    ${file}`).join("\n"),
 				);
 				failures += 1;

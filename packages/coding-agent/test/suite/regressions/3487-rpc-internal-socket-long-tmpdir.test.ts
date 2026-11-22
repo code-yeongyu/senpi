@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { reapOrphanedInternalHostDirs } from "../../../src/modes/rpc/host-internal-dir-reaper.ts";
 import { createInternalSocketPath } from "../../../src/modes/rpc/host-lifecycle.ts";
+import { internalHostDirRoots } from "../../../src/modes/rpc/host-lifecycle-scratch.ts";
 import { MAX_SOCKET_PATH_BYTES } from "../../../src/modes/rpc/socket-ownership.ts";
 
 // Regression coverage for https://github.com/code-yeongyu/senpi/issues/3487: a long TMPDIR (a macOS
@@ -13,6 +14,7 @@ describe.skipIf(process.platform === "win32")("createInternalSocketPath with a l
 	const created: string[] = [];
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		vi.unstubAllEnvs();
 		for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
@@ -63,6 +65,75 @@ describe.skipIf(process.platform === "win32")("createInternalSocketPath with a l
 		);
 
 		await reapOrphanedInternalHostDirs();
+
+		expect(existsSync(leftover)).toBe(false);
+	});
+
+	it("never reaps a leftover hop owned by another user in the shared /tmp", async () => {
+		const longTmp = mkdtempSync(join("/tmp", `senpi-3487-${"u".repeat(100)}-`));
+		created.push(longTmp);
+		vi.stubEnv("TMPDIR", longTmp);
+		const leftover = mkdtempSync(join("/tmp", "senpi-rpc-host-internal-3487u"));
+		created.push(leftover);
+		writeFileSync(
+			join(leftover, ".owner"),
+			JSON.stringify({
+				pid: 2_147_483_000,
+				processStartTime: "2000-01-01T00:00:00Z",
+				createdAt: Date.now() - 120_000,
+			}),
+		);
+		// This process stands in for a different local user: the directory is not its own.
+		const uid = process.getuid?.() ?? 0;
+		vi.spyOn(process, "getuid").mockReturnValue(uid + 1);
+
+		await reapOrphanedInternalHostDirs();
+
+		expect(existsSync(leftover)).toBe(true);
+	});
+
+	it("scans one root once when TMPDIR resolves to /tmp", () => {
+		const link = join(mkdtempSync(join("/tmp", "s3487l-")), "tmp-link");
+		created.push(join(link, ".."));
+		symlinkSync("/tmp", link);
+		vi.stubEnv("TMPDIR", link);
+
+		expect(internalHostDirRoots()).toHaveLength(1);
+	});
+
+	it("keeps the short /tmp name when a long TMPDIR resolves to /tmp", async () => {
+		const parent = mkdtempSync(join("/tmp", `s3487ll-${"l".repeat(100)}-`));
+		created.push(parent);
+		const link = join(parent, "tmp-link");
+		symlinkSync("/tmp", link);
+		vi.stubEnv("TMPDIR", link);
+
+		const internal = await createInternalSocketPath(link, process.platform);
+		if (internal.dir) created.push(internal.dir);
+
+		expect(internalHostDirRoots()).toEqual(["/tmp"]);
+		expect(internal.dir?.startsWith("/tmp/senpi-rpc-host-internal-")).toBe(true);
+		expect(Buffer.byteLength(internal.socket)).toBeLessThanOrEqual(MAX_SOCKET_PATH_BYTES);
+	});
+
+	it("still reaps a dead owner's hop where the platform has no user id", async () => {
+		const leftover = mkdtempSync(join("/tmp", "senpi-rpc-host-internal-3487n"));
+		created.push(leftover);
+		writeFileSync(
+			join(leftover, ".owner"),
+			JSON.stringify({
+				pid: 2_147_483_000,
+				processStartTime: "2000-01-01T00:00:00Z",
+				createdAt: Date.now() - 120_000,
+			}),
+		);
+		const getuid = process.getuid;
+		Object.defineProperty(process, "getuid", { value: undefined, configurable: true, writable: true });
+		try {
+			await reapOrphanedInternalHostDirs();
+		} finally {
+			Object.defineProperty(process, "getuid", { value: getuid, configurable: true, writable: true });
+		}
 
 		expect(existsSync(leftover)).toBe(false);
 	});

@@ -5,6 +5,7 @@ import {
 	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
 } from "../tui.ts";
+import { copyLineSources, getLineSources, setLineSource } from "../selection-source.ts";
 import { applyBackgroundToLine, flattenLines, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
@@ -84,13 +85,30 @@ export class Box implements Component {
 
 	private matchCache(width: number, childLines: string[], bgSample: string | undefined): boolean {
 		const cache = this.cache;
-		return (
-			!!cache &&
-			cache.width === width &&
-			cache.bgSample === bgSample &&
-			cache.childLines.length === childLines.length &&
-			cache.childLines.every((line, i) => line === childLines[i])
-		);
+		if (
+			!cache ||
+			cache.width !== width ||
+			cache.bgSample !== bgSample ||
+			cache.childLines.length !== childLines.length
+		) {
+			return false;
+		}
+		const cachedSources = getLineSources(cache.childLines);
+		const nextSources = getLineSources(childLines);
+		return cache.childLines.every((line, i) => {
+			if (line !== childLines[i]) return false;
+			const before = cachedSources?.[i];
+			const after = nextSources?.[i];
+			if (before === after) return true;
+			if (!before || !after) return false;
+			return (
+				before.document === after.document &&
+				before.ranges === after.ranges &&
+				before.sourceRow === after.sourceRow &&
+				before.columnOffset === after.columnOffset &&
+				before.unavailable === after.unavailable
+			);
+		});
 	}
 
 	invalidate(): void {
@@ -155,10 +173,12 @@ export class Box implements Component {
 		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
 			const lines = child.render(contentWidth);
+			const offset = childLines.length;
 			mouseChildren.push({ component: child, height: lines.length });
 			for (const line of lines) {
 				childLines.push(line);
 			}
+			copyLineSources(lines, childLines, offset);
 		}
 		this.mouseLayout = { width: contentWidth, children: mouseChildren };
 
@@ -170,8 +190,9 @@ export class Box implements Component {
 		const bgSample = this.bgFn ? this.bgFn("test") : undefined;
 
 		// Check cache validity
-		if (this.matchCache(width, childLines, bgSample)) {
-			return this.cache!.lines;
+		const cache = this.cache;
+		if (cache && this.matchCache(width, childLines, bgSample)) {
+			return cache.lines;
 		}
 
 		// Apply background and padding
@@ -180,6 +201,7 @@ export class Box implements Component {
 		// Top padding
 		for (let i = 0; i < this.paddingY; i++) {
 			result.push(this.applyBg("", width));
+			setLineSource(result, result.length - 1, null);
 		}
 
 		// Content
@@ -190,10 +212,12 @@ export class Box implements Component {
 		// Bottom padding
 		for (let i = 0; i < this.paddingY; i++) {
 			result.push(this.applyBg("", width));
+			setLineSource(result, result.length - 1, null);
 		}
 
 		// Update cache
 		flattenLines(result);
+		copyLineSources(childLines, result, this.paddingY, this.paddingX);
 		this.cache = { childLines, width, bgSample, lines: result };
 
 		return result;

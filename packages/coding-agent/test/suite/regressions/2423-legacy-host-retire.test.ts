@@ -9,10 +9,10 @@
 // `generation_handoff`, so SIGUSR1 drains it - exactly what the old engine did when drained by hand.
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { HostEnsureRefusedError } from "../../../src/modes/rpc/host-decision.ts";
 import { type EnsuredHost, ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
@@ -155,14 +155,17 @@ describe.skipIf(process.platform === "win32")("a live pre-layout-2 host (#2423)"
 
 /**
  * A real host on the agent directory's default socket that only a FLAT record names: the production
- * ensure starts it, then its layout-2 pointer is removed and the pre-layout-2 record written instead.
+ * ensure starts it, then its layout-2 pointer and generation record are removed (a pre-layout-2 build
+ * writes neither, and a generation record alone proves the host to `electPointer`, senpi#1911) and the
+ * pre-layout-2 record written instead.
  */
 async function startLegacyHost(label: string): Promise<LegacyHost> {
 	const qa = generationScratch(label);
 	scratches.push(qa);
 	writeRpcModelsJson(qa.agentDir, "http://127.0.0.1:1");
 	const socket = join(qa.agentDir, "rpc", "rpc.sock");
-	await mkdir(join(qa.agentDir, "rpc"), { recursive: true });
+	// `rpc/` is part of the host's key root, which it refuses when writable by group or others (senpi#4541).
+	await mkdir(join(qa.agentDir, "rpc"), { recursive: true, mode: 0o700 });
 	const ensured = await ensureOn(qa, socket);
 	// An attached client keeps a draining host resident; the legacy host must start with nobody on it.
 	ensured.release();
@@ -170,6 +173,8 @@ async function startLegacyHost(label: string): Promise<LegacyHost> {
 	if (startTime === undefined) throw new Error(`legacy host pid ${ensured.pid} has no readable start time`);
 	const paths = createHostDaemonPaths({ socket, agentDir: qa.agentDir });
 	await rm(paths.pointerFile, { force: true });
+	for (const instanceId of await readdir(paths.generationsDir))
+		await rm(generationPaths(paths, instanceId).pidFile, { force: true });
 	const flatRecord = `${JSON.stringify({ pid: ensured.pid, processStartTime: startTime })}\n`;
 	await writeFile(paths.legacyPidFile, flatRecord, { mode: 0o600 });
 	return { qa, socket, pid: ensured.pid, flatRecord };

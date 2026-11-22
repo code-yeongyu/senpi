@@ -120,6 +120,7 @@ describe("senpi#2822 a long streamed tool call on the anthropic-subscription lan
 		await settle(query);
 
 		// then the pump stopped pulling once the queue was full instead of failing the query
+		// The margin of 2 covers the replay message and the one message handed straight to the waiting reader (senpi#2974).
 		expect(query.queued.length).toBeGreaterThan(TOOL_CALL_DELTAS - SESSION_STREAM_QUEUE_CAPACITY - 2);
 
 		// when the consumer reads the whole turn

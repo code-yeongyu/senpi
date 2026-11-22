@@ -43,6 +43,8 @@ export async function execCommand(
 			cwd,
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
+			// senpi#3965: hide the console window for console-subsystem children on Windows.
+			windowsHide: true,
 		});
 
 		let stdout = "";

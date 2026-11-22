@@ -2,6 +2,7 @@ import {
 	type Component,
 	Container,
 	claimFrameRow,
+	copyLineSources,
 	currentRenderRevision,
 	dispatchMouseEvent,
 	frameMode,
@@ -209,7 +210,7 @@ export class ProgressiveTranscriptContainer extends Container {
 				heights: [1, ...this.paintedLayout.heights],
 			};
 		}
-		return [marker, ...lines];
+		return copyLineSources(lines, [marker, ...lines], 1);
 	}
 
 	/**
@@ -464,7 +465,7 @@ export class ProgressiveTranscriptContainer extends Container {
 			children: prefix.children.slice(0, kept),
 			revisions: prefix.revisions.slice(0, kept),
 			heights: prefix.heights.slice(0, kept),
-			lines: prefix.lines.slice(0, keptLines),
+			lines: copyLineSources(prefix.lines, prefix.lines.slice(0, keptLines)),
 		};
 	}
 

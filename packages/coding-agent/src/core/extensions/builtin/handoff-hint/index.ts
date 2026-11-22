@@ -8,6 +8,7 @@ import { goalStoreRef } from "../goal/store-ref.ts";
 import type { Goal } from "../goal/types.ts";
 import { buildHandoffBrief } from "./brief.ts";
 import { estimateHandoff, type HandoffEstimate, hintText } from "./estimate.ts";
+import { createReplacementRelay } from "./replacement-relay.ts";
 
 export const HANDOFF_HINT_ENTRY_TYPE = "handoff-hint";
 export const HANDOFF_BRIEF_MESSAGE_TYPE = "handoff-brief";
@@ -87,6 +88,7 @@ export function createHandoffHintExtension(
 ): ExtensionFactory {
 	const now = dependencies.now ?? Date.now;
 	const goalOf = dependencies.readGoal ?? readActiveGoal;
+	const acceptances = createReplacementRelay<HandoffHintEvent>();
 	return (pi: ExtensionAPI) => {
 		let ctx: ExtensionContext | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -207,11 +209,13 @@ export function createHandoffHintExtension(
 				previousSessionFile: current.sessionManager.getSessionFile(),
 				contextTokens: usage?.tokens ?? estimate?.contextTokens ?? 0,
 			});
-			const accepted = estimate === undefined ? undefined : hintEvent("accepted", current, estimate);
 			const sessionId = current.sessionManager.getSessionId();
+			const previousSessionFile = current.sessionManager.getSessionFile();
+			// The replacement's session_start emits it through the new generation's pi (senpi#4051).
+			if (estimate !== undefined) acceptances.hold(previousSessionFile, hintEvent("accepted", current, estimate));
 			hide(current);
-			const result = await current.newSession({
-				parentSession: current.sessionManager.getSessionFile(),
+			const switching = current.newSession({
+				parentSession: previousSessionFile,
 				withSession: async (next) => {
 					await next.sendMessage(
 						{ customType: HANDOFF_BRIEF_MESSAGE_TYPE, content: brief, display: true },
@@ -219,12 +223,9 @@ export function createHandoffHintExtension(
 					);
 				},
 			});
-			if (result.cancelled) {
-				if (estimate !== undefined && current.sessionManager.getSessionId() === sessionId)
-					render(current, estimate);
-				return;
-			}
-			if (accepted !== undefined) pi.events?.emit(HANDOFF_HINT_EVENT, accepted);
+			const result = await switching.finally(() => acceptances.release(previousSessionFile));
+			if (result.cancelled && estimate !== undefined && current.sessionManager.getSessionId() === sessionId)
+				render(current, estimate);
 		}
 
 		pi.registerCommand(HANDOFF_COMMAND, {
@@ -252,8 +253,10 @@ export function createHandoffHintExtension(
 			},
 		});
 
-		pi.on("session_start", (_event, next) => {
+		pi.on("session_start", (event, next) => {
 			ctx = next;
+			const accepted = event.reason === "new" ? acceptances.take(event.previousSessionFile) : undefined;
+			if (accepted !== undefined) pi.events?.emit(HANDOFF_HINT_EVENT, accepted);
 			disarm();
 			visible = undefined;
 			shownThisCrossing = false;

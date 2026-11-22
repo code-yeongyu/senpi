@@ -1,0 +1,16 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": false,
+	"id": "advertisement-off",
+	"advertisement": true,
+	"request": {
+		"id": "h",
+		"type": "get_protocol_info"
+	},
+	"expectedAck": {
+		"capabilities": []
+	}
+}

@@ -19,6 +19,7 @@ import {
 	trackSupervisor,
 } from "./helpers/rpc-host-endpoint-scratch.ts";
 import { processAlive } from "./helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 const lockedDirs: string[] = [];
 
@@ -31,7 +32,7 @@ async function socketHost(qa: EndpointScratch): Promise<{ pid: number; stderr: (
 	const cli = join(import.meta.dirname, "..", "src", "cli.ts");
 	const child = spawn(process.execPath, [cli, "--mode", "rpc", "--listen", `unix://${qa.legacy}`, ...hostArgs()], {
 		cwd: qa.cwd,
-		env: { ...process.env, ...hostEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
+		env: { ...hostSpawnEnv(), ...hostEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
 		stdio: ["ignore", "ignore", "pipe"],
 	});
 	let stderr = "";
