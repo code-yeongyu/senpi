@@ -13,7 +13,7 @@ import { registerMcpCommands } from "./commands.ts";
 import { forwardMcpControlInventory } from "./control-inventory.ts";
 import { injectMcpInstructions, refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
-import { registerMcpPromptCommands } from "./prompts.ts";
+import { createMcpPromptCommandSync } from "./prompts.ts";
 import { expandMcpResourceMentions } from "./resources.ts";
 import { getMcpService, McpService } from "./service.ts";
 import { createMcpSkillReveal } from "./skill-reveal.ts";
@@ -43,6 +43,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		};
 
 		registerMcpCommands(pi, service, () => attachPromise);
+		// Prompts that arrive in a later catalog generation (startup race, list_changed) register too (senpi#7249).
+		const promptCommands = createMcpPromptCommandSync(service, pi, sessionOwned);
 
 		installMcpNativeToolSearchGate(() => {
 			const setting = service.getNativeToolSearchSetting();
@@ -95,8 +97,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			attachPromise = (async () => {
 				await service.attachSession(event, ctx, pi);
 				refreshMcpInstructionsForSession(service);
-				if (sessionOwned) registerMcpPromptCommands(service, pi, service.getMcpPromptServers(pi));
-				else registerMcpPromptCommands(pi, service.getMcpPromptServers(pi));
+				promptCommands.register();
 			})();
 			scopeAttaches.set(contextKey(ctx), attachPromise);
 			return attachPromise;
@@ -191,6 +192,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			wrapAsync(
 				"mcp.session_shutdown",
 				async (event) => {
+					promptCommands.dispose();
 					if (sessionOwned) {
 						disposeControlInventory();
 						await service.handleSessionShutdown(event);
@@ -213,6 +215,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				"mcp.session_extensions_removed",
 				async (event) => {
 					if (event.removed.some((extension) => extension.path === MCP_BUILTIN_EXTENSION_PATH)) {
+						promptCommands.dispose();
 						disposeControlInventory();
 						if (sessionOwned) await service.dispose("reload");
 						else await service.releaseSession(pi, "reload");

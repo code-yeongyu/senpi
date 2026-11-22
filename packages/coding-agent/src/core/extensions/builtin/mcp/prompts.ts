@@ -5,10 +5,11 @@
 // ctx.ui.input (required arguments re-prompt once, then abort with a notice;
 // optional arguments may be left empty), calls prompts/get, and injects the
 // flattened returned messages into the input editor (senpi command semantics:
-// the user reviews and submits). prompts_list_changed rides the existing
-// tools-changed refresh, which re-runs registration; command registration is
-// last-wins, and prompts removed server-side keep a stale command until the
-// next session — invoking one surfaces the server error as a notice.
+// the user reviews and submits). Registration re-runs on every catalog
+// generation (senpi#7249), so a prompt that arrives after attach still becomes a
+// command. A handler reads its prompt from the live catalog when it runs, so it
+// uses the server's current arguments. A prompt the server stopped offering keeps
+// its command name, since commands cannot be unregistered, and invoking it says so.
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionUIContext } from "../../types.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
@@ -37,20 +38,52 @@ export function resetMcpPromptCommandsForTests(): void {
 	registeredCommandNames.clear();
 }
 
-export function registerMcpPromptCommands(pi: CommandRegistrar, servers: readonly McpPromptServer[]): string[];
+type LiveCatalog = () => readonly McpPromptServer[];
+type McpPromptRegistry = Pick<
+	McpService,
+	| "getMcpPromptServers"
+	| "onMcpRegistrationChanged"
+	| "isMcpPromptCommandRegistered"
+	| "markMcpPromptCommandRegistered"
+>;
+
+/** Registers this session's prompt commands now and after every later catalog generation. */
+export function createMcpPromptCommandSync(
+	service: McpPromptRegistry,
+	pi: CommandRegistrar,
+	sessionOwned: boolean,
+): { register(): void; dispose(): void } {
+	const current: LiveCatalog = () => service.getMcpPromptServers(pi);
+	const register = (): void => {
+		if (sessionOwned) registerMcpPromptCommands(service, pi, current(), current);
+		else registerMcpPromptCommands(pi, current(), current);
+	};
+	const dispose = service.onMcpRegistrationChanged(register);
+	return { register, dispose };
+}
+
 export function registerMcpPromptCommands(
-	service: McpService,
 	pi: CommandRegistrar,
 	servers: readonly McpPromptServer[],
+	current?: LiveCatalog,
 ): string[];
 export function registerMcpPromptCommands(
-	serviceOrPi: McpService | CommandRegistrar,
+	service: McpPromptRegistry,
+	pi: CommandRegistrar,
+	servers: readonly McpPromptServer[],
+	current?: LiveCatalog,
+): string[];
+export function registerMcpPromptCommands(
+	serviceOrPi: McpPromptRegistry | CommandRegistrar,
 	piOrServers: CommandRegistrar | readonly McpPromptServer[],
-	serversArg?: readonly McpPromptServer[],
+	serversOrCurrent?: readonly McpPromptServer[] | LiveCatalog,
+	currentArg?: LiveCatalog,
 ): string[] {
-	const service = serversArg === undefined ? undefined : (serviceOrPi as McpService);
-	const pi = (serversArg === undefined ? serviceOrPi : piOrServers) as CommandRegistrar;
-	const servers = (serversArg === undefined ? piOrServers : serversArg) as readonly McpPromptServer[];
+	const moduleScoped = Array.isArray(piOrServers);
+	const service = moduleScoped ? undefined : (serviceOrPi as McpPromptRegistry);
+	const pi = (moduleScoped ? serviceOrPi : piOrServers) as CommandRegistrar;
+	const servers = (moduleScoped ? piOrServers : serversOrCurrent) as readonly McpPromptServer[];
+	const current = (moduleScoped ? serversOrCurrent : currentArg) as LiveCatalog | undefined;
 	const added: string[] = [];
 	for (const server of servers) {
 		for (const prompt of server.prompts) {
@@ -62,14 +95,21 @@ export function registerMcpPromptCommands(
 			pi.registerCommand(commandName, {
 				description: prompt.description ?? `MCP prompt ${prompt.name} from ${server.server}`,
 				handler: async (_args, ctx) => {
+					const live = livePrompt(server, prompt, current);
+					if (live === undefined) {
+						ctx.ui.notify(`MCP prompt ${prompt.name} is no longer offered by ${server.server}.`, "warning");
+						return;
+					}
 					try {
-						server.bindPresentation?.(ctx.ui);
-						const collected = await collectPromptArguments(prompt.arguments ?? [], ctx);
+						live.server.bindPresentation?.(ctx.ui);
+						const collected = await collectPromptArguments(live.prompt.arguments ?? [], ctx);
 						if (collected === undefined) return;
-						if (server.requestOrigin) await ensureMcpToolCallConnection(server.connection, server.ensureFresh);
-						const result = await server.connection.client.getPrompt(
-							{ arguments: collected, name: prompt.name },
-							mcpRequestOptions(server.requestOrigin?.(), { timeout: server.requestTimeoutMs }),
+						if (live.server.requestOrigin) {
+							await ensureMcpToolCallConnection(live.server.connection, live.server.ensureFresh);
+						}
+						const result = await live.server.connection.client.getPrompt(
+							{ arguments: collected, name: live.prompt.name },
+							mcpRequestOptions(live.server.requestOrigin?.(), { timeout: live.server.requestTimeoutMs }),
 						);
 						ctx.ui.setEditorText(flattenPromptMessages(result.messages));
 					} catch (error) {
@@ -82,6 +122,20 @@ export function registerMcpPromptCommands(
 		}
 	}
 	return added;
+}
+
+type PromptEntry = McpPromptServer["prompts"][number];
+
+/** The server and prompt a command should use now: the live catalog's entry by name, or the registered one. */
+function livePrompt(
+	server: McpPromptServer,
+	prompt: PromptEntry,
+	current: LiveCatalog | undefined,
+): { server: McpPromptServer; prompt: PromptEntry } | undefined {
+	if (current === undefined) return { server, prompt };
+	const liveServer = current().find((candidate) => candidate.server === server.server);
+	const liveEntry = liveServer?.prompts.find((candidate) => candidate.name === prompt.name);
+	return liveServer && liveEntry ? { server: liveServer, prompt: liveEntry } : undefined;
 }
 
 async function collectPromptArguments(

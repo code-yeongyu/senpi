@@ -5,6 +5,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	createMcpPromptCommandSync,
+	type McpPromptServer,
 	registerMcpPromptCommands,
 	resetMcpPromptCommandsForTests,
 } from "../../src/core/extensions/builtin/mcp/prompts.ts";
@@ -61,6 +63,99 @@ function fakeCommandCtx(answers: Array<string | undefined>) {
 		notices,
 	};
 }
+
+function promptServer(server: string, prompts: McpPromptServer["prompts"], calls: unknown[]): McpPromptServer {
+	return {
+		server,
+		prompts,
+		connection: {
+			client: {
+				getPrompt: async (request: unknown) => {
+					calls.push(request);
+					return { messages: [{ role: "user", content: { type: "text", text: "from server" } }] };
+				},
+			},
+		},
+	} as never;
+}
+
+/** The service surface prompt commands use: the live catalog, its change signal and the registered-name set. */
+function fakePromptRegistry(servers: () => readonly McpPromptServer[]) {
+	const names = new Set<string>();
+	const listeners = new Set<() => void>();
+	return {
+		service: {
+			getMcpPromptServers: servers,
+			onMcpRegistrationChanged: (listener: () => void) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			},
+			isMcpPromptCommandRegistered: (name: string) => names.has(name),
+			markMcpPromptCommandRegistered: (name: string) => names.add(name),
+		} as never,
+		catalogChanged: () => {
+			for (const listener of [...listeners]) listener();
+		},
+		listeners: () => listeners.size,
+	};
+}
+
+// senpi#7249: prompt commands follow the server's live prompt catalog after attach.
+describe("mcp prompt commands follow the live catalog", () => {
+	it("registers a prompt that appears in a later catalog generation, and stops listening on dispose", () => {
+		let catalog: readonly McpPromptServer[] = [];
+		const registry = fakePromptRegistry(() => catalog);
+		const recorder = commandRecorder();
+
+		const sync = createMcpPromptCommandSync(registry.service, recorder as never, true);
+		sync.register();
+		expect([...recorder.commands.keys()]).toEqual([]);
+
+		catalog = [promptServer("fx", [{ name: "late", arguments: [] }], [])];
+		registry.catalogChanged();
+		expect([...recorder.commands.keys()]).toEqual(["mcp:fx:late"]);
+
+		sync.dispose();
+		expect(registry.listeners()).toBe(0);
+	});
+
+	it("invokes the prompt with the arguments the server declares now, not those at registration", async () => {
+		const before: unknown[] = [];
+		const after: unknown[] = [];
+		let catalog: readonly McpPromptServer[] = [
+			promptServer("fx", [{ name: "brief", arguments: [{ name: "name", required: true }] }], before),
+		];
+		const registry = fakePromptRegistry(() => catalog);
+		const recorder = commandRecorder();
+		const sync = createMcpPromptCommandSync(registry.service, recorder as never, true);
+		sync.register();
+
+		catalog = [promptServer("fx", [{ name: "brief", arguments: [{ name: "topic", required: true }] }], after)];
+		registry.catalogChanged();
+		const run = fakeCommandCtx(["tests"]);
+		await recorder.commands.get("mcp:fx:brief")?.handler("", run.ctx);
+
+		expect(before).toEqual([]);
+		expect(after).toEqual([{ arguments: { topic: "tests" }, name: "brief" }]);
+		expect(run.getEditorText()).toBe("from server");
+	});
+
+	it("reports a prompt the server no longer offers instead of calling it", async () => {
+		const calls: unknown[] = [];
+		let catalog: readonly McpPromptServer[] = [promptServer("fx", [{ name: "gone", arguments: [] }], calls)];
+		const registry = fakePromptRegistry(() => catalog);
+		const recorder = commandRecorder();
+		createMcpPromptCommandSync(registry.service, recorder as never, true).register();
+
+		catalog = [];
+		registry.catalogChanged();
+		const run = fakeCommandCtx([]);
+		await recorder.commands.get("mcp:fx:gone")?.handler("", run.ctx);
+
+		expect(calls).toEqual([]);
+		expect(run.notices).toEqual(["MCP prompt gone is no longer offered by fx."]);
+	});
+});
 
 describe("mcp prompts as slash commands", () => {
 	it("registers /mcp:<server>:<prompt> and injects prompts/get output into the editor", async () => {
