@@ -29,6 +29,7 @@
 		"dist",
 		"!dist/**/*.map",
 		"native",
+		"runtime",
 		"README.md"
 	],
 	"scripts": {

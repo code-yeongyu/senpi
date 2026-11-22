@@ -4,8 +4,8 @@ const DEFAULT_COMMAND = "bash";
 export const DEFAULT_SIGNAL: TerminalSessionSignal = "SIGTERM";
 /**
  * Escalation signal. On Windows there is no SIGKILL: Node maps any signal but 0
- * to TerminateProcess, and the pty session's own kill path routes it through
- * `taskkill /T /F`, so the forced semantics hold on both platforms.
+ * to TerminateProcess. The pipe fallback force-terminates verified descendants
+ * by explicit PID, or signals only the owned child if no safe tree is available.
  */
 export const FORCE_SIGNAL: TerminalSessionSignal = "SIGKILL";
 

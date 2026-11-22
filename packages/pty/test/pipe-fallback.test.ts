@@ -233,7 +233,7 @@ describe("PipeFallbackSession terminal detachment", () => {
 		async () => {
 			// Without a group kill, SIGTERM reaches only the direct shell; the
 			// backgrounded grandchild keeps the stdout pipe open and 'close'
-			// never fires (the POSIX twin of the Windows taskkill /T branch).
+			// never fires (the POSIX twin of the Windows descendant-cleanup path).
 			const session = new PipeFallbackSession({
 				command: "sh",
 				args: ["-c", "sleep 300 & echo READY; wait"],
@@ -260,6 +260,45 @@ describe("PipeFallbackSession terminal detachment", () => {
 });
 
 describe("PipeFallbackSession Windows process-tree cleanup", () => {
+	it.each([
+		["listed", ["/F", "/PID", "100", "/PID", "101", "/PID", "104"]],
+		["listing unavailable", ["owned handle", "SIGTERM"]],
+	])("signals only verified processes when the Windows tree is %s (#4053)", (mode, expected) => {
+		const moduleUrl = new URL("../src/process-tree.ts", import.meta.url).href;
+		// Intercept both OS commands before importing production code. No real process is listed or signalled.
+		const script = `
+			import childProcess from "node:child_process";
+			import { EventEmitter } from "node:events";
+			import { syncBuiltinESMExports } from "node:module";
+			const rows = [
+				"100 9 200 root.exe", "101 100 210 child.exe", "102 100 50 older.exe",
+				"103 102 220 unrelated.exe", "104 101 230 grandchild.exe",
+			].join("\\n");
+			childProcess.execFile = (file, args, options, cb) => {
+				if (file !== "powershell.exe") throw new Error("unexpected listing command");
+				if (${JSON.stringify(mode)} === "listed") cb(null, rows);
+				else cb(new Error("listing unavailable"), "");
+			};
+			childProcess.spawn = (file, args) => {
+				if (file !== "taskkill.exe") throw new Error("unexpected termination command");
+				console.log(JSON.stringify(args));
+				return new EventEmitter();
+			};
+			syncBuiltinESMExports();
+			const { terminateWindowsTree } = await import(${JSON.stringify(moduleUrl)});
+			terminateWindowsTree({
+				pid: 100, exitCode: null, signalCode: null,
+				kill: signal => console.log(JSON.stringify(["owned handle", signal])),
+			}, 100, "SIGTERM");
+		`;
+		const probe = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+			encoding: "utf8",
+			timeout: 5000,
+		});
+		expect(probe.status, probe.stderr).toBe(0);
+		expect(JSON.parse(probe.stdout)).toEqual(expected);
+	});
+
 	it("does not crash when taskkill is unavailable during kill", () => {
 		const moduleUrl = new URL("../src/pipe-fallback.ts", import.meta.url).href;
 		const script = `
