@@ -4,6 +4,7 @@ import type { CallProjection } from "../../../src/modes/rpc/compact-call-model.t
 import { checkpointComponents } from "../../../src/modes/rpc/compact-catalog-families.ts";
 import { CompactValues } from "../../../src/modes/rpc/compact-values.ts";
 import { type CallsRig, callsRig } from "./4272-calls-support.ts";
+import { memoryIo } from "./4272-spread-round-support.ts";
 
 // Part of #4272 (S10b, RULING-60 Q3, RULING-49): a settled call projection is paged, never truncated: at most 128 child
 // descriptors and 64 KiB per value page, recursively, walked iteratively with one page resident whatever the depth or
@@ -24,6 +25,23 @@ const end = (toolCallId: string) => ({
 	isError: false,
 });
 const sha256 = (text: string) => createHash("sha256").update(Buffer.from(text, "utf16le")).digest("hex");
+
+// #4904: exercise real spill/segment/page code without scheduling an OS open/read/close for every value page.
+// Only backing bytes live in memory; projection membership and residency still come from the production reader.
+async function pagingRig() {
+	const io = memoryIo();
+	let reads = 0;
+	const rig = await callsRig({
+		io: {
+			...io,
+			readFile(path, range) {
+				reads++;
+				return io.readFile(path, range);
+			},
+		},
+	});
+	return { ...rig, reads: () => reads };
+}
 
 /** The one settled member of the cut as the producer streams it: its digest, length and the settled value reader's peak. */
 async function settledMember(rig: CallsRig) {
@@ -55,7 +73,7 @@ async function settledMember(rig: CallsRig) {
 
 it("RULING-60 Q3 10,000 completed children at one level are all members of the parent's projection, paged with one value page resident, omitted 0", async () => {
 	// Given: a parent call with 10,000 completed children, settled by its toolResult
-	const rig = await callsRig();
+	const rig = await pagingRig();
 	try {
 		rig.record({ type: "turn_start" });
 		rig.record(start("p"));
@@ -66,11 +84,15 @@ it("RULING-60 Q3 10,000 completed children at one level are all members of the p
 		rig.record(end("p"));
 		rig.toolResult("p", "read", "done");
 		await rig.lane.idle();
+		const before = rig.reads();
 		// When: the whole-view reader and the catalog producer both read the settled row
 		const root = rig.lane.freeze();
 		const row = (await rig.lane.readSettled(root)).settledMessages[0];
 		rig.lane.release(root);
 		const member = await settledMember(rig);
+		// Two full readers over fixed-shape calls: linear page work, not a wall-clock performance assertion.
+		expect(rig.reads() - before).toBeGreaterThan(10_000);
+		expect(rig.reads() - before).toBeLessThanOrEqual(32 * 10_001);
 		// Then: nothing was truncated, and the streamed member is the canonical JSON of the whole-view row
 		expect(row?.call?.nestedCalls).toMatchObject({ complete: true, omitted: 0 });
 		expect(row?.call?.nestedCalls.calls).toHaveLength(10_000);
@@ -97,7 +119,7 @@ it("RULING-60 Q3 10,000 completed children at one level are all members of the p
 
 it("RULING-60 Q3 a projection nested 1,000 levels deep streams iteratively with one page resident and is complete at every level", async () => {
 	// Given: a chain of 1,000 nested calls, each the parent of the next, all completed and settled by the root's toolResult
-	const rig = await callsRig();
+	const rig = await pagingRig();
 	try {
 		rig.record({ type: "turn_start" });
 		rig.record(start("d0"));
@@ -105,11 +127,14 @@ it("RULING-60 Q3 a projection nested 1,000 levels deep streams iteratively with 
 		for (let depth = 999; depth >= 0; depth--) rig.record(end(`d${depth}`));
 		rig.toolResult("d0", "read", "done");
 		await rig.lane.idle();
+		const before = rig.reads();
 		// When: the whole-view reader walks the projection and the catalog producer streams it
 		const root = rig.lane.freeze();
 		const row = (await rig.lane.readSettled(root)).settledMessages[0];
 		rig.lane.release(root);
 		const member = await settledMember(rig);
+		expect(rig.reads() - before).toBeGreaterThan(1_000);
+		expect(rig.reads() - before).toBeLessThanOrEqual(32 * 1_000);
 		// Then: every level is present and complete with nothing omitted, and the stream kept one page resident
 		let depth = 0;
 		let call: CallProjection | undefined = row?.call;

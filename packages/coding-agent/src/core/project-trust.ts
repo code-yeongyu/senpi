@@ -50,9 +50,9 @@ async function selectProjectTrustOption(
 	return options.find((option) => option.label === selected);
 }
 
-function saveProjectTrustPromptResult(trustStore: ProjectTrustStore, result: ProjectTrustOption): void {
+async function saveProjectTrustPromptResult(trustStore: ProjectTrustStore, result: ProjectTrustOption): Promise<void> {
 	if (result.updates.length > 0) {
-		trustStore.setMany(result.updates);
+		await trustStore.setMany(result.updates);
 	}
 }
 
@@ -76,7 +76,7 @@ export async function resolveProjectTrusted(options: ResolveProjectTrustedOption
 		if (result) {
 			const trusted = result.trusted === "yes";
 			if (result.remember === true) {
-				options.trustStore.set(options.cwd, trusted);
+				await options.trustStore.set(options.cwd, trusted);
 			}
 			return trusted;
 		}
@@ -102,7 +102,7 @@ export async function resolveProjectTrusted(options: ResolveProjectTrustedOption
 
 	const selected = await selectProjectTrustOption(options.cwd, options.projectTrustContext);
 	if (selected !== undefined) {
-		saveProjectTrustPromptResult(options.trustStore, selected);
+		await saveProjectTrustPromptResult(options.trustStore, selected);
 		return selected.trusted;
 	}
 	return false;

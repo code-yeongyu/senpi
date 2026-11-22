@@ -152,7 +152,17 @@ it("T5 sequences in-process records in producer order, correlation before its co
 		expect(seen.at(-1)?.turnId, "agent_end closes the turn").toBeNull();
 
 		expectSameBytesExceptDeliveryStamp(actual, expected);
-		expect(actual.some((line) => /"(messageId|turnId|sessionEpoch)":/.test(line))).toBe(false);
+		// The lane's recovery carriers stay off the legacy wire. The one turn id a legacy client reads is the started
+		// prompt's reply naming its engine turn (senpi#5999): the `currentTurnId` epoch, not the lane's minted turn.
+		expect(actual.some((line) => /"(messageId|sessionEpoch)":/.test(line))).toBe(false);
+		const namingTurn = actual.filter((line) => line.includes('"turnId":')).map((line): unknown => JSON.parse(line));
+		expect(namingTurn).toHaveLength(1);
+		expect(namingTurn[0]).toMatchObject({
+			type: "response",
+			id: "p1",
+			command: "prompt",
+			data: { disposition: "started", turnId: "1", admission: { disposition: "started", turnId: "1" } },
+		});
 	} finally {
 		await binding.dispose();
 		writer.unregisterConnection("client");
@@ -205,9 +215,32 @@ const KIND_NAME_BYTES = 64;
 /** An ASCII string's heap: a 16-byte header and one byte per code unit, 8-aligned. */
 const asciiStringBytes = (value: string): number => (value === "" ? 0 : Math.ceil((16 + value.length) / 8) * 8);
 
+/**
+ * Every string reachable from `start` through own properties (symbol-keyed and non-enumerable ones included), array
+ * slots, Map keys/values and Set members: an outside-in view that trusts no accessor or iterator of the walked objects.
+ */
+function reachableStrings(start: unknown): string[] {
+	const seen = new Set<object>();
+	const strings: string[] = [];
+	const pending: unknown[] = [start];
+	while (pending.length > 0) {
+		const value = pending.pop();
+		if (typeof value === "string") strings.push(value);
+		if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value)) continue;
+		seen.add(value);
+		if (value instanceof Map) for (const [key, item] of value) pending.push(key, item);
+		if (value instanceof Set) for (const item of value) pending.push(item);
+		for (const key of Reflect.ownKeys(value)) {
+			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+			if (descriptor && "value" in descriptor) pending.push(descriptor.value);
+		}
+	}
+	return strings;
+}
+
 // Part of #4272, review MEDIUM-2 + RULING-61 Q1 = C: the host keeps each accepted append's id, its interned kind and
 // its parent link (the previous entry's own id string), never a serialized copy of its content.
-it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entry ids only, no stringify on the host loop", async () => {
+it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entry ids, interned kinds and shared parent links only, no stringify on the host loop", async () => {
 	vi.stubEnv(FLAG, "1");
 	const dir = await mkdtemp(join(tmpdir(), "senpi-4272-ids-"));
 	const manager = SessionManager.create(dir, dir);
@@ -275,38 +308,50 @@ it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entr
 	expect(charged, "retention is the ids, kinds and parents, independent of entry size").toBe(expectedCharge);
 	expect(charged).toBeLessThanOrEqual(appends * (ANCESTRY_RECORD_BYTES + 24) + KIND_NAME_BYTES + 24);
 	expect(root.transcript.ancestryBytes).toBeLessThan(DEFAULT_TRANSCRIPT_ANCESTRY_BYTES);
+	// Outside in (carry 55): the checks above read production's own charge and the records `AcceptedEntries` builds
+	// fresh, so a hidden retained field would pass them. Walk what the frozen root itself holds instead: everything but
+	// the shared tail (its retained bytes are 0 above) is ids, kinds and parent links, never any entry content.
+	const { tail: _tail, ...retained } = root.transcript;
+	const strings = reachableStrings(retained);
+	const longest = strings.reduce((max, value) => Math.max(max, value.length), 0);
+	expect(longest, "no string reachable from the frozen root outside its tail is entry-sized").toBeLessThan(64);
+	expect(strings.filter((value) => value.includes(content.slice(0, 64)))).toEqual([]);
 	lane.release(root);
 	manager.dispose();
 	await rm(dir, { recursive: true, force: true });
 });
 
 // Part of #4272, ruling 10: the accepted baseline exists before the router admits a connection to the session.
-it.each([true, false])("bootstrap precedes in-process admission (flag on: %s)", async (flag) => {
-	if (flag) vi.stubEnv(FLAG, "1");
-	const dir = await mkdtemp(join(tmpdir(), "senpi-4272-bootstrap-"));
-	const rig = createInProcessRig(dir);
-	const original = SessionEventWriter.prototype.attachConnectionToSession;
-	const atAdmission: Array<{ readonly sessionEpoch: string; readonly sequence: number } | null> = [];
-	vi.spyOn(SessionEventWriter.prototype, "attachConnectionToSession").mockImplementation(function (
-		this: SessionEventWriter,
-		id: string,
-		sessionId: string,
-	) {
-		const lane = rig.registry.peek(sessionId)?.acceptance;
-		const root = lane?.freeze();
-		if (lane && root) lane.release(root);
-		atAdmission.push(root ? { sessionEpoch: root.sessionEpoch, sequence: root.sequence } : null);
-		original.call(this, id, sessionId);
-	});
-	try {
-		const opened = await rig.open("caller", { cwd: dir, sessionPath: join(dir, "session.jsonl") });
-		expect(opened?.success, JSON.stringify(opened)).toBe(true);
-		expect(atAdmission.length).toBeGreaterThan(0);
-		if (flag) expect(atAdmission[0]).toEqual({ sessionEpoch: expect.stringMatching(UUID), sequence: 0 });
-		else expect(atAdmission[0], "flag off: no lane").toBeNull();
-	} finally {
-		rig.teardown.release();
-		await rig[Symbol.asyncDispose]();
-		await rm(dir, { recursive: true, force: true });
-	}
-});
+it.each([true, false])(
+	"bootstrap precedes in-process admission (flag on: %s)",
+	async (flag) => {
+		if (flag) vi.stubEnv(FLAG, "1");
+		const dir = await mkdtemp(join(tmpdir(), "senpi-4272-bootstrap-"));
+		const rig = createInProcessRig(dir);
+		const original = SessionEventWriter.prototype.attachConnectionToSession;
+		const atAdmission: Array<{ readonly sessionEpoch: string; readonly sequence: number } | null> = [];
+		vi.spyOn(SessionEventWriter.prototype, "attachConnectionToSession").mockImplementation(function (
+			this: SessionEventWriter,
+			id: string,
+			sessionId: string,
+		) {
+			const lane = rig.registry.peek(sessionId)?.acceptance;
+			const root = lane?.freeze();
+			if (lane && root) lane.release(root);
+			atAdmission.push(root ? { sessionEpoch: root.sessionEpoch, sequence: root.sequence } : null);
+			original.call(this, id, sessionId);
+		});
+		try {
+			const opened = await rig.open("caller", { cwd: dir, sessionPath: join(dir, "session.jsonl") });
+			expect(opened?.success, JSON.stringify(opened)).toBe(true);
+			expect(atAdmission.length).toBeGreaterThan(0);
+			if (flag) expect(atAdmission[0]).toEqual({ sessionEpoch: expect.stringMatching(UUID), sequence: 0 });
+			else expect(atAdmission[0], "a session without a structured lane: no acceptance lane").toBeNull();
+		} finally {
+			rig.teardown.release();
+			await rig[Symbol.asyncDispose]();
+			await rm(dir, { recursive: true, force: true });
+		}
+	},
+	600_000,
+);

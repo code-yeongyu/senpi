@@ -43,10 +43,10 @@ function unwrap<T>(outcome: RecoveryOutcome<T>): T {
 const unknownToken = { ok: false, failure: { kind: "repair_needed", reason: "unknown_token" } };
 
 /** Settles `promise`, or fails after `ms`: an operation that never ends is a failure of this test, not a hang. */
-async function within<T>(promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
+async function within<T>(name: string, promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<never>((_, reject) => {
-		timer = setTimeout(() => reject(new Error(`still pending after ${ms} ms`)), ms);
+		timer = setTimeout(() => reject(new Error(`deadline: ${name} still pending after ${ms} ms`)), ms);
 	});
 	try {
 		return await Promise.race([promise, deadline]);
@@ -229,7 +229,7 @@ it("carry 37 a replacement's first freeze replaces the peer + session stream and
 	expect(lane.liveRoots, "the bootstrap released the incarnation's roots").toBe(0);
 	expect(checkpoints.open, "the token is still owned until the stream is replaced").toBe(1);
 	const after = unwrap(checkpoints.freeze(route, lane)).token;
-	expect(after.admission).toMatchObject({ generation: 1 });
+	expect(after.admission).toMatchObject({ generation: 2 });
 	expect(after.admission.sessionEpoch).not.toBe(before.admission.sessionEpoch);
 	expect(checkpoints.open, "the previous incarnation's token was reclaimed by the replacement").toBe(1);
 	expect(checkpoints.status()).toMatchObject({ streams: 1, reclaimed: 1 });
@@ -267,7 +267,7 @@ it("RULING-56 (1) SECURITY a token minted for another peer or another session an
 	const peer = { ...caller, socketEpoch: "socket-2" };
 	const other = unwrap(checkpoints.freeze({ ...route, ...peer }, lane)).token;
 	const otherNewer = unwrap(checkpoints.freeze({ ...route, ...peer }, lane)).token;
-	expect(otherNewer.admission.generation, "the asking peer's own stream is at generation 2").toBe(2);
+	expect(otherNewer.admission.generation, "RULING-99: the asking peer draws the fourth session generation").toBe(4);
 	const incarnation = { ...caller, sessionId: "t" };
 	const onT = unwrap(checkpoints.freeze({ ...route, ...incarnation }, elsewhere)).token;
 	const closed = { ...caller, sessionId: "u" };
@@ -296,7 +296,7 @@ it("RULING-56 (1) SECURITY a token minted for another peer or another session an
 		expect(await checkpoints.readActive(token, asker), name).toEqual(unknownToken);
 	expect(await checkpoints.readActive(other, peer), "the asker's own superseded token is still described").toEqual({
 		ok: false,
-		failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 2 },
+		failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 4 },
 	});
 	expect(lane.liveRoots + elsewhere.liveRoots, "a probe pins and releases nothing").toBe(roots);
 	expect(checkpoints.status()).toMatchObject({
@@ -320,14 +320,14 @@ it("RULING-56 (4) retiring a route is idempotent: the admission's token is recla
 		status: checkpoints.status(),
 		liveRoots: lane.liveRoots,
 	});
-	checkpoints.retireRoute(caller, route.admissionId);
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
 	const once = snapshot();
 	expect(once).toEqual({
 		stream: { sessionEpoch: lane.sessionEpoch, generation: 1, routes: [] },
 		status: { open: 0, streams: 1, frozen: 1, reclaimed: 1, refused: {}, unavailable: {} },
 		liveRoots: 0,
 	});
-	checkpoints.retireRoute(caller, route.admissionId);
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
 	expect(snapshot(), "retire twice = retire once").toEqual(once);
 	expect(await checkpoints.readActive(token, caller)).toEqual(unknownToken);
 	checkpoints.release(token);
@@ -347,11 +347,14 @@ it("RULING-56 (4) an operation in flight on a retired route ends in a typed refu
 	const token = unwrap(checkpoints.freeze(route, lane)).token;
 	const reading = checkpoints.readActive(token, caller);
 	await hold.entered;
-	checkpoints.retireRoute(caller, route.admissionId);
-	checkpoints.retireRoute(caller, route.admissionId);
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
+	checkpoints.retireRoute(caller, route.admissionId, "client_detach");
 	expect(lane.liveRoots, "the read in flight defers the reclaim").toBe(1);
 	hold.release();
-	expect(await within(reading)).toEqual({ ok: false, failure: { kind: "repair_needed", reason: "released" } });
+	expect(await within("the retired route's read", reading)).toEqual({
+		ok: false,
+		failure: { kind: "repair_needed", reason: "released" },
+	});
 	expect(lane.liveRoots, "reclaimed once the read unwound").toBe(0);
 	expect(checkpoints.status()).toMatchObject({ open: 0, reclaimed: 1 });
 	lane.retire("close");
@@ -376,7 +379,7 @@ it("review LOW the reclaimed counter counts only roots reclaimed without their h
 		reclaimed: 0,
 	});
 	hold.release();
-	expect(await within(reading)).toEqual({
+	expect(await within("the superseded token's read", reading)).toEqual({
 		ok: false,
 		failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 2 },
 	});

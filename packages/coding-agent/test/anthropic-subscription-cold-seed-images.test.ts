@@ -110,7 +110,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		expect(images(blocks.slice(closer))).toEqual([]);
 		expect(labelsBeforeImages(blocks.slice(0, closer))).toEqual([
 			coldSeedImageText.userHistory,
-			coldSeedImageText.toolOutput(READ),
+			coldSeedImageText.currentTurnToolOutput({ kind: "tool", toolName: READ, toolCallId: "read-1" }),
 		]);
 	});
 
@@ -127,7 +127,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		expect(labelsBeforeImages(blocks)).toEqual([coldSeedImageText.userHistory]);
 		expect(countText(blocks, SEE_ATTACHED)).toBe(0);
 		const read: ReplayedImageOrigin = { kind: "tool", toolName: READ, toolCallId: "read-0" };
-		expect(countText(blocks, coldSeedImageText.duplicate(read, USER))).toBe(5);
+		expect(countText(blocks, `[tool output] ${coldSeedImageText.duplicate(read, USER)}`)).toBe(5);
 	});
 
 	it("keeps the image count constant when the agent keeps re-reading across repeated cold seeds", () => {
@@ -156,11 +156,13 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		const blocks = rebuild(messages);
 
 		expect(images(blocks)).toEqual([SCREENSHOT]);
-		expect(labelsBeforeImages(blocks)).toEqual([coldSeedImageText.toolOutput(READ)]);
+		expect(labelsBeforeImages(blocks)).toEqual([
+			coldSeedImageText.currentTurnToolOutput({ kind: "tool", toolName: READ, toolCallId: "read-4" }),
+		]);
 		expect(countText(blocks, SEE_ATTACHED)).toBe(0);
-		for (let n = 0; n < 4; n++) {
+		for (let n = 0; n < 5; n++) {
 			expect(texts(blocks)).toContain(
-				coldSeedImageText.answered({ kind: "tool", toolName: READ, toolCallId: `read-${n}` }),
+				`[tool output] ${coldSeedImageText.toolImage({ kind: "tool", toolName: READ, toolCallId: `read-${n}` })}`,
 			);
 		}
 	});
@@ -212,12 +214,12 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		expect(texts(blocks)).toContain(CONTINUE_TURN_INSTRUCTION);
 		expect(texts(blocks)).not.toContain(RESPOND_TO_USER_INSTRUCTION);
 		expect(labelsBeforeImages(blocks)).toEqual([
-			coldSeedImageText.toolOutput(READ),
-			coldSeedImageText.toolOutput(READ),
+			coldSeedImageText.currentTurnToolOutput({ kind: "tool", toolName: READ, toolCallId: "gen-1" }),
+			coldSeedImageText.currentTurnToolOutput({ kind: "tool", toolName: READ, toolCallId: "gen-2" }),
 		]);
 	});
 
-	it("a mid-turn replay leaves the current turn's own upload unlabeled (senpi#2768)", () => {
+	it("a mid-turn replay labels the current turn's upload as it will be labeled once the turn ends (senpi#5275)", () => {
 		const messages = [
 			say("earlier", 0),
 			{ ...assistantRead("noop", 1), content: [{ type: "text" as const, text: "ok" }], stopReason: "stop" as const },
@@ -228,7 +230,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		const blocks = rebuild(messages);
 
 		expect(texts(blocks)).toContain(CONTINUE_TURN_INSTRUCTION);
-		expect(texts(blocks)).not.toContain(coldSeedImageText.userHistory);
+		expect(labelsBeforeImages(blocks)[0]).toBe(coldSeedImageText.userHistory);
 		expect(images(blocks)).toContain(distinctImage(5).data);
 	});
 
@@ -249,7 +251,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		const blocks = rebuild(messages);
 
 		expect(images(blocks)).toEqual([]);
-		expect(texts(blocks).filter((text) => text.startsWith("[image returned earlier by the"))).toHaveLength(34);
+		expect(texts(blocks).filter((text) => text.includes("not shown in the history"))).toHaveLength(34);
 		expect(blocks.at(-1)).toEqual({ type: "text", text: "What is the build command?" });
 	});
 
@@ -267,7 +269,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		expect(images(blocks)).toEqual([SCREENSHOT]);
 		for (const id of ["empty", "garbled"]) {
 			expect(texts(blocks)).toContain(
-				coldSeedImageText.unreadable({ kind: "tool", toolName: READ, toolCallId: id }),
+				`[tool output] ${coldSeedImageText.unreadable({ kind: "tool", toolName: READ, toolCallId: id })}`,
 			);
 		}
 		expect(blocks.at(-1)).toEqual({ type: "text", text: "Which ones loaded?" });
@@ -291,7 +293,7 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 		]);
 		for (const id of ["wrapped", "url-safe", "unpadded"]) {
 			const origin: ReplayedImageOrigin = { kind: "tool", toolName: READ, toolCallId: id };
-			expect(texts(blocks)).toContain(coldSeedImageText.duplicate(origin, USER));
+			expect(texts(blocks)).toContain(`[tool output] ${coldSeedImageText.duplicate(origin, USER)}`);
 		}
 	});
 

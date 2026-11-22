@@ -64,6 +64,13 @@ describe("parseBrandProfile", () => {
 		});
 	});
 
+	test("carries the product logo for the sign-in result pages (#4432)", () => {
+		const logo = "data:image/svg+xml;base64,PHN2Zy8+";
+
+		expect(parseBrandProfile(JSON.stringify({ name: "OmO", logo }))?.logo).toBe(logo);
+		expect(parseBrandProfile('{"name":"OmO"}')?.logo).toBeUndefined();
+	});
+
 	test("keeps every field of a complete profile", () => {
 		expect(parseBrandProfile(OMO_PROFILE)).toEqual({
 			name: "omo",
@@ -206,6 +213,23 @@ describe("envValue", () => {
 			"SENPI_CODING_AGENT_DIR",
 			"PI_CODING_AGENT_DIR",
 		]);
+	});
+});
+
+describe("brand extensions (oh-my-openagent#14465)", () => {
+	test("keeps the absolute paths and drops anything else", () => {
+		vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const profile = parseBrandProfile(
+			JSON.stringify({ name: "omo", extensions: ["/opt/omo/plugin", "relative/plugin", 7, "/bad\u0000path"] }),
+		);
+		expect(profile?.extensions).toEqual(["/opt/omo/plugin"]);
+	});
+
+	test("is absent when the profile names none", () => {
+		expect(parseBrandProfile(JSON.stringify({ name: "omo" }))?.extensions).toBeUndefined();
+		expect(
+			parseBrandProfile(JSON.stringify({ name: "omo", extensions: "/opt/omo/plugin" }))?.extensions,
+		).toBeUndefined();
 	});
 });
 

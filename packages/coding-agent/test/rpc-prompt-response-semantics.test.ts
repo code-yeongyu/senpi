@@ -399,12 +399,18 @@ describe("RPC prompt response semantics", () => {
 	});
 
 	it("reports extension commands and intercepted input as handled without starting a run", async () => {
+		// The handler runs with the caller's arguments: the premise of method-class rule prompt@1 (senpi#4319).
+		const commandArgs: string[] = [];
 		const { lineHandler, cleanup } = await startRpcMode({
 			withAuth: false,
 			responseDelayMs: 0,
 			extensionsResult: await createTestExtensionsResult([
 				(pi) => {
-					pi.registerCommand("handled", { handler: async () => {} });
+					pi.registerCommand("handled", {
+						handler: async (args) => {
+							commandArgs.push(args);
+						},
+					});
 					pi.on("input", (event) => {
 						if (event.text === "handled input") return { action: "handled" };
 					});
@@ -414,7 +420,7 @@ describe("RPC prompt response semantics", () => {
 
 		try {
 			for (const [id, message] of [
-				["command", "/handled"],
+				["command", "/handled host-arg"],
 				["input", "handled input"],
 			]) {
 				lineHandler(JSON.stringify({ id, type: "prompt", message }));
@@ -424,6 +430,37 @@ describe("RPC prompt response semantics", () => {
 					]);
 				});
 			}
+			expect(parseOutputLines(rpcIo.outputLines).filter((line) => line.type === "agent_start")).toHaveLength(0);
+			expect(commandArgs).toEqual(["host-arg"]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("runs an extension command sent as steer or follow_up that starts a turn", async () => {
+		// whenIdle "start" takes the prompt path, which dispatches commands: the premise of rules steer@1/follow_up@1.
+		const commandArgs: string[] = [];
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionsResult: await createTestExtensionsResult([
+				(pi) => {
+					pi.registerCommand("handled", {
+						handler: async (args) => {
+							commandArgs.push(args);
+						},
+					});
+				},
+			]),
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "s1", type: "steer", message: "/handled steer-arg", whenIdle: "start" }));
+			await vi.waitFor(() => expect(commandArgs).toEqual(["steer-arg"]));
+			lineHandler(
+				JSON.stringify({ id: "f1", type: "follow_up", message: "/handled follow-arg", whenIdle: "start" }),
+			);
+			await vi.waitFor(() => expect(commandArgs).toEqual(["steer-arg", "follow-arg"]));
 			expect(parseOutputLines(rpcIo.outputLines).filter((line) => line.type === "agent_start")).toHaveLength(0);
 		} finally {
 			await cleanup();

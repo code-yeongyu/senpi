@@ -17,6 +17,8 @@ export interface ShellCaptureOptions {
 	readonly onChild?: (child: ShellCaptureChild, spawnOptions?: unknown) => void;
 	/** Tracks native shell waits without starting an unawaited ShellPromise. */
 	readonly onShellWait?: (promise: object, waiting: boolean) => void;
+	/** The kill guard (senpi#5349): the judge module a worker imported by URL, and the agent host's pid. */
+	readonly killGuard?: { readonly judge: unknown; readonly agentPid: number };
 }
 
 export function installShellCapture(options: ShellCaptureOptions): ShellCaptureRestore;

@@ -24,8 +24,9 @@ export type CatalogFamily = (typeof CATALOG_FAMILIES)[number];
 const FAMILY_SET: ReadonlySet<string> = new Set(CATALOG_FAMILIES);
 
 /**
- * Who produces a family's members: `complete` enumerates every member, `partial` enumerates some and never declares
- * the rest absent (the loaded base S11 streams: its transcript, opaque and source members). The assembly is complete
+ * Who produces a family's members: `complete` enumerates every member (for the families fed by entry kinds, the
+ * catalog's members of this epoch plus the loaded base's stamped-row stream each names with a `base` member, S11c),
+ * `partial` enumerates some and never declares the rest absent (an unavailable transcript). The assembly is complete
  * only when every family is `complete`, and a complete producer that emitted nothing fails the gate (`assertCoverage`).
  */
 const PRODUCERS = ["complete", "partial"] as const;
@@ -48,13 +49,18 @@ export const FAMILY_PRODUCERS: FamilyProducers = {
 };
 
 /**
- * The producers at one root (RULING-61 Q1): a loaded base is a file range whose kinds this epoch never saw, and an
- * unavailable transcript enumerates nothing, so the families fed by entry kinds (transcript, opaque, source) are
- * then `partial`, never complete or empty. A client correlation refused at the protocol depth limit never became the
- * lane's standing one, so `identity` is then `partial` too: its member reports the count (RULING-67 (4)).
+ * The producers at one root (RULING-61 Q1): an unavailable transcript enumerates nothing, so the families fed by
+ * entry kinds (transcript, opaque, source) are then `partial`, never complete or empty. A loaded base keeps them
+ * complete since S11c: its members are the stamped rows of the base stream every one of them names. A client
+ * correlation refused at the protocol depth limit never became the lane's standing one, so `identity` is then
+ * `partial` too: its member reports the count (RULING-67 (4)).
  */
-export function familyProducers(transcript: TranscriptRoot, refusedCorrelations: number): FamilyProducers {
-	const exact = transcript.unavailable === null && (transcript.base?.count ?? 0) === 0;
+export function familyProducers(root: {
+	readonly transcript: TranscriptRoot;
+	readonly refusedCorrelations: number;
+}): FamilyProducers {
+	const { transcript, refusedCorrelations } = root;
+	const exact = transcript.unavailable === null;
 	const entries: Partial<Record<CatalogFamily, "partial">> = exact
 		? {}
 		: { transcript: "partial", opaque: "partial", source: "partial" };
@@ -103,6 +109,11 @@ interface RegistryBase {
 	readonly format: "senpi-recovery-families";
 	readonly version: 1;
 	readonly families: readonly FamilyRow[];
+	/**
+	 * The families a root built from these producers requires (RULING-128): every `complete` one, in code-unit order,
+	 * each once. The manifest carries this exact list, and this component's digest is inside `checkpointDigest`.
+	 */
+	readonly requiredKinds: readonly CatalogFamily[];
 }
 /**
  * Set only by `familyRegistry`, which `readFamilyRegistry` decodes through and `completeAssembly` narrows to, so no other
@@ -125,7 +136,11 @@ export type FamilyRegistry = CompleteFamilyRegistry | IncompleteFamilyRegistry;
 export function familyRegistry(producers: FamilyProducers): FamilyRegistry {
 	const families = CATALOG_FAMILIES.map((family): FamilyRow => ({ family, producer: producers[family] }));
 	const incomplete = families.filter(({ producer }) => producer !== "complete").map(({ family }) => family);
-	const base = { format: "senpi-recovery-families", version: 1, families } as const;
+	const requiredKinds = families
+		.filter(({ producer }) => producer === "complete")
+		.map(({ family }) => family)
+		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+	const base = { format: "senpi-recovery-families", version: 1, families, requiredKinds } as const;
 	return incomplete.length === 0
 		? { ...base, assembly: "complete", [COMPLETE]: true }
 		: { ...base, assembly: "incomplete", incomplete };
@@ -175,5 +190,7 @@ export function readFamilyRegistry(text: string): FamilyRegistry {
 	const producers = Object.fromEntries(rows.map(({ family, producer }) => [family, producer]));
 	const registry = familyRegistry({ ...FAMILY_PRODUCERS, ...producers });
 	if (field(value, "assembly") !== registry.assembly) throw new RangeError("family registry assembly mismatch");
+	if (JSON.stringify(field(value, "requiredKinds")) !== JSON.stringify(registry.requiredKinds))
+		throw new RangeError("family registry requiredKinds mismatch");
 	return registry;
 }

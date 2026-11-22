@@ -119,11 +119,16 @@ export class CompactSessionState extends CompactActiveMessages {
 	}
 
 	/** A call record at its lane step; `changed` is false when the record is ignored and takes no sequence (Q9). */
-	acceptCall(record: object, sequence: number, turnId: string | null): CallFold {
+	acceptCall(record: object, sequence: number, turnId: string | null, callKey?: string): CallFold {
 		this.store.assertReadable();
-		const fold = foldCallRecord(this.calls, record, this.callScope(turnId), sequence);
+		const fold = foldCallRecord(this.calls, record, this.callScope(turnId), sequence, callKey);
 		if (fold.changed) this.sequence = sequence;
 		return fold;
+	}
+
+	/** The outstanding call whose block this is: the call a `toolcall_*` update streams (RULING-123), by the table's index. */
+	callOwning(messageId: string, contentIndex: number) {
+		return this.calls.table.byOwner(messageId, contentIndex);
 	}
 
 	applyCold(t: CompactColdOperation) {

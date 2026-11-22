@@ -127,12 +127,40 @@ it("T5/X03 holds worker acceptance while its fork is on disk: the cut keeps the 
 	}
 }, 600_000);
 
-it("flag off: the worker client owns no lane and frames carry no ordinal", async () => {
+// RULING-112 (replaces RULING-66 here): flag off, a worker owns no acceptance lane and stamps no capture, exactly like an
+// in-process session; its legacy output frames still cross one at a time, each after the previous frame's credit.
+it("RULING-112 flag off: a worker owns no acceptance lane while its legacy output stays ordered", async () => {
+	vi.stubEnv(FLAG, "0");
 	const host = await workerAcceptanceHost();
 	try {
-		const { worker } = await host.open();
-		expect(worker.acceptance).toBeUndefined();
-		expect(host.frames.every(({ frame }) => frame.ordinal === undefined && frame.recovery === undefined)).toBe(true);
+		const { sessionId, worker } = await host.open();
+		expect(worker.acceptance, "flag off: no acceptance lane").toBeUndefined();
+		expect(worker.intake, "flag off: no permit transport").toBeUndefined();
+		const settled = host.next("agent_settled", (record) => record.type === "agent_settled");
+		expect((await host.request({ type: "prompt", sessionId, message: "question" })).success).toBe(true);
+		await settled;
+		expect(host.frames.length).toBeGreaterThan(1);
+		expect(
+			host.frames.every(({ frame }) => frame.ordinal === undefined && frame.recovery === undefined),
+			"no capture: frames carry no ordinal and no recovery identity",
+		).toBe(true);
+		for (const [index, observed] of host.frames.entries()) {
+			if (index === 0) continue;
+			expect(observed.previousCredit, `frame ${index} arrived only after the previous frame's credit`).toBe(
+				WORKER_CREDIT_CODES.granted,
+			);
+		}
+		const delivered = host.records.filter(
+			(record) => record.type === "message_start" || record.type === "message_end",
+		);
+		expect(
+			delivered.map((record) => record.type),
+			"the legacy reader sees every message start before its end, in order",
+		).toEqual(delivered.map((_record, index) => (index % 2 === 0 ? "message_start" : "message_end")));
+		expect(delivered.length).toBeGreaterThanOrEqual(4);
+		expect(host.records.every((record) => record.materializer === undefined && record.eventLease === undefined)).toBe(
+			true,
+		);
 	} finally {
 		await host.dispose();
 	}

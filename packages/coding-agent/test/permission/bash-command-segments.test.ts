@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	analyzeBashCommand,
+	analyzeBashCommandWords,
 	bestEffortCommandLines,
 	lastAnalysisSteps,
 	MAX_COMMAND_LENGTH,
@@ -240,6 +241,70 @@ describe("analyzeBashCommand", () => {
 		["a dynamic -c script", 'bash -c "$script"'],
 	])("refuses %s", (_case, command) => {
 		expect(analyzeBashCommand(command)).toEqual({ kind: "unparsed" });
+	});
+});
+
+// senpi#5349: the kill guard reads the same segments with their words; the permission lines must not change.
+describe("analyzeBashCommandWords", () => {
+	const corpus = [
+		...CHAINED_SHAPES.map(([, command]) => command),
+		...WRAPPER_SHAPES.map(([, command]) => command),
+		"a && b || c; d | e & f",
+		"echo $(a) `b`",
+		"X=1 Y=$(a) b",
+		`find . "-exec" ${TARGET} {} \\;`,
+		"bash script.sh",
+		"case a in a) b;; esac",
+	];
+
+	it.each(corpus)("projects to exactly the analyzeBashCommand lines for %j", (command) => {
+		const words = analyzeBashCommandWords(command);
+		const lines =
+			words.kind === "parsed"
+				? {
+						kind: "parsed",
+						segments: words.segments.map((segment) => [segment.name, ...segment.words.map((w) => w.text)]),
+					}
+				: words;
+		expect(lines).toEqual(analyzeBashCommand(command));
+	});
+
+	it("keeps dynamic, quoted and the literal prefix of every word", () => {
+		const analysis = analyzeBashCommandWords('pkill -f "$PATTERN" "" -$G /x/"y"');
+		if (analysis.kind !== "parsed") throw new Error("expected a parsed command");
+		expect(analysis.segments[0]?.words).toEqual([
+			{ text: "-f", dynamic: false, quoted: false, literalPrefix: "-f" },
+			{ text: "", dynamic: true, quoted: true, literalPrefix: "" },
+			{ text: "", dynamic: false, quoted: true, literalPrefix: "" },
+			{ text: "-", dynamic: true, quoted: false, literalPrefix: "-" },
+			{ text: "/x/y", dynamic: false, quoted: true, literalPrefix: "/x/y" },
+		]);
+	});
+
+	it("names the spelling, the wrappers and the pipeline of each command", () => {
+		const analysis = analyzeBashCommandWords("sudo -u root /usr/bin/pkill -f x; pgrep y | xargs kill");
+		if (analysis.kind !== "parsed") throw new Error("expected a parsed command");
+		const [sudo, pkill, pgrep, xargs, kill] = analysis.segments;
+		expect([sudo?.name, sudo?.words]).toEqual(["sudo", []]);
+		expect(pkill).toMatchObject({ name: "pkill", nameSpelling: "/usr/bin/pkill", nameIsPath: true });
+		expect(pkill?.wrappers.map((wrapper) => [wrapper.name, wrapper.words.map((word) => word.text)])).toEqual([
+			["sudo", ["-u", "root", "/usr/bin/pkill", "-f", "x"]],
+		]);
+		expect(kill?.wrappers.map((wrapper) => wrapper.name)).toEqual(["xargs"]);
+		expect(pgrep?.pipeline).toBe(xargs?.pipeline);
+		expect(kill?.pipeline).toBe(pgrep?.pipeline);
+		expect(pkill?.pipeline).not.toBe(pgrep?.pipeline);
+	});
+
+	it("starts a new pipeline after || and keeps |& in one", () => {
+		const pipelines = (command: string) => {
+			const analysis = analyzeBashCommandWords(command);
+			return analysis.kind === "parsed" ? analysis.segments.map((segment) => segment.pipeline) : [];
+		};
+		const [a, b] = pipelines("a || b");
+		expect(a).not.toBe(b);
+		const [c, d] = pipelines("c |& d");
+		expect(c).toBe(d);
 	});
 });
 

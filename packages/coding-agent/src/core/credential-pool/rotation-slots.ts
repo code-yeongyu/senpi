@@ -2,14 +2,16 @@ import type { Credential } from "@earendil-works/pi-ai";
 import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { ConfigReferenceError, type ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import type { PoolState } from "../egress/pool-state.ts";
 import { getConfigValueEnvVarNames, resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { activeModelBlockUntil } from "./model-scope.ts";
+import type { AccountStrategy } from "./selection-order.ts";
 import {
 	acquireHalfOpenLease,
-	type CredentialSlotRepository,
+	applicableStoredState,
 	type CredentialSlotState,
 	type HalfOpenLease,
 } from "./state-store.ts";
@@ -18,7 +20,7 @@ export type RotationLane = "stored" | "env";
 
 /** Hands a half-open probe lease back, if the slot still holds that exact lease. */
 export async function releaseProbeLease(
-	repository: CredentialSlotRepository,
+	repository: PoolState,
 	providerId: string,
 	lane: RotationLane,
 	slotName: string,
@@ -38,7 +40,7 @@ export async function releaseProbeLease(
  * back: this request cannot run the probe, but a request for another model can.
  */
 async function releaseLeaseIfModelBlocked(
-	repository: CredentialSlotRepository,
+	repository: PoolState,
 	providerId: string,
 	lane: RotationLane,
 	slotName: string,
@@ -56,7 +58,7 @@ async function releaseLeaseIfModelBlocked(
  * request to it while the first is in flight.
  */
 async function probeInFlight<TSlot extends RotationSlot>(
-	repository: CredentialSlotRepository,
+	repository: PoolState,
 	providerId: string,
 	lane: RotationLane,
 	slot: TSlot,
@@ -78,7 +80,7 @@ const PROBE_IN_FLIGHT = "probe_in_flight";
  * written must not turn an expired cooldown into "no account available".
  */
 function probeLease(
-	repository: CredentialSlotRepository,
+	repository: PoolState,
 	providerId: string,
 	lane: RotationLane,
 	slotName: string,
@@ -94,8 +96,10 @@ export type RotationSlot = RunSlot & {
 	/** Env-lane key material for the attempt; never serialized or persisted. */
 	envKey?: string;
 	envVarName?: string;
-	/** Stored-lane material revision binding sidecar health to the current credential; never serialized. */
+	/** Stored-lane account revision: the key account-level health is recorded under; never serialized. */
 	storedRevision?: string;
+	/** Stored-lane material revision: the key a rejected-token block is recorded under; never serialized. */
+	materialRevision?: string;
 	/**
 	 * The half-open probe lease THIS listing took for the attempt; never serialized. `lease` is copied
 	 * from the shared file and may be another request's, so only this id may be handed back.
@@ -107,9 +111,10 @@ export type RotationSources = {
 	providerId: string;
 	credential: Credential | undefined;
 	env: (name: string) => string | undefined;
-	repository: CredentialSlotRepository;
+	repository: PoolState;
 	policy?: {
 		affinity?: boolean;
+		accountStrategy?: AccountStrategy;
 		cooldownBaseMs?: number;
 		cooldownCapMs?: number;
 		slots?: Record<string, { env?: string; value?: ConfigValue }>;
@@ -205,14 +210,17 @@ export async function listRotationSlots(
 		const slots: RotationSlot[] = [];
 		// A slot of the other kind cannot project, so a session must never be handed it (senpi#3486).
 		for (const slot of slotsOfOwnKind(credential)) {
+			if (slot.signedOut === true) continue;
 			const persisted = state[slot.name];
-			const storedRevision = await repository.storedCredentialRevision(providerId, slot.name, {
+			const revisions = await repository.storedSlotRevisions(providerId, slot.name, {
 				key: slot.key,
 				access: slot.access,
 				refresh: slot.refresh,
 			});
-			// A block belongs to the material that earned it; a re-login starts clean.
-			const applicable = persisted?.credentialRevision === storedRevision ? persisted : undefined;
+			const storedRevision = revisions.account;
+			const materialRevision = revisions.material;
+			// A verdict on the account survives a token refresh; a rejected token retires with its material (senpi#4093).
+			const applicable = applicableStoredState(persisted, revisions);
 			const modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
 			// A slot still blocked for this model never takes the half-open probe lease:
 			// it cannot run, and holding the lease would starve other models' requests.
@@ -234,8 +242,10 @@ export async function listRotationSlots(
 							lane: "stored" as const,
 							pinned: (credential as PooledCredential).pinned === slot.name,
 							storedRevision,
+							// A 401 on this slot after the lease ends is a verdict on this token (senpi#5097).
+							materialRevision,
 						},
-						(state) => state?.credentialRevision === storedRevision,
+						(state) => applicableStoredState(state, revisions) !== undefined,
 						now(),
 					);
 					if (inFlight !== undefined) slots.push(inFlight);
@@ -245,7 +255,7 @@ export async function listRotationSlots(
 			if (lease !== undefined && lease !== STORE_BUSY) {
 				const leased = await repository.listSlots(providerId, "stored");
 				const leasedState = leased[slot.name];
-				const leasedApplicable = leasedState?.credentialRevision === storedRevision ? leasedState : undefined;
+				const leasedApplicable = applicableStoredState(leasedState, revisions);
 				// Re-read after the awaits: a concurrent request may have blocked this model meanwhile.
 				const leasedModelUntil = activeModelBlockUntil(leasedApplicable?.modelBlocks, modelId, now());
 				await releaseLeaseIfModelBlocked(
@@ -264,6 +274,7 @@ export async function listRotationSlots(
 								lane: "stored",
 								pinned: (credential as PooledCredential).pinned === slot.name,
 								storedRevision,
+								materialRevision,
 								...(leasedModelUntil === undefined ? { heldLeaseId: lease.leaseId } : {}),
 							},
 							leasedApplicable,
@@ -281,6 +292,7 @@ export async function listRotationSlots(
 							lane: "stored",
 							pinned: (credential as PooledCredential).pinned === slot.name,
 							storedRevision,
+							materialRevision,
 						},
 						applicable,
 					),

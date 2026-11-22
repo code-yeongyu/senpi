@@ -2,7 +2,9 @@
 // KILL-STORE-* cases on a fresh medium of packages/session-backends/sqlite-bun through the exported
 // StoreConformanceAdapter; the WAKE, KILL-WAKE and MULTI-HOST cases on the Bun timer host (manual clock) whose alarm
 // persists in that SQLite store; the TRANSPORT, MULTI-LANE/FAIR and FAULT-TRANSPORT cases on the reference reliable
-// transport. Bun-only: it imports bun:sqlite.
+// transport; the BATCH, REPLAY and KILL-BATCH cases on the reference batch executor over that SQLite store; the
+// KILL-HAND, MULTI-HAND/KILL and FAULT-HAND cases run the in-process remote executor on that SQLite store and the
+// reference transport. Bun-only: it imports bun:sqlite.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,13 +14,14 @@ import { createManualTimers } from "../../../src/durable/testing/manual-timers.t
 import type { WakeCaseAdapters, WakeConformanceAdapter } from "../../../src/durable/testing/wake-harness.ts";
 import { createBunTimerHost } from "../../../src/durable/wake-host-bun-timer.ts";
 import { storeAlarmPersistence } from "../../../src/durable/wake-host-store-alarm.ts";
+import { type BatchCaseAdapters, referenceBatchExecutor } from "../../../src/execution/testing/batch-executor.ts";
 import { createReliableTransport, decodeReferencePacket } from "../../../src/transport/reliable-transport.ts";
 import type {
 	TransportCaseAdapters,
 	TransportConformanceAdapter,
 } from "../../../src/transport/testing/transport-harness.ts";
 
-export type BunSqliteHostAdapters = WakeCaseAdapters & TransportCaseAdapters;
+export type BunSqliteHostAdapters = WakeCaseAdapters & TransportCaseAdapters & BatchCaseAdapters;
 
 const T0 = 1_800_000_000_000;
 const rethrow = (_key: string, error: unknown): never => {
@@ -58,7 +61,13 @@ export function createBunSqliteHost(): ConformanceHost<BunSqliteHostAdapters> {
 	const media = createBunSqliteMedia(mkdtempSync(join(tmpdir(), "conf-bun-sqlite-")));
 	return {
 		name: "bun-sqlite",
-		provides: ["store", "wake", "transport"],
-		adapters: { store: media, wake: bunTimerWake(), transport: referenceTransport, platform: process.platform },
+		provides: ["store", "wake", "transport", "executor"],
+		adapters: {
+			store: media,
+			wake: bunTimerWake(),
+			transport: referenceTransport,
+			executor: referenceBatchExecutor,
+			platform: process.platform,
+		},
 	};
 }

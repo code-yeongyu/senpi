@@ -7,13 +7,20 @@ import {
 	OAuthTokenEndpointError,
 } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
-import { extract429RetryAfterMs } from "@earendil-works/pi-ai/utils/retry-hint";
+import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
+import { isSiwcMissingResponsesScope, siwcRecoveryFromDiagnostic } from "@earendil-works/pi-ai/utils/siwc-errors";
 import { rateLimitModelFamily } from "./model-scope.ts";
 import { usageLimitResetMs } from "./reset-time.ts";
 import { isAccountUsageLimitText } from "./usage-limit.ts";
 
 export const COOLDOWN_BASE_MS = DEFAULT_SLOT_BLOCK_MS;
 export const COOLDOWN_CAP_MS = MAX_SLOT_BLOCK_MS;
+/**
+ * The longest a guessed backoff may grow. A block with no provider-stated reset is only a guess, so
+ * the slot is re-probed at least this often: doubling to the 48 h cap across failed probes kept a
+ * spent account blocked for hours after its provider window had reset (senpi#4091).
+ */
+const GUESSED_BACKOFF_CAP_MS = 30 * 60 * 1_000;
 export const RETRY_SAME_MAX_ATTEMPTS = 2;
 
 /**
@@ -32,9 +39,19 @@ export type CredentialBlock =
 			reason: "rate_limit";
 			cooldownMs: number;
 			retryAfterWasCapped: boolean;
+			/** Where the wait came from, for the local block log (senpi#3216). */
+			resetSource?: RateLimitResetSource;
+			/** SIWC quota pause: cooldown is a probe policy, not the provider's reset time. */
+			usageLimit?: true;
 			/** Set when the limit names the one model family it binds ("Fable limit"). */
 			modelFamily?: string;
 	  };
+
+/**
+ * `retry_after`: the server's Retry-After header (the adapter's marker); `reset_field`: a reset time the provider's
+ * structured diagnostic carried; `reset_prose`: a wait or reset time read from the response text; `default_backoff`: none.
+ */
+export type RateLimitResetSource = "retry_after" | "reset_field" | "reset_prose" | "default_backoff";
 
 export type CredentialAction =
 	| { kind: "failover"; block: CredentialBlock }
@@ -43,8 +60,9 @@ export type CredentialAction =
 
 /**
  * Per-slot exponential cooldown with the server hint as a FLOOR, never an
- * override: a hint can only lengthen the wait the failure count already earned,
- * and everything caps at 48 hours with the capping recorded.
+ * override: a hint can only lengthen the wait the failure count already earned.
+ * The guessed backoff stops growing at GUESSED_BACKOFF_CAP_MS; everything caps at
+ * 48 hours with the capping recorded.
  */
 export function rateLimitCooldown(
 	failureCount: number,
@@ -53,7 +71,7 @@ export function rateLimitCooldown(
 ): { cooldownMs: number; retryAfterWasCapped: boolean } {
 	const cap = policy.capMs ?? COOLDOWN_CAP_MS;
 	const base = policy.baseMs ?? COOLDOWN_BASE_MS;
-	const backoff = Math.min(cap, base * 2 ** Math.max(0, failureCount));
+	const backoff = Math.min(cap, GUESSED_BACKOFF_CAP_MS, base * 2 ** Math.max(0, failureCount));
 	const floored = serverHintMs === undefined ? backoff : Math.max(backoff, serverHintMs);
 	return {
 		cooldownMs: Math.min(cap, floored),
@@ -136,6 +154,25 @@ const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
 ]);
 const MAX_CAUSE_LINKS = 16;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
+// A refusal scoped to one model the account's plan does not include (senpi#3972): the vendor names
+// the model and the entitlement gap ("Your subscription does not include access to model-a",
+// "model GLM-5.3 is not available on this plan"). That is a verdict on the model, not on the
+// credential — blocking the slot would poison every other model on the same provider (#2081 class).
+// Every pattern is anchored on plan/subscription entitlement wording, so an account-wide refusal
+// that merely mentions a model ("Access to model gpt-x denied: your account is not enabled",
+// "your API key was disabled") still blocks the slot.
+const MODEL_SCOPED_REFUSAL_TEXT = [
+	// "does not include access to model-a", "does not include model GLM-5.3", "not entitled to use model X".
+	/(?:does not include(?: access to)?|not entitled to(?: use)?|no access to)[^.]{0,60}?\bmodel\b/i,
+	// "model-a is not available", "model X not included in your plan" — the plan/subscription
+	// anchor at the end is what keeps account-wide "model ... not enabled" refusals out.
+	// The windows are `.` (not `[^.]`): a model id such as GLM-5.3 carries a period, and a
+	// `[^.]` window can never reach the "is not available" past it.
+	/\bmodel\b.{0,80}?\b(?:is not|not|no)\b.{0,40}?\b(?:available|included|entitled|enabled|accessible)\b.{0,40}?\b(?:plan|subscription)\b/i,
+	// The real z.ai refusal names no model at all: "Your current subscription plan does not yet
+	// include access to GLM-5.3" ("yet" in the middle, no word "model").
+	/(?:plan|subscription)[^.]{0,30}?\bdoes not\b[^.]{0,20}?\binclude access to\b/i,
+];
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
 const BILLING_TEXT =
 	/billing|credits?[ _-]?(?:required|exhausted|balance)|insufficient[ _-]?(?:funds|quota|credit)|payment[ _-]?required|quota[ _-]?exhausted/i;
@@ -156,6 +193,31 @@ const ABORT_TEXT = /\baborted?\b/i;
 // proxy's) fault even when its text also mentions auth: unknown shapes default to temporary (senpi#2081).
 const TEMPORARY_FAULT_TEXT =
 	/time[ds]?[ _-]?out|timed out|disconnect|reset before|connection reset|gateway|temporarily|unavailable/i;
+
+/**
+ * What the provider's own error code, minted by the adapter from the response's structured fields,
+ * says about a limit. It outranks the message prose: the ChatGPT adapter words every 429 that carries
+ * an error object as a spent account, so a per-request `rate_limit_exceeded` throttle read as prose
+ * blocked the account until its far window reset (senpi#3216). Undefined when no code proves either:
+ * Anthropic's `rate_limit_error` comes on every 429, spent Claude windows included, so it proves neither.
+ */
+function limitFromProviderCode(
+	error: unknown,
+): { kind: "throttle" } | { kind: "spent"; resetsAt?: number } | undefined {
+	const diagnostic = readProviderDiagnostic(error);
+	if (diagnostic?.evidence !== "structured_code") return undefined;
+	switch (diagnostic.code) {
+		case "rate_limit_exceeded":
+			return { kind: "throttle" };
+		case "usage_limit_reached":
+		case "usage_not_included":
+			return diagnostic.resetsAt === undefined
+				? { kind: "spent" }
+				: { kind: "spent", resetsAt: diagnostic.resetsAt };
+		default:
+			return undefined;
+	}
+}
 
 function isAbort(error: unknown, message: string): boolean {
 	if (error instanceof Error && error.name === "AbortError") return true;
@@ -246,6 +308,43 @@ function isOverflowText(text: string): boolean {
  * outage only destroys prompt-cache locality; everything else fails the
  * request so the model fallback chain above keeps owning it.
  */
+const JSON_BODY = /\{\s*"[^"]+"\s*:/;
+
+/** The wait a rate-limited response names, and which part of the response named it. */
+function rateLimitHint(
+	codedThrottle: boolean,
+	codedReset: number | undefined,
+	text: string,
+	status: number | undefined,
+	usageLimit: boolean,
+	diagnosticRetryAfterMs: number | undefined,
+	nowMs: number,
+): { hint: number | undefined; resetSource: RateLimitResetSource } {
+	const sourced = (
+		hint: number | undefined,
+		source: RateLimitResetSource,
+	): { hint: number | undefined; resetSource: RateLimitResetSource } =>
+		hint === undefined ? { hint, resetSource: "default_backoff" } : { hint, resetSource: source };
+	if (codedThrottle) return sourced(parseRetryAfterMsMarker(text), "retry_after");
+	if (codedReset !== undefined) return sourced(codedReset, "reset_field");
+	const retryAfter = extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs);
+	// The adapter writes a Retry-After header into the text as a marker; a JSON body carries reset fields; anything
+	// else the extractor read is prose.
+	if (retryAfter !== undefined) {
+		if (parseRetryAfterMsMarker(text) !== undefined) return sourced(retryAfter, "retry_after");
+		return sourced(retryAfter, JSON_BODY.test(text) ? "reset_field" : "reset_prose");
+	}
+	if (!usageLimit) return sourced(undefined, "default_backoff");
+	if (diagnosticRetryAfterMs !== undefined) return sourced(diagnosticRetryAfterMs, "reset_field");
+	return sourced(usageLimitResetMs(text, nowMs), JSON_BODY.test(text) ? "reset_field" : "reset_prose");
+}
+
+/** The provider's answer as one text, the same text the classifier reads. */
+export function credentialFailureText(error: unknown): string {
+	const normalized = normalizeProviderError(error);
+	return normalized.messageCarriesBody ? normalized.message : `${normalized.message} ${normalized.body ?? ""}`;
+}
+
 export function classifyCredentialFailure(
 	error: unknown,
 	context: { failureCount?: number; cooldownBaseMs?: number; cooldownCapMs?: number; nowMs?: number } = {},
@@ -258,6 +357,37 @@ export function classifyCredentialFailure(
 	const status = normalized.status;
 	const failureCount = context.failureCount ?? 0;
 
+	if (error instanceof Error && error.name === "AbortError") return { kind: "fail_request" };
+	const siwc = siwcRecoveryFromDiagnostic(readProviderDiagnostic(error));
+	switch (siwc) {
+		case "usage_limit":
+			// No provider reset is known. This is a guessed probe cooldown, not a reset
+			// time; ignore reset-like prose and cap the guess at #5034's 30 minutes.
+			return {
+				kind: "failover",
+				block: {
+					reason: "rate_limit",
+					usageLimit: true,
+					...rateLimitCooldown(failureCount, undefined, {
+						baseMs: context.cooldownBaseMs,
+						capMs: Math.min(context.cooldownCapMs ?? COOLDOWN_CAP_MS, 30 * 60_000),
+					}),
+				},
+			};
+		case "account_disabled":
+			return { kind: "failover", block: { reason: "account_disabled" } };
+		case "auth":
+			// An account without Responses access is not a rejected sign-in: a re-login cannot clear it, so
+			// the turn fails with the provider's message and the slot stays as it was (senpi#6643).
+			if (isSiwcMissingResponsesScope(text)) return { kind: "fail_request" };
+			return { kind: "failover", block: { reason: "auth_error" } };
+		case "request":
+			return { kind: "fail_request" };
+		case "transient":
+			return { kind: "retry_same", maxAttempts: RETRY_SAME_MAX_ATTEMPTS };
+		case undefined:
+			break;
+	}
 	if (isAbort(error, text)) return { kind: "fail_request" };
 	if (text.includes(ACCOUNT_POOL_REFUSAL_NOTE)) return { kind: "fail_request" };
 	// A server, gateway or timeout status describes the provider, not the credential: its body may
@@ -267,8 +397,10 @@ export function classifyCredentialFailure(
 		(status !== undefined && status >= 500 && status < 600) ||
 		(status === undefined &&
 			(TEMPORARY_FAULT_TEXT.test(text) || NETWORK_TEXT.test(text) || OVERLOAD_TEXT.test(text)));
-	const usageLimit = isAccountUsageLimitText(text) && !isOverflowText(text);
-	const limitText = RATE_LIMIT_TEXT.test(text) || usageLimit;
+	const codedLimit = limitFromProviderCode(error);
+	const usageLimit =
+		codedLimit !== undefined ? codedLimit.kind === "spent" : isAccountUsageLimitText(text) && !isOverflowText(text);
+	const limitText = codedLimit !== undefined || RATE_LIMIT_TEXT.test(text) || usageLimit;
 	// A slot whose material no longer resolves to usable auth is a per-credential
 	// fault, not a provider-wide one: failing the request here would let ONE bad
 	// slot dead-end a pool whose siblings are healthy. The block is permanent
@@ -300,6 +432,10 @@ export function classifyCredentialFailure(
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
 	if (status === 403 && !limitText) {
+		// A model-scoped refusal fails the request and leaves the slot healthy, so the next model on
+		// the same provider is still attempted (senpi#3972). The vendor's own message already names
+		// the model and the reason; the classifier's job is only to not poison the slot for it.
+		if (MODEL_SCOPED_REFUSAL_TEXT.some((pattern) => pattern.test(text))) return { kind: "fail_request" };
 		return ACCOUNT_SCOPED_403_TEXT.test(text)
 			? { kind: "failover", block: { reason: "auth_error" } }
 			: { kind: "fail_request" };
@@ -311,13 +447,33 @@ export function classifyCredentialFailure(
 	// Overflow prose is excluded (`usageLimit` above) because this branch runs
 	// before the overflow branch below.
 	if (status === 429 || limitText) {
+		// A model-scoped refusal can also arrive as 429, not 403 (z.ai error code 1311 is the
+		// plan-entitlement refusal with a 429 status): it is a verdict on the model, not a
+		// throttle, so it fails the request instead of cooling the slot down. A structured
+		// limit code still outranks the prose, so this only applies when no code proved a limit.
+		if (codedLimit === undefined && MODEL_SCOPED_REFUSAL_TEXT.some((pattern) => pattern.test(text))) {
+			return { kind: "fail_request" };
+		}
 		const nowMs = context.nowMs ?? Date.now();
 		// A spent account is out until its reset time, so that time (a reset
 		// header, a reset field or reset prose) floors its cooldown; without one,
 		// the default cooldown stands. Plain rate limits keep today's hint only.
-		const hint =
-			extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
-			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined);
+		// A coded throttle's text is the adapter's spent-account wording, so neither it nor the window
+		// reset it names is this throttle's wait; only the server's Retry-After header (the adapter's
+		// marker) is. A coded spent account's reset is the diagnostic's own; one already past proves
+		// nothing, so the reset the response names still decides.
+		const codedResetMs =
+			codedLimit?.kind === "spent" && codedLimit.resetsAt !== undefined ? codedLimit.resetsAt - nowMs : undefined;
+		const codedReset = codedResetMs !== undefined && codedResetMs > 0 ? codedResetMs : undefined;
+		const { hint, resetSource } = rateLimitHint(
+			codedLimit?.kind === "throttle",
+			codedReset,
+			text,
+			status,
+			usageLimit,
+			normalized.retryAfterMs,
+			nowMs,
+		);
 		const modelFamily = rateLimitModelFamily(text);
 		const policy = { baseMs: context.cooldownBaseMs, capMs: context.cooldownCapMs };
 		return {
@@ -330,6 +486,7 @@ export function classifyCredentialFailure(
 				...(usageLimit && hint !== undefined && hint > 0
 					? usageLimitCooldown(hint, policy)
 					: rateLimitCooldown(failureCount, hint, policy)),
+				resetSource,
 				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};

@@ -17,7 +17,8 @@ import {
  * `senpi-recovery-catalog/<version>/<encoding>/<domain>`: `encoding` names the stored encoding of the hashed bytes
  * (`utf16le`, RULING-58 (1): a store that writes another encoding gets its own tag and never collides) and `domain`
  * is `leaf` (one component's stored bytes), `node` (a catalog node as a child), `root` (the catalog root named by
- * the manifest) or `pointer` (a node's private side leaf, `compact-catalog-pointers.ts`). Bytes are the EXACT stored bytes of the content store: the UTF-16LE code units of the leaf text,
+ * the manifest), `pointer` (a node's private side leaf, `compact-catalog-pointers.ts`) or `fragment` (one recovery
+ * page of a component's bytes, `compact-recovery-bytes.ts`). Bytes are the EXACT stored bytes of the content store: the UTF-16LE code units of the leaf text,
  * a lone surrogate included, never a reconstructed or transcoded value. A format bump changes `CATALOG_VERSION`,
  * hence every tag; a retired prefix is never reused.
  *
@@ -31,7 +32,7 @@ const CATALOG_ENCODING = "utf16le" satisfies BufferEncoding;
 /** A node is one store leaf: 32,768 UTF-16 code units, 64 KiB stored, under D (131,072) and F. */
 export const CATALOG_NODE_MAX_UNITS = COMPACT_LEAF_CODE_UNITS;
 
-type CatalogDomain = "leaf" | "node" | "root" | "pointer";
+type CatalogDomain = "leaf" | "node" | "root" | "pointer" | "fragment";
 
 export interface CatalogEntry {
 	readonly kind: BoundedId;

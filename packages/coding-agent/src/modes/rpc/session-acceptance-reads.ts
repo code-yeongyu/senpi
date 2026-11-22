@@ -8,6 +8,8 @@ import type { FrozenAcceptedRoot } from "./session-acceptance-lane.ts";
  * live. Publishing and releasing roots stays with the lane (`SessionAcceptanceLane`), which owns these three fields.
  */
 export class AcceptedRootReads {
+	/** S16 freezes any required repair cut before the dependent accepted mutation. No consumer ACK is implied. */
+	beforeAccept?: (record: object) => void;
 	protected readonly live = new Set<FrozenAcceptedRoot>();
 	protected readonly rootOwners = new WeakMap<FrozenAcceptedRoot, CompactSettledMessages>();
 	protected readonly current = new CompactLaneCurrent();

@@ -1,5 +1,167 @@
 # changes
 
+## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getUserShellEnv()` (the base of `getShellEnv()`) spreads `childEnvironmentOf(process.env)` instead of `process.env`, so the bash tool, PTY terminal, monitors and `!` commands never carry the host's hand-off and carry the origin attribution instead.
+
+### Why
+
+- Every process a session started through its shell inherited the RPC host's identity and launch-default client capabilities (senpi#7034).
+
+### Why an extension could not handle it
+
+- `getShellEnv()` is the environment the built-in shell tools spawn with, before any extension can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the `return` of `getUserShellEnv()` and its new import.
+
+## 2026-11-16 - Agent shells never receive a declared credential (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` passes the user shell environment through `withCredentialProxy()` before the kill guard's layer. Every variable named in the user's global `credentialProxy.credentials`, and any other variable carrying one of those values, is set to a fixed placeholder; a declared `baseUrlEnv` points at the credential's loopback proxy route. `getUserShellEnv()` (the user's own `!` commands) is unchanged.
+
+### Why
+
+- The bash tool, PTY bash, monitors and the tool child all spawn with `getShellEnv()`, which handed every engine credential to every agent command (senpi#6828). Step 1 of the agent vault design: a credential is used only through the injection proxy.
+
+### Why an extension could not handle it
+
+- The environment is built here before any extension sees a spawn; an extension cannot remove a value from it.
+
+### Expected merge conflict zones
+
+- LOW: `getShellEnv()` body and its import block.
+
+## 2026-11-06 - Process start-time probes read in UTC (senpi#3067 L1)
+
+### What changed
+
+- `packages/coding-agent/src/utils/process-identity.ts`: `readProcessStartTime` gains an optional `timeZone: "UTC" = "UTC"` parameter and passes it through to `readProcessIdentity`, so every live-process start-time probe reads in UTC by construction. Legacy local-format records are still parsed as local time by `processStartTimeMs`.
+
+### Why
+
+- senpi#3067 L1: `holderPids` probes the live process in local form while `host-child.pid` records a UTC-tagged start time. During a DST fall-back the local time `01:30` happens twice and `Date.parse` takes the earlier offset, so a child started in the repeated hour reads one hour off and stops counting as a holder of its sessions. The same mixed-format comparison existed in every other `readProcessStartTime` consumer (pidfile matching, published claims, `rpc-public-key` records); all direct `readProcessIdentity` call sites already passed `"UTC"`.
+
+### Why an extension could not handle it
+
+- Process identity is read in core RPC/host plumbing before any extension loads, and no extension hook runs between the OS probe and the holder comparison.
+
+### Expected merge conflict zones
+
+- LOW: `readProcessStartTime` in `packages/coding-agent/src/utils/process-identity.ts` and its call sites in `packages/coding-agent/src/modes/rpc/`.
+
+## 2026-11-15 - The image byte sniffer moves to a module without Node imports (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/utils/mime.ts`: `detectSupportedImageMimeType` and its helpers move to `image-mime.ts`, re-exported here; this module keeps `detectSupportedImageMimeTypeFromFile`.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The sniffer is a core utility the built-in read tool imports.
+
+### Expected merge conflict zones
+
+- LOW: `mime.ts` is now the file reader plus a re-export.
+
+## 2026-11-13 - Binary installs read the update version from the latest GitHub Release (senpi#6633)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: when the running install is a standalone binary (`detectInstallMethod() === "bun-binary"`) and no branded channel is set, `getLatestPiRelease` reads `https://api.github.com/repos/code-yeongyu/senpi/releases/latest` and takes the version from `tag_name` (`readLatestReleaseVersion`, which refuses drafts and prereleases). npm-based installs keep npm `latest`; branded channels keep their dist-tag. `getLatestPiRelease`, `getLatestPiVersion` and `checkForNewPiVersion` accept an optional `installMethod`.
+
+### Why
+
+- A binary can only be updated from a GitHub Release, but its notice came from npm `latest`. Since senpi#6627 npm can publish before the release exists, which told binary users about a version they could not download.
+
+### Why an extension could not handle it
+
+- The startup update notice and `senpi update` call this module directly; no extension hook decides where the installable version comes from.
+
+### Expected merge conflict zones
+
+- LOW: the request URL and headers in `getLatestPiRelease` and the `checkForNewPiVersion` signature in `version-check.ts`.
+
+## 2026-11-06 - Copy reaches a remote viewer without SSH/Mosh markers (senpi#6108, PR #6109)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard.ts`: `copyToClipboard()` also emits OSC 52 after a verified native or command clipboard write when stdout is a terminal, so the terminal that displays the session receives the text too. `isRemoteSession()` also treats `SSH_TTY` as a remote marker. Success still rests on a write that was verified or, as before, on OSC 52 where it is the only route (remote or display-less sessions); a failed local write with a terminal on stdout still throws.
+
+### Why
+
+- A persistent terminal session can be viewed from another machine while the program's environment carries no SSH/Mosh markers. On macOS the native write to the execution host's clipboard succeeded, OSC 52 was skipped, and the user saw "Copied!" while the viewing machine's clipboard was unchanged.
+
+### Why an extension could not handle it
+
+- `copyToClipboard()` is the core clipboard writer used by the interactive copy paths; an extension cannot change what the core writer sends to the terminal.
+
+### Expected merge conflict zones
+
+- LOW: `isRemoteSession()` and the OSC 52 condition near the end of `copyToClipboard()`.
+
+## 2026-11-01 - getShellEnv carries the kill guard's runtime layer (senpi#5349, PR #5358)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` passes `getUserShellEnv()` (the previous `getShellEnv()` body, now also used for the user's own `!` commands) through `withKillGuardRuntime()`. While a session has the kill guard's runtime layer active, that function puts the shim directory first on `PATH`, sets `BASH_ENV` to the wrapper (keeping a user's own `BASH_ENV` in `SENPI_KILL_GUARD_USER_BASH_ENV`), exports the judge variables, and sets `SHLVL=1` when the environment has no usable level. bash skips `BASH_ENV` in a top-level shell whose stdin is a socket (its rshd rule; Node and libuv pipes are sockets) or that sshd started, and an inherited `SHLVL` makes every agent `bash -c` a nested shell. With no active layer the environment is unchanged.
+
+### Why
+
+- PTY bash, the core bash tool and monitors all spawn with `getShellEnv()`. Putting the shims there makes every agent command and its children judge `kill`, `pkill` and `killall` on their real argv.
+
+### Why an extension could not handle it
+
+- The environment is built here before any extension can intervene, and the core bash tool that SDK consumers get never passes through the terminal extension.
+
+### Expected merge conflict zones
+
+- LOW: `getShellEnv()`, the new `getUserShellEnv()` below it, and the new import.
+
+## 2026-11-02 - Order zero-padded and -1 CalVer versions (#5406, PR #5411)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: Senpi CalVer parsing accepts any `-N` revision with N >= 1 (`-1` equals the bare date, `-10` > `-9`) and compares month and day numerically, so `2026.11.02-1`, `2026.11.2-1` and `2026.11.2` are one release. When only one side is CalVer, the semver fallback receives that side in its canonical unpadded form.
+
+### Why
+
+- Release `2026.11.02-1` stamped a zero-padded version with a `-1` suffix. The pattern only accepted `-2` and higher, and semver rejects the padded `02`, so `isNewerPackageVersion` was always false: users on that release were never offered an update, and the self-update tests went red on main.
+
+### Why an extension could not handle it
+
+- Version ordering for the update check and `senpi update` runs in core bootstrap code before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `SENPI_CALVER_PATTERN` and `comparePackageVersions` in `packages/coding-agent/src/utils/version-check.ts`.
+
+## 2026-10-31 - Adopt Windows pipes by mode bits (#5137, PR #5142)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts`: exports `isFifoMode` and adopts an inherited descriptor when its file-type mode bits are FIFO, instead of `Stats.isFIFO()`, so adoption accepts every pair the parser accepts.
+
+### Why
+
+- On Windows source runtimes `Stats.isFIFO()` is false for real pipes, so a parsed pair was never adopted and the private channel silently stayed down.
+
+### Why an extension could not handle it
+
+- Private channel adoption runs during bootstrap, before extensions load.
+
+### Expected merge conflict zones
+
+- Inherited descriptor type checks.
+
 ## 2026-10-29 - Compose and protect inherited pipe pairs (#4859)
 
 ### What changed

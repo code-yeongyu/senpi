@@ -15,6 +15,7 @@ import { CompactValues } from "../../../src/modes/rpc/compact-values.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { memoryIo, spoolRoot } from "../compact-storage-support.ts";
+import { componentText } from "./4272-frozen-bytes-support.ts";
 import { cutStructuredBytes, recoveryRig } from "./4272-recovery-support.ts";
 
 // Part of #4272 (S10a, R4.B2, RULING-60): every checkpoint family has a typed registry entry and an explicit catalog
@@ -55,7 +56,10 @@ async function catalogOf(rig: ReturnType<typeof recoveryRig>) {
 	const text = async (kind: string, id: string) => {
 		const index = entries.findIndex(([k, i]) => k === kind && i === id);
 		expect(index, `${kind}/${id} is cataloged`).toBeGreaterThanOrEqual(0);
-		return component(unwrap(await rig.checkpoints.readCatalog(token, caller, ref(manifest.catalogRoot, index))));
+		const read = component(
+			unwrap(await rig.checkpoints.readCatalog(token, caller, ref(manifest.catalogRoot, index))),
+		);
+		return { ...read, text: await componentText(read) };
 	};
 	return { token, manifest, root, entries, text };
 }
@@ -91,6 +95,7 @@ it("X03 T1 every family of the versioned schema has a registry row and an explic
 		version: 1,
 		assembly: "complete",
 		families: CATALOG_FAMILIES.map((family) => ({ family, producer: "complete" })),
+		requiredKinds: [...CATALOG_FAMILIES].sort(),
 	});
 	expect(FAMILY_PRODUCERS).toEqual(Object.fromEntries(CATALOG_FAMILIES.map((family) => [family, "complete"])));
 	expect(JSON.parse((await text("transcript", "transcript")).text)).toEqual({

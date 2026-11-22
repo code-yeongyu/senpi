@@ -1,3 +1,85 @@
+## 2026-11-09 - generate_image is eval-only, like bash (senpi#6272, closes #6269)
+
+### What changed
+
+- `tool.ts`: `exposure: "eval"` replaces `exposure: "search"`; the search-only `searchGroup` and `searchKeywords` are gone because senpi's `tool_search` catalog indexes only search-exposed tools.
+- `skill/SKILL.md`: the tool-routing section says to call `generate_image` from an eval cell (`tool.generate_image({ prompt: "..." })` in js, `tool.generate_image(prompt="...")` in py, `tool_schema("generate_image")` for the parameters) and that it is a direct tool only when no eval tool exists.
+- `../../../../docs/skills.md`, `docs/extensions.md`, `docs/settings.md`: the eval-only policy text names `generate_image` (and `glob`) among the declared eval tools.
+- Tests: `test/suite/imagegen-eval-only.test.ts` (new) proves the tool is withheld while an eval tool exists, runs through `executeTool` from the registry without activating, and is direct without eval; `test/suite/regressions/issue-1682-tool-search-side-effect-free.test.ts` asserts the eval semantics for the generate_image case and drops its `evalOnlyToolNames` override (which replaced the declared set); `test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts` lists the tool as direct in its no-eval session.
+
+### Why
+
+- Q asked for `generate_image` and the omo thread tools to be callable only through eval, exactly like `bash`. Whenever codemode's `eval` tool is registered the model never sees the ~1K-token schema and calls the tool from a cell; without an eval tool nothing changes. Behaviour, parameters, credentials, the native `image_generation` arbitration and results are untouched.
+
+### Why an extension could not handle it
+
+- This is the builtin imagegen extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the definition header of `tool.ts` and the "Which tool" section of `skill/SKILL.md`.
+
+## 2026-11-05 - generate_image defaults to GPT Image 2.6 with a one-shot 2.5 fallback (senpi#5821, fixes #5820)
+
+### What changed
+
+- `params.ts`: `DEFAULT_IMAGE_MODEL` is `gpt-image-2.6-sunburst`; the model union adds both 2.6 ids and keeps the 2.5 pair and `gpt-image-2`; `complexity` is a new optional parameter; `IMAGE_MODEL_FALLBACKS` maps each 2.6 id to its 2.5 counterpart; `NATIVE_IMAGE_MODEL` keeps the native `image_generation` lane on `gpt-image-2.5-sunburst`; details gain `fallbackFrom`.
+- `model-request.ts` (new): model synthesis and the generation request moved out of `tool.ts`; when the endpoint answers with a model-config error for a 2.6 id, the same endpoint is asked once more with the 2.5 counterpart and without `complexity`.
+- `saved-images.ts` (new): `collectImages` and `writeImages` moved out of `tool.ts` unchanged.
+- `tool.ts`: rejects `complexity` on models older than 2.6 as `invalid_params`, reports the model that answered plus a fallback note, and its description names 2.6.
+- `skill/SKILL.md`: 2.6 model selection, the complexity control, the automatic fallback, and quality tiers on 2.5 and 2.6.
+- `../openai-image-gen/inject.ts`: pins `NATIVE_IMAGE_MODEL` instead of `DEFAULT_IMAGE_MODEL`.
+
+### Why
+
+- The owner default is the most capable model, which is now 2.6 Sunburst. Several OpenAI-compatible gateways do not serve the 2.6 ids yet, and failing every default request on them would be a regression, so the client tool falls back on that one error class. The native lane has no client-side retry and 2.6 is not yet verified on the subscription backend, so it keeps 2.5 Sunburst.
+
+### Why an extension could not handle it
+
+- This is the builtin imagegen extension itself.
+
+### Expected merge conflict zones
+
+- MEDIUM: the request block in `tool.ts` `execute()`, which also moves in open PR #5676.
+
+## 2026-11-03 - Scan only gateways whose API serves OpenAI Images (senpi#5674)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/auth.ts`: the gateway scan skips a built-in provider unless its generated image catalog lists an `openai-images` model; providers declared in models.json are still scanned and an explicit `PI_IMAGE_GEN_PROVIDER` pin is honoured. `unsupportedImageGateways` lists the logged-in providers passed over and `setupReason` names them in the setup guidance.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts`: a `missing_config` result names those providers in its message and in `details.unsupportedProviders`.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/params.ts`: `GenerateImageDetails.unsupportedProviders`.
+
+### Why
+
+- senpi#5674: a machine logged in to xAI sent every image request to xAI's chat API, which has no OpenAI Images endpoint and answered 400/415, a final status for a scanned gateway, so no request could succeed and the user saw a raw provider error.
+
+### Why an extension could not handle it
+
+- Gateway selection is this builtin's own credential resolution.
+
+### Expected merge conflict zones
+
+- LOW: the scanned-provider filter in `imageGenCandidates` and the `missing_config` branch in `tool.ts`.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts`: `IMAGE_GEN_SECTION` and its `before_agent_start` handler are removed; the gpt-image-gen skill catalog line already carries the trigger.
+
+### Why
+
+- senpi#5335: the section's first sentence restated the skill trigger and its second named no tool.
+
+### Why an extension could not handle it
+
+- The section was this extension's own prompt contribution.
+
+### Expected merge conflict zones
+
+- LOW: the removed handler.
+
 ## 2026-10-16 - Resolve the openai provider like model calls; never strand on a gateway without images (omo#10285)
 
 ### What changed

@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
@@ -26,8 +27,8 @@ beforeEach(() => {
 	repository = new CredentialSlotRepository(path);
 });
 
-afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+	await rm(dir, { recursive: true, force: true });
 });
 
 describe("credential pool state sidecar", () => {

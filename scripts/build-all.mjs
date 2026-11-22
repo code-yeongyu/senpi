@@ -28,8 +28,8 @@ const SUPPORTED_PMS = new Set(SUPPORTED_PACKAGE_MANAGERS);
 // before any dependent phase starts.
 export const BUILD_PHASES = [
 	["packages/chord"],
-	["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol"],
-	["packages/ai", "packages/client"],
+	["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol", "packages/realm-registry"],
+	["packages/ai", "packages/client", "packages/machine-ops"],
 	["packages/agent"],
 	["packages/session-backends/sqlite-node"],
 	["packages/coding-agent"],

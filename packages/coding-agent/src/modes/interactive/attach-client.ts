@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AssistantProgress } from "@earendil-works/pi-ai";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "../rpc/jsonl.ts";
 import { connectRpcClientSocket } from "../rpc/rpc-client-socket.ts";
@@ -19,6 +19,8 @@ import type {
 export type AttachRecord = (
 	| Exclude<JsonAgentSessionEvent, { type: "message_update" }>
 	| (Extract<JsonAgentSessionEvent, { type: "message_update" }> & { readonly message?: AssistantMessage | null })
+	// The renderer keeps no raw tool arguments (it shows them only from `toolcall_end`), so the reset needs no state.
+	| Extract<AssistantProgress, { type: "message_tool_arguments_reset" }>
 	| RpcExtensionUIRequest
 	| RpcSessionStatusEvent
 	| RpcQuestionResolvedEvent

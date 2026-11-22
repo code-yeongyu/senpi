@@ -20,8 +20,10 @@ afterEach(async () => {
 	await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): CreateAgentSessionRuntimeResult {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+async function runtime(
+	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
+): Promise<CreateAgentSessionRuntimeResult> {
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
 			...fakeSessionBase(options),
@@ -33,7 +35,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 			favoriteModels: [],
 			scopedModels: [],
 			isBashRunning: false,
-			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+			extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 			abort: async () => {},
 			waitForIdle: async () => {},
 			dispose: () => {},

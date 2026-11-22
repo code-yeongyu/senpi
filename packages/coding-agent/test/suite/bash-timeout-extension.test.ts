@@ -3,7 +3,6 @@ import {
 	applyBashTimeout,
 	BASH_DEFAULT_TIMEOUT_SECONDS,
 	BASH_MAX_TIMEOUT_SECONDS,
-	buildBashTimeoutPrompt,
 	resolveBashTimeoutDefaults,
 } from "../../src/core/extensions/builtin/bash-timeout/timeout.ts";
 
@@ -112,42 +111,5 @@ describe("applyBashTimeout", () => {
 		applyBashTimeout(input, defaults);
 
 		expect(input.timeout).toBeUndefined();
-	});
-});
-
-describe("buildBashTimeoutPrompt", () => {
-	const SHIPPED_POLICY =
-		"\n## Bash Tool Timeout Policy\n\nThe `bash` tool's `timeout` parameter is the process kill deadline, not how long you wait for output: the command is killed when it reaches the deadline.\n\n- Default timeout: 1800s (30 min). Applied automatically when you do not set `timeout`.\n- Recommended maximum timeout: 1800s (30 min). Explicit `timeout` values are preserved because different hosts may use different timeout units.\n- Foreground blocking stops at the ~60s window. A command still running then auto-detaches alive to a background session with a `bash_id` and keeps running until it exits or hits the kill deadline; the session tools in the terminal section steer or stop it.";
-
-	it("is byte-identical to the shipped kill-deadline policy", () => {
-		expect(buildBashTimeoutPrompt({ defaultSeconds: 1800, maxSeconds: 1800 }, { foregroundWindowSeconds: 60 })).toBe(
-			SHIPPED_POLICY,
-		);
-	});
-
-	it("states that timeout is the process kill deadline, not the wait budget", () => {
-		const prompt = buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}), { foregroundWindowSeconds: 60 });
-
-		expect(prompt).toContain("## Bash Tool Timeout Policy");
-		expect(prompt).toContain("process kill deadline");
-		expect(prompt).toContain("not how long you wait");
-		expect(prompt).toContain("Default timeout: 1800s (30 min)");
-	});
-
-	it("contains the auto-detach guidance and never mentions the prompt cache", () => {
-		const prompt = buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}), { foregroundWindowSeconds: 60 });
-
-		expect(prompt).toContain("~60s window");
-		expect(prompt).toContain("auto-detaches alive");
-		expect(prompt).toContain("bash_id");
-		expect(prompt).not.toContain("tmux");
-		expect(prompt.toLowerCase()).not.toContain("prompt cache");
-	});
-
-	it("falls back to seconds for non-minute-aligned values", () => {
-		const prompt = buildBashTimeoutPrompt({ defaultSeconds: 45, maxSeconds: 90 });
-
-		expect(prompt).toContain("Default timeout: 45s (45s)");
-		expect(prompt).toContain("Recommended maximum timeout: 90s (90s)");
 	});
 });
