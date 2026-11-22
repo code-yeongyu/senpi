@@ -33,19 +33,17 @@ const scenario = vi.hoisted((): FsScenario => ({
 
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	const stat = async (path: string, options?: unknown) => {
-		if (scenario.statSize === undefined) return actual.stat(path, options);
-		return { isFile: () => true, size: scenario.statSize } as unknown as Awaited<
-			ReturnType<typeof actual.stat>
-		>;
+	const stat = async (path: string) => {
+		if (scenario.statSize === undefined) return actual.stat(path);
+		return { isFile: () => true, size: scenario.statSize } as unknown as Awaited<ReturnType<typeof actual.stat>>;
 	};
-	const readFile = async (path: string, options?: unknown) => {
-		if (scenario.grownBytes === undefined) return actual.readFile(path, options);
+	const readFile = async (path: string) => {
+		if (scenario.grownBytes === undefined) return actual.readFile(path);
 		scenario.readFileServed += scenario.grownBytes.byteLength;
 		return scenario.grownBytes;
 	};
-	const open = async (path: string, flags?: unknown, mode?: unknown) => {
-		if (scenario.grownBytes === undefined) return actual.open(path, flags, mode);
+	const open = async (path: string, flags?: string) => {
+		if (scenario.grownBytes === undefined) return actual.open(path, flags);
 		const grown = scenario.grownBytes;
 		let cursor = 0;
 		const handle = {
