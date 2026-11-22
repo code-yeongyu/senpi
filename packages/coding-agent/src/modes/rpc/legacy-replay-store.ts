@@ -16,13 +16,14 @@ import { carriesMedia, omitNormalInlineMedia } from "./media-placeholders.ts";
  */
 type SnapshotRecord = {
 	readonly line: string;
-	placeholderLine?: string;
+	placeholderLine?: string | (() => Promise<string>);
 	readonly hasMessage: boolean;
 	readonly mayCarryMedia: boolean;
 };
 
 /** The placeholder variant of a remembered record, derived and memoized on first use. */
-function snapshotPlaceholderLine(record: SnapshotRecord): string {
+function snapshotPlaceholderLine(record: SnapshotRecord): string | Promise<string> {
+	if (typeof record.placeholderLine === "function") return record.placeholderLine();
 	if (record.placeholderLine !== undefined) return record.placeholderLine;
 	if (!record.mayCarryMedia) return record.line;
 	const source = JSON.parse(record.line) as Record<string, unknown>;
@@ -58,7 +59,12 @@ export class LegacyReplayStore {
 		return this.pendingQuestions.get(sessionId)?.size ?? 0;
 	}
 
-	remember(sessionId: string, value: Record<string, unknown>, line: string, placeholderLine?: string): void {
+	remember(
+		sessionId: string,
+		value: Record<string, unknown>,
+		line: string,
+		placeholderLine?: SnapshotRecord["placeholderLine"],
+	): void {
 		const record: SnapshotRecord = {
 			line,
 			placeholderLine,

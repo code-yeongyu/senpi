@@ -3,6 +3,7 @@ import { replyAdmission } from "./compact-admission-reply.ts";
 import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import type { RecoveryStreamState } from "./compact-recovery-types.ts";
 import { SocketEventSinkActor } from "./socket-event-fanout.ts";
+import type { DeferredSocketLine } from "./socket-event-queue.ts";
 import type { MirrorPending } from "./compact-mirror-pending.ts";
 
 /** Every enqueue path, including startup UI/lifecycle and compaction replacements, uses the same route.
@@ -96,7 +97,7 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 	bind(checkpoints: RecoveryCheckpoints, socketEpoch: string, peer: string): void {
 		this.peer = peer;
 		const enqueue = super.enqueue.bind(this);
-		this.enqueue = (line, key, written, demoted, reply, held) => {
+		this.enqueue = (line, key, written, demoted, reply, held, current, prepare) => {
 			const lines = this.route(line, checkpoints, socketEpoch);
 			this.retireReplied(line);
 			if (lines.length === 0) {
@@ -106,13 +107,22 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 			const replacements = demoted === undefined ? undefined : this.route(demoted, checkpoints, socketEpoch);
 			let remaining = lines.length;
 			let delivered = false;
+			let prepared: ReturnType<DeferredSocketLine> | undefined;
+			let preparedWritten: ((ok: boolean) => void) | undefined;
 			const receipt = (ok: boolean) => {
 				delivered ||= ok;
-				if (--remaining === 0) written?.(delivered);
+				if (--remaining === 0) {
+					written?.(delivered);
+					preparedWritten?.(delivered);
+				}
 			};
 			for (let i = 0; i < lines.length; i++) {
 				const line = lines[i] ?? "";
-				const admissionId: unknown = Reflect.get(JSON.parse(line), "admissionId");
+				const header: unknown = JSON.parse(line);
+				const admissionId: unknown =
+					header && typeof header === "object" && "admissionId" in header ? header.admissionId : undefined;
+				const generation: unknown =
+					header && typeof header === "object" && "generation" in header ? header.generation : undefined;
 				const pending = typeof admissionId === "string" ? this.pendingMirrors.get(admissionId) : undefined;
 				const deliver = () =>
 					enqueue(
@@ -122,6 +132,16 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 						replacements?.[i],
 						reply,
 						held,
+						current,
+						prepare &&
+							(async (live) => {
+								const ready = await (prepared ??= prepare(live));
+								if (!ready) return undefined;
+								preparedWritten = ready.onWritten;
+								if (admissionId === undefined) return { line: ready.line };
+								const record = JSON.parse(ready.line) as Readonly<Record<string, unknown>>;
+								return { line: serializeJsonLine({ ...record, admissionId, generation }) };
+							}),
 					);
 				if (pending && !reply) pending.enqueue(line, deliver, () => receipt(false));
 				else deliver();

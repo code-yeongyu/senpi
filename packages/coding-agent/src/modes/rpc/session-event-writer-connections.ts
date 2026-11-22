@@ -5,7 +5,7 @@ import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import { ConnectionDelegations, type LaunchProofSource } from "./delegated-connection.ts";
 import type { DelegationDescriptor } from "./delegation-record.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import type { MediaPersister } from "./media-placeholders.ts";
+import type { AsyncMediaPersister } from "./media-placeholders.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import type { SessionEventWriterConnection } from "./session-event-connection.ts";
 import type { RpcRecord } from "./session-event-writer-compaction.ts";
@@ -174,7 +174,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	 * instead of broadcast; an interactive session keeps the broadcast every client (the
 	 * desktop mirror, the supervisor's idle observer) relies on.
 	 */
-	setSessionMedia(sessionId: string, persister: MediaPersister | undefined): void {
+	setSessionMedia(sessionId: string, persister: AsyncMediaPersister | undefined): void {
 		if (persister === undefined) this.mediaPersisters.delete(sessionId);
 		else this.mediaPersisters.set(sessionId, persister);
 	}

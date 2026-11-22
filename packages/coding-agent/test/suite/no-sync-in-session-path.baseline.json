@@ -977,60 +977,6 @@
 			"count": 1
 		},
 		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "chmodSync",
-			"symbol": "writeImage",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "existsSync",
-			"symbol": "store",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "existsSync",
-			"symbol": "storedBytes",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "lstatSync",
-			"symbol": "assertRealDirectoryChain",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "mkdirSync",
-			"symbol": "writeImage",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "readdirSync",
-			"symbol": "directoryBytes",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "renameSync",
-			"symbol": "writeImage",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "rmSync",
-			"symbol": "writeImage",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"callee": "statSync",
-			"symbol": "directoryBytes",
-			"count": 1
-		},
-		{
 			"file": "src/nearest-parent-config.ts",
 			"callee": "lstatSync",
 			"symbol": "isDirectory",

@@ -62,6 +62,9 @@ export type MediaPersister = (
 	block: { readonly data: string; readonly mimeType?: string },
 ) => PersistedMedia | undefined;
 
+/** Captures the live scope now; the expensive write starts only at the destination's FIFO position. */
+export type AsyncMediaPersister = (...args: Parameters<MediaPersister>) => (() => Promise<PersistedMedia>) | undefined;
+
 /** The block a capable client receives in place of inline image bytes. */
 export interface ImageRefBlock {
 	readonly type: "image_ref";
@@ -227,4 +230,32 @@ export function omitNormalInlineMedia<T extends object>(record: T, persist?: Med
 	const scrubbed = typed.type === "tool_execution_end" ? omitToolExecutionEndImages(typed, persist) : typed;
 	const walked = walk(scrubbed, persist);
 	return (walked === typed ? record : walked) as T;
+}
+
+/** A placeholder-only preview for queue admission, and its shared, lazy persisted version. */
+export function prepareInlineMedia<T extends object>(
+	record: T,
+	persist?: AsyncMediaPersister,
+): { readonly preview: T; readonly ready?: () => Promise<T> } {
+	const jobs: ((() => Promise<PersistedMedia>) | undefined)[] = [];
+	const preview = omitNormalInlineMedia(
+		record,
+		persist &&
+			((ref, block) => {
+				jobs.push(persist(ref, block));
+				return undefined;
+			}),
+	);
+	if (!jobs.some((job) => job !== undefined)) return { preview };
+	let resolved: Promise<T> | undefined;
+	return {
+		preview,
+		ready: () =>
+			(resolved ??= (async () => {
+				const outcomes: (PersistedMedia | undefined)[] = [];
+				for (const job of jobs) outcomes.push(await job?.());
+				let index = 0;
+				return omitNormalInlineMedia(record, () => outcomes[index++]);
+			})()),
+	};
 }

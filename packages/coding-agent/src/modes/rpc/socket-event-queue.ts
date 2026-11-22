@@ -1,6 +1,14 @@
 import type { BaselineBarrier } from "./socket-baseline-barrier.ts";
 import type { ResyncReason } from "./socket-peer-recovery.ts";
 
+export type DeferredSocketLine = (live: () => boolean) => Promise<
+	| {
+			readonly line: string;
+			readonly onWritten?: (written: boolean) => void;
+	  }
+	| undefined
+>;
+
 export type QueueEntry = {
 	line: string;
 	bytes: number;
@@ -18,6 +26,8 @@ export type QueueEntry = {
 	held?: () => boolean;
 	/** A targeted reply's destination check, repeated immediately before its write (#4728). */
 	current?: () => boolean;
+	/** Render at this FIFO position, after asynchronous media is on disk. */
+	prepare?: DeferredSocketLine;
 };
 
 /** A late peer's attach baseline in its FIFO position. */

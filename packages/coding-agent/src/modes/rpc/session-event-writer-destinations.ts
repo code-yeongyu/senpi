@@ -2,13 +2,14 @@ import { COMPACT_RECORD_MAX_BYTES } from "./compact-event-leases.ts";
 import { COMPACT_EVENTS_CAPABILITY, MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { jsonSize } from "./json-pieces.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import { omitNormalInlineMedia } from "./media-placeholders.ts";
+import { prepareInlineMedia } from "./media-placeholders.ts";
 import { compactDelta, demoteToDeltaOnly, MESSAGE_KEY, type RpcRecord } from "./session-event-writer-compaction.ts";
 import { SessionEventWriterRecovery } from "./session-event-writer-recovery.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
-import { materializerLine } from "./compact-materializer-line.ts";
+import { planMaterializerLine } from "./compact-materializer-line.ts";
 import { declarationReply } from "./compact-negotiation.ts";
 import { unvouchedCall } from "./compact-call-identity.ts";
+import type { DeferredSocketLine } from "./socket-event-queue.ts";
 
 /** A record's legacy line, encoded on first use: a record no legacy destination needs never builds it (RULING-81 X06). */
 export class RecordLine {
@@ -41,6 +42,7 @@ interface EventLine {
 	readonly record?: RpcRecord;
 	readonly undelivered?: (written: boolean) => void;
 	readonly atomic?: boolean;
+	readonly prepare?: DeferredSocketLine;
 }
 
 /**
@@ -72,13 +74,18 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		const hasPlaceholderTarget = targets.some((target) =>
 			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
 		);
-		const redacted = hasPlaceholderTarget
-			? omitNormalInlineMedia(tagged, this.mediaPersisters.get(sessionId))
-			: tagged;
+		const { preview: redacted, ready } = hasPlaceholderTarget
+			? prepareInlineMedia(tagged, this.mediaPersisters.get(sessionId))
+			: { preview: tagged };
 		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
 		const placeholder = new RecordLine(redacted, placeholderLine);
 		if (!isTargeted && !this.fanout.acceptance.has(sessionId))
-			this.fanout.rememberSnapshot(sessionId, tagged, line.text, placeholderLine);
+			this.fanout.rememberSnapshot(
+				sessionId,
+				tagged,
+				line.text,
+				ready ? async () => serializeJsonLine(await ready()) : placeholderLine,
+			);
 		const copies = new Map<RpcRecord, CompactCopy>();
 		for (const target of targets) {
 			if (target !== undefined && !this.fanout.get(target)) continue;
@@ -92,6 +99,7 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 					wants ? redacted : tagged,
 					wants ? placeholder : line,
 					copies,
+					wants ? ready : undefined,
 				);
 				const keyed = !out.atomic && compactDelta(tagged) !== undefined && tagged.message !== null;
 				registered.actor.enqueue(
@@ -104,6 +112,7 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 						? undefined
 						: this.fanout.attachmentOf(target, sessionId, isTargeted, record.type),
 					current,
+					out.prepare,
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}
@@ -123,6 +132,7 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		record: RpcRecord,
 		line: RecordLine,
 		copies: Map<RpcRecord, CompactCopy>,
+		ready?: () => Promise<RpcRecord>,
 	): EventLine {
 		const reply = declarationReply(record, this.compactSelection(target));
 		if (reply !== undefined && reply !== record) return { line: serializeJsonLine(reply) };
@@ -140,49 +150,75 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		const admissionId =
 			this.ordinaryRoute(target, sessionId)?.routes[0] ?? this.fanout.admissionOf(target, sessionId);
 		const socketEpoch = this.fanout.get(target)?.socketEpoch;
-		if (!events || !lane || admissionId === undefined || socketEpoch === undefined) return { line: line.text };
-		if (!this.fanout.connectionHas(target, COMPACT_EVENTS_CAPABILITY)) return { line: line.text };
+		if (
+			!events ||
+			!lane ||
+			admissionId === undefined ||
+			socketEpoch === undefined ||
+			!this.fanout.connectionHas(target, COMPACT_EVENTS_CAPABILITY)
+		)
+			return { line: line.text, prepare: ready && (async () => ({ line: serializeJsonLine(await ready()) })) };
+
 		// RULING-120 (#5331): only this compact peer's copy carries the ids the settled overlay pages for its message;
 		// RULING-123 (#5346): and a live call record's snapshot key, or `callUnknown` when the lane vouched for none.
-		let copy = copies.get(record);
-		if (!copy) {
-			const identity = lane.identities.of(record.type, lane.acceptedSequence) ?? unvouchedCall(record);
-			const stamped = identity ? { ...record, ...identity } : record;
-			copy = { stamped, line: identity ? new RecordLine(stamped) : line };
-			copies.set(record, copy);
-		}
-		const { stamped, line: stampedLine } = copy;
-		const identity = stamped !== record;
-		const materializer = materializerLine(this.fanout, this.required, target, sessionId, stamped);
-		if (materializer) return materializer;
-		const built = stampedLine.built;
-		const size =
-			built === undefined ? jsonSize(stamped) : { bytes: Buffer.byteLength(built) - 1, units: built.length - 1 };
-		if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES)
-			return { line: stampedLine.text, ...(identity ? { record: stamped } : {}) };
-		const at = { sessionEpoch: lane.sessionEpoch, sequence: lane.acceptedSequence };
+		const sequence = lane.acceptedSequence;
+		const identityFields = lane.identities.of(record.type, sequence) ?? unvouchedCall(record);
+		const at = { sessionEpoch: lane.sessionEpoch, sequence };
 		const routes = this.ordinaryRoute(target, sessionId)?.routes ?? [];
-		const owner = routes[0] ?? admissionId;
-		const minted = events.mint({ socketEpoch, sessionId, admissionId: owner }, at, stamped, built ?? size);
-		if (minted.ok) {
-			const { id } = minted.value;
-			const held = events.claim({ socketEpoch, sessionId }, id, owner);
-			if (held.ok) for (const route of routes) held.value.admissions.add(route);
+		const materialize = planMaterializerLine(this.fanout, this.required, target, sessionId, String(record.type));
+		const render = (record: RpcRecord, line: RecordLine): EventLine => {
+			let copy = copies.get(record);
+			if (!copy) {
+				const stamped = identityFields ? { ...record, ...identityFields } : record;
+				copy = { stamped, line: identityFields ? new RecordLine(stamped) : line };
+				copies.set(record, copy);
+			}
+			const { stamped, line: stampedLine } = copy;
+			const identity = stamped !== record;
+			const materializer = materialize?.(stamped);
+			if (materializer) return materializer;
+			const built = stampedLine.built;
+			const size =
+				built === undefined ? jsonSize(stamped) : { bytes: Buffer.byteLength(built) - 1, units: built.length - 1 };
+			if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES)
+				return { line: stampedLine.text, ...(identity ? { record: stamped } : {}) };
+			const owner = routes[0] ?? admissionId;
+			const minted = events.mint({ socketEpoch, sessionId, admissionId: owner }, at, stamped, built ?? size);
+			if (minted.ok) {
+				const { id } = minted.value;
+				const held = events.claim({ socketEpoch, sessionId }, id, owner);
+				if (held.ok) for (const route of routes) held.value.admissions.add(route);
+				return {
+					line: serializeJsonLine({ type: Reflect.get(record, "type"), sessionId, eventLease: minted.value }),
+					...(identity ? { record: stamped } : {}),
+					// The lease lives only if its envelope is written: every drop path of the socket actor ends it unseen.
+					undelivered: (written) => {
+						if (!written) events.abandon(socketEpoch, id);
+					},
+				};
+			}
+			process.stderr.write(`senpi rpc connection ${target} event lease refused (${minted.reason}); closing\n`);
+			const { reason } = minted;
 			return {
-				line: serializeJsonLine({ type: Reflect.get(record, "type"), sessionId, eventLease: minted.value }),
-				...(identity ? { record: stamped } : {}),
-				// The lease lives only if its envelope is written: every drop path of the socket actor ends it unseen.
-				undelivered: (written) => {
-					if (!written) events.abandon(socketEpoch, id);
-				},
+				line: serializeJsonLine({ type: "event_lease_refused", sessionId, reason }),
+				// RULING-124: the refusal is the peer's last record before `socket_closing` and the close.
+				undelivered: () => this.fanout.get(target)?.close("event_lease_refused", reason),
 			};
-		}
-		process.stderr.write(`senpi rpc connection ${target} event lease refused (${minted.reason}); closing\n`);
-		const { reason } = minted;
+		};
+		if (!ready) return render(record, line);
+		const preview =
+			materialize || Buffer.byteLength(line.text) > COMPACT_RECORD_MAX_BYTES
+				? serializeJsonLine({ type: record.type, sessionId, id: record.id })
+				: line.text;
 		return {
-			line: serializeJsonLine({ type: "event_lease_refused", sessionId, reason }),
-			// RULING-124: the refusal is the peer's last record before `socket_closing` and the close.
-			undelivered: () => this.fanout.get(target)?.close("event_lease_refused", reason),
+			line: preview,
+			atomic: true,
+			prepare: async (live) => {
+				const record = await ready();
+				if (!live()) return undefined;
+				const rendered = render(record, new RecordLine(record));
+				return { line: rendered.line, onWritten: rendered.undelivered };
+			},
 		};
 	}
 }
