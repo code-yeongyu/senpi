@@ -4,9 +4,10 @@
  * through a device the user owns. Only types and constants live here; implementations live with the
  * provider pipeline, and the fused path passes today's stream function through untouched.
  */
+import type { ProviderId } from "@earendil-works/pi-ai";
 import type { StreamFn } from "../types.ts";
 
-export type ProviderId = string;
+export type { ProviderId };
 export type DeviceId = string;
 export type Epoch = number;
 export type EgressRoute = "direct" | "sealed" | "device";

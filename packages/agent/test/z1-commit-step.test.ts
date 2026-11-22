@@ -63,13 +63,18 @@ describe("loop edit 1: AgentLoopConfig.commitStep (C6 custody, CK1)", () => {
 		expect(trace.indexOf("commit:stop:0")).toBeLessThan(trace.lastIndexOf("turn_end"));
 	});
 
-	it("commits a terminal-failure message too, before the loop ends the turn", async () => {
-		const { trace, failure } = await run([errorStep], { commitStep: async () => {} });
-		expect(failure).toBeUndefined();
-		const commit = trace.indexOf("commit:error:0");
-		expect(commit).toBeGreaterThan(trace.indexOf("message_end:assistant"));
-		expect(commit).toBeLessThan(trace.indexOf("turn_end"));
-	});
+	it.each(["error", "aborted"] as const)(
+		"commits a terminal %s message before the loop ends the turn",
+		async (stopReason) => {
+			const { trace, failure } = await run([{ message: { ...errorStep.message, stopReason } }], {
+				commitStep: async () => {},
+			});
+			expect(failure).toBeUndefined();
+			const commit = trace.indexOf(`commit:${stopReason}:0`);
+			expect(commit).toBeGreaterThan(trace.indexOf("message_end:assistant"));
+			expect(commit).toBeLessThan(trace.indexOf("turn_end"));
+		},
+	);
 
 	it("a rejected commit leaves the loop: no tool dispatch, no further events, the same error out", async () => {
 		const refusal = new StepCommitError("step-1", "fenced");
