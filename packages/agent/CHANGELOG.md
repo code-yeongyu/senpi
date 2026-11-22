@@ -12,6 +12,409 @@
 
 ### Removed
 
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Follow-ups parked by a run that ended in a provider error are written at the next run's first turn, even when that run's request fails too, and `peekQueuedMessages({ all: true })` lists every queued message in `one-at-a-time` mode ([oh-my-openagent#14428](https://github.com/code-yeongyu/oh-my-openagent/issues/14428))
+
+### Removed
+
+## [2026.11.20] - 2026-11-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-5] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-4] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-2] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+- The hand protocol's `invoke` carries the issuing session's optional `promptSurface`. `createRemoteToolHost` sends it (option `promptSurface`), and a hand's `HandCall.promptSurface` exposes it ([#6925](https://github.com/code-yeongyu/senpi/pull/6925))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-3] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-2] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.17-2] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.17] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+- Durable wake link between a hand and the brain that owns its scopes (`createHandWakeLink`, `serveHandWakes`, `HAND_WAKE_LANE`): commit before send, receipt after the inbox commit, re-offer on start and on request, bounded un-acked wakes with durable drop reports (`overflow`, `expired`, `refused`, `malformed`; best-effort `unrecorded`), and a brain-side session check ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+- The brain side of a hand's wakes: `parseHandWake`, `deliverHandWake` (with the local notifiers' turn guards), `deliverHandDrop`, `scopeSessionCheck` ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+
+### Changed
+
+- `createWakeInbox({ onUndeliverable, maxAttempts })`: one wake the loop cannot take is reported and poisoned after its attempts instead of holding every wake behind it ([#6767](https://github.com/code-yeongyu/senpi/pull/6767))
+
+### Fixed
+
+- A remote tool call still pending when the hand link closes ends as `hand_restarted` (its invoke went out, outcome uncertain) or `cancelled` (never sent), not an untyped error ([#6778](https://github.com/code-yeongyu/senpi/pull/6778))
+- A device file operation sent before the hand link closed fails `interrupted` with its outcome uncertain instead of `hand_unreachable`; under split-local placement a closed tool call returns the non-error placeholder ([#6783](https://github.com/code-yeongyu/senpi/pull/6783))
+- A remote tool call made after its hand link was closed settles at once as `cancelled` (never sent) instead of being sent on the closed link ([#6791](https://github.com/code-yeongyu/senpi/pull/6791))
+- A closed hand link no longer acks late replies or re-sends floors when frames still arrive ([#6796](https://github.com/code-yeongyu/senpi/pull/6796))
+
+### Removed
+
+## [2026.11.15-4] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15-3] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+- `@earendil-works/pi-agent-core/read-folders`: the structural read folder without the agent loop or the AI package ([#6740](https://github.com/code-yeongyu/senpi/pull/6740))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15-2] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.13] - 2026-11-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.12] - 2026-11-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.11] - 2026-11-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-3] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+- `AgentOptions.commitStep`: an optional hook that makes each finished model step durable before the loop acts on it, forwarded to every loop run only when set ([#6236](https://github.com/code-yeongyu/senpi/pull/6236))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Two processes bound to one durable session (same store, same epoch) no longer lose each other's entries: session entries are records in the store's append-only log, so every append is kept in commit order ([#5955](https://github.com/code-yeongyu/senpi/pull/5955)).
+
+### Removed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+- The conformance entry exports the `AdmissionLine` type, so a writer outside the package can take a store's single admission line ([#5732](https://github.com/code-yeongyu/senpi/issues/5732))
+- `SyncCommit` / `SyncCommitStore`: the memory and Bun SQLite durable stores now offer `commitSync`, a commit that is durable when it returns and throws a refusal on the same call ([#5866](https://github.com/code-yeongyu/senpi/pull/5866)).
+- A session store over `DurableStore` (`openSessionStore`, `openSyncSessionStore`, `SessionStoreError`, exported from `@earendil-works/pi-agent-core/conformance`): a session's header and entries with atomic append and rewrite, async on every backend and synchronous on a `SyncCommitStore` ([#5866](https://github.com/code-yeongyu/senpi/pull/5866)).
+- `ToolHost` may serve the files of the device it runs calls on: an optional `deviceFiles(scope)`, which the remote ToolHost already provides ([#5869](https://github.com/code-yeongyu/senpi/pull/5869)).
+- `isLocalDeviceFiles(files)` and the `LOCAL_DEVICE_FILES` registry symbol: `localDeviceFiles()` objects carry the brand, so an extension can tell a fused session's local filesystem from a split session's file channel ([#6054](https://github.com/code-yeongyu/senpi/pull/6054)).
+
+### Changed
+
+### Fixed
+
+- A tool result whose content JSON cannot carry (for example a BigInt inside a content part) now settles that call as an `isError` tool result naming the problem on the prepared executor, instead of rejecting the whole call with an untyped `TypeError`. Model-issued calls, `pi.executeTool()` and the agent harness all reach it ([#5878](https://github.com/code-yeongyu/senpi/pull/5878)).
+- Agent harness tool bodies run on the cleared arguments object again, not the prepared ToolHost's JSON copy of it: a value `prepareArguments` added that JSON would change (a `Date`) reaches the body unchanged, and the body's in-place edits reach `after_tool`'s `args`. Arguments JSON cannot carry (a BigInt, a cycle) now settle as a tool error before the body runs, instead of an untyped `TypeError` ([#5883](https://github.com/code-yeongyu/senpi/pull/5883)).
+- Hand conformance cases (KILL-HAND, MULTI-HAND, FAULT-HAND) now pass on a store whose writes confirm only after I/O, such as Durable Object SQLite: the hand rig takes an event-loop turn between transport clock steps, and MULTI-KILL-01 waits for every record to be acknowledged instead of a fixed 200 ms ([#6053](https://github.com/code-yeongyu/senpi/pull/6053))
+- Hand conformance cases on a store whose writes confirm after I/O no longer time out: each rig step now takes eight event-loop turns instead of one, enough for a write that confirms after several I/O hops to land before the clock moves ([#6114](https://github.com/code-yeongyu/senpi/issues/6114), [#6115](https://github.com/code-yeongyu/senpi/pull/6115))
+
+### Removed
+
 ## [2026.11.5-1] - 2026-11-05
 
 ### Breaking Changes

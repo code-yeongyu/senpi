@@ -78,8 +78,8 @@ describe("terminal state gc", () => {
 
 	it("keeps a reclaim lock whose holder is alive and removes one whose holder is gone or reused", async () => {
 		const dir = await tempDir();
-		const lock = (pid: number, processStartedAtMs: number) =>
-			JSON.stringify({ pid, bootAtMs: processBootAtMs(), processStartedAtMs });
+		const bootAtMs = await processBootAtMs();
+		const lock = (pid: number, processStartedAtMs: number) => JSON.stringify({ pid, bootAtMs, processStartedAtMs });
 		await write(dir, "held.lease.lock", lock(LIVE_PID, LIVE_START));
 		await write(dir, "orphaned.lease.lock", lock(DEAD_V1_PID, LIVE_START));
 		await write(dir, "reused.lease.lock", lock(REUSED_PID, LIVE_START));

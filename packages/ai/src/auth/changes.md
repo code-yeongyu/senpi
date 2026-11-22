@@ -1,3 +1,23 @@
+## 2026-11-05 - Reauthorizing a signed-out ChatGPT account restores it in place (part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `LoginOptions.reauthorizeSlot` names the saved account that `reauthorize` selects.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` takes `reauthorizeSlot` and rewrites exactly that account. It keeps the name, label and source, clears `signedOut`, and moves the flat projection to it when it carried that account or when the whole credential was signed out.
+- `packages/ai/src/auth/pool/slots.ts`: before it rewrites the account, the sign-in must be the same ChatGPT account. The route must match; SIWC must match issuer, subject and client ID; legacy must match the token identity, or the workspace once signed out. Otherwise `ReauthorizeAccountMismatchError` is thrown and nothing is written.
+
+### Why
+
+- A signed-out account holds blank tokens. Neither the token-identity match nor the sign-in takeover could find it, so reauthorizing it appended a duplicate `login-N`.
+
+### Why an extension could not handle it
+
+- The credential pool's login merge is shared by every login entry point.
+
+### Expected merge conflict zones
+
+- `appendLoginSlot` and its options type.
+
 ## 2026-10-30 - Replace a returning SIWC registration instead of appending (part of senpi#5003)
 
 ### What changed

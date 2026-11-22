@@ -12,7 +12,7 @@ import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiReque
 type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
 type Pending = {
 	frame: RpcQuestionUiRequest;
-	progress: (draft: RpcExtensionUIProgress) => void;
+	progress: (draft: RpcExtensionUIProgress) => "applied" | "question_already_resolved";
 	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean | "question_already_resolved";
 	cancel: () => void;
 };
@@ -124,6 +124,9 @@ export class ConnectionQuestionBridge {
 				frame,
 				cancel,
 				progress: (draft) => {
+					// A claimed question already has its winner: a draft that lands while that answer is being admitted
+					// must not overwrite the selections it settles with (senpi#5960).
+					if (claimed) return "question_already_resolved";
 					if (draft.answers !== undefined) answers = draft.answers;
 					if (draft.comment !== undefined) comment = draft.comment;
 					arm();
@@ -135,6 +138,7 @@ export class ConnectionQuestionBridge {
 							deadlineAtMs: frame.deadlineAtMs,
 							remainingMs: Math.max(0, frame.deadlineAtMs - Date.now()),
 						});
+					return "applied";
 				},
 				respond: (response, beforeAnswer) => {
 					// The first answer wins: one that arrives while the winner's `beforeAnswer` runs settles nothing.
@@ -186,10 +190,7 @@ export class ConnectionQuestionBridge {
 	/** Hands a draft to its pending question; reports whether one took it, or why none did (senpi#5761). */
 	progress(draft: RpcExtensionUIProgress): "applied" | "question_already_resolved" | "unknown_extension_ui_request" {
 		const pending = this.pending.get(draft.id);
-		if (pending) {
-			pending.progress(draft);
-			return "applied";
-		}
+		if (pending) return pending.progress(draft);
 		return this.resolved.has(draft.id) ? "question_already_resolved" : "unknown_extension_ui_request";
 	}
 	cancelAll(): void {

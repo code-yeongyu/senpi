@@ -7,8 +7,10 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { ClientMessageIdentity } from "../../core/client-message-identity.ts";
 
 import type { SessionEntry } from "../../core/session-manager.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
+import type { RpcAdmitExternalMessageCommand } from "./admit-external-message-wire.ts";
 import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
@@ -36,6 +38,8 @@ export type RpcSessionCommand =
 			 * that names a turn which is not running is refused `turn_conflict` (senpi#5776).
 			 */
 			expectedTurnId?: string;
+			/** The session leaf the caller decided this prompt at; a moved leaf is refused `stale_leaf` and nothing is sent (senpi#6922). */
+			expectedLeafId?: string;
 			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
 			toolBarrier?: ToolBarrierSpec;
 			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
@@ -62,6 +66,8 @@ export type RpcSessionCommand =
 			mode?: "continue" | "release";
 			message?: string;
 			effectId?: string;
+			/** Answer `stopped` and resume nothing while a person's Stop or a parent's run hold is live (senpi#7016). */
+			unlessStopped?: boolean;
 	  }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
@@ -108,7 +114,7 @@ export type RpcSessionCommand =
 			/** `stop` is a user Stop: the session is paused until human input or resume_session (senpi#3811). */
 			intent?: "stop" | "abort";
 	  }
-	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort" }
+	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort"; background?: "stop" }
 	/** Human input held for a paused session, delivered when it resumes; idempotent by inputId (senpi#3811). */
 	| {
 			id?: string;
@@ -162,6 +168,7 @@ export type RpcSessionCommand =
 	 * a session whose extension registered no control endpoint answers `admitted: []`.
 	 */
 	| { id?: string; type: "wake"; delivery_ids?: string[] }
+	| RpcAdmitExternalMessageCommand
 
 	// State
 	| { id?: string; type: "get_state" }
@@ -205,6 +212,9 @@ export type RpcSessionCommand =
 	// Compaction
 	| { id?: string; type: "compact"; customInstructions?: string }
 	| { id?: string; type: "set_auto_compaction"; enabled: boolean }
+
+	// Approval mode
+	| { id?: string; type: "set_permission_preset"; permissionPreset: string }
 
 	// Retry
 	| { id?: string; type: "set_auto_retry"; enabled: boolean }
@@ -308,6 +318,8 @@ export type RpcSessionCommand =
 	| RpcRecoveryCommand
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
+	| { id?: string; type: "set_session_archived"; archived: boolean }
+	| { id?: string; type: "set_session_settled"; settled: boolean; by?: ThreadSettledBy }
 	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
 	| { id?: string; type: "record_user_activity"; kind: "draft" }
 	| { id?: string; type: "import_jsonl"; inputPath: string; cwdOverride?: string }
@@ -324,6 +336,46 @@ export type RpcSessionCommand =
 	// Commands and loaded runtime surfaces
 	| { id?: string; type: "get_commands" }
 	| { id?: string; type: "get_loaded_surfaces" }
+
+	// The session workspace's project trust and project-scope settings (senpi#6176)
+	| { id?: string; type: "get_project_trust" }
+	| {
+			id?: string;
+			type: "set_project_trust";
+			choice: "trust" | "trust_parent" | "do_not_trust" | "no_inherit";
+			expectedCwd?: string;
+	  }
+	| { id?: string; type: "get_project_settings" }
+	| { id?: string; type: "set_project_setting"; key: string; value: unknown; expectedCwd?: string }
+	// The workspace's instruction files: AGENTS.md, CLAUDE.md, .omo/rules/**
+	| { id?: string; type: "read_project_file"; path: string }
+	| {
+			id?: string;
+			type: "write_project_file";
+			path: string;
+			content: string;
+			ifEtag: string | null;
+			expectedCwd?: string;
+	  }
+	| { id?: string; type: "get_project_mcp_servers" }
+	| {
+			id?: string;
+			type: "set_project_mcp_servers";
+			patch: Record<string, unknown>;
+			ifEtag: string | null;
+			expectedCwd?: string;
+	  }
+	| { id?: string; type: "read_project_skill_file"; skill: string }
+	| {
+			id?: string;
+			type: "write_project_skill_file";
+			skill: string;
+			content: string;
+			ifEtag: string | null;
+			expectedCwd?: string;
+	  }
+	| { id?: string; type: "read_user_skill_file"; skill: string }
+	| { id?: string; type: "write_user_skill_file"; skill: string; content: string; ifEtag: string | null }
 	| { id?: string; type: "extension_request"; name: string; data?: unknown }
 	| { id?: string; type: "eval_cells.list" }
 	| { id?: string; type: "eval_cells.peek"; cellId: string; tailBytes?: number }

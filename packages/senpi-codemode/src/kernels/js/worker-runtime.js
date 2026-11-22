@@ -81,7 +81,15 @@ export class JsWorkerRuntime {
 			const shadowed = [];
 			const source = bindKernelBun(wrapUserCode(cellCode, shadowed));
 			if (shadowed.length > 0) this.#emitText("stderr", shadowNote(shadowed));
-			const value = await awaitMaybePromise(indirectEval(source, sourceName));
+			let pending;
+			try {
+				pending = indirectEval(source, sourceName);
+			} catch (error) {
+				// User code runs inside an async function: its exceptions reject the promise instead.
+				if (error instanceof SyntaxError) error.code = "js_cell_parse_error";
+				throw error;
+			}
+			const value = await awaitMaybePromise(pending);
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {

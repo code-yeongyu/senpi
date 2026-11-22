@@ -78,11 +78,16 @@ function refuse(reason: string): RpcInboundValidation {
 function fieldBoundsError(record: Record<string, unknown>): string | undefined {
 	const payload = rpcCommandPayloadError(record) ?? rpcMessageLengthError(record);
 	if (payload !== undefined) return payload;
-	if (record.type === "open_session" || record.type === "warm") {
+	if (
+		record.type === "open_session" ||
+		record.type === "warm" ||
+		record.type === "park_session" ||
+		record.type === "claim_session"
+	) {
 		const context = sessionContextError(record.context);
 		if (context !== undefined) return context;
 	}
-	if (record.type === "open_session")
+	if (record.type === "open_session" || record.type === "claim_session")
 		return sessionRetryFallbackError(record.retryFallback) ?? sessionEnvShapeError(record.env);
 	if (record.type === "set_retry_fallback") return sessionRetryFallbackError(record.retryFallback);
 	return undefined;

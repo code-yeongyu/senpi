@@ -3,18 +3,21 @@ name: OpenGateway catalog refresh
 # Keeps packages/ai/src/providers/data/opengateway.json current with the gateway
 # (senpi#2552). Daily it regenerates only the OpenGateway catalog, and when the
 # catalog changed it opens (or updates) one refresh PR with a per-model summary
-# and a changelog fragment. It fails loudly when the gateway cannot be read, and when
-# a refresh PR has waited longer than MAX_STALE_DAYS, so a stale shipped catalog
-# is visible instead of silent. Release regeneration keeps the committed catalog on
-# a feed break (--keep-last-good-opengateway); this workflow is the alarm
-# (senpi#4067). Pull requests that touch the pipeline run the regeneration and
-# summary in dry-run mode.
+# and a changelog fragment, labels it for hosted CI and enables auto-merge, so it
+# lands once its required checks are green. A release never regenerates the catalog
+# (senpi#2287): it ships what main committed, so these PRs and model-catalog-refresh.yml
+# are the only way catalog data reaches main. It fails loudly when the gateway cannot
+# be read, and when a refresh PR has waited longer than MAX_STALE_DAYS, so a stale
+# shipped catalog is visible instead of silent. The whole-catalog refresh keeps the
+# committed OpenGateway catalog on a feed break (--keep-last-good-opengateway); this
+# workflow is the alarm (senpi#4067). Pull requests that touch the pipeline run the
+# regeneration and summary in dry-run mode.
 
 on:
   schedule:
     - cron: '23 1 * * *'
   workflow_dispatch:
-  # #3243: when main's catalog data moves (another refresh, a release regeneration), regenerate the
+  # #3243: when main's catalog data moves (the whole-catalog refresh or a hand change), regenerate the
   # refresh branch on top of it at once, so an open refresh PR never carries an older snapshot.
   push:
     branches: [main]
@@ -134,7 +137,7 @@ jobs:
             --fragment "$RUNNER_TEMP/opengateway-fragment.md" >> "$GITHUB_OUTPUT"
           cat "$RUNNER_TEMP/opengateway-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Open or update the refresh PR
+      - name: Open or update the refresh PR and enable auto-merge
         env:
           # A PAT is required: PRs pushed with GITHUB_TOKEN do not trigger the required CI checks.
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
@@ -148,7 +151,7 @@ jobs:
           node scripts/publish-catalog-refresh.mjs \
             --fragment "$RUNNER_TEMP/opengateway-fragment.md" \
             --summary "$RUNNER_TEMP/opengateway-summary.md" \
-            --title "fix(ai): refresh the OpenGateway model catalog" \
+            --title "fix(ai): refresh the OpenGateway model catalog" --auto-merge \
             -- packages/ai/src/providers/data/opengateway.json packages/ai/src/providers/data/.manifest.json
 
       - name: Fail when the shipped catalog has been stale too long

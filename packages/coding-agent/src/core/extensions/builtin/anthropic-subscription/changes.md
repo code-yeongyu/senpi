@@ -1,3 +1,330 @@
+## 2026-11-19 - Claude Code receives senpi's MCP tool descriptions whole (senpi#7032)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/query-environment.ts`: `claudeCodeQueryEnvironment` adds `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH=16384` unless the host environment (new `hostEnvironment` parameter, default `process.env`) already sets it, and always returns a record.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: `queryOptions.env` is always that record.
+
+### Why
+
+- senpi's tools reach Claude Code as the `custom-tools` MCP server, and Claude Code 2.1.321 keeps only the first 4096 chars of an MCP tool description (16384 when loaded through its tool search). The ~8.1k eval description lost its eval-only tool list, so the model never learned the thread tools existed (oh-my-openagent#14291). 16384 is Claude Code's own ceiling for a loaded tool; a user-set value still wins.
+
+### Why an extension could not handle it
+
+- The Claude Code child environment is built inside this builtin provider extension; no other extension sees it.
+
+### Expected merge conflict zones
+
+- LOW: the body of `claudeCodeQueryEnvironment` and the `queryOptions.env` line in `buildAnthropicSubscriptionQueryOptions`.
+
+## 2026-11-15 - Re-check stale Claude rate-limit blocks once per person-started turn (senpi#6727)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/limit-recheck.ts`: derive a turn-local allowance from the session's admitted person-run identity. Every lookup checks that identity, so a fresh automated run cannot inherit an earlier person's set. Open only the selection view of rate-limit blocks lacking newer usage evidence; preserve model-specific blocks and retain the same attempt set across explicit retries.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/index.ts`, `stream.ts`, `session-stream.ts`, and `auth-lane.ts`: carry the allowance through main resident and one-shot requests; auxiliary requests and connection tests receive none.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: use normal account selection first. Only an `AllAccountsBlockedError` on a person-started turn allows selection from the temporary re-check view, so a healthy account serves without probing stale-blocked siblings. Spend each account's allowance before attempting it. Half-open requests do not retry the same account. Success uses the existing timestamp-guarded block cleanup, while a spent account receives its fresh reset through normal persistence.
+
+### Why
+
+- A blocked CLI account cannot run Claude Code to renew its own expired token, so usage polling can remain unreadable until a stale reset expires. A person can now ask once without making automated turns probe a spent account.
+
+### Why an extension could not handle it
+
+- The policy lives in this builtin extension. Its private selection and failover boundary must retain the stored block while allowing one request; a separate extension cannot enforce that attempt budget.
+
+### Expected merge conflict zones
+
+- LOW: the input lifecycle wiring in `index.ts`, private allowance plumbing in `stream.ts`, `session-stream.ts`, and `auth-lane.ts`, and selection and same-account retry handling in `failover.ts`.
+
+## 2026-11-15 - A locally refused account pool names its soonest retry to the session retry (senpi#6727)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts`: `withAuthGuidance` ends a pool refusal (`AllAccountsBlockedError` with no limited model) with `(retry-after-ms: <ms>)` until `rateLimitedUntil`, the moment the pool recovers on its own. A failure that left no account to try (`ClassifiedSdkError.poolState`) ends with the same marker. A pool that waits on a re-login, billing or an unknown block gets none, as before. The limited-model refusal keeps its marker.
+- `packages/coding-agent/test/suite/regressions/6727-pool-refusal-retry-waits-for-soonest.test.ts` (new).
+
+### Why
+
+- The session read the refusal as a 429 with no retry hint, so it retried at the backoff floor until its budget ran out (`Attempt 5/5`). Every retry was refused locally, and the turn could end seconds before a sibling account returned. With the marker the hint tiers apply: a soonest retry within `hintedWaitCapMs` is waited for in the turn, and one past `probeBackMaxMs` ends the turn at once, naming the wait.
+
+### Why an extension could not handle it
+
+- The refusal text is this extension's own wire output.
+
+### Expected merge conflict zones
+
+- LOW: the return statements of `withAuthGuidance` and `retryAfterMarker` in `stream-guidance.ts`.
+
+## 2026-11-14 - Tool-result text never reaches Claude Code as a slash command (senpi#6667)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/content-blocks.ts`: new `neutralizeToolResultText(blocks, from)` prefixes every non-empty text block appended from `from` with `[tool output] `.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-sync.ts`: `buildDeltaPromptBlocks` applies it to each tool result's content.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts`: the cold-seed history replay applies it to each historical tool result's content.
+
+### Why
+
+- Claude Code reads a user text block that starts with `/` as one of its own slash commands, and tool output is untrusted text. The prefix is unconditional, so no leading character, visible or invisible, can make tool output read as a command (oh-my-openagent#13380).
+
+### Why an extension could not handle it
+
+- These builders are the anthropic-subscription bridge's own wire mapping; no extension hook runs between them and the Claude Code subprocess.
+
+### Expected merge conflict zones
+
+- LOW: the tool-result branches of `buildDeltaPromptBlocks` and of the cold-seed history loop in `prompt-bridge.ts`.
+
+## 2026-11-12 - A pooled account whose limit was lifted early is selected again (senpi#6536)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `isLimitLiftedEarly(account, now)` is true for a live `rate_limit` block when the account's usage in the subscription limit store, reported after `blockedAt`, shows capacity. `clearExpiredBlocks` removes such a block, so `selectAccount` and `runFailover` use the account again.
+
+### Why
+
+- A confirmed usage limit stores `blockedUntil` at the reset the limit stated. A limit the provider lifted earlier left every account blocked until that time, and the pool refused with `AllAccountsBlockedError` while the account's usage read 0%.
+
+### Why an extension could not handle it
+
+- Account selection is this extension's own code.
+
+### Expected merge conflict zones
+
+- LOW: `clearExpiredBlocks` and the block helpers above it in `affinity.ts`.
+
+## 2026-11-11 - A live model switch no longer holds set_model (senpi#6411)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-entry-annotations.ts`: `switchEntryModel` is synchronous. It starts `query.setModel` without awaiting it and chains it on `entry.pendingModelSwitch`, so switches apply in order and the last one wins. The chain (`pendingModelSwitch.done`) never rejects and carries the model it selects (`pendingModelSwitch.modelId`); `modelId` moves only when Claude Code confirms, so a failed switch leaves the last confirmed model. A failure on the live process is written to session.log as `claude_sdk_oauth_model_switch_failed`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry.ts`: the entry carries the optional `pendingModelSwitch`; `switchSessionModel` is synchronous.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-wiring.ts`: the `model_select` handler no longer awaits the switch; `keepBindingThenClose` moved to `session-reattach.ts`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-reattach.ts`: `keepBindingThenClose` records a switch still waiting for confirmation on the model it selects, so a close in that window (a thinking-level change, a provider excursion, the wait bound below) resumes on the selected model instead of flattening on `model_changed`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: `waitForModelSwitch` waits for the pending switch, bounded by `SESSION_TURN_ADMISSION_WAIT_MS` and abortable like `waitForActiveTurn`. A switch not confirmed in time retires the process through `keepBindingThenClose` (`model_switch_timeout`, logged as `claude_sdk_oauth_model_switch_timeout`), so the turn reattaches on the selected model.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: `createResidentAttempt` waits for the pending switch after the previous turn's bookkeeping and before reading continuity. A confirmed switch continues as a delta on the same process; a failed one meets `model_changed` and reattaches the same lineage on a fresh process with the selected model, keeping the binding.
+
+### Why
+
+- Claude Code confirms the model with the API on every `setModel` (80-280 ms, 15 s when unreachable). The awaited `model_select` emit put that round trip inside the `set_model` RPC answer, the slowest interactive step left in the remote desktop budget (senpi#6411).
+
+### Why an extension could not handle it
+
+- The resident session registry, its `model_select` wiring, and turn admission all belong to this builtin provider. No hook runs between `model_select` and the provider's turn admission.
+
+### Expected merge conflict zones
+
+- LOW: `switchEntryModel` in `session-entry-annotations.ts`, `keepBindingThenClose` in `session-reattach.ts`, the `model_select` handler in `session-registry-wiring.ts`, the admission block at the head of `createResidentAttempt` in `session-stream.ts`, and the `AnthropicSubscriptionSessionEntry` interface tail in `session-registry.ts`.
+
+## 2026-11-11 — Claude test failures keep provider diagnostics and credential ownership
+
+### What changed
+- `claude-cli-connection-test.ts` keeps the redacted original error and HTTP status, capped at `STORED_CHECK_MESSAGE_MAX_CHARS` after redaction without splitting a surrogate pair. A deadline or caller cancel that fired first still reports `timeout` / `cancelled`.
+- `errors.ts` exposes the provider-error text extraction and makes it total for null-prototype objects and Errors whose `message` is not a string.
+- `claude-cli-login-slots.ts`, `oauth-login.ts` and `claude-cli-account-test.ts` bind automatic and manual results to the tested CLI directory, and login progress includes the redacted provider response.
+- `accounts.ts` adds the optional `message` / `status` check fields.
+
+### Why
+- A bare classification such as `other` cannot explain a failure, and a result for a previous credential must not overwrite a fresh sign-in.
+
+### Why an extension could not handle it
+- The built-in subscription lane owns the SDK errors, the credential-directory identity and the login transaction.
+
+### Expected merge conflict zones
+- The connection-test result and catch paths, and the automatic and manual check updates. Keep classification codes, redaction and the directory comparison.
+
+## 2026-11-11 — Revert the Claude connection-test diagnostics from #6380
+
+### What changed
+- `accounts.ts`, `errors.ts`, `claude-cli-connection-test.ts`, `claude-cli-login-slots.ts`, `oauth-login.ts` and `claude-cli-account-test.ts` under `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/` are back to their state before #6380, with the tests #6380 added.
+
+### Why
+- #6380 is reverted as one unit so main is green. Its diagnostics and credential-directory binding come back in the re-land.
+
+### Why an extension could not handle it
+- This is a revert of the built-in subscription lane. No extension is involved.
+
+### Expected merge conflict zones
+- The connection-test result and catch paths, when #6380 is re-landed.
+
+## 2026-11-11 — Claude test failures preserve provider diagnostics and credential ownership
+
+### What changed
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts` adds optional check diagnostics and excludes migrated legacy default placeholders from stored subscription listings.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/errors.ts` exposes the existing provider-error text extraction and makes it total: a null-prototype object or an Error with a non-string `message` no longer throws out of the classifiers.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-connection-test.ts` redacts and retains original errors and HTTP status (the stored message capped at `STORED_CHECK_MESSAGE_MAX_CHARS` after redaction), including readable timeout and missing-result explanations; a deadline or caller cancel that fired before the SDK's own error still reports `timeout` / `cancelled`, as before.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-login-slots.ts`, `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`, and `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-account-test.ts` bind automatic and manual results to the tested CLI directory; login progress includes the redacted provider response.
+- Regression tests cover bare API keys, OAuth access/refresh tokens, Bearer JWTs, and structured refresh tokens in thrown and result errors without printing credential values. Late results timestamped after a replacement sign-in are rejected by directory identity; results for the unchanged directory are still stored.
+- The commit-before-test login fixture inspects the actual stored account instead of importing a nonexistent normalizer.
+
+### Why
+- A classification such as `other` cannot explain a failure. A result for a previous credential must not overwrite a fresh sign-in. Login still awaits durable credential commit before testing.
+
+### Why an extension could not handle it
+- The built-in subscription lane owns SDK errors, credential-directory identity, and the login transaction. A UI extension cannot restore information after that lane discards it.
+
+### Expected merge conflict zones
+- Check metadata, the connection-test result/catch paths, and automatic/manual check updates. Preserve stable classification codes, secret redaction, and credential-directory comparisons.
+
+## 2026-11-10 - The one-shot cache pin reads the lifetime from loaded settings files (senpi#2988)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-settings-env.ts`: new `resolveClaudeSettingsEnv` reads the effective `env` block through the SDK's own `resolveSettings` merge engine, for exactly the sources the attempt loads; `resolveQuerySettingsEnv` picks those sources (an explicit `settingSources` list, or user/project in preset-append ambient mode) and resolves to nothing otherwise. A merge failure returns undefined instead of failing the turn.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts`: `pinOneShotPromptCacheTtl` takes the settings env as a fourth input. Precedence is settings env, then explicit env, then the lane default — Claude Code writes each settings source's env over the process env, and launch-env keys are only protected when the session is host-orchestrated, so a settings `FORCE_PROMPT_CACHING_5M` / `CLAUDE_CODE_PROMPT_CACHE_TTL` beats both the process env and `options.env` as well as the managed lanes' 1h assumption, and an ambient lane pins a settings lifetime instead of adding no breakpoint.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: resolves the settings env once per stream and passes it to the pin only for attempts whose `settingSources` are non-empty.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/sdk-boundary.lazy.ts`: the lazy SDK module also loads `resolveSettings`.
+
+### Why
+
+- The pin only saw process env and query-options env, so a lifetime set in a loaded settings file was invisible: on a managed lane the pin defaulted to 1h while Claude Code used the settings 5m, and the 1h breakpoint could then be rejected by the Messages API — the exact failure senpi#2982 fixed for explicit env.
+
+### Why an extension could not handle it
+
+- This builtin owns the one-shot prompt rebuild, the cache breakpoint, and the SDK boundary the settings merge comes through.
+
+### Expected merge conflict zones
+
+- LOW: `prompt-cache-ttl.ts` (the pin signature) and `stream.ts` (only the pin call site); `claude-settings-env.ts` is new, and `sdk-boundary.lazy.ts` only gains one picked member.
+
+## 2026-11-10 - Claude Code refuses a request only past the window senpi compacts against (senpi#6303)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/context-window.ts`: new exported `claudeCodeMaxContextTokens(window, outputTokens = cap)`, built on the module-local `CLAUDE_CODE_OUTPUT_RESERVE_CAP` (20k) and `CLAUDE_CODE_BLOCKING_BUFFER` (3k), which returns `window + min(outputTokens, 20k) + 3k`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/query-environment.ts`: while senpi owns compaction, `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is `claudeCodeMaxContextTokens(plannedContextWindow(model))` instead of the bare planned window.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: the one-shot 200k retry after a refused `[1m]` request passes `claudeCodeMaxContextTokens(200k, outputReserveTokens)`, the output budget it already sends as `CLAUDE_CODE_MAX_OUTPUT_TOKENS`.
+
+### Why
+
+- With `DISABLE_COMPACT` set, Claude Code takes `CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the model's window, but it refuses a request on its own, with a synthetic `Prompt is too long` (`invalid_request`) and no API call, once the conversation passes that window minus its output reserve (the request's output budget, capped at 20k) minus a 3k buffer (`But()` and `Woo` in Claude Code 2.1.321). Handing it the bare planned window put that point 23k below the window senpi compacts against: senpi's hard valve on a 200k window is 200k minus a 16,384 reserve (183,616), and Claude Code refused from 177k. Every turn in between failed in about 30 ms, and the recovery compaction's summarization request, which carries the same history through the same lane, failed the same way. A session on a 200k row (`claude-haiku-4-5`, `claude-opus-4-5`, a legacy id after a 1M refusal, or a models.json row declaring 200k) looped between "Context overflow detected, compacting" and `Prompt is too long`. Windows of 575k and up were not hit only because the scaled reserve (4% of the window, capped at 49,152) already exceeds 23k.
+- senpi keeps its own output reserve below the window, so Claude Code's second reserve only moved its refusal point inside senpi's plan. The variable now carries the window plus Claude Code's reserve, and Claude Code's refusal point is the window itself. For the main path the cap is added whatever the model's output budget: Claude Code reserves its own default there, which is at least 20k for every Claude model, and a larger addition only lets a request reach the API's own window check, whose `prompt is too long: N tokens > M maximum` senpi's overflow recovery already parses.
+- The value is part of the resident-process fingerprint (`session-sync.ts`), so a resident Claude Code process restarts once at the new value.
+
+### Why an extension could not handle it
+
+- This builtin owns the Claude Code subprocess environment and the 200k retry.
+
+### Expected merge conflict zones
+
+- LOW: `context-window.ts` (new constants and helper after `CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW`), the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` line in `query-environment.ts`, and the `standardWindow` env block in `auth-lane.ts`. Tests that pin the variable (`3801-*`, `4065-*`, `anthropic-subscription-options`, `prompt-presets-claude-fable-5-5`) now compute it through `claudeCodeMaxContextTokens`.
+
+## 2026-11-10 - Floor table no longer reads the Fable 5.5 launch block (senpi#3893)
+
+### What changed
+
+- `executable-model-support.ts`: `OBSERVED_CLAUDE_CODE_MODEL_FLOORS` drops the launch-gated spread. No floor is recorded for `claude-fable-5-2` because none has been observed. A comment names the line to add when the API rejects an older Claude Code for it.
+
+### Why
+
+- The table is append-only from observed rejections; the provisional launch id is retired.
+
+### Why an extension could not handle it
+
+- The table lives in this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `OBSERVED_CLAUDE_CODE_MODEL_FLOORS` literal.
+
+## 2026-11-09 - An aborted turn releases the anthropic-subscription pump at once (senpi#2974)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: `createSessionTurnAttempt` passes an abort-aware `writable()` to the pump: the wait races the queue's `writable()` against a promise that resolves when the turn's abort signal fires. An abort while the consumer is stalled releases the pump immediately, so the terminal result is read and the interrupt receipt decides keep-or-close instead of the 1 s abort grace timer firing first and closing the session as `abort_uncertain`. The grace timer stays as the backstop for an interrupt that never delivers a terminal result.
+
+### Why
+
+- #2973 made the session stream apply backpressure: the pump awaits the turn's `writable()` before reading the next SDK message. When a turn was aborted while its consumer was not reading, the pump waited on a full queue; if that lasted longer than `SESSION_TURN_ABORT_GRACE_MS` (1 s), the grace timer settled the turn as `abort_uncertain` and closed the session, instead of taking the interrupted-and-kept path the interrupt receipt (`still_queued: []`) entitled it to (senpi#2974).
+
+### Why an extension could not handle it
+
+- The pump's backpressure wait and the turn's abort wiring both live in this builtin's session turn path; no extension API exposes the pump's `writable()` wait or the abort signal it must race against.
+
+### Expected merge conflict zones
+
+- LOW: the `writable` closure in `createSessionTurnAttempt` only; no other caller of `submitSessionTurn` passes a `writable`.
+
+## 2026-11-09 - `/claude-account` lists one readable block per account (senpi#6288)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-list.ts` (new): `formatClaudeAccountList` maps each slot to a list entry: label, tags (pin with its source, `next turn` for the affinity pick, `from environment`), status rows (account block, login-expired guidance, per-model blocks) and the account's limit readings.
+- `packages/coding-agent/src/core/extensions/builtin/account-list-view.ts` (new): provider-neutral plain-text renderer. One header line per account, aligned `label  value` rows, relative times with a short local clock (`formatWhen`), and list wording for account blocks (`describeBlockStatus`).
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`: `showAccounts` still resolves pin and affinity pick, then notifies `formatClaudeAccountList`; the `|`-row and status helpers moved out.
+- `packages/coding-agent/src/core/subscription-limits/limit-summary.ts`: the reading-age helper is exported as `readingAge`; `describeAccountLimits` output is unchanged.
+- `packages/coding-agent/src/core/credential-pool/model-scope.ts`: `describeModelBlocks` (UTC ISO wording) is removed; `/claude-account` was its only caller.
+
+### Why
+
+- The old list put every account on one `|`-joined row, packed all limit windows into one line that repeated a full date with year and time zone per window, printed per-model blocks as UTC ISO, and wrapped to column 1 at 80 and 120 columns (senpi#6288, first item of senpi#5100).
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own command output; no core path changes.
+
+### Expected merge conflict zones
+
+- LOW: `showAccounts` in `account-command.ts` and its import block; the `/claude-account` cases of `regressions/4092-account-list-block-reason`, `regressions/5350-login-expired-recovery` and `regressions/omo-9234-account-list-limits`.
+
+## 2026-11-06 - A stored Claude account with no name is a sign-in state, not a crypto TypeError (oh-my-openagent#12228)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `isListedStoredSlot(slot)` also requires a non-empty string `name`, so the one listing rule shared by the lane, the RPC account list and the configured check never hands out an account it cannot name. New `unusableStoredSlotCount(credential)` counts the stored entries that rule drops.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `managedPool` refuses with `claude_account_unusable: a stored Claude account has no name, so no turn can use it; run /login anthropic-subscription to add a named account` when the lane defaulted to ambient only because every stored claude-cli account was unusable, instead of spawning the SDK against host credentials. A lane the user set to `ambient` explicitly (settings or `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION`) is never refused.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: `seatDigest(accountName)` refuses a value that is not a non-empty string with that same named error rather than passing it to `createHmac(...).update(...)`.
+
+### Why
+
+- `auth.json` is read as JSON and cast, so a stored account entry with no `name` reached the lane as `accountName: undefined`, and the seat digest runs for every resident attempt: `createHmac(...).update(undefined)` threw `The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received undefined` before any model call, on the main turn and on session-title generation alike, and model fallback repeated it at the same line on the next model. Signing in again could not clear it because the nameless entry stayed in the file and kept being selected (oh-my-openagent#12228).
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool, its listing rule and the seat digest that identifies a seat in logs.
+
+### Expected merge conflict zones
+
+- LOW: `accounts.ts` (`isListedStoredSlot` and the new counter) and `seat-digest.ts`; `auth-lane.ts` only in the `managedPool` body, beside the ambient resolution.
+
+## 2026-11-06 - An unusable Claude account dir id is a sign-in state, not a turn failure (oh-my-openagent#12228)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/sign-in-again.ts`: new `isServableAccountSlot(slot)` - a stored CLI slot is servable only when no sign-in is required and its account dir id parses. `signInRequiredAccounts` now also reports a CLI slot whose `dirId` is unusable, as `login_expired`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: the pre-failover filter drops every unservable slot through that predicate instead of only the `signInRequired` ones, so a pool that still has a readable account serves the turn and a pool with none fails with the sign-in prompt naming the unusable account.
+
+### Why
+
+- `accountDirFor` refuses an id of any other shape with `Invalid Claude account dir id`, and the lane selected such a slot first: the whole turn failed before the first model call, the error named no remedy, and model fallback repeated it on a sibling model (oh-my-openagent#12228). A stored slot with no usable dir holds no login this engine can read, which is what the sign-in prompt exists for.
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool and its pre-failover selection filter.
+
+### Expected merge conflict zones
+
+- LOW: `sign-in-again.ts` (the predicate and `signInRequiredAccounts`) and the sign-in filter in `auth-lane.ts`.
+
+## 2026-11-06 - A rendered skill path names the copy the runtime loaded
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: `claudeSkillsPath` returns the Claude-form path only when it resolves to the same file as the skill path the runtime loaded (`realpathSync` on both sides, `~` expanded against home); otherwise the loaded absolute path is rendered unchanged.
+
+### Why
+
+- The rewrite was unconditional. Where `~/.claude/skills` is a symlink farm into a different install, the prompt named a skill file that install does not ship, so the model read another version's text or fell back to a same-named `SKILL.md` in the project.
+
+### Why an extension could not handle it
+
+- This file is the extension; the rewrite is part of its `preset-append` assembly.
+
+### Expected merge conflict zones
+
+- None upstream: the directory is fork-only. Inside the fork, `claudeSkillsPath` and its two call sites in `rewriteSkillsLocations`.
+
 ## 2026-11-01 - A signed-out Claude CLI login needs sign-in again and heals itself (part of senpi#5350)
 
 ### What changed

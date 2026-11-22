@@ -30,7 +30,11 @@ held. Attaching a client does not release the hold.
 
 Real prompt, steer, follow-up, or question input releases it. The user's message
 starts one turn with the latest coalesced non-goal context before that message;
-the goal revalidates and may continue afterwards.
+the goal revalidates and may continue afterwards. A message another session sent
+(`admit_external_message`, `pi.session.admitExternalMessage`) that would start a turn
+releases an `unattended` hold the same way and answers `started` (senpi#6490). It does
+not release a person's Stop, the hold after an interrupted run or a parent's run hold:
+those need the person, so the delivery is kept as a held notice and answers `held`.
 
 #### resume_session
 
@@ -83,6 +87,17 @@ A repeated `effectId` answers the recorded outcome with `replayed: true` and res
 reopen. A session with nothing held answers
 `not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
 
+`unlessStopped: true` is for a resume another session or a tool asks for, not a person (senpi#7016): while a person's
+Stop or a parent's run hold is live it answers `resumed: false, reason: "stopped"` and releases nothing, so only the
+person resumes their Stop. Otherwise it resumes exactly as the bare form does. This is the sanctioned remote resume of
+a session reopened after an interrupted run: open it (`open_session`), then send
+`{"type":"resume_session","sessionId":"...","expectedSeq":<pauseSeq from open_session.state>,"unlessStopped":true}`.
+
+A reopened session is held as interrupted only when its file shows a run that was still in flight: a run recorded
+active whose transcript does not end in an assistant answer that asks for no tool call (a tool call without its result,
+a tool result, or input after the answer). A run whose answer was written ends there, even when its process was killed
+(SIGKILL included) before the idle record cleared `runActive`, so it reopens without the interrupted-run hold.
+
 ```json
 {"type":"response","command":"resume_session","success":true,"data":{"resumed":true,"pauseSeq":3,"turnStarted":true,"deliveredNotices":2,"deliveredHeldInputs":1}}
 ```
@@ -100,8 +115,10 @@ holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCount
 keys each record by `key` (defaulting to its kind) and preserves opaque `data`
 through a restart. Persisted additions carry `key`/`data`, and release entries list `keys`. It
 implements only `unattended`. Consumers must distinguish kinds rather than infer
-them from the notification text. The first hold that pauses the session emits `session_paused` with `kind`,
-`pauseSeq`, `at`, `noticeCount`, and `persisted`. The release that ends the pause emits
+them from the notification text. Every hold that pauses the session emits `session_paused` with `kind`,
+`pauseSeq`, `at`, `noticeCount`, and `persisted`, including a hold added while the session is already paused
+(a second Stop, a re-armed hold), so the last `pauseSeq` a client saw is always the one `resume_session`
+accepts as `expectedSeq`. The release that ends the pause emits
 `session_resumed { cause: "input" | "resume_session", pauseSeq, at }` once; a run fence alone pauses nothing and
 emits neither.
 The ordinary extension UI `notify` event shows the paused count and Resume
@@ -578,8 +595,11 @@ only when its `set_client_info` declared `raiser_notice_v1`:
 never carries a value, draft, `answerId` or receipt, it is not replayed, and it
 grants no answering authority: an answer from that connection is still
 `secret_answer_refused`. A connection without `raiser_notice_v1` receives
-nothing, as before. The owner can query its bounded, value-free
-`get_state.answeredUiRequests` receipts after acknowledgement loss. Discard the
+nothing, as before. The connection that raised the request is never a
+recipient, including when its own lane was refused (`client_unsupported`,
+`no_presenter`) and the request proceeds on the sealed route. The owner can
+query its bounded, value-free `get_state.answeredUiRequests` receipts after
+acknowledgement loss. Discard the
 value instead of resending or saving it in a reconnect queue. A missing receipt
 after eviction/restart means unknown outcome, not proof the callback did not run.
 
@@ -651,10 +671,12 @@ created; a grant acquired later is not offered it.
   `{type: "mcp_presenter_secret_reply", id, disposition: "applied" | "replay"}` or
   `{type: "mcp_presenter_secret_reply", id, error}`, where `error` is `invalid_secret_response`,
   `secret_answer_refused`, `secret_stepup_refused`, `already_answered` or `unknown_extension_ui_request`.
-- When the prompt ends, every holder receives the value-free
+- When the prompt ends, every holder that received its request receives the value-free
   `{type: "mcp_presenter_secret_settled", v: 1, uiRequestId, outcome, elsewhere}`, with `elsewhere: false` only for
   the holder whose answer won. A raiser connection still receives `secret_input_settled` with unchanged bytes, and
   `answeredUiRequests` lists raiser-route receipts only.
+  If the prompt ends before its asynchronous request key is ready, no request or settled frame reaches holders.
+  Key-generation failure ends the prompt as `unavailable`.
 - Worker sessions (the worker runtime) behave the same for clients.
   - The host selects holders, signs the request and authenticates an answer: shape, sender, envelope signature and
     step-up token.
@@ -671,6 +693,8 @@ created; a grant acquired later is not offered it.
     `mcp_presenter_secret_answer`;
   - the terminal's own input and the sealed answers race one latch, the first answer wins, and the losing side is
     dismissed;
+  - a rejected local input cancels the pending latch immediately, dismissing the input and settling offered holders
+    with `outcome: "cancelled"` without forwarding the error;
   - holders receive `mcp_presenter_secret_settled` as above, `elsewhere: true` when the terminal answered;
   - without a sealed holder the terminal's prompt is unchanged.
 
@@ -1279,7 +1303,7 @@ from them that the host itself went away (shutdown) or handed its endpoint to a 
 | `event_queue_failed` | `true` | The socket's event queue failed; follows its `overflow` record when it has one | `overflow`, `stall` or `transport_error` |
 | `event_lease_refused` | `true` | An event cannot be leased; follows its `event_lease_refused` record | `lease_limit` or `storage_unavailable` |
 | `compact_endpoint_unsupported` | `false` | A compact mirror of a session served only on the legacy wire; follows its `compact_refused` record | none |
-| `host_shutdown` | `true` | The host is shutting down; follows its sessions' `session_closed` records (`reason: "host_shutdown"`) | none |
+| `host_shutdown` | `true` | The host is shutting down; follows its sessions' `session_closed` records (`reason: "host_shutdown"`), or `session_parked { reason: "host_shutdown" }` for a retained session on a socket host | none |
 | `host_handoff` | `true` | The host drains for a newer generation; follows its sessions' handoff park records | none |
 
 #### interactive_user
@@ -1373,6 +1397,8 @@ The record is exclusively created with `O_NOFOLLOW`, fsynced, and checked to be 
 regular file with mode 0600. Publication failure closes the endpoint with `key_publication_failed`.
 A group- or other-writable agent directory or `rpc` (for example one created under umask 002) is such a
 failure: the host exits, and its message names the directory and the fix, `chmod go-w <dir>`.
+A supervised generation also publishes one record for its generation-private route endpoint (its
+`endpoint` names that `route` socket), which a successor authenticates against (senpi#7098).
 Each launch generates a new UUID and a new 32-byte key in memory. Hosts delete only their own
 record; `senpi host gc` also collects records whose process is dead or whose PID has been reused.
 
@@ -1651,14 +1677,18 @@ parsing a version string:
   host?" signal: it changes whenever the process does, including after a replacement.
 - `generation` - which generation of its daemon directory this host is, handed to it at spawn time
   (`SENPI_RPC_HOST_GENERATION`). A host nobody ensured reports `0`.
-- `engineVersion` - the build string: the CalVer package version plus `+<buildEpoch>.<sha7>` when the binary
-  was compiled with build metadata. Informational, like `serverVersion`.
+- `engineVersion` - the build string: the engine's senpi CalVer version plus `+<buildEpoch>.<sha7>` when the binary
+  was compiled with build metadata. A distribution compiled beside its own package.json (whose version is then
+  `serverVersion`) defines `SENPI_ENGINE_VERSION` with the embedded senpi version, so this field and the ordinal
+  stay senpi CalVer. Informational, like `serverVersion`.
 - `engineOrdinal` - `[year, month, day, postRelease, buildEpoch]`, the ONLY ordering a client may use.
   `[y, m, d, n]` compares lexicographically, where `n` is the CalVer post-release increment (`2026.9.16-3`
   ships AFTER `2026.9.16`, the opposite of the semver reading of those strings). The build epoch breaks a tie
   only when BOTH sides carry one; otherwise the two builds are EQUAL, so a build whose age cannot be established
   never outranks one that can. Binaries built without git metadata report an epoch of `0`, which is exactly how a
-  client reads "this build has no age": a non-zero epoch is comparable, `0` is not.
+  client reads "this build has no age": a non-zero epoch is comparable, `0` is not. Only two senpi CalVer
+  ordinals (first part a year, 2000 or later) are ordered (senpi#7040): compiled omo builds through 5.1.78
+  advertised their omo version (`[5, 1, 78, 0, 0]`), and a pair with such an ordinal is uncomparable.
 - `launch_profile` - what the host was launched with: `core.session_runtime`, `core.multi_session` and
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
@@ -1833,11 +1863,37 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    connection occupancy. Clients see `session_closed { reason: "handoff_parked", sessionPath }` before
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
-   A session with no attachment cannot be reached on the drained generation any more, so each drain pass
-   holds its automatic turns (goal continuation, monitor and codemode wakes), exactly as an unattended
-   reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
-   that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
-   client is still attached to keeps its automatic turns.
+   When both generations support routing, an `open_session { sessionPath }` on the successor attaches to
+   the predecessor's existing writer while its turn runs. Use the returned `sessionId` on that connection:
+   session commands and events follow the writer. After the park the same handle addresses the successor's
+   local session; the routed client does not receive the predecessor's terminal record. `list_sessions`
+   reports the writer's `generation` and `hostInstanceId` on the session row; a predecessor that does not answer
+   that listing within the socket handshake budget (it exited mid-request, or it stalled) contributes no routed rows,
+   and the listing still answers with the successor's own. A command sent on a routed handle while the session moves
+   onto the successor waits at most the close grace window, then answers the retryable `generation_switch_pending`;
+   if the move cannot finish (the successor began draining, the session file is gone) it answers that reason instead.
+   Every other call the successor makes to its predecessor is bounded the same way: an answer later than the host's
+   stall threshold (5 s) is followed by a liveness probe on that connection, and a predecessor that answers neither is
+   cut, so the routed command or `open_session` answers `predecessor_request_timeout`. A long command on a live
+   predecessor keeps waiting. A command already written to the predecessor is never replayed on the successor: when
+   its connection is lost, even one cut by another request's deadline, it answers
+   `predecessor_delivery_outcome_unknown`. A narrowing `set_client_info` or `declare_delegation` that a predecessor does not
+   install is still acknowledged: that copy is cut and its session moves to the successor.
+   An older predecessor without a route endpoint keeps its claim and the reopen returns the existing retryable
+   `session_path_in_use`.
+   While a predecessor still runs, new connections negotiate ordinary JSONL, not compact recovery:
+   a compact checkpoint and its tokens belong to the physical writer's acceptance lane. The successor
+   advertises compact recovery again once its predecessor scan finds no live predecessor.
+   Each drain pass holds the automatic turns (goal continuation, monitor and codemode wakes) of every
+   session, attached or not, exactly as an unattended reopen does: they wait as notices, its running turn is
+   its last on this generation, and it parks once that turn settles. A person's input or `resume_session`
+   releases the hold after the reopen. An attached client still steers or cancels the running turn and
+   reopens the session on the successor after the park, so a session that keeps working never pins a
+   superseded generation (senpi#7098).
+   While the successor is still taking over (parks it has not reopened yet, or a predecessor that still runs),
+   its `list_sessions` answer carries `handover: { pending, predecessor_draining }` beside `sessions`: the
+   listing is not yet the endpoint's whole set, so a reader must not treat a missing session as gone. The field
+   is absent once the takeover is done (senpi#7020).
 
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
@@ -1855,6 +1911,15 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
   upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
   by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
   owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
+- The successor must not run an OLDER engine than the running host (senpi#7018). `handoffHost` compares the
+  successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
+  host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
+  sides carry one; equal builds and builds uncomparable only for a missing epoch are not older; version strings
+  are never compared) and refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
+  spawning anything when the successor is strictly older, or when either ordinal is not senpi CalVer and the
+  successor therefore cannot be proven not older (senpi#7040); `detail` names both engines. An `ensure` with the
+  upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr. `allowDowngrade` (`host handoff --allow-downgrade`)
+  is the caller's explicit consent and skips the check. A host that advertises no ordinal is not judged.
 - Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
   dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
   placed and stays replaceable through the idle path above. Every host built with the field avoids it.
@@ -1959,7 +2024,11 @@ owns the operation:
 1. a request naming another `agent_dir` than the host's own refuses `foreign_agent_dir` before anything else
    (a request without the field, from a CLI before it existed, is not checked); a request with an `operationId`
    it already holds answers with that operation when the terms match (and `operation_conflict` when they do
-   not); a new operation is checked first against the named generation (`stale_generation`);
+   not); a new operation is checked first against the named generation (`stale_generation`), then refuses
+   `older_engine` when its `target_engine` (`{ text, ordinal }`, the requesting CLI's own engine, which the
+   successor runs) is older than the host's engine by the generation handoff's rule. A request without
+   `target_engine` comes from a CLI before senpi#7018, whose engine predates the guard, and is refused
+   `older_engine` too. `allow_downgrade: true` (`--allow-downgrade`) skips the check;
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
@@ -2079,13 +2148,18 @@ JSONL file. Every generation records each open session path in
 parks. `attached` is republished whenever that session gains its first client or loses its last one, so the
 claim says whether anybody is still driving the file.
 
-A claim STANDS while one of two things is true: its owner is the generation the pointer names, or its owner
-still has a client attached to that session. Those are the cases where somebody is really writing the file.
-A claim from a SUPERSEDED generation that published `attached: false` is reclaimable - that generation has
-been asked to drain and parks the session as it settles - so the current generation takes the path over
-instead of refusing it forever. A claim whose owner is gone (a killed host, a reboot, a recycled pid with a
-different start time) is ignored, and a claim written before the field existed is honored, so a running older
-build is never reclaimed from.
+A claim a current host publishes carries `strict_transfer: true`: its owner removes it itself when the session
+parks or closes, so the claim STANDS for as long as its owner runs, attached or not (senpi#7098). A drain parks
+every idle session at once, so what a superseded generation still claims is a session it is still writing - a
+retained lane runs its turns with no client attached.
+
+A claim without `strict_transfer` (written by an older build) STANDS while one of two things is true: its owner
+is the generation the pointer names, or its owner still has a client attached to that session. Such a claim
+from a SUPERSEDED generation that published `attached: false` is reclaimable - that generation has been asked
+to drain and parks the session as it settles - so the current generation takes the path over instead of
+refusing it forever. A claim whose owner is gone (a killed host, a reboot, a recycled pid with a different start
+time) is ignored, and a claim written before the `attached` field existed is honored, so a running older build
+is never reclaimed from.
 
 An `open_session { sessionPath }` refused by a standing claim answers `session_path_in_use` with
 `errorData { owner, retry_after_ms: 2000 }`, where `owner` carries `{ instanceId, pid, processStartTime,
@@ -2103,7 +2177,7 @@ senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
 senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force]
                       [--expected-generation <json>] [--socket <path>]
-senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
+senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
@@ -2135,7 +2209,10 @@ symmetry with other commands; the answer is always JSON (the one exception is `s
 which prints the bare socket path).
 
 - `ensure` prints `{ action, socket, pid, instanceId, generation, engineVersion, engineOrdinal,
-  capabilities, launchProfileId, runtimeBuildId, clientRuntimeBuildId, reused, upgradeable }`. `--policy upgrade` (the default) allows a
+  capabilities, launchProfileId, runtimeBuildId, clientRuntimeBuildId, reused, upgradeable, unit, lifetime_tied_to? }`. `unit` is
+  `{ cgroup, name, own }` for the host's supervisor on Linux (`null` elsewhere): `own: true` when it runs in its own
+  `senpi-host-<instanceId>.scope`; otherwise `lifetime_tied_to` names the unit (`name`) whose stop would end the host
+  (see "Supervisor unit" below). `host handoff` prints the same two fields for the successor. `--policy upgrade` (the default) allows a
   generation handoff, `never` only attaches or starts, and `fallback` answers exit 4 rather than attaching
   to a host this build disagrees with. `action` is `handoff` exactly when the socket was already served and
   the process behind it changed. An ensure invoked by an in-process session inside a multi-session host is
@@ -2162,8 +2239,9 @@ which prints the bare socket path).
   `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
   1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
-  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
-  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
+  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive, unit }`, newest
+  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, `unit`
+  the cgroup and unit its supervisor runs in (`{ cgroup, name, own }`, `null` off Linux or for an ended generation), and `sessions` counts the session files it
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
@@ -2188,8 +2266,10 @@ which prints the bare socket path).
   - `crashes`: records in the endpoint's `crashes.jsonl` that are deaths - supervised host children that died
     rather than stopped, `engine_stop` and watchdog lines excluded; `0` when the file is absent. Each line of that
     file is `{ at, signal?, code?, uptimeMs, kind?, generation?, detection?, sender?, chain?, reason?, stopIntent?,
-    stall? }`: `kind: "rpc-host"` is a generation's TERMINAL record (at most one per generation) and
-    `kind: "rpc-host-watchdog"` the host child's own line when its supervisor vanished; `detection` is
+    stall?, drainingForMs? }`: `kind: "rpc-host"` is a generation's TERMINAL record (at most one per generation),
+    `kind: "rpc-host-watchdog"` the host child's own line when its supervisor vanished, and
+    `kind: "rpc-host-drain-overdue"` (not a death) a generation still draining once per handoff grace period, with
+    `drainingForMs` (senpi#7098); `detection` is
     `supervisor` (it crashed), `external` (a signal nobody announced) or `engine_stop` (an engine process stopped it on
     purpose, named by `sender`/`chain` and `reason`, e.g. `replace_unreachable -> signal:SIGTERM` or
     `readiness_timeout; supervisor_escalated` when the caller had to SIGKILL the supervisor). Every field after
@@ -2256,7 +2336,8 @@ which prints the bare socket path).
   `reason` is `socket_refused` or `socket_absent`. A sibling that is a directory is not unlinked: it stays and
   the removed entry lists it as `skipped: [{ path, type: "directory" }]`. Because the directory goes last, a
   removal that fails part-way leaves the endpoint listed for the next gc. Everything else is kept with its
-  reason: `live_generation`, `live_claim`, `reachable`, `locked` (an ensure held the lock for 2 s),
+  reason: `live_generation`, `live_claim`, `reachable`, `credential_unavailable` (Windows: the socket secret
+  is missing or invalid, so the pipe it names cannot be proven silent), `locked` (an ensure held the lock for 2 s),
   `legacy_layout` (a flat directory without `layout.json` - a legacy host's, never touched), `unknown_identity`
   (nothing names the socket, so its lock cannot be taken), or `failed` (reading the evidence or removing threw;
   the entry carries `error`) - and a `failed` endpoint never stops gc from going on to the others.
@@ -2507,7 +2588,8 @@ releases the caller's own attachment and closes the session only when no other c
 
 Retention limits (what `open`'s `retain_on_disconnect: true` does NOT survive): an explicit `close`, the host's own
 idle-eviction window (`SENPI_RPC_SESSION_IDLE_EVICTION_MS`, default 30 minutes, after which the session is parked -
-any `senpi host session` verb given its path or durable id resumes it), or the host process exiting. A session that has not
+any `senpi host session` verb given its path or durable id resumes it). The host process exiting does not end it: the next
+host on the same endpoint reopens it (see "Retained sessions across a host restart"). A session that has not
 received a message yet may have no JSONL file on disk even though `open` already reported a `sessionPath`.
 
 A minimal orchestration run:
@@ -2610,12 +2692,15 @@ A connection without an attachment receives `errorCode: "session_not_attached"` 
 ```json
 {"type": "session_status", "subscriptionId": "sub-1", "seq": 4, "sessionId": "rpc-1", "durableSessionId": "<id>", "sessionPath": "<path>",
  "kind": "interactive", "cwd": "<cwd>", "status": "idle", "reason": "aborted", "attachments": 3,
- "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
+ "archived": false, "settled": false, "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
  "lastChange": {"at": "2026-10-12T08:00:00.000Z", "cause": "abort", "by": "client"}}
 ```
 
 - `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
-- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close` or `context`; `by` is `client`, `agent` or `host`.
+- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context`, `rename` (the session's name changed: `set_session_name` or a generated title), `archive` (`set_session_archived`), `settle` (`set_session_settled`) or `retry` (an auto-retry wait started or ended); `by` is `client`, `agent` or `host`.
+- `waiting: { kind, attempt, maxAttempts, delayMs, until, error? }` is present only while a `running` session sleeps in an auto-retry backoff: `kind` is `rate_limit` for a 429, rate, usage or quota limit and `retry` for any other transient error, `until` is the ISO time of the next attempt, `error` the provider error cut to 200 characters. It clears when the retried request starts or the retry ends. `get_state` carries it as `retryWait`. A `list_sessions` row carries the same `waiting` without `error`: a listing reaches every connection that can list sessions, so the provider's error text stays on `get_state` and on `session_status`.
+- `archived` is the session file's archived flag (`set_session_archived`); it is always present.
+- `settled` is the session file's Done flag (`set_session_settled`); it is always present. `settledBy` says how the session reached Done and is present only while `settled` is true and the flag was written with a `by`.
 - `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
 - On `new_session`, `switch_session` or `fork` the routing id stays; the record carries the new `durableSessionId` and `sessionPath` with cause `replace`.
 
@@ -2737,9 +2822,68 @@ context - inside a provider scope of their own, then drops them.
 - A host whose sessions run in worker isolates (`--session-runtime worker`) has nothing it can warm from the host
   process: it answers `state: "unsupported"` and does not advertise the capability. A draining generation refuses with
   `host_draining`.
+- A host whose launch carried a private descriptor table (`SENPI_PRIVATE_FDS`) runs this warm itself once at boot,
+  for its default profile (the host's cwd and context, no `kind`), right after it starts listening, so an extension
+  can claim its private channel before any client connects. A `warm` of that profile then joins it, or answers
+  `already_warm` once it is done, and never loads again; a boot load that fails is logged to stderr and the host
+  keeps serving. Without a table nothing loads before an `open_session` or `warm`.
+  The boot warm's factory call is what claims the channel: its services are then dropped and its provider scope is
+  closed, so every later session's `takeInheritedPrivateChannel` returns `undefined`. An extension must keep its
+  channel handling host-global, never tied to that factory call's `pi`. This applies only to in-process hosts: a
+  `--session-runtime worker` host has no `warm`, so one handed a table loads nothing at boot.
 
 Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
 error.
+
+### Parking and claiming a built session (`park_claim`)
+
+An in-process multi-session host advertises `park_claim`. A caller that knows the next session's profile can
+build it ahead of time:
+
+```json
+{"id":"p1","type":"park_session","cwd":"/abs/project","kind":"worker","context":{"role":"child"}}
+{"id":"p1","type":"response","command":"park_session","success":true,"data":{"state":"parked"}}
+{"id":"c1","type":"claim_session","cwd":"/abs/project","kind":"worker","context":{"role":"child"},"retain_on_disconnect":true}
+```
+
+A successful claim has exactly the `open_session` success payload (`sessionId`, `state`, permission-mode fields
+and, where available, `presence`), with `command: "claim_session"`. It takes the opener's normal connection
+capabilities, attachment, ownership and retention policy. No runtime is built in the claim request.
+When no ready park matches, or an option requires a fresh open, the response is:
+
+```json
+{"id":"c1","type":"response","command":"claim_session","success":true,"data":{"claimed":false}}
+```
+
+Send a normal `open_session` after that miss. A claim does not wait for an in-flight park. A ready park is consumed
+once; concurrent claims cannot receive the same session. After a successful claim, the host schedules a replacement
+for that profile in the background.
+
+Both commands require an absolute `cwd`. `kind` defaults to `interactive`; `context` has the same validation and
+host-identity merge as `open_session`, and its key order does not affect matching. Repeated parks of the same profile
+share one build or answer `state: "already_parked"`. Each host holds at most four speculative profiles, including
+builds in flight and scheduled replacements; another profile answers `state: "full"`. This cap never limits ordinary opens. A ready park expires
+after 60 seconds; repeating `park_session` does not extend its lifetime.
+
+Claim accepts the open options. `retain_on_disconnect`, model/provider, thinking level, permission preset,
+prompt surface and browser engine apply through the same live operations used by ordinary session commands or
+attach-on-open. A requested `sessionPath`, `durableSessionId`, `expectedHostInstance`, `spawnedBy`, `env`,
+`auto_title`, `retryFallback`, `attended: false`, or an unpaired provider/model choice returns `claimed: false`
+without consuming the park. Compact admissions (`admissionId`,
+`retry`, or a connection that selected compact transport) also miss, so the caller uses the existing `open_session`
+admission contract. Invalid applicable options receive their ordinary error response.
+
+Parks run the existing open implementation without an owner or reply. They start attended, in memory, and acquire
+their persistent file and file hold only when claimed. Until then they appear in no session listing, status stream,
+`session_opened` event, session-list file, hosted export, durable-id collision check, attachment count or zero-session
+trim count. Build timing is dropped. `park_session` never makes its connection an idle-exit attachment; a claim does.
+Both methods are `device_admin` in the method-class table because they require a host cwd.
+
+Expiry, drain, handoff and stop dispose parks without a public terminal record or a handover entry. Builds already
+in flight are closed when they finish; a stopped host never schedules replacements. Parks have no persistent
+transcript to survive a crash, and no successor reopens them. Worker-isolate hosts do not advertise `park_claim` and
+answer `park_claim_unsupported`; classic RPC and terminal single-session endpoints answer `multi_session_disabled`.
+Probe the capability before sending either command.
 
 ### Delegated connections (`declare_delegation`)
 
@@ -2785,8 +2929,8 @@ viewer opened to the next one (senpi#5808). So every `open_session` on a delegat
 stays `open` with `attachments: 0` and attachable from any connection, exactly like a retained session (see "Retained
 sessions"). The host decides this when it reads the line, so a connection that ends while its open is still running
 leaves that session retained too. Like any retained session it is still closed by an explicit `close_session`, parked
-by the idle-eviction window, and recorded at park for the next host generation, which reopens it on startup, so a
-parked session survives into the next generation. `attach_session` never turns retention on: attaching over a delegated
+by the idle-eviction window, and recorded (at open, and again at park) for the next host on the endpoint, which reopens
+it on startup, so it survives into the next generation and across a host restart. `attach_session` never turns retention on: attaching over a delegated
 connection to a session that is not retained leaves it closing with its last attachment. One consequence to know: a
 delegated `open_session` by `sessionPath` (which needs `device_admin`) that lands on a session already live and opened by
 someone else joins it as an attach that asks for retention, so it turns retention on for that live session and every
@@ -2809,6 +2953,49 @@ every form. Otherwise the reply is `{ "type": "mcp_form_reply", "id": "...", "er
 
 A private reply bypasses the connection's event queue, snapshots, mirrors and replay. These records are not in the
 method-class table, so `classify_record` answers `class: null` for them and the digest is unchanged.
+
+#### Connection roles on a delegated connection (`delegation_roles_v1`)
+
+A host that advertises `delegation_roles_v1` also takes `roles` on `declare_delegation`: the connection roles
+(`interactive_user`, `task_parent`) the forwarder lets the principal hold. Each appears at most once; anything else is
+`delegation_malformed`. The roles themselves are still claimed by the viewer's own `set_client_info`; `roles` is the
+ceiling, and a role counts only while both the claim and the ceiling hold it.
+
+```json
+{ "id": "d1", "type": "declare_delegation", "principal": { "deviceId": "laptop-7" }, "granted": ["observe", "drive", "thread"], "roles": ["interactive_user", "task_parent"] }
+{ "id": "d1", "type": "response", "command": "declare_delegation", "success": true, "data": { "granted": ["observe", "drive", "thread"], "digest": "71d68465…", "roles": ["interactive_user", "task_parent"] } }
+```
+
+- The first declaration decides the mode for the connection's life: with `roles` it is role-bound, without them the
+  roles are the client's own claims as before. `roles` on a later declaration of a connection that started without
+  them is `delegation_fixed`.
+- A later declaration may only narrow `roles` too (else `delegation_fixed`); omitting `roles` keeps the current set.
+  Every successful reply on a role-bound connection echoes the set in force after it as `data.roles`, in the order
+  `interactive_user`, `task_parent`.
+- A narrowing takes effect for every record the engine reads after it, including a record that was admitted earlier
+  and reaches its role check later in a session worker. Work already admitted (a held input, a turn that started)
+  stays.
+- `detach_connection` on a role-bound connection starts a new incarnation of the connection with the same roles
+  ceiling: a role claimed before the detach no longer counts, so the client claims again with `set_client_info`. A
+  `set_client_info` written before the detach and decided after it is refused alone with
+  `errorCode: "delegation_incarnation_stale"`; it changes nothing, and the connection stays open.
+- The `remoteOrigin` of any delegated connection is its principal (`deviceId`, `deviceName`): a `set_client_info`
+  carrying another valid `remoteOrigin` succeeds and the value is ignored; a malformed one is still
+  `remote_origin_invalid`.
+
+A forwarder may number each record it forwards on a role-bound connection with a top-level `relayExec` (a positive
+safe integer). The host removes it before anything else reads the record, refuses any other value as
+`delegation_malformed`, and adds an `authority` receipt to every response to that record:
+
+```json
+{ "id": "h1", "type": "hold_input", "sessionId": "s1", "inputId": "i1", "revision": 0, "text": "…", "relayExec": 41 }
+{ "id": "h1", "type": "response", "command": "hold_input", "success": true, "data": { "entryId": "…" }, "authority": { "exec": 41, "incarnation": 1, "epoch": 1, "roles": ["interactive_user"] } }
+```
+
+`roles` is the set of roles the record's role checks granted, or `null` when it consulted none. `incarnation` starts at
+1 and grows by one per `detach_connection`; `epoch` starts at 1 in each incarnation and grows only when a narrowing
+removed a role or the incarnation ended. Order receipts of one connection by `(incarnation, epoch)`. Connections that
+are not role-bound never get `authority`, and `relayExec` is an ignored member there.
 
 `classify_record` answers the class of one record without running it, on any connection:
 
@@ -2873,6 +3060,14 @@ it, and an attach without the field keeps the current engine; `new_session` / `s
 also when the attach lands while one of them is still building the replacement. Probe `browser_engine` in
 `get_protocol_info` before sending the field; the capability is advertised only because the value reaches every
 consumer above. Any other value is refused with `invalid_launch_profile`.
+
+#### Host tools (`host_tools`)
+
+Every session on a host that advertises `host_tools` registers its host tools (today `show_html_page`) through the
+SDK's `attachHostTools`: the tool always serves on its own, and a host bridge may route its calls to an app that
+serves the same public name. The public SDK exports the writer such an app calls back (`writeHtmlPage`). An app
+offers its host tool attachment (and the credential that serves it) only to a session on a host that names this
+capability; any other host keeps the standalone tool.
 
 #### Caller env per session (`session_env`)
 
@@ -2958,20 +3153,32 @@ open --(turns)--> idle --unload_session / idle sweep--> unloaded (session_parked
                                                         close_session / release_session --> closed (session_closed, terminal for this handle)
 ```
 
-`unload_session { sessionId, effectId?, interrupt?, clearQueue?, children?: "refuse" | "detach", force? }` frees a session this host keeps loaded. The transcript stays on disk; queued input stays in the admission ledger and is restored on the reopen (input sent without a `clientMessageId` too) unless `clearQueue`; every attached client receives `session_parked { sessionId, sessionPath, reason: "unloaded" }` (the idle sweep's park says `reason: "idle"`); the session leaves `list_sessions`; `open_session { sessionPath }` reopens it.
+`unload_session { sessionId, effectId?, interrupt?, clearQueue?, children?: "refuse" | "detach", force?, deliveries?: "refuse" }` frees a session this host keeps loaded. The transcript stays on disk; queued input stays in the admission ledger and is restored on the reopen (input sent without a `clientMessageId` too) unless `clearQueue`; every attached client receives `session_parked { sessionId, sessionPath, reason: "unloaded" }` (the idle sweep's park says `reason: "idle"`); the session leaves `list_sessions`; `open_session { sessionPath }` reopens it.
 
 The answer is always `success: true` with `data.outcome`: `unloaded` (with `sessionPath`), or `refused` with `reason`, `detail` and `action`, changing nothing:
 
 | `reason` | When | Override |
 |---|---|---|
-| `turn_active` | an agent run, a prompt about to start, compaction, barrier-held work | `interrupt: true` aborts and waits (bounded) first |
-| `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true` |
+| `turn_active` | an agent run, a prompt about to start, compaction, barrier-held work, and a run with any tool body executing even while a dialog is open (a running tool can open one, such as an MCP elicitation); never a run whose only work is an unanswered dialog with no tool body executing (a permission prompt before its call starts), which the unload aborts (the dialog is cancelled) and waits for, bounded, as with `interrupt: true` | `interrupt: true` aborts and waits (bounded) first |
+| `work_pending` | bash, an admitted delivery not yet written (its ids in `pending.deliveries`), another request for the session | `interrupt: true`; once the aborted work settles, a delivery still waiting in the runtime's queues leaves them and the ledger unwritten (its sender redelivers it), and every later answer lists its id in `dropped.deliveries`. With `deliveries: "refuse"` a busy session (any `turn_active` blocker) holding such deliveries is refused here, with or without `interrupt` and before anything is interrupted; a delivery admitted while an interrupt it did allow is settling, and an idle session's stranded deliveries, are still handed back and named in `dropped.deliveries` |
 | `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
 | `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
 
-With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays. Capability: `unload_session`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
+With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays (a refusal with its `pending.deliveries`). Capability: `unload_session`; `deliveries` and `pending.deliveries`: `unload_refuse_deliveries`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
+
+##### Graceful close (`graceful: true`)
+
+`unload_session { sessionId, graceful: true, waitMs?, force?, children?, effectId? }` closes a session without interrupting it (oh-my-openagent#14313). `graceful` and `interrupt` exclude each other. Capability: `unload_graceful`.
+
+1. The fence, in one step: automatic turns (monitor, goal and loop wakes) wait as notices under the engine-turn hold `closing`, `admit_external_message` refuses every new delivery with `errorCode: "session_closing"`, and the queued input leaves the session unread: admitted delivery ids in `dropped.deliveries` (their senders keep them), the user's queued text in `dropped.user_messages`.
+2. The drain: the running turn, its tool calls, bash, compaction, prompts in preflight and other requests end on their own. Nothing is aborted. The wait is bounded by `waitMs` (default 60 000 ms, at most 600 000 ms).
+3. The close: the `closing` hold is released, a `session-closed` custom entry (`{ graceful, turn, waited_ms, returned, stopped: { wake_sources }, at }`) is the clean-stop record, and the teardown's `session_shutdown` carries `closed: true`. The terminal builtin then records no monitor or background job to restore, loops end `stopped` and an active goal is paused. The run ended normally, so a reopen writes no `interrupted-run` entry and arms no hold.
+
+The answer is `outcome: "unloaded"` with `sessionPath`, `dropped` and `graceful: { turn, waited_ms, stopped }`. `turn_active` and `work_pending` are what a graceful close waits for, and `extension_work` is what it stops, so neither refuses it; every other reason refuses before anything is fenced. A drain that outlives `waitMs` answers `outcome: "refused"`, `reason: "turn_active"`, `timed_out: true`, `open: true`, `admission: "reopened"`, `turn` and `waited_ms`, plus `dropped`: the hold is released and admission reopened, so the session keeps running as before, minus the input already handed back. With `effectId` the effect is `done` only when the session closed, so its `updatedAt` is the close.
+
+A terminal's control endpoint takes the same record, `graceful: true` only (anything else is refused `unsupported`). It also refuses `composer_draft` while the composer holds unsent text or an attachment, before the fence and again after the drain, so a close never discards what a person typed. After the answer, the terminal exits by itself as a quit does, and its session file keeps the same clean-stop record.
 
 ### Multi-session host lifecycle (cold start + idle exit)
 
@@ -3018,14 +3225,31 @@ holds the host this way while at least one remote viewer is attached, and releas
 held observer is occupancy everywhere occupancy is read: the idle-exit window, the empty-host exit, and the
 owner-death quiescence check. Hosts that predate the field ignore it and treat the read as a plain observing read.
 
-A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
-id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
-on every socket request. When a connection's first non-observing request names the host's own generation, the
+A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host keeps its generation
+id (`SENPI_RPC_HOST_INSTANCE_ID`) in its own environment (a socket host that named itself writes it there at start),
+and every child it starts for an agent (shells, eval kernels, the tool child) gets it as
+`SENPI_RPC_ORIGIN_HOST_INSTANCE` instead, so a nested host never adopts it as its own identity (senpi#7034). The
+host's other launch hand-off (daemon directory, generation, build id, watch binding, key sentinel and its
+launch-default `SENPI_RPC_CLIENT_CAPABILITIES`) never reaches those children. `RpcClient` sends whichever of the two
+ids it has as `"origin_host_instance"` on every socket request. When a connection's first non-observing request
+names the host's own generation, the
 connection neither holds the window open, nor blocks the owner-death grace, nor keeps an empty host alive. Without
 this, a task tree whose children open their own children on the shard they run in (omo's `p` shards are keyed by the
 root session) keeps that shard alive through its own connections after the owner and every outside client are gone.
 Turns still count as activity, so a dependent session mid-turn keeps the host open until the turn ends. Hosts that
-predate the field ignore it. The supervisor learns about turns through
+predate the field ignore it.
+
+An attached connection whose sessions on the host have ALL closed stops keeping it open (oh-my-openagent#14272): a
+parent that keeps its task-shard connection after its last session there closed no longer keeps a 0-session host
+alive, and the window starts when that session closes. A connection that never held a session still counts as
+before (an ensure's attach hold, a client about to open), as does any connection with an open or a command in flight;
+attaching (the first non-observing line) restarts the window. The supervisor proxies bytes and cannot see sessions, so its observer
+connection sends `{"type": "watch_host_occupancy", "observe": true}` (an observing read with no response) and the
+host answers on that connection with `{"type": "host_occupancy", "holders": <n>}`, the number of attached
+connections that still occupy it, at once and again on every change; the supervisor counts at most that many attached
+clients, plus held observers. Until the host has answered, and while the observer connection is unhealthy, every
+attached client counts, as before. While a supervisor watches, the host's own empty exit stays with the supervisor.
+The owner-death quiescence check still counts every attached client. The supervisor learns about turns through
 its observer connection to the host; while that connection is unhealthy it cannot see turns, so it treats activity as
 unknown and keeps the host open as if a turn were running — but only for one idle window, during which it keeps
 reconnecting. An observer that stays unhealthy for longer than the window stops counting as busy, and the connection
@@ -3163,6 +3387,23 @@ invalid lengths and incomplete records at EOF close the hop. Complete-record tru
 JSONL lines span records with backpressure and retain the existing 16 Mi-character ceiling. Windows retains the
 secret-file/raw-handshake internal hop.
 
+#### Supervisor unit (Linux)
+
+A supervisor is detached into its own session, but on Linux a process stays in the cgroup of whoever started it. A
+supervisor started by `host ensure` or `host handoff` from a transient unit (a terminal's per-terminal service, an ssh
+session scope, a CI job) therefore used to die with that unit (senpi#7099). Where `systemctl --user is-system-running`
+answers for the spawn environment (`XDG_RUNTIME_DIR` set) and `systemd-run` is on its `PATH`, each generation's
+supervisor is started as `systemd-run --user --scope --unit=senpi-host-<instanceId>.scope --collect --quiet -- <supervisor
+argv>`: `systemd-run` moves itself into the new scope and then execs the supervisor in place, so the spawned pid is
+the supervisor and every inherited descriptor (owner pipe, presenter channel, startup pipe) is kept; the scope is
+unloaded when the generation exits. No running process is moved between cgroups. Before placing a generation the
+probe starts one throwaway scope (`systemd-run --user --scope --collect --quiet -- true`); a manager that answers but
+refuses transient scopes (no cgroup delegation in a container, bus or polkit policy) is treated like no manager.
+Without a reachable user manager that accepts scopes (containers, CI without systemd, macOS) the spawn is unchanged
+and never fails for it; `host ensure`, `host handoff` and `host status` then report the unit the host's lifetime is
+tied to. Only a manager that accepted the probe scope and then refuses the generation's own (a policy change in that
+instant) fails that start, as any spawn failure does.
+
 ### Supersession lifecycle: `host_superseded`
 
 Before parking for a generation handoff, the old host sends every connected client one unsolicited record:
@@ -3195,9 +3436,10 @@ without a known replacement. This record has no request id or session handle; ol
    draining supervised connection are refused with `host_stopping`; a bare (unsupervised) socket host
    still returns `host_draining`. Re-resolve the public endpoint rather than retrying the draining connection.
 4. The **supervisor** starts `SENPI_RPC_HANDOFF_GRACE_MS` at supersession (default **600000 ms / 10 minutes**).
-   This is a soft grace, not an abort deadline or a delay before parking. At expiry it reports outstanding work
-   and requests another drain pass. Sessions still mid-turn or handling requests remain alive even beyond grace;
-   no turn is cut short. Parkable sessions never wait for grace. A bare socket host has no supervisor grace timer,
+   This is a soft grace, not an abort deadline or a delay before parking. At every expiry while the generation
+   still drains it appends `{ kind: "rpc-host-drain-overdue", generation, drainingForMs }` to the endpoint's
+   `crashes.jsonl` (the alarm host monitors read; it is not a death) and requests another drain pass. Sessions
+   still mid-turn or handling requests remain alive even beyond grace; no turn is cut short. Parkable sessions never wait for grace. A bare socket host has no supervisor grace timer,
    but follows the same announce/park/settle sequence.
 5. Once every session has parked and its terminal records have drained, the generation exits even if an observer
    or client never voluntarily disconnects. Neither the normal idle timeout nor persistent-host mode can pin it.
@@ -3238,8 +3480,9 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   command's `unknown_session`. A GENERATION HANDOFF also parks attached sessions, using the distinct activity
   predicate below, and emits `session_closed { sessionId, reason: "handoff_parked", sessionPath }`, so a client can tell "the host handed
   over, reopen by path" from "this session ended". An explicit `close_session` is `reason: "client_close"`; the host
-  process exiting is `reason: "host_shutdown"` (even for a retained session - the process is going away, so this is not
-  a park). `reason` is optional on the wire; a client that does not know a
+  process exiting is `reason: "host_shutdown"`, except for a retained session on a socket host, which PARKS instead
+  (`session_parked { reason: "host_shutdown" }`) because the next host on the endpoint reopens it (see "Retained sessions
+  across a host restart"). `reason` is optional on the wire; a client that does not know a
   value, or receives a record with no `reason` field, treats the record exactly as a reason-less one. "Session-owned
   work" is the complete activity contract, not just a streaming turn: an agent run, a running bash command,
   background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
@@ -3275,17 +3518,46 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   in-flight turn to settlement, keeps its path reservation and worker slot, and stays in `list_sessions`. A later
   `open_session` with that `sessionPath` — from any connection — attaches to the same routing handle and returns
   `attached: true`. Retention never outranks an explicit teardown: a `close_session` from an attached connection still
-  reaches zero attachments and closes the session, host shutdown closes it, and the idle-eviction window above still
+  reaches zero attachments and closes the session, a socket host's shutdown parks it (see below), and the idle-eviction
+  window above still
   parks it (or the completed-detached-worker rule above parks it sooner) — announced as
   `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
   evicted session, and the parked session counts as gone for the empty-host exit below. The park is also recorded
   for the NEXT generation, which reopens it on startup; the host that parked it never reopens it on its own, so a
-  client reopening the session right after `session_parked` is the only open of that path (senpi#3485). It is also bounded by the empty-host exit
-  and the supervisor's idle-exit window below: retention survives a client, not the host. Any attach may turn retention
+  client reopening the session right after `session_parked` is the only open of that path (senpi#3485). Retention survives
+  the host process too (next item). Any attach may turn retention
   on for a live session; no attach turns it off for clients that already rely on it. Omitting the flag is byte-identical
   to the previous behavior — the session is closed with its last connection — except on a delegated connection
   (`declare_delegation`), where every `open_session` is retained (see "Delegated connections"; senpi#5808). Probe `retain_on_disconnect` in
   `get_protocol_info` capabilities before relying on it: an older host silently ignores the field.
+- **Retained sessions across a host restart**: every retained session with a session path is recorded in the
+  endpoint's daemon directory (`handover-parked/`, one entry per session path, the same record a handoff park writes)
+  as soon as its open succeeds; the entry follows the session's `set_session_context` patches and its park, and a
+  transcript switch (`new_session`, `switch_session`, a fork) moves it to the new file, so only the transcript the
+  session is on comes back. An explicit `close_session`, a `release_session` (the file is another runtime's then) or
+  a reclaim removes every key the session was recorded under. While the session is open the entry names the process
+  that holds it; a park drops that, and a host never reopens an entry whose holding process is still alive. So during
+  a generation handoff the successor does not open a session its draining predecessor still has loaded, idle and
+  detached ones included: it reopens the predecessor's
+  park once the drain writes it (or the entry, if the predecessor dies without parking). A host
+  that starts on the same socket and agent dir - after a handoff, a clean stop, a crash, or a kill in the middle of a
+  turn - reopens, in the background right after it binds, every entry an earlier process wrote, replaying the
+  recorded launch profile as `open_session { sessionPath, durableSessionId, retain_on_disconnect: true, ... }`: the same
+  open-by-path a TUI resume runs on its session file. The session is `open` in `list_sessions` again with the same
+  `durableSessionId`, `sessionPath` and transcript, announced by a `session_opened` record, and no client has to
+  re-open it. A clean stop (SIGTERM, idle or empty exit) parks each retained session first: attached clients receive
+  `session_parked { sessionId, sessionPath, reason: "host_shutdown" }`, never `session_closed`, and a turn running at
+  the stop ends with `agent_end { aborted: true, abortSource: "system", abortCause: { kind: "host_shutdown" } }`, never
+  a user abort. A killed host sends nothing. Either way the turn the stopped process was running is not resumed: the
+  transcript holds what was persisted before the stop, as after a TUI crash. The routing handle (`sessionId`, `rpc-N`) is new, since handles are unique per process;
+  a client holding the old one gets `session_not_found` and re-resolves the session from `list_sessions` (or
+  `session_opened`) by `durableSessionId`. A relay that mirrors `list_sessions` (relayd keeps no session store of its
+  own) therefore sees the session again unchanged. Not reopened: an entry whose session file is gone (a session that
+  never received a message has none), an explicitly closed or reclaimed session (its entry is removed), and a session
+  whose context `task_status` is terminal (`completed`, `cancelled`, `error`, `failed`, `lost`, `interrupted`). There is
+  no separate resume-by-durable-id request: `open_session { sessionPath }` already resumes a known transcript, but a
+  remote client learns sessions only from `list_sessions`, so a session the restarted host did not list could not be
+  resumed by one at all.
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
@@ -3332,9 +3604,11 @@ registrant opens no socket and writes no registry directory.
   user's draft still holds it.
   - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status",
     "tui_observer", "observe_reads", "entries_tail"]` (`tui_observer`: the observe-and-drive set below), `generation: 0`, the endpoint's
-    `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
-    controls below lists no `commands`.
-  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
+    `instanceId`, `commands`: every command this endpoint accepts, and `method_classes`: the same table and digest a
+    host's answer carries (one builder serves both). A terminal from before the session controls below lists no
+    `commands`; one from before senpi#6158 carries no `method_classes`.
+  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`, plus the same
+    `archived`, `settled`, `settledBy?`, `activity` and `model?` fields a host row carries.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
   - `get_messages`.
@@ -3355,10 +3629,10 @@ registrant opens no socket and writes no registry directory.
     `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
   - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
     `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
-    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    (`admitExternalMessage`), so input the user submitted and the runtime has not taken yet holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
-    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started` or
-    `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3410,8 +3684,12 @@ registrant opens no socket and writes no registry directory.
   - `steered`: the session is mid-turn, the steer names the current `turn_epoch`, and it goes on the steering
     queue once.
   - `turn_conflict`: the epoch is stale, or a steer names none.
-  - `held_draft`: the user is composing, or their submitted input has not reached the runtime yet (a buffered
-    submission, a command that may still submit text). Nothing is enqueued; retry on the next wake.
+  - `held_draft`: input the user submitted has not reached the runtime yet (a buffered submission, a command that
+    may still submit text). Nothing is enqueued; retry on the next wake. A draft still in the composer holds
+    nothing: an idle session starts the delivery's own turn and leaves the draft in place (senpi#7043).
+  - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
+    an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
+    hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).
   - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
     its entry and it is not admissible again yet (see `failed` below).
 
@@ -3518,7 +3796,7 @@ no longer lists it and the handle answers `unknown_session`.
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.
 
-A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one. Before the seal, a `move` release runs the extensions' `session_move_export` handlers, each under the `session_shutdown` handler budget (`sessionShutdownHandlerTimeoutMs`); a handler that throws or is still running at the cap fails the release with `release_failed` (nothing sealed, admission open again). Each `move` release attempt stages into its own folder and its `session_released` entry records that attempt (`state_attempt`); `move_session export` bundles only the sealing attempt's state, so a handler still running from an earlier, failed attempt of the same move never feeds the bundle. A release refused after those handlers ran and before its seal is written removes its own attempt's folder; one refused after the seal (for example `session_closing`) keeps it, since the seal names it.
+A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one. Before the seal, a `move` release runs the extensions' `session_move_export` handlers, each under the `session_shutdown` handler budget (`sessionShutdownHandlerTimeoutMs`); a handler that throws or is still running at the cap fails the release with `release_failed` (nothing sealed, admission open again). So does state a bundle could not carry: a staged file, or a resident blob of the session, whose path in the bundle would have more than 32 segments (`MAX_BUNDLE_PATH_SEGMENTS`) fails the release with `release_failed` before the seal, and `errorData.detail` names the path; the session stays live on this host. Each `move` release attempt stages into its own folder and its `session_released` entry records that attempt (`state_attempt`); `move_session export` bundles only the sealing attempt's state, so a handler still running from an earlier, failed attempt of the same move never feeds the bundle. A release refused after those handlers ran and before its seal is written removes its own attempt's folder; one refused after the seal (for example `session_closing`) keeps it, since the seal names it.
 
 ### Moving a session to another device (`move_session`)
 
@@ -3526,18 +3804,33 @@ A move hands a session to another host under the same id (capability `move_sessi
 
 | `op` | Side | Fields | `data` |
 |---|---|---|---|
-| `prepare` | receiver | `moveId` | `{ state: "ready", expires_at }` (or `receiving` / `accepted` if it already is); the move must see its bundle within 10 minutes |
+| `prepare` | receiver | `moveId`, `cwd?` (absolute), `repository?` | `{ state: "ready", expires_at }` (or `receiving` / `accepted` if it already is); the move must see its bundle within 10 minutes. With `cwd` it first checks that folder's repository and then holds the move to it; capability `move_session_prepare_repository` |
 | `cancel` | receiver | `moveId` | the record: `declined` with reason `cancelled`, unless already `receiving` or `accepted` |
-| `export` | sender | `sessionPath`, `moveId`, `target`, `droppedUserMessages?` | `{ move_id, session_id, bundle_dir, files }`; `bundle_dir` is the folder to send, kept until `finish` |
-| `import` | receiver | `bundleDir`, `cwd` (both absolute), `from?` | `{ session_id, session_path }`; the session lands in this host's session folder for `cwd`. A move lands in one file only: see below |
-| `status` | receiver | `moveId`, `sessionPath?` | the answer for the sender: `receiving`, `accepted`, or `declined` / `failed` with `reason`; an unknown move is recorded `declined` (`no_record`) before the answer. `accepted` carries `revoked: true` once the import was revoked, with or without `sessionPath`; `revoked: true` wins over `accepted` for writability: that copy refuses every write (`session_moved_away`). A `sessionPath` whose file is not this move's import is refused with `move_mismatch` |
-| `finish` | sender | `sessionPath`, `moveId`, `answer` (the `status` data, `revoked` included) | `{ ownership: "moved" \| "writable" \| "moving" }`; an answer with `revoked: true` takes the session back (`writable`), and is refused with `move_already_moved` if the file was already marked moved |
+| `export` | sender | `sessionPath`, `moveId`, `target`, `droppedUserMessages?`, `inline?`, `inlineMaxBytes?` | `{ move_id, session_id, bundle_dir, files }`; `bundle_dir` is the folder to send, kept until `finish`. With `inline`, also `inline_files` when the bundle is small: see "Moving without a bundle folder" |
+| `import` | receiver | `cwd` (absolute), `bundleDir` (absolute) or `files`, `from?`, `sessionDir?` (absolute), `open?` | `{ session_id, session_path }`; the session lands in this host's session folder for `cwd`, or in `sessionDir`. With `open`, the opened session's data sits beside it. A move lands in one file only: see below |
+| `status` | receiver | `moveId`, `sessionPath?` or `landing?` | the answer for the sender: `receiving`, `accepted`, or `declined` / `failed` with `reason`; an unknown move is recorded `declined` (`no_record`) before the answer. `accepted` carries `revoked: true` once the import was revoked, with or without `sessionPath`; `revoked: true` wins over `accepted` for writability: that copy refuses every write (`session_moved_away`). A `sessionPath` whose file is not this move's import is refused with `move_mismatch`. Beside `accepted` it says where the move landed (`session_path`, `session_id`, `cwd`, or `landed_file: "gone"`): see below; capability `move_session_status_landed_path`. With the path it says whether that copy can still be written (`writable`, and `sealed_by` when it cannot); capability `move_session_status_writable`. With `landing` the answer comes from the file at the place the move would have landed, before the record: see below; capability `move_session_status_landing` |
+| `finish` | sender | `sessionPath`, `moveId`, `answer` (the `status` data, `revoked` included; the fields that say where the move landed are not read) | `{ ownership: "moved" \| "writable" \| "moving" }`; an answer with `revoked: true` takes the session back (`writable`), and is refused with `move_already_moved` if the file was already marked moved |
 | `revoke` | receiver | `sessionPath` (the imported copy), `moveId` | `{ ownership: "moved" }`; capability `move_session_revoke` |
 | `copy` | either | `sessionPath`, `sessionId` (a plain id), `sessionDir?` (absolute) | `{ session_id, session_path }`: a new writable session with the source's history; capability `move_session_copy` |
+| `identity` | either | `sessionPath` (a session file of this host) or `cwd` (a folder), exactly one | `{ repository: { rootCommits, originUrl? } }`, or `{}` when there is none; reads only, changes nothing; capability `move_session_identity` |
 
-A move lands in one file only. The first `import` that starts receiving a move records the session file it lands as; from then on, while the move is receiving or accepted, an `import` for any other folder is refused with `move_fenced` before anything is written, so two imports at once, or an import after a crash lost the `accepted` record, never land a second copy. The rename itself also runs only into that recorded file. Importing again into the same file returns it unchanged when it is there (a landed file whose `accepted` record a crash lost is accepted then). A move lands once: if the landed copy was deleted, the copy is gone, and an `import` for the move is refused with `move_fenced` whether or not it was revoked (copy the session to a new thread to keep working). A move an older version started receiving, whose record names no landing file, accepts only the file it already landed (an `import` into that same folder); an `import` into any other folder is refused with `move_fenced`.
+A move lands in one file only. The first `import` that starts receiving a move records the session file it lands as; from then on, while the move is receiving or accepted, an `import` for any other folder is refused with `move_fenced` before any session file or record is written (it may leave an empty session folder for that other folder), so two imports at once, or an import after a crash lost the `accepted` record, never land a second copy. The rename itself also runs only into that recorded file. Importing again into the same file returns it unchanged when it is there (a landed file whose `accepted` record a crash lost is accepted then). So does an import into that file that overlapped the one that landed it: it looked before the file was there and reached the record after, and it is answered the landed session, never `move_fenced`. A move lands once: if the landed copy was deleted, the copy is gone, and an `import` for the move is refused with `move_fenced` whether or not it was revoked (copy the session to a new thread to keep working). A move an older version started receiving, whose record names no landing file, accepts only the file it already landed (an `import` into that same folder); an `import` into any other folder is refused with `move_fenced`.
 
-An interrupted step never leaves two writable copies, and the record always ends up agreeing with the files. Before the import renames the session into place, the record is stamped `committing`, so a crash or a failure on either side of the rename never lets the move land again: a failure after the rename never records `failed` beside the landed copy. `status` then settles the move from the file at the recorded landing target. If this move's file is there, the move is `accepted` (with `revoked: true` if it is sealed); if no file is there, the move is `failed`, and the sender takes the session back. A same-file `import` confirms a landed file the same way and keeps its revoke mark, and `status` also restores a revoke mark a crash lost after the copy was sealed. A repeated `finish` re-queues the dropped input once and removes the bundle.
+`status` for an accepted move also says where it landed (capability `move_session_status_landed_path`): `{ "state": "accepted", "session_path", "session_id", "cwd" }`, the session file the move's record names, with the id and the folder that file's header names. Without it only the `import`'s own answer names the landed session, so a caller that lost that answer and no longer has the bundle cannot bind a session that landed. The path is the landing target the record stores. It is read under the record's lock, by the same read of that file that settles an interrupted step, and it is answered only while the file there still records this move. If no file is there, or the file there no longer records the move, the answer is `{ "state": "accepted", "landed_file": "gone" }` with no path: the move stays accepted, and a deleted copy is gone. A record that names no landing target (an older version wrote it) answers `accepted` alone. `revoked: true` stays beside these fields. A `move_fenced` refusal of a move that is already accepted here carries the same fields in `errorData`, beside `detail`, and `revoked: true` when that copy was sealed, whichever op was refused: an `import` into another folder, or a `prepare` that names another folder than the one the move was readied for. The fields only add to the refusal: if the record or the landed file cannot be read at that moment, the refusal is sent as `move_fenced` without them. Whoever may send the `import` may ask: on a delegated connection `move_session` needs `device_admin`, and the answer names a path on this host, as the import's answer does. Nothing is opened, held or rewritten for it. `finish` reads only `state`, `reason` and `revoked` from the answer it is given, so a `status` answer can be passed on as it came.
+
+Beside the path, the answer says whether that copy can still be written here (capability `move_session_status_writable`): `"writable": true`, or `"writable": false` with `"sealed_by": { "move_id", "state": "moving" | "moved", "target"? }`. Where a move landed is read from that move's own entries, so the path is still answered after a later move released the session from this host (it moved on to another device, or back). The copy there is then read-only, and a write to it is refused `session_moved_away`. `writable` and `sealed_by` are the verdict of the rule that refuses those writes, taken from the same read of the file, so the answer and the refusal agree. `sealed_by` names the move that sealed the copy. Its `target` is the device that move's release named. It is absent when the release named none (`release_session` takes `target` as optional), never an empty string: the destination is then not known to this host, and a caller shows it as another device, the words the `session_moved_away` refusal uses for the same case. For a later move it says `moving` until that move ends and `moved` once it finished; if that move is declined and the session is taken back here, the answer is `writable: true` again. For this move's own revoke it names this move, with `state: "moved"` and `target` the device the session went back to, beside `revoked: true`. A `move_fenced` refusal's `errorData` carries the two fields with the path. Neither is sent beside `landed_file: "gone"`. A client that binds a session from this answer checks `writable` first.
+
+`status` can name the place a move would have landed instead of a session path (capability `move_session_status_landing`): `{ "op": "status", "moveId", "landing": { "cwd", "sessionFileName", "sessionDir"? } }`. `cwd` is the absolute folder the `import` was given, `sessionFileName` is the session file name the bundle's manifest carries, and `sessionDir` is the absolute session folder the import named, only if it named one. The host resolves the landing path from those values exactly as `import` does, and makes no folder for the question. It then reads the file there before it asks its record:
+
+| At the landing path | `status` answers | It records |
+|---|---|---|
+| a file that records this move | `accepted` with where it landed (`session_path`, `session_id`, `cwd`), also when the move's record is lost; `accepted` with `revoked: true` when that copy was sealed again | nothing: no record is made for a move whose record is gone |
+| a file that does not record this move (the copy an earlier move of the session left there, or another session) | what the record says, as when no file is there: that file is not this move's landing | as below |
+| no file | what the record says; an unknown move is `declined` (`no_record`) | an unknown move is recorded `declined` (`no_record`) before the answer, which fences a later import of it |
+
+This is what makes `declined` (`no_record`) safe to act on. A record can be lost while the session it described landed; a sender that reads "no record" as "never arrived" would take the session back and leave two writable copies. A `status` that names the landing answers `accepted` for such a move, so `no_record` is answered only when no landing is there. `landing` together with `sessionPath`, a `cwd` or `sessionDir` that is not absolute, and a `sessionFileName` that is not a plain session file name (a path separator, `..`, another extension) are refused `invalid_move_request` and nothing is recorded. Send this `status` only after the import answered or its deadline passed: on a move this host has no record of, the answer records the fence.
+
+An interrupted step never leaves two writable copies, and the record always ends up agreeing with the files. Before the import renames the session into place, the record is stamped `committing`, so a crash or a failure on either side of the rename never lets the move land again: a failure after the rename never records `failed` beside the landed copy. `status` then settles the move from the file at the recorded landing target. If this move's file is there, the move is `accepted` (with `revoked: true` if it is sealed); if no file is there, the move is `failed` once the stamp is 30 seconds old, and the sender takes the session back. Until then `status` answers `receiving`: a commit holds the move's lock from its stamp to its rename, so a younger stamp may belong to a commit whose process stalled until its lock was taken over, and that commit can still land the file when it runs again. A commit checks the record again wherever a stalled process may have lost its lock: right before it writes its stamp it must find the move receiving for its target, and the stamp's own write refuses a holder that was told its lock is gone; right after the stamp it must still hold the lock and find its own stamp; and it checks that once more right before the rename that lands the file, after the wait for the session's move lock (up to 5 seconds) and the rewrite of the session file. A commit that finds the move settled by another process at any check stamps or lands nothing and is refused `move_fenced`; a copy it had already rewritten is removed and the sidecars it had moved go back. A stamp's age is not read from the wall clock alone: the stamp also carries its machine's uptime, and a reader on the same machine counts it old only when both clocks say so, so a wall clock that was stepped forward does not settle a healthy commit `failed`. A reader on another machine, a reader after a restart, and a reader of a stamp an older version wrote go by the wall clock alone, where a stamp dated after now counts as old. What the checks cannot cover: a process that stalls between its last check and the rename itself for longer than the settle bound, or during the stamp's own write while another import of the move fails, can still land a second writable copy once another process has settled the move `failed`. A same-file `import` confirms a landed file the same way and keeps its revoke mark, and `status` also restores a revoke mark a crash lost after the copy was sealed. A repeated `finish` re-queues the dropped input once and removes the bundle.
 
 `revoke` seals the copy this host imported for a move after the sender took the session back, so two writable copies never exist. It appends `session_moved` with `reason: "revoked"` (and `target` set to the import's `from`), and from then on any write to the copy is refused with `session_moved_away`. It runs under the same move lock as `export` and `finish` (`session_held`, `session_open_here`). Only a file whose latest ownership entry is this move's `session_moved_in` is revoked; a repeat for the same move changes nothing and answers the same, and any other file (another move's import, the sender's released copy, a session that was never imported) is refused with `move_mismatch`. A client checks for the `move_session_revoke` capability before relying on it.
 
@@ -3549,11 +3842,50 @@ The receiver's record of the move stays `accepted` after a revoke; that state is
 
 To take a session back, the sender's client first sends `cancel` to the receiver, which fences a move whose import has not landed (a later `import` is refused with `move_fenced`), then sends `revoke` if the import already landed (`cancel` answers `accepted`). A `cancel` that answers `receiving` met an import in flight; the client asks `status` until it settles and revokes if it is `accepted`. A `revoke` alone does not fence a pending move: before the import it is refused with `move_mismatch`, and a late import would still land a writable copy. A client whose `revoke` did not succeed (an error, a timeout, a lost connection) repeats it before acting on any `status`: a revoke that sealed the copy but crashed before marking the record leaves the record plain `accepted`, and the repeat writes the mark again.
 
+#### Checking the repository before the release
+
+A session moves only into a checkout of the same repository, and until senpi#6435 only the `import` decided that. The import runs after the sender released the session, so a move that could never land still ended that session's runtime, sealed its file and took its queued input, and the user saw the refusal at the last step. Two reads let a client decide before it releases anything. A host that has them advertises `move_session_identity` and `move_session_prepare_repository`; against a host without them, keep today's order.
+
+`identity` answers a repository identity and nothing else. It opens, claims, seals and rewrites nothing and touches no move record, so it may be sent at any time, including while the session is open. Send it CONCURRENTLY with the `get_state` a move already makes before its release: on that route it costs no extra wall time.
+
+- `{"op":"identity","sessionPath":"…"}` on the SENDER answers what the session recorded: `{ repository: { rootCommits, originUrl? } }`, or `{}` when it recorded none. It is the value `export` writes into its bundle, read the same way (the file's last `repository-identity` entry wins). It reads only a session file of that host's own session folder (`<agentDir>/sessions/<folder>/<name>.jsonl`, decided on the resolved path, so a link out of that folder is refused without being opened) and scans at most 1 GiB of it. Every path it will not read answers one and the same refusal, `move_failed`, so the answer never says which paths exist. A larger file answers `move_failed` too, with its own detail.
+- `{"op":"identity","cwd":"…"}` on the RECEIVER answers that folder's own git identity: the read `import` already makes on the folder a caller names. It never refuses for what the folder is. A folder with no repository, one that is not there, one that is not a directory and one that cannot be read all answer `{}`, so it never says which folders exist. Only a malformed request is refused with `invalid_move_request`: a relative `cwd`, both fields at once, or neither.
+
+`prepare { moveId, cwd, repository }` then decides with the comparison the import makes. The same repository readies the move and the record keeps `cwd`; a `cwd` that does not exist on this host answers `workspace_missing`, anything else answers `move_repository_mismatch`, and neither readies anything, so the sender never releases. A `cwd` with no `repository` is compared as "the session recorded none", which is a mismatch, exactly as that bundle's import would be. `repository` without `cwd`, a relative `cwd`, or a `repository` that is not `{ rootCommits: string[], originUrl?: string }` is refused `invalid_move_request`, and nothing is readied. The folder is kept and compared as resolved text: `.` and `..` segments and doubled or trailing slashes are normalised, but a symbolic link is not followed and letter case is not folded, so a path through a link, or in another case on a disk that ignores case, is another folder to the move. An `import` that spells the folder that other way is refused `move_fenced`: it writes no session file and no record, though it may leave an empty session folder for that other spelling, and the move stays ready for the spelling it was readied with; send `prepare` and `import` the same `cwd`.
+
+A move readied for a folder lands only there: an `import` naming another `cwd` is refused `move_fenced`: it writes no session file and no record, though it may leave an empty session folder for that other `cwd`, and the move stays ready for the folder its `prepare` checked, so the right import still lands. A second `prepare` for the same folder answers the same record with the same `expires_at`; one for another folder is refused `move_fenced`; one naming no folder answers the record and leaves the folder as it is, so an older client's `prepare` changes nothing. A move readied with no folder takes the folder of the first `import` that receives it, and `cancel` is unchanged throughout.
+
+A `prepare` with neither `cwd` nor `repository` behaves exactly as it always did, and `import` keeps its own check: the bundle is the authority, and the folder can change between the two steps. So can the session: `identity` answers what the session recorded when it was asked, and `export` reads the session again after the release, so a session that records another repository in between passes `prepare` and is refused `move_repository_mismatch` by the import, after the release. Nothing lands, the move is declined (`repository`), and the sender takes the session back with `finish`; read `identity` as close to the release as the caller can.
+
 `export` and `finish` run one at a time per session file, so two `finish` calls for one move settle it once and hand the queued input back once. This holds across processes too: each step takes the session's move lock, refuses a session any live process holds (`session_held`, for example another host generation on the same agent directory) and makes a concurrent open of that session wait or refuse. Inside the lock, both first refuse a session this host has open (compared after resolving `.`, `..` and symlinks).
 
-The order is: the receiver `prepare`s; the sender releases the session with `release_session` reason `move` (usually with `interrupt: true`) and passes its `dropped.user_messages` to `export`; the transport carries `bundle_dir` to the receiver, which `import`s it; the sender asks `status` (on start, on reconnect, and when the session is opened) and `finish`es with the answer. `accepted` leaves the sender's copy read-only for good; `declined`, `failed`, or `accepted` with `revoked: true` makes it writable again with its queued input back. `receiving` changes nothing.
+The order is: the sender reads the session's repository (`identity`, alongside its `get_state`) and the receiver reads the target folder's; the receiver `prepare`s with both, which refuses a folder of another repository before anything is released; the sender releases the session with `release_session` reason `move` (usually with `interrupt: true`) and passes its `dropped.user_messages` to `export`; the transport carries `bundle_dir` to the receiver, which `import`s it; the sender asks `status` (on start, on reconnect, and when the session is opened) and `finish`es with the answer. `accepted` leaves the sender's copy read-only for good; `declined`, `failed`, or `accepted` with `revoked: true` makes it writable again with its queued input back. `receiving` changes nothing.
 
-Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, or a bundle for a move the receiver never readied), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository), `move_target_occupied`, `move_mismatch`, `move_already_moved` (a revoked answer for a sender already marked moved), `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
+Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, a bundle for a move the receiver never readied, or an `import` or `prepare` naming a folder other than the one the move was readied for), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository: from `prepare` before the release, and from `import`), `workspace_missing` (`cwd` does not exist on this host, from the same two steps; an `import` declines the move `repository` exactly as for a mismatch, so only the code tells the two apart), `move_target_occupied`, `move_mismatch`, `move_already_moved` (a revoked answer for a sender already marked moved), `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
+
+#### Moving without a bundle folder
+
+Four additions let a small bundle travel inside the move's own answers, so the transport carries no folder and the receiver needs no separate `open_session`. Each has its own capability; a client checks for it before sending the field it names. An older host ignores `inline`, `sessionDir` and `open` (the folder answer, this host's own session folder, no open) and refuses an `import` without `bundleDir` with `invalid_move_request`.
+
+| Field | On | Capability | What it does |
+|---|---|---|---|
+| `inline: true`, `inlineMaxBytes?` | `export` | `move_session_export_inline` | Also answers `inline_files` when the bundle fits the cap |
+| `files` | `import` | `move_session_import_files` | The bundle itself, in place of `bundleDir` |
+| `sessionDir` (absolute) | `import` | `move_session_import_session_dir` | The folder the session lands in, as on `copy`. A relative one, one with a file in its place or above it, and one this host cannot look at (no permission, a symlink loop) and a folder it may not write into is refused `invalid_move_request` and the move stays importable; a folder that is not there yet is created |
+| `open` | `import` | `move_session_import_open` | Opens the landed session on the importing connection in the same answer |
+
+`inline_files` is every file of the bundle folder as `{ path, sha256, base64 }`, the manifest (`manifest.json`) first: `path` is the file's `/`-separated path inside the bundle, `sha256` is the hex digest of its bytes, and `base64` is those bytes as padded base64. `export` answers it only when the files together hold at most 1,048,576 bytes (1 MiB, counted before base64) and number at most 1,024. The host states that cap in its capabilities as `move_session_inline_max_bytes:<n>`, so a client reads the number instead of assuming it. `inlineMaxBytes` asks for less, for example when the transport that will carry the import takes a smaller record; a value above the cap means the cap. A bundle over the limit is answered exactly as without `inline`: no `inline_files`, and the transport carries `bundle_dir`. The folder is written and kept until `finish` either way.
+
+`import` takes that list unchanged as `files`. The engine writes it into a folder of its own under `<agentDir>/session-moves/incoming`, verifies it exactly as it verifies a bundle folder, and removes the folder when the import ends, however it ends. Before it writes, it also removes the `inline-` folders under `incoming` that were not modified for an hour (an import that died left them); a younger one, and a folder of any other name, is kept. Every file must match the manifest and the `sha256` it was sent with; a file that does not, or a listed file that was not sent, is refused `move_bundle_invalid` and the move is recorded `failed` (`bundle_invalid`), as for a folder. The list itself is checked before a folder is made or a byte is written, and a list refused there is refused `move_bundle_invalid` with the move's record left as it was (the manifest names the move, so a list that cannot be trusted settles no move). That covers: a path that cannot be a file inside the bundle (absolute, a drive path, an empty, `.` or `..` segment under either separator, a NUL character, a segment longer than 255 bytes, or a path longer than 1,024 bytes); a path sent twice; a path that is also the folder of another sent path; a missing manifest; a manifest whose bytes do not match its `sha256`; and a file the manifest does not list. `bundleDir` together with `files`, a list whose entries are not `{ path, sha256, base64 }` strings with padded base64, more than 1,024 files, or files over the cap is refused `invalid_move_request` and changes nothing. No path in a bundle may have more than 32 segments (`MAX_BUNDLE_PATH_SEGMENTS`), in either form of the import: a folder import whose manifest lists a deeper path is refused `move_bundle_invalid` when the manifest is read, and an inline import that sends or lists one is refused before a folder is made. The engine's own paths are at most four segments deep; extension state under `state/` is as deep as its extension makes it (senpi#6469). Two paths in a bundle that differ only in letter case, or only in Unicode form, are one name on some file systems. An import refuses such a bundle `move_bundle_invalid` before the move is touched, but only where the file system it would write on really treats them as one name: for a bundle that holds such a pair it asks that file system (it writes one empty file, looks for it under the other spellings and removes it), in an inline bundle's staging folder and in the session folder; it does not go by the platform's name. Where the names are kept apart the bundle is accepted, with one exception that holds on every host: a backslash in a bundle path is always read as a separator, so two paths that differ only by a backslash against a slash (`files/x\y` and `files/x/y`) are one name and a bundle that holds both is refused, here as on a host whose file system would keep them apart, because a bundle travels between computers (senpi#6472). The sender refuses first, so that a session is never sealed for a move a receiver would refuse: `release_session` for a move answers `release_failed` before its seal, and `export` of a session whose staged state or resident blobs would not fit answers `move_failed` and writes no bundle (`errorData.detail` names the path). An `export` refused for a session that an earlier version already sealed leaves it sealed: `finish` with a `declined` answer takes it back. `finish` reads only the format, the move id and the queued input from the bundle the sender kept, so a bundle written before the cap still finishes, either way; a kept bundle in a format this version does not know is refused, and the session and the bundle stay as they are.
+
+`open` is `true`, or an object of `open_session` fields to open the session with (for example `{ "retain_on_disconnect": true }`); `id`, `type`, `sessionPath`, `cwd` and `admissionId` are the import's own and are refused `invalid_move_request` before anything is imported. The open is the one an `open_session` for the landed file from the same connection would be, with the import's `cwd` as its folder: the opened session works in the folder the import named, whatever folder the host was started in. Retention follows that connection's rule too: on a delegated connection the opened session is retained whatever `retain_on_disconnect` says, and on a machine-owned host an open that does not say is retained. On success the answer is the import's `{ session_id, session_path }` with the open's data at the keys `open_session` uses (`sessionId`, `state`, and the rest), delivered where an `open_session` reply is. An open that fails (`host_draining`, `session_held`, an invalid launch field) never undoes the import: the answer is still `success: true`, with `open_error: { error, errorCode?, errorData? }` and no `state`, the move is `accepted`, and the client opens the session with `open_session`. A refused import opens nothing. On a connection that negotiated compact updates an open needs an `admissionId`, which the import's `open` does not take, so there the import's open always fails `compact_admission_required`: the import stands, the failure is reported as `open_error`, and the caller opens the landed session with `open_session`. A host that is draining answers `open_error` with `host_draining` the same way. An import that finds its move already landed answers the landed session only for the folder it landed for: the same bundle imported into the same `sessionDir` with another `cwd` is refused `move_fenced` and opens nothing, since that folder's repository was never checked.
+
+```json
+{"id":"1","type":"move_session","op":"export","sessionPath":"/abs/session.jsonl","moveId":"move-1","target":"device-b","inline":true}
+{"id":"1","type":"response","command":"move_session","success":true,"data":{"move_id":"move-1","session_id":"...","bundle_dir":"/abs/session-moves/outgoing/move-1","files":1,"inline_files":[{"path":"manifest.json","sha256":"...","base64":"..."},{"path":"files/session.jsonl","sha256":"...","base64":"..."}]}}
+{"id":"2","type":"move_session","op":"import","cwd":"/abs/repo","from":"device-a","files":[{"path":"manifest.json","sha256":"...","base64":"..."},{"path":"files/session.jsonl","sha256":"...","base64":"..."}],"open":{"retain_on_disconnect":true}}
+{"id":"2","type":"response","command":"move_session","success":true,"data":{"session_id":"...","session_path":"/abs/sessions/.../session.jsonl","sessionId":"...","state":{"sessionId":"...","sessionFile":"/abs/sessions/.../session.jsonl"}}}
+```
 
 ### Continuing a session on another computer (`session_relocation`)
 
@@ -3596,6 +3928,37 @@ It comes after the run's `agent_end`, and only when no new run has started meanw
 `relocation_due` is delivered **at most once**. The schedule lives only in the running host: no due event follows when the user aborts any run while it is scheduled (the run that asked for it, or a later run the notice was waiting behind: the user's control wins), when the session closes or its runtime is replaced, when the connection that accepted it leaves the session before the notice (`close_session`, `detach_connection`, a dropped socket) or no longer offers relocation, and when the host process ends. A host must therefore time out an accepted request that never receives `relocation_due` and roll back what it prepared (a readied receiver expires after 10 minutes on its own).
 
 If the schedule is cleared because the offering connection left, the user aborted, or the offering capability was withdrawn or taken over by another connection, the agent receives exactly one custom session message of type `session_relocation`, with `details: { status: "dropped", reason, moveId, target }`. The reason is respectively `disconnected`, `aborted`, or `withdrawn`; `moveId` and `target` identify the accepted request. A withdrawal during a long run is reported when the run settles. After a user abort, the notice is appended at `agent_settled`, before another prompt is needed, and is saved even if the session then closes. The message says the session stays on this computer and the agent should keep working here. It is context only (`display: false`, `triggerTurn: false`): it never starts another turn or resumes a user-stopped run. This is a session message through the existing message events, not another host request or a new RPC event type. Session disposal and process exit still have no later agent notice.
+
+### Device operations for the local relay host (`machine_op`)
+
+A multi-session host advertising `machine_op_v1` runs the `run` step of one device operation for the local relay host (senpi#6752). The relay host keeps admission, grants, consent, the run-once ledger, audit, blob relay and deadlines; the host runs the op and answers the relay host's own `OpOutcome`. The five records below are not in `RPC_METHOD_CLASS` (the method-class digest is unchanged). They are answered only on a connection that proved the endpoint's launch key and declared no delegation; any other connection gets `errorCode: "machine_op_not_authorized"` and nothing runs. A record that does not parse gets `machine_op_malformed`.
+
+```json
+{ "id": "m1", "type": "machine_op", "op": "fs.write", "args": { "path": "notes.txt", "bytes": "aGk=" }, "op_id": "op-7", "deadline_ms": 1763251200000, "scope": { "root": "/home/me", "confined": false }, "sender": "device-a", "env_overlay": { "RELAY_STATE_DIR": "/home/me/.relay" } }
+{ "id": "m1", "type": "response", "command": "machine_op", "success": true, "data": { "state": "applied", "response": { "path": "/home/me/notes.txt", "writtenBytes": 2 } } }
+```
+
+- `op`: one of `fs.read`, `fs.read_range`, `fs.write`, `fs.write_range`, `fs.edit`, `fs.glob`, `fs.grep`, `fs.stat`, `fs.list`, `shell`, `exec_command`, `write_stdin`, `wait_for_command`, `kill_terminal`, `process.info`, `mesh.message`. Any other op answers `{ state: "refused", error: { code: "malformed", message: "unknown op <op>" } }`. `args` and every response are the relay host's own shapes; bytes travel base64 (`args.bytes`, the read response's `bytes`).
+- Writes carry their bytes inline: one RPC line carries up to 16 MiB of JSON, so an 8 MiB write fits. No other carrier exists; an `args` key the op does not take (`bytes_path` included) is refused `malformed`.
+- `op_id`: opaque (the relay host sends `JSON.stringify([sender, batch_id, op_id])`). The answer is cached by the whole string (4,096 answers, 24 hours after settling) and bound to `sender`. A repeat from the same sender answers the first outcome and never runs again; a repeat that arrives while the op still runs joins it; a repeat from another sender is refused `errorCode: "machine_op_conflict"` and runs nothing.
+- `deadline_ms` (optional): absolute epoch ms on this machine's clock; absent means the op has no deadline. The op is aborted then (`state: "cancelled"`, code `aborted`); a shell's own `timeoutMs` still answers `timed_out`.
+- `scope`: the relay host's scope verdict. `confined: true` refuses any path or symlink resolving outside `root` (`policy_denied`). `confined: false` anchors relative fs paths and glob's `cwd` at `root`, and an OS refusal answers `os_permission_denied`. A `shell` or `exec_command` with no `cwd` runs in `root`.
+- `sender`: the device the op runs for; it owns the terminals its `exec_command` creates. `write_stdin`, `wait_for_command`, `kill_terminal` and `process.info { handleId }` act only on their own sender's handle; another sender's answers `{ state: "failed", error: { code: "not_owner" } }`.
+- `cross_owner` (optional, boolean): set by the relay host only after its own admin verdict on another sender's op or handle; it lifts the owner checks above and on `machine_op_result` / `machine_op_cancel`.
+- `env_overlay` (optional, string values): laid last over a `shell` or `exec_command` child's environment, `args.env` included.
+
+Terminals run on one host-owned terminal manager and outlive the connection that created them; handle ids are the manager's. An `exec_command` whose first wait is aborted (deadline, cancel, shutdown) kills its terminal before answering `cancelled`, so nothing is left running without a handle. A `kill_terminal` waits at most 5 s for the process to end and answers the lifecycle it reached. While an op runs or a machine terminal lives the host is not idle: no idle handover and no empty-host exit. From the idle check that starts a handover's switch, or the empty-host exit, a new `machine_op` is refused `machine_op_unavailable` (retry it) and runs nothing; a blocked handover admits machine ops again. A wait without `last_seq` answers the newest retained page; `lastSeq` and `totalBytes` are byte offsets; a `last_seq` older than the retained output (1 MiB per handle) fails `replay_gap`, and an unknown handle `unknown_handle`. The engine's mesh inbox is `<agentDir>/machine/inbox/<topic>.jsonl`.
+
+```json
+{ "id": "r1", "type": "machine_op_result", "op_id": "op-7", "sender": "device-a" }
+{ "id": "r1", "type": "response", "command": "machine_op_result", "success": true, "data": { "known": true, "outcome": { "state": "applied", "response": { "path": "/home/me/notes.txt", "writtenBytes": 2 } } } }
+{ "id": "o1", "type": "machine_op_owner", "handle_id": "bash_3f2a_1" }
+{ "id": "o1", "type": "response", "command": "machine_op_owner", "success": true, "data": { "sender": "device-a" } }
+{ "id": "h1", "type": "machine_op_health" }
+{ "id": "h1", "type": "response", "command": "machine_op_health", "success": true, "data": { "ok": true, "terminals": 1, "cache": 12, "version": "2026.11.15-2" } }
+```
+
+`machine_op_cancel { op_id, sender }` aborts that op if it is running (it then answers `state: "cancelled"`, code `aborted`) and answers `{ cancelled: true }`; an op that is not running answers `{ cancelled: false }`. `machine_op_result` and `machine_op_cancel` for another sender's op are refused `machine_op_conflict` unless `cross_owner: true`. A `machine_op` whose engine state cannot be prepared (its `<agentDir>/machine` directory) is refused `machine_op_unavailable` on that line, nothing is cached, and the next op tries again. `machine_op_result` answers `{ known: false }` for an op_id it does not hold or whose op is still running (send the `machine_op` again to join it). `machine_op_owner` answers `{}` for an unknown handle. `machine_op_health` is read-only: running terminals, cached answers and the engine version.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 
@@ -3815,18 +4178,26 @@ names a valid preset.
 | `release_attachment` | `sessionId` | `{ deferred: boolean }` | Releases exactly one caller hold with disconnect semantics; `deferred` is true only when settlement owns the final release, and false while draining. Capability `release_attachment`. |
 | `reclaim_session` | `sessionPath`, `durableSessionId`, `expectedHostInstance` | `{ reclaimed: true, sessionId }` | Atomic attach-and-claim of every caller hold; refuses other connections before aborting. Capability `reclaim_session`. |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, method_classes: { version, digest }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `session_held` (the active foreign-holder admission guard, in both runtimes), `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `moved_path_guard` (senpi resolves and guards paths the OmO desktop moved with its data home), `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?`, `env?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?`, `env?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); an omitted `cwd` means the folder the file's header names when `sessionPath` is an existing session file (capability `open_session_header_cwd`; see "The folder an open_session works in"), and the host's cwd otherwise; `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_hands` | `sessionId?` | `{ hands: [{ device, label, platform, reachable }], selected? }` | Headless engine with a hand directory only (capability `hand_selection`; otherwise `hand_selection_unsupported`). See "Hand selection (headless engine)". |
 | `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
-| `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context? }] }` | Includes `opening`/`closing` entries. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
+| `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context?, archived, settled, settledBy?, activity, model? }] }` | Includes `opening`/`closing` entries. `archived` is the session file's archived flag (see `set_session_archived`); a thread list hides archived rows by default, and the host lists them like any other row. `settled` is the session file's Done flag (see `set_session_settled`) and is always present; `settledBy` is present only on a settled row whose flag was written with a `by`. `activity` is `running` while a turn is in flight (the same streaming state `session_status` reports as `running`) and `idle` otherwise, including an opening row. `model` is the session's current `{ provider, id }`, the same value `session_status.model` carries, and is absent while it is unknown. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
-| `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
+| `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments, dropped }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `move_session` | `op` and its fields (see "Moving a session to another device (`move_session`)") | per `op` | Drives one step of a session move between hosts. Capability `move_session`. |
 | `host_response` | `id`, `data?`, `error?` | `{ type: "response", command: "host_response", success }` | Answers one `host_request` of the session (see "Continuing a session on another computer"). Capability `session_relocation`. |
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
+
+### The folder an open_session works in
+
+`open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. A folder that exists but is not a directory (a file, a socket), named or taken from a header, refuses the open with `session_cwd_not_directory` (`errorData { cwd }`) before any session is opened or created. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
+
+An open that names no folder never falls back to the host's own for a session file it could not read: a file that exists but cannot be read, and a moved-path probe whose step timed out, refuse the open (`open_failed`) instead. A `cwd` of `null` means no folder was named, as the host's launch profile already reads it.
+
+Hosts that do this advertise `open_session_header_cwd`. A host without it opens every `sessionPath` that names no `cwd` in its own folder, so a client that reopens a session by path on such a host must pass the folder.
 
 ### Live-only attachment and scoped release
 
@@ -3908,8 +4279,8 @@ On a socket host, session-scoped commands require the current connection to be a
 in the following effect-based read allow-list:
 
 `get_state`, `get_messages`, `get_entries`, `get_tree`, `get_fork_messages`,
-`get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`,
-`get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
+`get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`, `get_project_trust`,
+`get_project_settings`, `read_project_file`, `get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
 `get_pending_inputs`, `get_steering_messages`, `get_follow_up_messages`, `get_auth_providers`,
 `get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
 and `check_reload_veto`.
@@ -4011,7 +4382,8 @@ codes or code prefixes in `error`:
   - **Mid-turn policy:** a turn admitted before the foreign holder appeared finishes and persists its results; subsequent writing RPCs are refused. Read/control requests, including abort, queue clearing, `extension_ui_response` and `extension_ui_progress`, remain available.
   - **Conservative admission:** `new_session`, `fork`, `clone`, and settings or account commands carrying this session's routing handle are also refused while its current file is held. Close the handle and open another session to leave a held file.
   - Holder records are admission evidence, not an exclusive filesystem lock. SessionManager's append API is synchronous and fresh process-identity checks are asynchronous; changing append to asynchronous admission would change the SDK contract and could discard results of already-executed tools.
-- `session_path_in_use` (path held by an opening or quarantined owner; a fully-open current owner is attached instead, an owner whose teardown is already in flight is waited out on the in-process runtime, and a path a live owner has superseded is released rather than held). A path held by ANOTHER GENERATION of the daemon carries `errorData { owner: { instanceId, pid, processStartTime, sessionPath, current }, retry_after_ms: 2000 }`: that generation is still writing the file and is parking it, so the open is a retry, not a failure. An open that arrives while ANOTHER open of the same path is still taking that cross-generation claim waits for it - bounded by the close grace window - and then attaches to the session that open is building; a claim that does not settle in that window answers `errorData { reason: "claim_in_progress", retry_after_ms: 2000 }`. When the claim it waited on is refused, the next waiting open takes the claim itself and later ones wait on that, so no racing open answers a bare refusal; a path still reserved by a session past its teardown grace answers `errorData { reason: "path_still_held", retry_after_ms: 2000 }` (senpi#3485). Only a claim whose owner serves the socket (`current: true`) or still has a client attached refuses an open at all - a superseded, attachment-less claim is reclaimed instead
+- `session_path_in_use` (path held by an opening or quarantined owner; a fully-open current owner is attached instead, an owner whose teardown is already in flight is waited out on the in-process runtime, and a detached path an older-build owner has superseded is released rather than held). A path held by ANOTHER GENERATION of the daemon carries `errorData { owner: { instanceId, pid, processStartTime, sessionPath, current, strict_transfer? }, retry_after_ms: 2000 }`: that generation is still writing the file and is parking it, so the open is a retry, not a failure. An open that arrives while ANOTHER open of the same path is still taking that cross-generation claim waits for it - bounded by the close grace window - and then attaches to the session that open is building; a claim that does not settle in that window answers `errorData { reason: "claim_in_progress", retry_after_ms: 2000 }`. When the claim it waited on is refused, the next waiting open takes the claim itself and later ones wait on that, so no racing open answers a bare refusal; a path still reserved by a session past its teardown grace answers `errorData { reason: "path_still_held", retry_after_ms: 2000 }` (senpi#3485). Only a claim whose owner serves the socket (`current: true`) or still has a client attached refuses an open at all - a superseded, attachment-less claim is reclaimed instead
+  - On the worker runtime, an `open_session` naming a session whose worker is quarantined (it stopped answering, so the host is ending it) answers `session_path_in_use` with `errorData { reason: "session_quarantined", action: "retry", retry_after_ms: 2000 }`. The refusal releases nothing: the quarantined entry keeps its claim and reservations, because a worker stuck in a system call can still be writing the file. When the worker's thread exits, the host first removes its session claim, waiting at most the close grace window (it carries on when the window ends even if the removal has not settled), and only then drops the entry and its reservations. Until that drop, every open naming the session gets this same refusal, including one sent just after the thread exited. Retry after `retry_after_ms`: the first open after the drop is no longer refused for the quarantine and opens the session from its file in a new worker (senpi#6452).
 - `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
@@ -4030,6 +4402,7 @@ codes or code prefixes in `error`:
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
 - `invalid_path` (relative `sessionPath`/`cwd`)
+- `session_cwd_not_directory` (`open_session` whose `cwd`, named or taken from a session file's header, exists but is not a directory; `errorData { cwd }`; nothing is opened or created)
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
@@ -4110,7 +4483,7 @@ Successful responses echo both IDs in `data` and, when `clientMessageId` is pres
 include `data.admission`:
 
 ```json
-{"durableSessionId":"session-id","clientMessageId":"message-1","clientTurnId":"turn-1","state":"running","disposition":"started"}
+{"durableSessionId":"session-id","clientMessageId":"message-1","clientTurnId":"turn-1","state":"running","disposition":"started","turnId":"3"}
 ```
 
 `state` is `queued`, `running`, or `completed`. Completed means the admission settled,
@@ -4118,6 +4491,12 @@ including handled or cleared input; it is not a claim that a provider answered
 successfully. The existing `disposition` remains `started`, `queued`, or `handled`.
 Preflight or storage rejection creates no accepted admission, so the same delivery
 can be retried after the failure is repaired.
+
+`turnId` is optional and identifies the engine turn at admission, using the same
+identifier as `get_state.currentTurnId`. It is independent of the caller's
+`clientTurnId`. The recorded value is retained when the admission completes and
+when a duplicate is answered after reopening; it is not replaced by a later
+running turn's ID. Older admissions and queued or handled inputs omit it.
 
 Accepted queues and their prepared content survive reopening the transcript. They
 are restored in the original enqueue order without rerunning input transforms, and a
@@ -4253,6 +4632,12 @@ Queued prompts cannot include `thinkingLevel`; wait for the current turn to comp
 {"type": "prompt", "message": "Use the other file", "streamingBehavior": "steer", "expectedTurnId": "3"}
 ```
 
+**Prompting from a specific leaf**: `prompt` may name the session leaf it was decided at with `expectedLeafId` (the id `get_tree` or the edit commands report as the current leaf). If the session's current leaf differs when the command is admitted, it is refused with `errorCode: "stale_leaf"` (the same code and message the edit commands use), and nothing is appended or sent to the model. As with the edit commands, session-lifecycle bookkeeping entries written after the leaf (for example the `done` marker a finished turn appends) do not count as a move. The check runs at admission, so `expectedLeafId` cannot be combined with `streamingBehavior` (`steer` or `followUp`): such a prompt would run later, at a leaf the check never saw, and is refused with `errorCode: "invalid_argument"`. For the same reason it is refused with `errorCode: "invalid_argument"` from a connection without the `interactive_user` role while the user's Stop or a parent's run hold is live: such a prompt would otherwise be kept as a notice that a later turn consumes at another leaf, and nothing is stored. A session whose leaf is the root (no entries yet) has no leaf id to name, so it cannot be guarded this way; the edit commands have the same limit. Omitting the field keeps the old behaviour.
+
+```json
+{"type": "prompt", "message": "Run this again", "expectedLeafId": "a1b2c3d4"}
+```
+
 **Model not ready**: A prompt that would start a turn is refused before the model is called when the session
 cannot run one. The `error` text is the same guidance the TUI shows; the `errorCode` says why:
 
@@ -4294,12 +4679,19 @@ same message with `"unknownCommandAsText": true` to send it to the model unchang
 
 Response:
 ```json
-{"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": { "disposition": "started" }}
+{"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": { "disposition": "started", "turnId": "3" }}
 ```
 
 The prompt success response carries `data.disposition` (`"started"` | `"queued"` | `"handled"`), captured from the host session's own disposition callback so proxied clients can resolve optimistic-echo contracts exactly like the local path. Older hosts omit `data`; clients must then degrade to canonical-only rendering (treat the echo as rejected). The response is emitted before the user `message_start` event on the same connection, and disposition callbacks registered through the client run synchronously inside response-frame dispatch — never through the resolved promise's microtask.
 
 `success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
+
+For a started input, optional `data.turnId` is captured after the engine admits the
+turn and before the user `message_start`. Identified inputs also retain it in
+`data.admission.turnId`. This applies to `steer` and `follow_up` with
+`whenIdle: "start"` too. A duplicate returns the original admission's ID, even if
+another turn is now running. If an older host or admission omits the field, the
+client cannot infer it from `clientTurnId` or a later `get_state` response.
 
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
 The `message` field for `prompt`, `steer`, and `follow_up` is limited to 1,000,000 characters;
@@ -4460,6 +4852,20 @@ answers after the turn settled.
 
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
+```
+
+With `"background": "stop"` the command also stops the background jobs the interrupted turn started: each bash
+session that turn ran with `run_in_background`, or that auto-detached from the foreground, while that turn was running.
+Sessions an earlier turn started keep running. The stop happens after the turn settled, and the answer then carries
+`background: { stopped, failed }`: `stopped` names each job as `{ kind: "bash", id, description? }`, and `failed`
+names a job it could not stop with its `reason` (a session on the tool child under `--tool-runtime child`, or one
+still running after TERM then KILL). An idle session, or a `turnId` naming another turn, answers both lists empty.
+A stopped session's exit notice does not start a turn: the model reads `Background terminal session <id> was stopped
+when turn <turnId> was interrupted` at its next turn. Without the field nothing but the turn stops, as before.
+
+```json
+{"type": "interrupt", "turnId": "3", "background": "stop"}
+{"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3", "background": {"stopped": [{"kind": "bash", "id": "bash_1", "description": "sleep 60"}], "failed": []}}}
 ```
 
 With `"intent": "stop"` (on `abort` or `interrupt`) the command is a user Stop: the session is paused before the
@@ -4667,10 +5073,25 @@ Response:
     "autoCompactionEnabled": true,
     "messageCount": 5,
     "pendingMessageCount": 0,
-    "pendingDialogs": []
+    "pendingDialogs": [],
+    "permissionPreset": "ask",
+    "permissionPresetSource": "client",
+    "permissionPresetStatus": "applied",
+    "effectivePermissionPreset": "ask"
   }
 }
 ```
+
+`permissionPreset`, `permissionPresetSource`, `permissionPresetStatus` and `effectivePermissionPreset` report the approval mode the session enforces. `permissionPresetSource` is `client` when a client named a valid preset for this session (`open_session.permissionPreset`, an attach naming one, or `set_permission_preset`) and `host_default` when the host's own default applies (its `--permission-preset` flag, then project and global settings, then `full-access`). `permissionPresetStatus` is `invalid` when the named preset or the host's setting cannot be parsed: the open is still accepted, but every gated tool call is refused, and an invalid preset never counts as one the client set. `effectivePermissionPreset` is the preset the next permission decision uses, `null` while the status is `invalid`. A client confirms a mode it asked for only when `permissionPreset` equals it and `permissionPresetStatus` is `applied`. The `open_session` reply carries the first three fields in `data` as well as in `data.state`.
+
+A preset a client named is recorded in the session file as a `permission_mode` entry. The entry is a record only: a later open that names no preset still uses the host's own default, and the launch flag always wins.
+
+Each gated decision picks its preset in this order:
+
+1. A preset a client named for the session (`open_session.permissionPreset`, an attach naming one, or `set_permission_preset`) wins.
+2. Work a remote device started asks: a turn started by a `prompt`, `follow_up` or `steer` (`whenIdle: "start"`) from a delegated connection, and engine-started work (extension messages, goal and loop turns, `continue_from_leaf`, `wake`, restored input) on a session a remote device has driven. A session counts as remote-driven once a delegated connection sends it any record whose method class is `drive` or `device_admin`; the engine's method-class table decides, so every run starter is covered. That includes records that start no turn, such as `abort`, `set_session_name` or `clear_queue`, and the mark lasts for the session's lifetime on purpose: telling which drive records can shape later engine-started work would need a second hand-kept list beside the table, and a wrong guess there would run remote-influenced work without asking, so the engine errs toward asking. When the operator named no `--permission-preset`, it uses the preset a client recorded in the session file instead. An embedder's host-level preset is the host default, not a launch flag. This rule is decided before `spawnedBy`: a parent named in `open_session`, real or not, never takes a remote device's work off it.
+3. A child session (`spawnedBy`) follows its live parent's current mode, including later changes to it. A child whose parent is not live in this process asks, unless the operator named a preset for it with `--permission-preset`.
+4. Everything else uses the host's own default. A local connection's turn keeps the host default even on a session a remote device has driven, and a `steer` never changes the origin of the turn it joins.
 
 `currentTurnId` is the id of the running turn, present only while one runs; a steer or follow-up names it as `expectedTurnId` (on `prompt`, `steer` or `follow_up`).
 
@@ -5124,6 +5545,21 @@ Response:
 ```json
 {"type": "response", "command": "set_auto_compaction", "success": true}
 ```
+
+#### set_permission_preset
+
+Move this session to another approval mode. It works on a classic `--mode rpc` connection, which refuses `open_session`, and on a multi-session host with the `sessionId` envelope, so a client on another device can change a live session's mode without knowing its session file. It is classed `device_admin`: it changes what the agent may do without asking. Hosts that take it advertise `set_permission_preset_v1`.
+
+```json
+{"type": "set_permission_preset", "permissionPreset": "ask"}
+```
+
+Response:
+```json
+{"type": "response", "command": "set_permission_preset", "success": true, "data": {"permissionPreset": "ask", "permissionPresetSource": "client", "permissionPresetStatus": "applied"}}
+```
+
+The new preset applies from the next permission decision, and the session file records it like a preset named at open. An unknown preset is refused with `errorCode` `invalid_launch_profile` and changes nothing, so the session keeps the mode it had. Extensions hear a change on the `permission_preset_changed` event and read the enforced preset with `pi.getPermissionPreset()`.
 
 ### Retry
 
@@ -5783,6 +6219,50 @@ Response:
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `senpi --mode rpc` process.
 
+#### set_session_archived
+
+Archive or unarchive the session (method class `drive`). The flag is written into the session file as a `custom` entry (`customType: "session_archived"`, `data: { archived, sessionId }`), so every surface that reads the file (the desktop app, the CLI, the terminal, a relay listing on another device) sees the same value; the newest such entry wins and a session without one is not archived. Archiving changes nothing else: the session stays open, listed and drivable.
+
+An entry counts only for the session id it names. A fork or clone (`fork`, `clone`, `move_session` `op: "copy"`, `senpi --fork`) is a new thread under a new id: it copies the source's entries but starts unarchived, while the source keeps its flag. Reopening or moving a session keeps its id, so it keeps its flag. Reading the flag never loads the session's history: the host keeps it current as entries are appended, so listing an idle compacted session leaves its trimmed history on disk.
+
+```json
+{"type": "set_session_archived", "sessionId": "rpc-1", "archived": true}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "set_session_archived",
+  "success": true
+}
+```
+
+Every attached connection then receives `session_archived_changed { archived }`, and every matching `subscribe_sessions` subscriber, attached or not, receives a `session_status` with `archived` set and `lastChange.cause: "archive"`. `list_sessions` reports the flag on each row as `archived`. Like every custom entry, the flag reaches the file with the session's next persisted write: a session that has never had a message stays unsaved, so its flag lasts only as long as the session is open.
+
+#### set_session_settled
+
+Mark the session Done, or reopen it (method class `drive`). The flag is written into the session file as a `custom` entry (`customType: "session_settled"`, `data: { settled, by?, at, sessionId }`, `at` an ISO timestamp), so every surface that reads the file sees the same value; the newest such entry wins and a session without one is not settled. Done is a flag, not a state: the session stays open, listed and drivable, and Done does not hide it.
+
+`by` says how the session reached Done. It is one of `{ kind: "user" }`, `{ kind: "agent", threadId?, threadTitle? }`, `{ kind: "pr-merged", pullRequestNumber? }`, `{ kind: "pr-closed", pullRequestNumber? }` or `{ kind: "inactivity", days }` (the desktop app's `ThreadSettledBy`): `pullRequestNumber` is an integer of at least 1, `days` an integer of at least 0, and `threadId` and `threadTitle` non-empty strings, stored trimmed; fields a kind does not carry are dropped. An unknown kind or a malformed field is refused with `invalid_argument`, and nothing is written. `by` is optional, and it is ignored when `settled` is false.
+
+As with `set_session_archived`, an entry counts only for the session id it names: a fork or clone starts not settled while the source keeps its flag, a reopen or move keeps it, and reading it never loads the session's history.
+
+```json
+{"type": "set_session_settled", "sessionId": "rpc-1", "settled": true, "by": {"kind": "pr-merged", "pullRequestNumber": 42}}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "set_session_settled",
+  "success": true
+}
+```
+
+Every attached connection then receives `session_settled_changed { settled, settledBy? }`, and every matching `subscribe_sessions` subscriber, attached or not, receives a `session_status` with `settled` (and `settledBy`) set and `lastChange.cause: "settle"`. `list_sessions` reports the flag on each row as `settled` and `settledBy`. Like every custom entry, the flag reaches the file with the session's next persisted write.
+
 #### record_user_activity
 
 Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`. It requires the connection to be attached to the session, as every session command does (see Attachment admission).
@@ -5818,7 +6298,33 @@ Response:
 }
 ```
 
-`kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
+`kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `held`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
+
+#### admit_external_message
+
+Admits a message another agent sent this session (a relayed peer delivery) exactly as `pi.session.admitExternalMessage` does in process (multi-session hosts: session-scoped). The engine writes its own `session_control_delivery` custom entry, with `details.sender` and `details.display_text` for human surfaces: never a `role: "user"` message, never the extension `input` event, and a `/`-led `text` is not dispatched as a command or expanded as a template. Method class `drive`.
+
+```json
+{"type": "admit_external_message", "sessionId": "rpc-1", "deliveryId": "d7", "text": "[from peer] build is green", "sender": {"kind": "agent", "session_id": "s-42", "name": "reviewer"}, "displayText": "build is green", "deliverAs": "followUp"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "admit_external_message",
+  "success": true,
+  "data": { "kind": "started", "turnId": "0" }
+}
+```
+
+- `deliveryId` (1-256 chars), `text` (non-empty) and `deliverAs` (`steer` | `followUp`) are required. `sender` is `{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }` with no other field.
+- `whenIdle`: `start` (default) starts a turn on an idle session; `queue` holds it for the next turn.
+- `expectedTurnId` is `get_state.currentTurnId` (a string). A steer whose `expectedTurnId` is not the current turn, or a mid-turn steer that names none, answers `kind: "turn_conflict"` and admits nothing. The reply's `turnId` is the session's turn at admission, in the same form.
+- `chainCount` is a thread call's hop count, checked against `threads.chainCountLimit` before anything is admitted (refused with `chain_count_limit` / `invalid_chain_count`, as on `prompt`/`steer`/`follow_up`); the admitted hop is written as `details.chain_count`.
+- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). `held` (senpi#6490): the session is idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run hold); the delivery is kept as a held notice and starts once that hold is released, and `holds` lists the hold kinds, for example `{ "kind": "held", "turnId": "0", "holds": ["session_hold"] }`. An `unattended` hold alone is released by the delivery, which answers `started`. A caller that predates `held` must treat it as neither success nor a refusal to retry: the delivery is admitted and waits on that device for its person. The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
+- On a connection that speaks for a remote device (a delegated connection, or one whose `set_client_info` declared `remoteOrigin`), the engine stamps that device as `details.remote_origin` and writes `text` unchanged, so the model reads exactly what a delivery on a local connection carries and no device (senpi#6250). It keeps `text` as `details.display_text` when no `displayText` is given, and refuses a `command_line` sender (`sender_not_allowed`). A delegated connection that names no remote device is refused (`delegated_origin_unknown`), never admitted as a local delivery. A record that names `remote_origin` is refused on every connection. The turn that consumes the delivery takes the connection's origin, so a remote device's follow-up runs under the delegated approval-mode rule even inside a local turn.
+- Once `release_session` has closed the session's admission, the record answers `success: false` with the release's message: the delivery stays with its sender.
 
 #### release_session
 
@@ -5846,6 +6352,36 @@ Response:
 `dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner, and hand `user_messages` to the adopting client, which decides what to do with them (for example, resubmit them in order as queued prompts).
 
 Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
+
+#### find_session
+
+Which session file of this host carries a durable session id, for a client whose session is closed and unlisted.
+
+```json
+{"type":"find_session","durableSessionId":"0197…"}
+```
+
+Every other command that takes a durable id works on a session the host still has open: `list_sessions` lists what is open, `claim_session` consumes a ready park, `resume_session` is the pause and resume of a user Stop, and `open_session` needs the path. A client that binds a thread to a session on another machine keeps the routing key and the durable id, not the path, so when that session closes (a move given back after its release leaves the file writable and the session not open) the key names nothing and there is no path to reopen by. This answers that path.
+
+`data` is exactly one of:
+
+```json
+{"found":{"sessionPath":"/abs/sessions/--folder--/<file>.jsonl","cwd":"/abs/folder/the/header/names","open":false}}
+{"ambiguous":true}
+{"unknown":true}
+```
+
+`open` says an engine of this host holds that session now, so a client knows whether its next step is an `open_session` or an attach. `ambiguous` is the answer when two session files carry one durable id (a caller-minted id reused while the first was parked); it names neither, and the client picks by another means. `unknown` is the answer when no session file of this host carries it.
+
+The command is a read: it opens, claims, unloads, seals and rewrites nothing, and touches no move record. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/` and files directly in `<agentDir>/sessions/`), never a path from the request, which carries the durable id alone. Of each session file only the first line, its header, is read.
+
+The files senpi names for the id (`<timestamp>_<durable id>.jsonl`) are read first, and the header decides: a file whose name carries the id but whose header names another id is not a candidate. Only when no such file carries the id is every other header read, so a session file under a caller-chosen name (`--session <path>`) is still found. When a senpi-named file carries the id, a file under another name carrying the same id is not read: two senpi-named files still answer `ambiguous`, a renamed copy beside a named file does not.
+
+It needs the standing a path-naming `open_session` needs, so on a delegated connection it needs `device_admin`. A caller without that standing is refused before the lookup runs, and the refusal is the same for an id this host knows and one it does not, so it learns nothing either way.
+
+It is bounded: a host holding more than 20,000 session files answers `find_session_too_many` instead of a partial answer, and no file is read before that bound is decided. A `durableSessionId` that is missing, empty or not a string is `invalid_argument`. Every host this package starts keeps an agent directory, whichever runtime its sessions use, so all of them answer `find_session`, a host that runs its sessions in workers included. `find_session_unsupported` remains for a host built with no agent directory at all; no host this package starts answers it.
+
+After a `found`, open the session with `open_session { sessionPath, cwd }` and compare the answer's `state.sessionId` with the durable id before binding to it: the id is the proof, the path only a hint.
 
 #### detach_connection
 
@@ -5968,6 +6504,318 @@ Extension rows come directly from the session's loaded resource inventory, not f
 
 In multi-session mode this is a session-scoped command and requires the routing `sessionId`.
 
+### Workspace trust and project settings
+
+A project folder's settings file, skills, prompt templates, extensions, themes and MCP servers load only when the
+project is trusted. The terminal asks when a session opens; an RPC session is never asked, so it stays untrusted
+until a client saves a decision with `set_project_trust`. These four commands act on the routed session's working
+directory (in multi-session mode each requires the routing `sessionId`) and use the same storage and rules as
+the terminal: the device's `trust.json` and the project's own settings file.
+
+#### get_project_trust
+
+```json
+{"type": "get_project_trust"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_trust",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "projectTrusted": false,
+    "requiresTrust": true,
+    "saved": null,
+    "locked": false,
+    "choices": [
+      { "choice": "trust", "label": "Trust", "trusted": true, "path": "/home/user/project" },
+      { "choice": "trust_parent", "label": "Trust parent folder (/home/user)", "trusted": true, "path": "/home/user" },
+      { "choice": "do_not_trust", "label": "Do not trust", "trusted": false, "path": "/home/user/project" }
+    ]
+  }
+}
+```
+
+- `projectTrusted`: whether this session runs with the project trusted now. (`get_state.projectTrusted` reports
+  only a decision saved for the folder itself.)
+- `requiresTrust`: whether the folder has anything trust gates; a folder without such files counts as trusted.
+- `saved`: the nearest decision saved at or above the folder, or `null`.
+- `locked`: the engine was launched with `--approve` or `--no-approve`; that flag outranks every saved decision,
+  so `set_project_trust` is refused.
+- `choices`: exactly the choices the terminal's `/trust` command offers. `set_project_trust` also takes
+  `no_inherit`, which is never listed here.
+
+#### set_project_trust
+
+Saves one of the `/trust` choices and applies it to the session at once: project resources load (or unload)
+as they would on `reload`, and the next session opened in the folder gets the same decision. It is never
+implied by `open_session` or by a permission preset; only this explicit request saves a decision.
+
+```json
+{"type": "set_project_trust", "choice": "trust", "expectedCwd": "/home/me/project"}
+```
+
+`expectedCwd` is optional, as on every project write: see [The folder a project write is for](#the-folder-a-project-write-is-for). `choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
+does), `do_not_trust`, or `no_inherit`. The response carries the same `data` as `get_project_trust`, read after the change.
+
+`no_inherit` is for clients, not people, and `get_project_trust` never lists it: it saves an explicit `null` for the
+folder in `trust.json`, an entry that holds no decision. The folder then inherits no decision from a folder above it or,
+for a linked git worktree, from its main checkout, so it is decided as if nothing were saved: a Full access session
+trusts it, and a session that may ask asks; an answer the host process gave the folder before the entry was
+saved does not apply either. `saved` reads `null` afterwards. It never adds trust to the session it is
+sent in: a trust that came only from Full access stays, any other trust goes, unless a `project_trust` handler decides
+the folder is trusted (that handler is not overruled, so it never refuses `no_inherit`). An engine older than this
+answers `invalid_argument`, and reads such an entry as no entry at all, so the folder inherits there as before.
+A later `trust`, `trust_parent` or `do_not_trust` replaces the entry.
+Errors: `invalid_argument` for an unknown choice or an `expectedCwd` that is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder than the session's (nothing is saved or applied), `project_trust_locked` when the launch named the trust, and
+`project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
+project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
+the request is refused and nothing is saved or applied. A folder with nothing trust gates stays trusted whatever is
+chosen.
+
+#### get_project_settings
+
+Reads the project settings file as stored. Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "get_project_settings"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_settings",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": "/home/user/project/.senpi/settings.json",
+    "exists": true,
+    "projectTrusted": true,
+    "settings": { "defaultThinkingLevel": "high" },
+    "error": null
+  }
+}
+```
+
+`settings` is `null` when the file does not exist or does not parse; `error` then names the parse failure.
+
+#### set_project_setting
+
+Writes one top-level key of the project settings file through the same locked, merge-on-write path the
+terminal's project setters use; `"value": null` removes the key. The value is stored as given, like an edit to
+the file: values the session reads when it starts (default model and thinking level, steering and follow-up
+modes) apply after `reload` or in the next session.
+
+```json
+{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high", "expectedCwd": "/home/me/project"}
+```
+
+The response carries the same `data` as `get_project_settings`, read after the write. Errors:
+`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`), `value` is missing or `expectedCwd` is
+not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
+`project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
+existing file does not parse (nothing is written), and `project_settings_write_failed` when writing the file fails
+(permissions, a held lock).
+
+`get_project_trust` is an `observe` read; `set_project_trust`, `get_project_settings` and `set_project_setting`
+are `device_admin` (a saved trust decision decides whether project code runs on the device, and the settings
+commands read and write a file in the session's folder).
+
+#### read_project_file
+
+Reads one of the workspace's project files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
+below it, a file under `.omo/rules/`, or the folder's OmO config `.omo/omo.jsonc` (per-agent and per-category model
+routing; at the folder itself only). Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "read_project_file", "path": "AGENTS.md"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "read_project_file",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": "AGENTS.md",
+    "exists": true,
+    "content": "# Project rules\n",
+    "etag": "sha256-…",
+    "projectTrusted": true
+  }
+}
+```
+
+`path` is relative to the session's folder, `/`-separated and canonical: no empty, `.` or `..` segment, no `\\`, `:`
+or NUL, and never through `.git` or `node_modules`. A file that does not exist yet is a success with `exists: false`
+and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it.
+Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path, reason }`):
+`reason` is `not_listed` for any other path and `unsafe` when a folder on the way or the file itself is a symlink or
+not a regular file and folder (an engine before `.omo/omo.jsonc` was listed sends no `reason`), and
+`project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
+
+#### The folder a project write is for
+
+`set_project_trust`, `set_project_setting`, `write_project_file`, `set_project_mcp_servers` and
+`write_project_skill_file` take an optional `expectedCwd`: the folder the
+caller means. A client that reaches a session by a key that can since name another session (a remote desktop, through
+a relay) states it, so the write lands only in that folder's project. When it is given and the session's working
+directory is another folder, the write is refused with `project_cwd_mismatch` and nothing is written or applied. Both
+paths are compared with only trailing separators of the path's own style dropped (`/` for a POSIX path; `\` or `/`
+for a drive or UNC path) and a Windows drive letter in either case; nothing is trimmed and the rest of the path is
+compared as written. A present `expectedCwd` that is not a string is refused with `invalid_argument`. Without it, a
+write behaves as before.
+
+#### write_project_file
+
+Replaces (or creates) one of the files `read_project_file` reads, naming the version it replaces.
+
+```json
+{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…", "expectedCwd": "/home/me/project"}
+```
+
+`ifEtag` is required: the `etag` last read, or `null` to create a file that must not exist yet. Missing parent
+folders are created. The file lands by a temporary file and a rename, so a reader never sees a partial write, and
+writes to one file are applied one at a time. The response carries the same `data` as `read_project_file`, read
+after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
+Errors: `invalid_argument` when `content` is not a string, `ifEtag` is neither a string nor `null`, or `expectedCwd` is
+not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
+`project_not_trusted` while the project is untrusted (read again when the write commits),
+`project_file_permission_denied` when this machine's own permission rules for an edit of that path refuse it (the same
+decision the write tool gets), `project_file_not_allowed` as for `read_project_file`,
+`project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
+version cannot be checked without reading it), `project_file_conflict` when
+`ifEtag` is not the file's current version (`errorData: { currentEtag, exists }`; nothing is written; read again
+and retry), and `project_file_write_failed` when the write fails (permissions, disk).
+
+Both are `device_admin`: they read and write a file in the session's folder.
+
+#### get_project_mcp_servers
+
+Reads the session folder's project MCP file (`.omo/mcp.json`) as stored.
+Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "get_project_mcp_servers"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_mcp_servers",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": ".omo/mcp.json",
+    "exists": true,
+    "mcpServers": { "docs": { "command": "docs-mcp" } },
+    "parseError": null,
+    "etag": "sha256-…",
+    "projectTrusted": true
+  }
+}
+```
+
+`mcpServers` holds the entries as stored (placeholders unexpanded); it is `null` when the file is missing or does
+not parse. `parseError` says why a stored file does not parse (not JSON, not a JSON object, or `mcpServers` not an
+object). Errors: `project_file_not_allowed` when the config folder or the file is a symlink or not a regular
+file and folder, and `project_file_too_large` for a stored file over 512 KiB.
+
+#### set_project_mcp_servers
+
+Edits the servers of the project MCP file in one write, naming the version it replaces.
+
+```json
+{"type": "set_project_mcp_servers", "patch": {"old": null, "new": {"command": "docs-mcp"}}, "ifEtag": "sha256-…"}
+```
+
+The merge is one level deep: each `patch` entry replaces the server of that name, `null` removes it, and every other
+server and top-level key stays as stored, so a rename is one atomic write. The merged file is checked with the
+engine's own MCP config loader before anything is written. The write needs the folder to be trusted at the moment it
+commits and gets the same permission decision a `write` of that file gets in the session (rules, preset, saved
+answers, or a prompt). In an RPC session that prompt goes to the session's client, as it does for the session's own
+`write` tool, so the client that sent the write answers it. The response carries the same `data` as
+`get_project_mcp_servers`, read after the write.
+Errors: `invalid_argument` when `patch` is not an object, `ifEtag` is neither a string nor `null`, or `expectedCwd`
+is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
+`project_not_trusted`, `project_file_conflict` (`errorData: { currentEtag, exists }`),
+`project_mcp_config_unparseable` (`errorData: { parseError }`; a file that does not parse is never written over),
+`project_mcp_config_invalid` when the loader rejects the merged file, `project_file_permission_denied`,
+`project_file_not_allowed`, `project_file_too_large`, and `project_file_write_failed`.
+
+#### read_project_skill_file
+
+Read the file of a skill the engine lists for the session, by skill name.
+
+```json
+{"type": "read_project_skill_file", "skill": "deploy"}
+```
+
+#### write_project_skill_file
+
+Replace the file of a skill the engine lists for the session, by skill name. `ifEtag` is the `etag` the last read
+answered.
+
+```json
+{"type": "write_project_skill_file", "skill": "deploy", "content": "---\nname: deploy\n…", "ifEtag": "sha256-…"}
+```
+
+For both, `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
+Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
+skill, also when the agent's directory lies inside the session's folder) or is reached through a folder link or a
+file link is refused. A write passes the same trust and permission
+gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
+(`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_cwd_mismatch` (a write whose
+`expectedCwd` names another folder), `project_not_trusted`,
+`project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and
+`project_file_write_failed`.
+
+All four are `device_admin`: they read and write files in the session's folder.
+
+#### read_user_skill_file
+
+Read the file of a user-global skill the engine lists for the session (one in the agent directory's `skills` folder
+or in `~/.agents/skills`), by skill name. The same verb serves this machine and another device of the account.
+
+```json
+{"type": "read_user_skill_file", "skill": "deploy"}
+```
+
+#### write_user_skill_file
+
+Replace the file of a user-global skill the engine lists for the session, by skill name. `ifEtag` is the `etag` the
+last read answered.
+
+```json
+{"type": "write_user_skill_file", "skill": "deploy", "content": "---\nname: deploy\n…", "ifEtag": "sha256-…"}
+```
+
+`data` is `{ skill, path, exists, content, etag }`, with `path` the file's real absolute path. The file must lie inside
+a user skills folder, taken from that folder's real path and resolved without following any link; a skill outside,
+behind a link or reached through `..` is refused with `user_skill_file_not_allowed`.
+
+A write from this machine's own connection commits at once. A write from a connection that speaks for another
+device (a delegated connection, or one that declared `remoteOrigin`) commits only after someone on this machine
+approves it: the engine asks the session's local grant presentation (an attached local client with `grant_select`,
+never a remote or delegated connection), and the question names the origin device, the file's path and the diff
+of the change (the whole content for a new file). The choices are "Allow this change" and "Deny"; there is no
+"always". Every write attempt from another device appends exactly one line to
+`<agentDir>/audit/user-skill-writes.jsonl`: `{ at, originDeviceId, originDeviceName?, path, sha256Before,
+sha256After, decision, reason? }` with `decision` one of `approved`, `denied`, `unconfirmed`, or `refused` for an
+attempt refused before the question (`reason` is its error code; `path` and the hashes are `null` unless the file
+was located inside a user skills folder). An audit line that cannot be written never changes the write's outcome:
+the answer carries `auditError` beside it (in `data` on success, in `errorData` on a refusal). A connection that
+speaks for another device never presents or answers this question (nor any grant select), on the in-process and the
+worker session runtime alike, even when it advertises `grant_select`.
+
+Errors: `user_skill_not_listed` (`errorData: { skill }`), `user_skill_file_not_allowed`, `user_skill_write_declined`
+(denied on this machine), `user_skill_write_unconfirmed` (no local presenter, or no answer within 120 s),
+`project_file_conflict` (`errorData: { currentEtag, exists }`), `project_file_too_large`, `project_file_write_failed`,
+and `invalid_argument`. Both are `device_admin`.
+
 ### extension_request
 
 Invoke a request handler registered by an extension through `pi.rpc.handle(name, handler)`:
@@ -6079,7 +6927,7 @@ When a multi-session host ends a routing handle it may name why:
 | `client_close` | An attached client sent `close_session` |
 | `idle_evicted` | The idle sweep ended a session that was not retained |
 | `session_dir_removed` | The session's transcript directory was deleted and nothing can reopen it: the idle sweep ended it because no client held it (whatever the idle window), or a generation handoff drain ended it instead of parking it. No `sessionPath` |
-| `host_shutdown` | The host process is exiting (SIGTERM, idle-exit, empty-host). A retained session is closed, not parked |
+| `host_shutdown` | The host process is exiting (SIGTERM, idle-exit, empty-host). A retained session on a socket host is parked instead (`session_parked { reason: "host_shutdown" }`) |
 | `replaced` | The routing handle ended because the live session behind it was replaced |
 | `handoff_parked` | A generation handoff drained this host; reopen with `open_session { sessionPath }` |
 | `released` | `release_session` handed the session to a runtime outside this host. Carries `sessionPath`, the file that runtime now writes: do NOT reopen it here |
@@ -6207,6 +7055,37 @@ capability:
 }
 ```
 
+#### Background session age
+
+The terminal builtin emits `terminal_background_age` on the same path, and on the in-process `pi.events`
+bus, when a background bash session is still running at 10 minutes and then every 30 minutes (10, 40,
+70, ...), and when the opt-in auto-reap (`terminal.backgroundAutoReapMinutes` or the `bash` parameter
+`auto_reap_minutes`) has stopped one, or once when its stop did not end the session. `data` has `kind`
+(`running`, `reaped`, or `reap_failed`), `id` (the `bash_id`), `description`, optional `command`,
+`startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes` (the age at which the session is stopped
+automatically, or `null` when nothing will stop it), `reason` (on `reap_failed` only: why the stop did not
+end it), and `stop`, the call that stops it. After `reap_failed` the session is still running, the
+`running` reports go on, and the auto-reap does not try again. Nothing is stopped by this event; a client that wants the session gone calls `kill_bash`
+with `stop.args`. A report that came due while the host slept arrives once, not once per missed interval.
+
+```json
+{
+  "type": "extension_event",
+  "name": "terminal_background_age",
+  "data": {
+    "kind": "running",
+    "id": "bash_3",
+    "description": "npm run dev",
+    "command": "npm run dev",
+    "startedAtMs": 1710000000000,
+    "ageMs": 600000,
+    "ageMinutes": 10,
+    "autoReapMinutes": null,
+    "stop": { "tool": "kill_bash", "args": { "bash_id": "bash_3" } }
+  }
+}
+```
+
 #### Job widgets
 
 The `job-widgets` builtin emits `job_widget_state` on the same path: live, display-ready widgets for the
@@ -6270,7 +7149,7 @@ cannot replace the ID on a queued start event. Older engines omit this additive 
 
 ### agent_end
 
-Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow. A run stopped because its session was replaced also carries `abortCause: { kind: "session_replaced", reason, targetSessionFile?, targetSessionId? }` (see `session_replaced`); extensions' own `agent_end` does not carry it, they learn of the replacement from `session_shutdown`.
+Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow. A run stopped because its session was replaced also carries `abortCause: { kind: "session_replaced", reason, targetSessionFile?, targetSessionId? }` (see `session_replaced`); a run the host's own stop cut short ends with `aborted: true`, `abortSource: "system"` and `abortCause: { kind: "host_shutdown" }`, never `abortSource: "user"` (senpi#6190); extensions' own `agent_end` does not carry it, they learn of the replacement from `session_shutdown`.
 
 ```json
 {
@@ -6829,6 +7708,8 @@ A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"gl
 A provider holds logins of one kind. If it had an OAuth login, the key replaces it: `auth.json` is backed up first, and the response `data` is `{replaced: "oauth", backupPath?}`, where `backupPath` is absent when the credential store is not a file (a failed backup fails the login instead). A key added over another key has no `data`.
 
 When `auth.json` exists but cannot be loaded, `get_auth_providers` `data` also carries `storeError` `{kind, reason}`. `kind` is `malformed_json` (not valid JSON), `invalid_format` (the document is not a JSON object), `unreadable` (the file cannot be read, for example a permission error) or `write_back_failed` (the file was read, but saving its repaired or migrated copy failed; the sign-ins it read stay configured and writes are not refused for this kind). `reason` is a short message that never includes the file's path or contents. While `storeError` has any other kind, a stored sign-in reads as unconfigured because it could not be read, not because it is missing (a store that loaded earlier in the process keeps its last loaded sign-ins). Every write, such as `login_api_key`, a login, or `logout`, fails and leaves the file unchanged. A client should say the sign-in store could not be read and ask the user to repair or move `auth.json`. The next `get_auth_providers` after the file becomes readable no longer has `storeError`. A store that is only locked by another writer is not a `storeError`.
+
+While another process holds `auth.json`'s lock, `get_auth_providers` `data` also carries `storeBusy: true`. The request still answers within about a second: the rows come from `auth.json` read without its lock, so a stored sign-in stays configured instead of reading as missing. A client can say the sign-in store is busy and read again; `storeBusy` is absent once the store has been read under its lock.
 
 `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a literal key the app stored when it is at least 12 characters long. OAuth rows, `!command` and `$ENV` references, and short keys have none.
 

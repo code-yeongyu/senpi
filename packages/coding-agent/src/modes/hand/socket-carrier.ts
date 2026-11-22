@@ -52,8 +52,9 @@ function decodeCarrierLine(line: string): unknown {
  * Makes `socket` the current connection of `side` until it closes. Returns `detach`, which ends this connection's
  * hold on the side (the socket's own close does the same) without signalling it twice.
  */
-export function attachSocketCarrier(socket: Socket, side: CarrierSide): () => void {
+export function attachSocketCarrier(socket: Socket, side: CarrierSide, report: (message: string) => void): () => void {
 	let live = true;
+	let reportedError = false;
 	const stopReading = attachJsonlLineReader(
 		socket,
 		(line) => {
@@ -64,6 +65,19 @@ export function attachSocketCarrier(socket: Socket, side: CarrierSide): () => vo
 	const onDrain = (): void => {
 		if (live) side.writable();
 	};
+	/**
+	 * A failing carrier leaves one line per connection - the code and the message, never a packet payload - and then
+	 * the socket is destroyed as before, so the transport resumes on a fresh connection and the failure is visible
+	 * in the hand's stderr instead of only as a stalled lane (senpi#5993).
+	 */
+	const onError = (error: Error): void => {
+		if (live && !reportedError) {
+			reportedError = true;
+			const code = (error as NodeJS.ErrnoException).code;
+			report(`carrier socket error${code === undefined ? "" : ` ${code}`}: ${error.message}`);
+		}
+		socket.destroy();
+	};
 	const detach = (): void => {
 		if (!live) return;
 		live = false;
@@ -73,7 +87,7 @@ export function attachSocketCarrier(socket: Socket, side: CarrierSide): () => vo
 	};
 	socket.on("drain", onDrain);
 	socket.once("close", detach);
-	socket.on("error", () => socket.destroy());
+	socket.on("error", onError);
 	side.attached({
 		// `false` means "not taken": the side resends after `writable()`. So refuse while the socket is over its
 		// high-water mark instead of queueing a line the side will send again.
@@ -94,13 +108,18 @@ export function attachSocketCarrier(socket: Socket, side: CarrierSide): () => vo
  * carrier only after it sent the secret's bytes first (`authenticateSocket`), so a connection without it never
  * displaces the current carrier.
  */
-export function serveSocketCarrier(server: Server, side: CarrierSide, secret?: Uint8Array): void {
+export function serveSocketCarrier(
+	server: Server,
+	side: CarrierSide,
+	secret: Uint8Array | undefined,
+	report: (message: string) => void,
+): void {
 	let current: { readonly socket: Socket; readonly detach: () => void } | undefined;
 	const take = (socket: Socket): void => {
 		const previous = current;
 		previous?.detach();
 		previous?.socket.destroy();
-		const detach = attachSocketCarrier(socket, side);
+		const detach = attachSocketCarrier(socket, side, report);
 		current = { socket, detach };
 		socket.once("close", () => {
 			if (current?.socket === socket) current = undefined;

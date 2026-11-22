@@ -1,3 +1,246 @@
+## 2026-11-20 - `todo.firstTurnPlan` documents its per-preset default (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/docs/settings.md`: the `todo.firstTurnPlan` row gives the default as `"force"`, and `"off"` under a GPT prompt preset.
+
+### Why
+
+- The default changed for GPT presets (senpi#7101).
+
+### Why an extension could not handle it
+
+- Documentation of a core setting.
+
+### Expected merge conflict zones
+
+- LOW: one table row.
+
+## 2026-11-15 - New worker-safe tools-core entry (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new `./tools-core` export (`src/tools-core.ts`): the core bash/read/write/edit factories, `createCoreCodingTools`, `createToolMachine`, `ToolMachine` and the MachineOps types.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one added entry in the `exports` map.
+
+## 2026-11-13 - The install lock's @hono/node-server override matches the root pin (senpi#6624)
+
+### What changed
+
+- `packages/coding-agent/package.json` `overrides`: `@hono/node-server` 2.1.1 -> 2.1.8, the same version as the root override; `packages/coding-agent/install-lock/package.json` follows. `packages/coding-agent/install-lock/package-lock.json` is regenerated to match.
+
+### Why
+
+- The engine tarball installs one copy of `@hono/node-server`; a pin older than the root's re-introduced the vulnerable 2.1.x range the audit flags (GHSA-qv5m-9pm6-hqp3, GHSA-jpvv-r467-5p4w). hono itself only enters through `@modelcontextprotocol/sdk`; no first-party source imports hono APIs, so nothing can depend on an API the bump removes.
+
+### Why an extension could not handle it
+
+- The install lock and its manifest are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the `@hono/node-server` line in the `overrides` block of `packages/coding-agent/package.json`.
+
+## 2026-11-11 - coding-agent depends on the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/coding-agent/package.json`: adds the `@earendil-works/pi-realm-registry` workspace dependency.
+- `packages/coding-agent/tsconfig.build.json`: maps that package to its built declarations.
+
+### Why
+
+- The tables one engine copy writes and another reads (`core/permission-decision.ts`, `core/turn-origin.ts`, `core/kill-guard/runtime.ts`, `core/session-write-reservation.ts`, `core/extensions/kernel-tools-context.ts`, `core/config-reference-redaction.ts`) are built through the shared helper.
+
+### Why an extension could not handle it
+
+- Package manifests and build configuration are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list in `package.json` and the `paths` map in `tsconfig.build.json`.
+
+## 2026-11-11 - zod 4.6.7 (senpi#6402)
+
+### What changed
+
+- `packages/coding-agent/package.json`: zod 4.6.5 -> 4.6.7.
+
+### Why
+
+- zod <4.6.6 can exhaust memory while validating oversized constrained collections (GHSA-mrhx-c7xc-m3w5); 4.6.7 is the newest patch past the fix.
+
+### Why an extension could not handle it
+
+- zod is a direct dependency of the engine.
+
+### Expected merge conflict zones
+
+- LOW: the zod line in `packages/coding-agent/package.json`.
+
+## 2026-11-11 - minimatch 11.0.5 (senpi#6397)
+
+### What changed
+
+- `packages/coding-agent/package.json`: minimatch 10.2.6 -> 11.0.5. `package-lock.json`, `bun.lock` and `packages/coding-agent/install-lock` are regenerated to match.
+
+### Why
+
+- minimatch >=7.0.0 <11.0.1 is open to a denial of service through globparts amplification (GHSA-g3hv-75wg-m249), which fails the `npm audit` workflow. No 10.x release has the fix. 11.0.5 is the newest 11.x older than the repo's `min-release-age=2`.
+
+### Why an extension could not handle it
+
+- minimatch is a direct dependency of the engine (`core/model-resolver.ts`, `core/package-manager.ts`).
+
+### Expected merge conflict zones
+
+- LOW: the minimatch line in `packages/coding-agent/package.json`; the lockfiles regenerate on any conflict.
+
+## 2026-11-11 - undici 8.12.4 and re2js 2.8.8 (senpi#6395)
+
+### What changed
+
+- `packages/coding-agent/package.json`: undici 8.10.2 -> 8.12.4 and re2js 2.8.6 -> 2.8.8.
+
+### Why
+
+- undici 8.0.0-8.12.1 carries eight advisories (fixed in 8.12.2) and re2js <2.8.7 carries GHSA-gg6h-894w-4m9c; both failed the `npm audit` workflow. Both stay inside their current minor or patch line.
+
+### Why an extension could not handle it
+
+- These are the engine's own direct dependencies.
+
+### Expected merge conflict zones
+
+- LOW: the two dependency lines in `packages/coding-agent/package.json`.
+
+## 2026-11-10 - Bundled Claude Agent SDK 0.3.321 (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.306 -> 0.3.321. `bun.lock`, `package-lock.json`, `install-lock/` and the SDK platform lock are regenerated with the repository scripts.
+
+### Why
+
+- Claude Code 2.1.321, bundled by SDK 0.3.321, is the first build whose model table knows `claude-fable-5-2` / `claude-mythos-5-2`. The omo#8700 regression requires the bundled Claude Code to embed every Claude model senpi promotes.
+
+### Why an extension could not handle it
+
+- The SDK is a pinned dependency of the coding-agent package.
+
+### Expected merge conflict zones
+
+- The single dependency line in `packages/coding-agent/package.json`, `bun.lock`, `package-lock.json` and `install-lock/package-lock.json`.
+
+## 2026-11-09 - A terminal-held session admits a relayed peer-agent message (senpi#6294)
+
+### What changed
+
+- `src/modes/interactive/session-control-peer-commands.ts` (new): `set_client_info` on a terminal's control endpoint now records the remote device a connection speaks for (`remoteOrigin`, validated and fixed once declared, exactly as on the RPC host) beside its roles; `admit_external_message` runs the RPC host's `admitExternalMessage` on the terminal's session, taking the device from the connection and never from the record.
+- `src/modes/interactive/session-control-rpc-commands.ts`: lists `admit_external_message` (so `get_protocol_info.commands` includes it), checks the record with the RPC host's `admitExternalMessageFieldError`, and routes it and `set_client_info` to the new file. Before this a terminal answered `unsupported`, so an agent on another device could reach a session only when it ran under the RPC host.
+- `test/suite/regressions/6294-tui-admit-external-message.test.ts`: on the terminal endpoint, a remote delivery carries the device in `details.remote_origin` only; a repeated id is `already_admitted`; a remote `command_line` sender, a record naming its own origin, and a chain over the limit are refused with the RPC host's codes (the chain guard first); a local delivery has no remote origin.
+
+## 2026-11-08 - Inbound sample for `admit_external_message` (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/scripts/rpc-inbound-samples.ts`: one sample record for the new method; the shared fixture is regenerated.
+
+### Why
+
+The sample table is exhaustive over the inbound record types (#6233).
+
+### Why an extension could not handle it
+
+The sample table is the engine's own method list.
+
+### Expected merge conflict zones
+
+- LOW: one table entry.
+
+## 2026-11-07 - Presenter tests count EPIPE as the host closing the channel (senpi#6161)
+
+### What changed
+
+- `packages/coding-agent/test/suite/host-cli-presenter-support.ts`: `hostCloses` accepts `EPIPE` as well as `ECONNRESET` before the close event; `host-cli-presenter-waits.test.ts` covers both, and still rejects any other errno.
+
+### Why
+
+- A forced release run failed `immediate handoff preserves enforcement and requires fresh enrollment (explicit true)` with `the stale management channel failed before the host closed it: write EPIPE`. Under load the client's write raced the host's close, so the same close surfaced as `EPIPE`.
+
+### Why an extension could not handle it
+
+- It is a test helper in this repository.
+
+### Expected merge conflict zones
+
+- LOW: none.
+
+## 2026-11-07 - The Windows stale-table test retries removing its just-run executable (senpi#6142)
+
+### What changed
+
+- `packages/coding-agent/test/suite/host-private-fds-proof-gate.test.ts`: the test's `finally` cleanup removes its temporary directory with `maxRetries: 10, retryDelay: 100`, as the sibling pair test already does.
+
+### Why
+
+- On Windows, a compiled executable that has just exited can stay locked for a moment. A single `unlink` then threw `EBUSY` and failed a test whose assertions had all passed (main red at 3c237e1a48). The child is awaited before the cleanup, so the retry is a bounded backstop.
+
+### Why an extension could not handle it
+
+- It is a test cleanup in this repository.
+
+### Expected merge conflict zones
+
+- LOW: none.
+
+## 2026-11-06 - The runtime inventory snapshot hook is bounded by copy progress (senpi#6091, fixes #5816)
+
+### What changed
+
+- `packages/coding-agent/test/runtime-snapshot/inventory.test.ts`: the `beforeAll` that materializes the snapshot has no wall-clock deadline. It copies through a counting copier, and a watchdog fails the hook when no copy finishes for 30 s. The `afterAll` removal has no deadline either. Assertions and the per-runtime budget are unchanged. Tests only.
+
+### Why
+
+- The snapshot is the whole dependency closure (14,676 files in 286 packages), and its wall time follows host load: 3-4 s idle, 26 s under a 4% CPU quota. The fixed 60 s hook budget failed whole-suite receipts on loaded hosts with no failing assertion. Its planning and removal are synchronous, so a vitest deadline on them could never catch a hang.
+
+### Why an extension could not handle it
+
+- This is the package's own test.
+
+### Expected merge conflict zones
+
+- LOW: the constants and hooks at the top of `inventory.test.ts`.
+
+## 2026-11-05 - build:binary keeps linkedom's optional canvas external (senpi#6045)
+
+### What changed
+
+- `packages/coding-agent/package.json`: the `build:binary` `bun build --compile` passes `--external canvas`.
+
+### Why
+
+- Matches the release compile in `scripts/build-binaries.sh` (senpi#6045): the compile must not need canvas's native binding, and linkedom falls back to its JS canvas shim.
+
+### Why an extension could not handle it
+
+- Package build script, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one flag in the `build:binary` script string.
+
 ## 2026-11-05 - The `./presenter-authority` package entry (D11 M-1, senpi#4249)
 
 ### What changed

@@ -22,7 +22,11 @@ import { accountDirFor, claudeCliSharedRoot, ensureAccountDir } from "./claude-c
 import { buildClaudeCliEnvironment } from "./claude-cli-environment.ts";
 import { profileChanged, verifyClaudeCliInitialization } from "./claude-cli-token-source.ts";
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
-import { asksLegacyLongContext, CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
+import {
+	asksLegacyLongContext,
+	CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW,
+	claudeCodeMaxContextTokens,
+} from "./context-window.ts";
 import { isExtraUsageExhausted } from "./errors.ts";
 import { runFailover } from "./failover.ts";
 import { logContinuityEvent } from "./session-observability.ts";
@@ -32,7 +36,7 @@ import { refreshFailure } from "./refresh-failure.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
-import { ClaudeSignInRequiredError, signInRequiredAccounts } from "./sign-in-again.ts";
+import { ClaudeSignInRequiredError, isServableAccountSlot, signInRequiredAccounts } from "./sign-in-again.ts";
 
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 export { overrideAuthLaneBoundary, resetAuthLaneBoundary } from "./auth-lane-boundary.ts";
@@ -74,6 +78,8 @@ export type AuthenticatedQueryInput = {
 	 * is tried even while blocked, and no block is stored or cleared. Requires `pinnedAccount`.
 	 */
 	probe?: boolean;
+	/** Accounts already attempted on this person's turn; absent on automated and auxiliary requests. */
+	recheckedAccounts?: Set<string>;
 	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
 	preferredAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
@@ -240,7 +246,10 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			options.model = options.model?.replace(/\[1m\]$/, "");
 			options.env = {
 				...options.env,
-				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW),
+				// Claude Code then refuses only past the 200k window itself; the prompt-plus-output check below keeps the fit.
+				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(
+					claudeCodeMaxContextTokens(CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW, outputReserveTokens),
+				),
 				// Reserve and request the same output budget, not the model catalog's ceiling.
 				CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(outputReserveTokens),
 			};
@@ -309,13 +318,16 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			},
 		});
 	}
-	// A slot that must sign in again is never selected, like a removed one; with none left the turn names them.
+	// A slot that must sign in again is never selected, like a removed one, and neither is a stored CLI slot whose
+	// account dir id is unusable: that slot carries no readable login and preparing it would fail with an internal
+	// error before the first model call (omo#12228). With none left the turn names them.
 	const signedOut = signInRequiredAccounts(pool.accounts);
-	pool.accounts = pool.accounts.filter((account) => account.store !== "claude-cli" || !account.signInRequired);
+	pool.accounts = pool.accounts.filter(isServableAccountSlot);
 	if (pool.accounts.length === 0) throw new ClaudeSignInRequiredError(signedOut);
 	let askedLegacyLongContext = false;
 	yield* runFailover({
 		accounts: pool.accounts,
+		recheckedAccounts: input.probe === true ? undefined : input.recheckedAccounts,
 		accountFallback: input.providerSettings.accountFallback,
 		selectFn: (accounts) =>
 			selectAccount(accounts, {

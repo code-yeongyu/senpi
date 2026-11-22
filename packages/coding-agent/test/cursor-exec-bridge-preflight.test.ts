@@ -29,6 +29,7 @@ describe("cursor exec bridge tool_call preflight", () => {
 		const session: CursorExecBridgeSession = {
 			getRegisteredTool: (name) => (name === "write" ? tool : undefined),
 			emitExecBridgeToolResult: async () => undefined,
+			releaseExecBridgeToolCall: () => undefined,
 			preflightToolCall: async (toolCall, args) => {
 				await eventQueue;
 				if (isRecord(args) && "content" in args) args.content = "mutated by tool_call";

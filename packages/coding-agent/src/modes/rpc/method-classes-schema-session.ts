@@ -22,7 +22,9 @@ import {
 	Strings,
 	session,
 	ThinkingLevel,
+	ThreadSettledBy,
 } from "./method-classes-schema-fields.ts";
+import { DELIVERY_RECORD_SCHEMAS } from "./method-classes-schema-delivery.ts";
 
 /** A thread call's hop count: 1 for the first call of a chain, one more per hop. */
 const ChainCount = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
@@ -63,6 +65,7 @@ const PROMPTING_SCHEMAS = {
 		clientMessageId: OptId,
 		clientTurnId: OptId,
 		expectedTurnId: OptId,
+		expectedLeafId: OptId,
 		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
 		chainCount: Opt(ChainCount),
 	}),
@@ -81,6 +84,7 @@ const PROMPTING_SCHEMAS = {
 		mode: Opt(literals("continue", "release")),
 		message: OptStr,
 		effectId: OptId,
+		unlessStopped: OptBool,
 	}),
 	append_user_message: session("append_user_message", { content: Type.Unknown() }),
 	append_session_entry: session("append_session_entry", { entry: Type.Unknown() }),
@@ -93,7 +97,11 @@ const PROMPTING_SCHEMAS = {
 		graceMs: OptNum,
 		intent: Opt(literals("stop", "abort")),
 	}),
-	interrupt: session("interrupt", { turnId: OptId, intent: Opt(literals("stop", "abort")) }),
+	interrupt: session("interrupt", {
+		turnId: OptId,
+		intent: Opt(literals("stop", "abort")),
+		background: Opt(literals("stop")),
+	}),
 	hold_input: session("hold_input", {
 		inputId: Id,
 		revision: Num,
@@ -161,6 +169,7 @@ const STATE_AND_MODEL_SCHEMAS = {
 	set_follow_up_mode: session("set_follow_up_mode", { mode: literals("all", "one-at-a-time") }),
 	compact: session("compact", { customInstructions: OptStr }),
 	set_auto_compaction: session("set_auto_compaction", { enabled: Bool }),
+	set_permission_preset: session("set_permission_preset", { permissionPreset: Id }),
 	set_auto_retry: session("set_auto_retry", { enabled: Bool }),
 	abort_retry: session("abort_retry", {}),
 	set_retry_fallback: session("set_retry_fallback", { retryFallback: RetryFallback }),
@@ -214,6 +223,8 @@ const BASH_AND_TREE_SCHEMAS = {
 	get_tree: session("get_tree", {}),
 	get_last_assistant_text: session("get_last_assistant_text", {}),
 	set_session_name: session("set_session_name", { name: Str }),
+	set_session_archived: session("set_session_archived", { archived: Bool }),
+	set_session_settled: session("set_session_settled", { settled: Bool, by: Opt(ThreadSettledBy) }),
 	record_user_activity: session("record_user_activity", { kind: Type.Literal("draft") }),
 	import_jsonl: session("import_jsonl", { inputPath: PathStr, cwdOverride: OptPath }),
 	get_messages: session("get_messages", {}),
@@ -223,6 +234,39 @@ const BASH_AND_TREE_SCHEMAS = {
 const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	get_commands: session("get_commands", {}),
 	get_loaded_surfaces: session("get_loaded_surfaces", {}),
+	get_project_trust: session("get_project_trust", {}),
+	set_project_trust: session("set_project_trust", {
+		choice: literals("trust", "trust_parent", "do_not_trust", "no_inherit"),
+		expectedCwd: OptStr,
+	}),
+	get_project_settings: session("get_project_settings", {}),
+	set_project_setting: session("set_project_setting", { key: Id, value: Type.Unknown(), expectedCwd: OptStr }),
+	read_project_file: session("read_project_file", { path: PathStr }),
+	write_project_file: session("write_project_file", {
+		path: PathStr,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
+	}),
+	get_project_mcp_servers: session("get_project_mcp_servers", {}),
+	set_project_mcp_servers: session("set_project_mcp_servers", {
+		patch: Type.Unknown(),
+		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
+	}),
+	read_project_skill_file: session("read_project_skill_file", { skill: Id }),
+	write_project_skill_file: session("write_project_skill_file", {
+		skill: Id,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
+	}),
+	read_user_skill_file: session("read_user_skill_file", { skill: Id }),
+	write_user_skill_file: session("write_user_skill_file", {
+		skill: Id,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
+	}),
 	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
 	"eval_cells.list": session("eval_cells.list", {}),
 	"eval_cells.peek": session("eval_cells.peek", { cellId: Id, tailBytes: OptNum }),
@@ -248,6 +292,7 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 
 export const SESSION_RECORD_SCHEMAS = {
 	...PROMPTING_SCHEMAS,
+	...DELIVERY_RECORD_SCHEMAS,
 	...STATE_AND_MODEL_SCHEMAS,
 	...BASH_AND_TREE_SCHEMAS,
 	...SURFACE_AND_ACCOUNT_SCHEMAS,

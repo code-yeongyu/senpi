@@ -97,9 +97,13 @@ describe("startup event wire (senpi#4602)", () => {
 	});
 
 	it.skipIf(process.platform === "win32")(
-		"releases the inherited fillers, keeps a slot the private table names, and strips the list",
+		"keeps a listed slot that holds no inherited filler socket, keeps a slot the private table names, and strips the list",
 		() => {
+			// The spawn test above proves real filler sockets are released. Node on Linux holds 3..17 itself, so only on macOS
+			// does this file land in a listed slot; on Linux the Bun child in issue-6282-startup-fillers-lost-before-entry.test.ts
+			// proves a listed slot holding the runtime's own descriptor stays open.
 			const [filler, privateSlot] = [openSync("/dev/null", "r"), openSync("/dev/null", "r")];
+			if (process.platform === "darwin") expect(filler).toBeLessThan(STARTUP_EVENT_FD);
 			const env: NodeJS.ProcessEnv = {
 				SENPI_PRIVATE_FDS: JSON.stringify({ channel: privateSlot }),
 				SENPI_RPC_HOST_STARTUP_EVENTS: encodeStartupHandOff({
@@ -111,17 +115,11 @@ describe("startup event wire (senpi#4602)", () => {
 			};
 			try {
 				releaseInheritedStartupFillers(env);
-				if (filler < STARTUP_EVENT_FD) expect(() => fstatSync(filler)).toThrow();
+				expect(() => fstatSync(filler)).not.toThrow();
 				expect(() => fstatSync(privateSlot)).not.toThrow();
 				expect(parseStartupHandOff(env.SENPI_RPC_HOST_STARTUP_EVENTS)?.fillers).toEqual([]);
 			} finally {
-				for (const fd of [filler, privateSlot]) {
-					try {
-						closeSync(fd);
-					} catch {
-						// Released above: already closed.
-					}
-				}
+				for (const fd of [filler, privateSlot]) closeSync(fd);
 			}
 		},
 	);

@@ -134,11 +134,26 @@ Configure compaction in `~/.senpi/agent/settings.json` (global) or `.senpi/setti
 
 ### Compaction Settings
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `compaction.enabled` | `true` | Enable proactive auto-compaction. `false` leaves threshold compaction to you; a provider-rejected context overflow still runs the one-shot compact-and-retry recovery. |
-| `compaction.reserveTokens` | `16384` | Tokens reserved for the LLM's response. Lower values allow more context but risk truncation. |
-| `compaction.keepRecentTokens` | `20000` | How much recent conversation to keep uncompressed. Higher values preserve more context but trigger compaction sooner. |
+[settings.md](settings.md#compaction) lists every `compaction` key with its type and default. The three you are most likely to change:
+
+- `compaction.enabled`: `false` leaves threshold compaction to you. Two safety nets stay on: a prompt that would not fit inside the reserve is still compacted first, and a provider-rejected context overflow still runs the one-shot compact-and-retry recovery.
+- `compaction.reserveTokens`: tokens held back for the LLM's response. Lower values allow more context but risk truncation.
+- `compaction.keepRecentTokens`: how much recent conversation stays unsummarized. Higher values preserve more detail, but each compaction frees less, so the next one comes sooner.
+
+### What Runs by Default and What It Costs
+
+Senpi does more than summarize at the limit. Each behaviour below is on by default and has its own switch under `compaction`. [compaction.md](compaction.md#proactive-compaction) explains how each one works.
+
+| Behaviour | Switch | What it saves | What it costs | Turn it off when |
+|-----------|--------|---------------|---------------|------------------|
+| Background summary | `speculativeEnabled` | The wait at the threshold: the summary is ready when it is needed | One summarization request per summary, paid even if the conversation moves on and the summary is discarded | Summarization requests are expensive or rate limited, and waiting at the threshold is fine |
+| Idle compaction | `idleCompactionEnabled` | The next prompt starts on a compacted context; the work happens while nobody is waiting | Summarization requests after a run ends, starting once half of the context window is used | You pay per request and often leave sessions idle below the threshold |
+| Grace band | `graceBandEnabled` | A prompt does not wait for a summary that is almost finished | One turn can run past the threshold by up to the lead (8192 to 32768 tokens) | You want compaction exactly at the threshold |
+| Tool-result admission | `toolAdmissionEnabled` | One huge tool output cannot fill the context | The model sees only the head and tail of a result above the cap and must read the middle again in smaller pieces | The model has to read very large outputs whole and the window has room |
+| Reserve scaling | `reserveScalingEnabled` | Room for long responses on large context windows | Up to 49152 tokens of the window held back instead of 16384 | You chose `reserveTokens` on purpose and want exactly that value |
+| Restoration | `restorationEnabled` | After a compaction the model knows which files and skills to open again | A hidden note of paths and names in the next prompt, capped by the `restoration*` limits | Nothing should be added to the prompt after a compaction |
+
+To make every summary cheaper without turning anything off, set `compaction.model` to a cheaper `"provider/modelId"`. The session model is used again whenever that model cannot serve.
 
 ### Branch Summary Settings
 
@@ -215,13 +230,13 @@ For technical details, see:
 
 ### "Compaction keeps triggering too often"
 
-**Cause:** Your `reserveTokens` may be too low for your typical response sizes, or you're using a model with a small context window.
+**Cause:** The threshold is a fixed share of the context window (see [When It Triggers](compaction.md#when-it-triggers)), so a small window fills quickly. A large `keepRecentTokens` also leaves less to summarize, so each compaction frees less.
 
-**Fix:** Increase `reserveTokens` (e.g., to 24000) or switch to a model with a larger context window. You can also increase `keepRecentTokens` to reduce compaction frequency.
+**Fix:** Switch to a model with a larger context window, or lower `keepRecentTokens`. Raising `reserveTokens` does not help: it makes the reserve trigger fire earlier.
 
 ### "I want to disable auto-compaction"
 
-Set `compaction.enabled: false` in your settings. Use `/compact` manually when you want to compact. Threshold compaction stays off, but a context the provider rejects as too large is still compacted once and retried so the session does not stall. The RPC `set_auto_compaction` command and OmO Desktop's per-thread toggle change only that session; they do not write this setting.
+Set `compaction.enabled: false` in your settings, and `compaction.speculativeEnabled: false` with it so that no background summary is written (see [What Runs by Default and What It Costs](#what-runs-by-default-and-what-it-costs)). Use `/compact` manually when you want to compact. Threshold compaction stays off, but a context the provider rejects as too large is still compacted once and retried so the session does not stall. The RPC `set_auto_compaction` command and OmO Desktop's per-thread toggle change only that session; they do not write this setting.
 
 ### "How do I see what was compacted?"
 

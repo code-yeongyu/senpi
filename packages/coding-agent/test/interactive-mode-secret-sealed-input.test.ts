@@ -28,7 +28,11 @@ it("a TUI secret prompt with a sealed route goes through the race, and the TUI a
 	};
 	const { ui, typed } = mode(sealed);
 	const answered = ui.input("API key", undefined, { secret: true });
-	expect(sealed.open).toHaveBeenCalledWith("API key", undefined, { secret: true });
+	expect(sealed.open).toHaveBeenCalledWith(
+		"API key",
+		undefined,
+		expect.objectContaining({ secret: true, signal: expect.any(AbortSignal) }),
+	);
 	typed.resolve("typed-in-the-tui");
 	await Promise.resolve();
 	await Promise.resolve();

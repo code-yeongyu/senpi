@@ -1,6 +1,13 @@
 import { releaseQuestionInput } from "../../../question-input.ts";
 import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
+import {
+	AskUserEscapeResidueError,
+	type EscapeResidueRetry,
+	escapeResidueNote,
+	findEscapeResidue,
+	refuseEscapeResidue,
+} from "./escape-residue.ts";
 import { TOOL_NAMES } from "./family.ts";
 import {
 	formatGatedCancellation,
@@ -39,6 +46,8 @@ import {
 export interface AskUserState {
 	timedOut: boolean;
 	unavailable: boolean;
+	/** One refusal per turn of residue calls; the re-calls in a later turn open as written (oh-my-openagent#12797). */
+	escapeResidue: EscapeResidueRetry;
 }
 const REASK = "The user did not answer the previous question this turn; continue without asking again.";
 const REASK_REQUIRED =
@@ -370,6 +379,12 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				emitAskUserClosed(pi, request.requestId, unavailable);
 				return result(variant, unavailable, request);
 			}
+			const residue = findEscapeResidue(request.questions);
+			if (refuseEscapeResidue(state.escapeResidue, residue.length > 0)) {
+				emitAskUserClosed(pi, request.requestId, unavailable);
+				throw new AskUserEscapeResidueError(residue);
+			}
+			if (residue.length > 0) ctx.ui.notify(escapeResidueNote(residue), "warning");
 			const completion = startQuestion(pi, ctx, request, signal, state, variant);
 			if (!request.waitForAnswer)
 				return {
