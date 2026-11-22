@@ -15,6 +15,8 @@ export interface EvalPromptParts {
 	readonly description: string;
 	readonly promptSnippet: string;
 	readonly promptGuidelines: readonly string[];
+	/** The pre-diet guidelines, rendered by presets that declare full shared sections (senpi#5665). */
+	readonly fullPromptGuidelines: readonly string[];
 }
 
 export interface EvalPromptOptions {
@@ -30,7 +32,7 @@ export interface EvalPromptOptions {
 	readonly hostLine?: string;
 	/** Identity of the in-process js kernel; a bun runtime swaps the Node.js worker line for the Bun one. */
 	readonly jsRuntime?: EvalRuntimeInfo;
-	/** Absolute path of the active bun-1-4 skill; rendered as a MUST READ pointer only on a bun kernel. */
+	/** Absolute path of the active bun skill; rendered as a MUST READ pointer only on a bun kernel. */
 	readonly bunSkillPath?: string;
 	/** Kill deadline for a cell's own execution time, as configured; the description states it. */
 	readonly runBudgetSeconds?: number;
@@ -38,6 +40,8 @@ export interface EvalPromptOptions {
 	readonly maxDetachedCells?: number;
 	/** Active tools' kernel globals; each documentation line joins the prelude helper list. */
 	readonly kernelPreludes?: readonly KernelPreludeContribution[];
+	/** Tools withheld from the model's direct list and reachable only as `tool.<name>(...)` in a cell (senpi#6886). */
+	readonly evalOnlyTools?: readonly string[];
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
@@ -111,6 +115,7 @@ export function buildEvalPrompt(
 		runBudgetSeconds: String(options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS),
 		maxDetachedCells: String(options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS),
 		kernelPreludeDocs: (options.kernelPreludes ?? []).map((prelude) => prelude.documentation).join("\n"),
+		evalOnlyTools: (options.evalOnlyTools ?? []).join(", "),
 	};
 	const rendered = renderTemplate(EVAL_PROMPT_TEMPLATE, context)
 		.replace(/\n{3,}/g, "\n\n")
@@ -119,7 +124,9 @@ export function buildEvalPrompt(
 	return {
 		description,
 		promptSnippet: "Run one incremental code cell in a persistent language kernel.",
-		promptGuidelines: [
+		// Batching guidance lives in the per-style description above; the guideline keeps only what no schema states.
+		promptGuidelines: ["Bracketed kernel memory notice in eval result names biggest globals -> drop unneeded ones."],
+		fullPromptGuidelines: [
 			style === "gpt" && context.monitor === true ? GPT_MONITOR_BATCHING_GUIDELINE : BATCHING_GUIDELINES[style],
 			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
 		],

@@ -21,8 +21,10 @@ record({
 });
 
 const [group, command] = process.argv.slice(2);
+// The real copy-code URL joins its scopes with "+"; FAKE_CLAUDE_MANUAL_URL replaces it to print a foreign URL.
 const MANUAL_URL =
-	"https://claude.ai/oauth/authorize?code=true&client_id=fixture&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=fixture-state";
+	process.env.FAKE_CLAUDE_MANUAL_URL ??
+	"https://claude.ai/oauth/authorize?code=true&client_id=fixture&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Aprofile+user%3Ainference&state=fixture-state";
 const AUTOMATIC_URL =
 	"https://claude.ai/oauth/authorize?code=true&client_id=fixture&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback&state=fixture-state";
 
@@ -63,16 +65,31 @@ if (group === "auth" && command === "logout" && mode === "logout-hang") {
 if (group !== "auth" || command !== "login") process.exit(2);
 
 if (mode === "login-hang") process.on("SIGTERM", () => record({ sigterm: true }));
+const terminalOutput = mode.endsWith("-terminal");
+// An OSC 8 hyperlink, terminated by ST (`-terminal`) or BEL (`-bel`, what 2.1.306 prints even with NO_COLOR=1).
+const osc8 = (url, end) => `\x1b]8;;${url}${end}${url}\x1b]8;;${end}`;
+const manualUrl = terminalOutput
+	? osc8(MANUAL_URL, "\x1b\\")
+	: mode.endsWith("-bel")
+		? osc8(MANUAL_URL, "\x07")
+		: MANUAL_URL;
+const successOutput = terminalOutput
+	? "\x1b[32mLogin successful.\x1b[0m\r\n"
+	: mode.endsWith("-wrong-prefix")
+		? "\nError > Login successful.\n"
+		: mode.endsWith("-inline") || mode.endsWith("-bel")
+			? "Login successful.\n"
+			: "\nLogin successful.\n";
 process.stdout.write("Opening browser to sign in…\n");
-process.stdout.write(`If the browser didn't open, visit: ${MANUAL_URL}\n`);
+process.stdout.write(`If the browser didn't open, visit: ${manualUrl}\n`);
 if (process.env.BROWSER) spawnSync(process.env.BROWSER, [AUTOMATIC_URL], { stdio: "ignore" });
 process.stdout.write("Paste code here if prompted > ");
 
 if (mode === "login-hang") {
 	setInterval(() => {}, 1 << 30);
-} else if (mode === "login-auto") {
-	process.stdout.write("\nLogin successful.\n");
-	process.exit(0);
+} else if (mode.startsWith("login-auto") || mode === "login-exit1-success") {
+	process.stdout.write(successOutput);
+	process.exit(mode === "login-exit1-success" ? 1 : 0);
 } else if (mode === "login-org-denied") {
 	process.stderr.write("OAuth login failed: cli_auth_login_org_not_allowed\n");
 	process.exit(1);
@@ -81,7 +98,7 @@ if (mode === "login-hang") {
 	lines.once("line", (line) => {
 		record({ stdin: line });
 		if (mode === "login-exit0-silent") process.exit(0);
-		process.stdout.write("\nLogin successful.\n");
+		process.stdout.write(successOutput);
 		process.exit(0);
 	});
 }

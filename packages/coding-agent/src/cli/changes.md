@@ -1,3 +1,169 @@
+## 2026-11-20 - An attaching start does not refuse the distribution's own extension (#7118, oh-my-openagent#14465)
+
+### What changed
+
+- `packages/coding-agent/src/cli/held-session-attach.ts`: the `--extension` row of `UNAPPLIED_FLAGS` counts only the paths the brand profile does not name as the distribution's own (`userExtensions`, compared after `path.resolve`). A user-given `--extension` beside them still refuses the start.
+
+### Why
+
+- oh-my-openagent#14465: omo's launchers prepend `--extension <install>/plugin` to every chat start, so since #6914 every `omo --session <id>` on a host-held session exited 1 naming a flag the user never gave. The host runs that plugin already.
+
+### Why an extension could not handle it
+
+- The attach plan runs in `main.ts` before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `--extension` row of `UNAPPLIED_FLAGS` and the imports in `held-session-attach.ts` (fork-only file).
+
+## 2026-11-20 - Preserve prompts after boolean extension flags (#7116)
+
+### What changed
+
+- `args.ts` leaves the following positional argument untouched when the extension declares its option as boolean.
+
+### Why
+
+- The initial parse treated a positional prompt as the option's value and left the session with no first request.
+
+### Why an extension could not handle it
+
+- Extensions declare option types after the CLI first reads argv.
+
+### Expected merge conflict zones
+
+- The extension-option branch of `parseArgs`.
+
+## 2026-11-19 - `senpi host handoff --allow-downgrade` (senpi#7018)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command-args.ts`: `handoff` accepts `--allow-downgrade` (`ParsedHostArgs.allowDowngrade`, also set on the idle-handover terms).
+- `packages/coding-agent/src/cli/host-command.ts`: the handoff request carries it; the usage text names it and the `older_engine` refusal.
+
+### Why
+
+- A handoff onto a newer-engine host is now refused `older_engine`; the flag is the explicit way to downgrade on purpose.
+
+### Why an extension could not handle it
+
+- `senpi host` argument parsing runs before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `host-command-args.ts` flag loop and return literal; `host-command.ts` `USAGE` and `hostRequest`.
+
+## 2026-11-18 - A terminal that attaches to a host-held session applies its command line (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/cli/held-session-attach.ts` (new): `heldSessionAttachPlan(parsed, { autoResizeImages })` turns the command line of an attaching start into an `AttachStartup`. The first prompt carries the `@file` text and images before the first message, and the other messages follow. `--provider/--model` or `--model <provider>/<id>[:<thinking>]` becomes the model, and `--thinking` the level. A model pattern, or a model without a provider, refuses the start. So does every flag that configures the process running a session (`UNAPPLIED_FLAGS`: `--system-prompt`, `--append-system-prompt`, `--api-key`, `--models`, the tool flags, `--tool-runtime`, the extension, skill, prompt-template, theme and context-file flags, `--name`, `--offline`, `--approve`/`--no-approve`, `--verbose`, `--grok-neo`, `-` (stdin)), plus any unknown or extension flag. The refusal names each one, since the host already runs the session with its own configuration.
+
+### Why
+
+- senpi#6911 L1: the attach path of senpi#6909 dropped the prompts, `--model`, `--thinking`, `--use-theme` and `--tui-mode` without a word.
+
+### Why an extension could not handle it
+
+- Startup admission runs before any extension loads.
+
+### Expected merge conflict zones
+
+- None: new file.
+
+## 2026-11-17 - A session the machine's multi-session host holds opens attached there (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/cli/session-opening.ts`: `StartupAdmission` gains `{ attach: HostAttachTarget }`. An interactive start (`canAsk`) that may attach (`canAttach`) of a session whose holders are all one multi-session host with a published `host_socket` is admitted as an attach to that socket and the session's durable id, instead of being refused. Everything else keeps the senpi#5756 admission unchanged.
+
+### Why
+
+- The OmO desktop runs its sessions on such a host. Refusing them in a terminal meant a running app and a terminal could never share a session live in either direction.
+
+### Why an extension could not handle it
+
+- Startup admission runs before any extension loads, and decides whether the in-process runtime opens the file at all.
+
+### Expected merge conflict zones
+
+- LOW: `admitStartupSession` and the `StartupAdmission` type.
+
+## 2026-11-07 - The headless project_trust context lives apart from the startup UI (senpi#6185)
+
+### What changed
+
+- `packages/coding-agent/src/cli/project-trust-headless.ts`: new. `createHeadlessProjectTrustContext`: the `project_trust` handler context that never asks (no answer to select/confirm/input; notices to stderr outside the TUI), with no UI import.
+- `packages/coding-agent/src/cli/project-trust.ts`: `createProjectTrustContext` builds on it and adds the startup selectors only for an interactive run with a UI; behavior is unchanged.
+
+### Why
+
+- `modes/rpc/project-workspace-commands.ts` (#6177) imported `createProjectTrustContext`, and through it `cli/startup-ui.ts`, `core/keybindings.ts` and `core/package-manager.ts`, putting their synchronous fs calls and `spawnSync` on the RPC session path.
+
+### Why an extension could not handle it
+
+- The context is what the core hands every `project_trust` handler; the import graph of the RPC session path is core.
+
+### Expected merge conflict zones
+
+- LOW: `createProjectTrustContext` in `cli/project-trust.ts`.
+
+## 2026-11-05 - Startup admission for a held session; held deliveries defer (senpi#5756)
+
+### What changed
+
+- `packages/coding-agent/src/cli/session-opening.ts`: new `admitStartupSession(sessionFile, io)` returning `open`, `cancelled` or `refused`, and `SESSION_HELD_EXIT_CODE`. It reuses `checkSessionHolders`, `describeSessionHolders`, `takeOverRefusal` and `stopSessionHolders`. Without a person to ask, or for a holder that cannot be stopped safely, it refuses and names the holder; otherwise it asks, stops the holder on take-over, and refuses if the session is still (or newly) held. A failed lookup stays advisory. `prepareSessionOpening` is unchanged.
+- `packages/coding-agent/src/cli/schedule-delivery.ts`: `DeliveryResult` failures may carry `sessionHeld: true`; `runDeliveryProcess` reports it for the launch's `sessionHeldExitCode`, which only `sessionResumeDelivery` sets (`SESSION_HELD_EXIT_CODE`). `--exec` hooks are unchanged.
+- `packages/coding-agent/src/cli/schedule-runner.ts`: `deliverClaimed` treats a `sessionHeld` result as a deferral: it undoes a recurring job's re-arm, puts the claimed generation back in `pending/` and returns a `deferred` event, so no `failed/` record is written.
+
+### Why
+
+senpi#5756: opening a held session at startup must never start a second writer. A session opened between the runner's `deferWhileSessionOpen` check and the child's admission would otherwise fail that occurrence for good.
+
+### Why an extension could not handle it
+
+It runs before the runtime and its extensions exist, and the runner owns the occurrence records.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `session-opening.ts`, `DeliveryResult`/`ProcessLaunch` and the `close` handler in `schedule-delivery.ts`, the result handling in `deliverClaimed`.
+
+## 2026-11-05 - --hand and --headless engine flags (senpi#5840)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--hand` and `--headless` (validated by the new `engine-mode-args.ts`: both run in RPC mode, `--headless` as a multi-session host; a prompt, `--print`, stdin, @files, `--mode text|json`, both flags together, and `--listen`/`--multi-session` with `--hand` are refused), documents both in `--help`, accepts `--listen` after either flag, and runs a headless host's sessions in process by default.
+
+### Why
+
+- senpi#5840: the headless host (#5423) and the hand runtime (#5424, #5483) existed only as libraries; nothing in the CLI started either, so a launcher or device service had no engine to start.
+
+### Why an extension could not handle it
+
+- Mode selection happens in the CLI's own argument parser before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `Args` interface, the `--multi-session` branch of `parseArgs`, `resolveSessionRuntime` and the multi-session lines of `--help`.
+
+## 2026-10-31 - ANTHROPIC_OAUTH_TOKEN help text (senpi#5131)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `ANTHROPIC_OAUTH_TOKEN` line of `--help` says the variable is read like `ANTHROPIC_API_KEY` and that Claude OAuth tokens are refused in favour of `anthropic-subscription`.
+
+### Why
+
+- senpi#5131: the old text advertised the removed OAuth path.
+
+### Why an extension could not handle it
+
+- The help text is the CLI's own.
+
+### Expected merge conflict zones
+
+- LOW: one line of the environment-variable list.
+
 ## 2026-10-30 - Check CLI choices without type assertions (senpi#4971)
 
 ### What changed

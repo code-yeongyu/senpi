@@ -164,7 +164,8 @@ async function startLegacyHost(label: string): Promise<LegacyHost> {
 	scratches.push(qa);
 	writeRpcModelsJson(qa.agentDir, "http://127.0.0.1:1");
 	const socket = join(qa.agentDir, "rpc", "rpc.sock");
-	await mkdir(join(qa.agentDir, "rpc"), { recursive: true });
+	// `rpc/` is part of the host's key root, which it refuses when writable by group or others (senpi#4541).
+	await mkdir(join(qa.agentDir, "rpc"), { recursive: true, mode: 0o700 });
 	const ensured = await ensureOn(qa, socket);
 	// An attached client keeps a draining host resident; the legacy host must start with nobody on it.
 	ensured.release();

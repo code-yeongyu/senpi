@@ -1,7 +1,10 @@
 // SC-LIVE invariant checker (plan §3.4, P0-05g): pure checks over one live-session run record. Each check returns
 // { id, pass, detail }; evaluateLiveRun() runs them all and passes only when every one passes. Nothing here talks to a
-// model or a process, so the checks are unit-tested on synthetic records (live-invariants.test.mjs).
+// model or a process, so the checks are unit-tested on synthetic records (live-invariants.test.mjs);
+// G1 lives in live-hook-invariants.mjs.
 import { diffNormalized } from "./equivalence-normalize.mjs";
+import { checkHooksOncePerCall } from "./live-hook-invariants.mjs";
+import { messages, nestedCalls, toolResults, transcriptCalls } from "./live-transcript.mjs";
 
 const MIN_TOOL_CALLS = 30;
 const MIN_TURNS = 8;
@@ -20,44 +23,6 @@ const check = (id, failures, detail) => ({
 	pass: failures.length === 0,
 	detail: failures.length ? failures : detail,
 });
-const messages = (entries) => entries.filter((entry) => entry?.type === "message" && entry.message);
-
-/** Every tool call in the transcript, in source order: { id, name, messageIndex }. */
-function transcriptCalls(entries) {
-	return messages(entries).flatMap(({ message }, messageIndex) =>
-		message.role === "assistant" && Array.isArray(message.content)
-			? message.content
-					.filter((part) => part?.type === "toolCall")
-					.map((part) => ({ id: part.id, name: part.name, messageIndex }))
-			: [],
-	);
-}
-
-/**
- * Calls a tool ran inside another call (an eval cell's \`tool.bash\`): the engine reports them only on its
- * \`tool_hook_status\` stream, under their own ids. Each is attributed to the top-level call that was running when it
- * first appeared: { id, name, parentId }.
- */
-export function nestedCalls(events) {
-	const open = [];
-	const topLevel = new Set(events.filter((e) => e.type === "tool_execution_start").map((e) => e.toolCallId));
-	const nested = new Map();
-	for (const event of events) {
-		if (event.type === "tool_execution_start") open.push(event.toolCallId);
-		else if (event.type === "tool_execution_end") {
-			// An end with no matching start must not close another running call; checkNoDanglingCall reports it.
-			const index = open.lastIndexOf(event.toolCallId);
-			if (index !== -1) open.splice(index, 1);
-		} else if (event.type === "tool_hook_status" && !topLevel.has(event.toolCallId) && !nested.has(event.toolCallId))
-			nested.set(event.toolCallId, { id: event.toolCallId, name: event.toolName, parentId: open.at(-1) });
-	}
-	return [...nested.values()];
-}
-
-const toolResults = (entries) =>
-	messages(entries)
-		.filter(({ message }) => message.role === "toolResult")
-		.map(({ message }) => message);
 
 /** B4: every call has exactly one result, and each assistant message's results are persisted in its call order. */
 export function checkResultsOncePerCall(entries) {
@@ -113,61 +78,6 @@ export function checkNoDanglingCall(events) {
 	}
 	for (const [id, count] of open) if (count > 0) failures.push(`call ${id} started and never ended`);
 	return check("engine.no-dangling-call", failures, `${started} started, all ended`);
-}
-
-/** G1: PreToolUse and PostToolUse fire exactly once per call (top-level, nested-agent and eval-run calls alike). */
-export function checkHooksOncePerCall(hookTrace, entries, events, sessionTranscripts = []) {
-	const failures = [];
-	const sessions = new Map();
-	for (const transcript of [{ entries }, ...sessionTranscripts]) {
-		const id = transcript.entries.find((entry) => entry.type === "session")?.id;
-		if (!id || sessions.has(id)) {
-			failures.push(`missing or duplicate session transcript ${id}`);
-			continue;
-		}
-		const callIds = new Set(transcriptCalls(transcript.entries).map((call) => call.id));
-		// The trusted sandbox extension records engine tool_call ids in the owning session.
-		// Eval result details.toolCalls carry DIFFERENT kernel-local ids, not hook ids.
-		for (const entry of transcript.entries)
-			if (entry.type === "custom" && entry.customType === "live-tool-call" && entry.data?.id)
-				callIds.add(entry.data.id);
-		sessions.set(id, {
-			calls: callIds,
-			fired: { PreToolUse: new Map(), PostToolUse: new Map() },
-		});
-	}
-	// Eval dispatches are not assistant toolCall blocks. Keep their independent parent RPC execution
-	// evidence, but only under an eval call present in THIS parent's transcript, never under another session.
-	const parentId = entries.find((entry) => entry.type === "session")?.id;
-	const parent = sessions.get(parentId);
-	const evalIds = new Set(transcriptCalls(entries).filter((call) => call.name === "eval").map((call) => call.id));
-	for (const call of nestedCalls(events)) {
-		if (parent && evalIds.has(call.parentId)) parent.calls.add(call.id);
-		else if (![...sessions.values()].some((session) => session.calls.has(call.id)))
-			failures.push(`nested call ${call.id} has no owning session`);
-	}
-	for (const line of hookTrace) {
-		const session = sessions.get(line.session_id);
-		if (!session) {
-			failures.push(`${line.event} fired for unknown session ${line.session_id}, call ${line.toolCallId}`);
-			continue;
-		}
-		const { calls, fired } = session;
-		if (!fired[line.event]) failures.push(`unexpected hook event ${line.event}`);
-		else fired[line.event].set(line.toolCallId, (fired[line.event].get(line.toolCallId) ?? 0) + 1);
-		if (!calls.has(line.toolCallId))
-			failures.push(`${line.event} fired for unknown call ${line.toolCallId} in session ${line.session_id}`);
-	}
-	let count = 0;
-	for (const [sessionId, { calls, fired }] of sessions) {
-		count += calls.size;
-		for (const id of calls)
-			for (const event of Object.keys(fired)) {
-				const count = fired[event].get(id) ?? 0;
-				if (count !== 1) failures.push(`${event} fired ${count} times for ${id} in session ${sessionId}`);
-			}
-	}
-	return check("G1.hooks-once-per-call", failures, `${count} calls in ${sessions.size} sessions, Pre and Post once each`);
 }
 
 /** O7: the transcript reopens with the same durable id and message count, and every persisted entry is kept. */

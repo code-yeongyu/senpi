@@ -1,0 +1,43 @@
+name: Registry packages published
+
+# senpi#6636: npm trusted publishing cannot do a package's first publish, so a name added to the publish set
+# (scripts/registry-packages.mjs) that the registry does not know fails the next release half-way through its publish.
+# This check reads the real registry on the PR that changes the set, and on main, so the gap is seen before a release.
+on:
+  pull_request:
+    paths:
+      - 'scripts/registry-packages.mjs'
+      - 'scripts/npm-registry.mjs'
+      - '.github/workflows/registry-packages-published.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/registry-packages.mjs'
+      - 'scripts/npm-registry.mjs'
+      - '.github/workflows/registry-packages-published.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-packages-published-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Publish-set packages exist on npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Every publish-set package is known to the npm registry
+        run: node scripts/npm-registry.mjs

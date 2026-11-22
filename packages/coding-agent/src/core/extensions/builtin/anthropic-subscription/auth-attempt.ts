@@ -39,6 +39,7 @@ export type AttemptFactoryInput = {
 	/** The turn's abort signal; an initialization wait never outlives it. */
 	signal?: AbortSignal;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
+	onAttemptStart?: () => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
 	) => RetainableAttempt<SDKMessage> | Promise<RetainableAttempt<SDKMessage>>;
@@ -94,6 +95,7 @@ export async function createAttemptMessages(
 	input: AttemptFactoryInput,
 	auth: AuthenticatedAttemptInput,
 ): Promise<AsyncIterable<SDKMessage>> {
+	input.onAttemptStart?.();
 	const account = attemptAccountContext(auth);
 	logAttemptAccount(auth, input.sessionId);
 	// Claude Code loads auto memory independently of settingSources. Keep its private

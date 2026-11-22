@@ -546,6 +546,83 @@ describe("openai-completions tool_choice", () => {
 		expect(functionTool?.parameters?.required).toEqual(["required", "optional"]);
 	});
 
+	// Regression coverage for senpi#4821: strictness is a request-level capability.
+	it.each([false, true, undefined])(
+		"honors mixedStrictTools=%s for mixed prefer schemas",
+		async (mixedStrictTools) => {
+			const model = {
+				...localOpenAICompletionsModel,
+				id: "mixed-strict",
+				name: "Mixed strict",
+				compat: { supportsStrictMode: true, mixedStrictTools },
+			};
+			const tools: Tool[] = [
+				{
+					name: "strict_capable",
+					description: "Strict-capable tool",
+					parameters: Type.Object({ value: Type.Optional(Type.String()) }),
+					constrainedSampling: { type: "json_schema", strict: "prefer" },
+				},
+				{
+					name: "incompatible",
+					description: "Tool with an unsupported strict schema",
+					parameters: Type.Object({ value: Type.Unsafe({ oneOf: [{ type: "string" }, { type: "number" }] }) }),
+					constrainedSampling: { type: "json_schema", strict: "prefer" },
+				},
+			];
+			const result = await streamSimple(
+				model,
+				{ messages: [{ role: "user", content: "Use the tools", timestamp: 0 }], tools },
+				{ apiKey: "test" },
+			).result();
+			expect(result.stopReason).toBe("stop");
+			const params = mockState.lastParams as {
+				tools: Array<{ function: { strict: boolean; parameters: { required?: string[] } } }>;
+			};
+			expect(params.tools.map((tool) => tool.function.strict)).toEqual([mixedStrictTools !== false, false]);
+			expect(params.tools[0].function.parameters.required ?? []).toEqual(
+				mixedStrictTools === false ? [] : ["value"],
+			);
+			expect(tools[0].parameters).not.toHaveProperty("required");
+		},
+	);
+
+	it("rejects a required strict tool with an incompatible sibling before sending", async () => {
+		const resultStream = streamSimple(
+			{
+				...localOpenAICompletionsModel,
+				id: "mixed-strict",
+				name: "Mixed strict",
+				compat: { supportsStrictMode: true, mixedStrictTools: false },
+			},
+			{
+				messages: [{ role: "user", content: "Use the tools", timestamp: 0 }],
+				tools: [
+					{
+						name: "required_strict",
+						description: "Requires strict sampling",
+						parameters: Type.Object({ value: Type.String() }),
+						constrainedSampling: { type: "json_schema", strict: "require" },
+					},
+					{
+						name: "ordinary",
+						description: "Non-strict tool",
+						parameters: Type.Object({}),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		);
+		const events = [];
+		for await (const event of resultStream) events.push(event);
+		const result = await resultStream.result();
+		expect(result.stopReason).toBe("error");
+		expect(events.at(-1)?.type).toBe("error");
+		expect(result.errorMessage).toContain("required_strict");
+		expect(result.errorMessage).toContain("ordinary");
+		expect(mockState.calls).toHaveLength(0);
+	});
+
 	it("maps Groq Qwen reasoning levels to default reasoning_effort", async () => {
 		const model = getModel("groq", "qwen/qwen3.6-27b")!;
 		let payload: unknown;

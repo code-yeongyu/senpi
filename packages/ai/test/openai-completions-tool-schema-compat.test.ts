@@ -126,6 +126,51 @@ describe("tool-schema-compat", () => {
 				},
 			});
 		});
+
+		// senpi#5138: the merged root keeps only branch-common required names, so a branch's own
+		// required fields would vanish from the wire; they survive as a REQUIRED hint instead.
+		it("keeps branch-only required fields as a description hint when merging a root union", () => {
+			const schema = {
+				type: "object",
+				description: "Run code or control cells.",
+				properties: { action: { type: "string" } },
+				anyOf: [
+					{
+						type: "object",
+						properties: {
+							action: { type: "string", const: "run" },
+							language: { type: "string" },
+							code: { type: "string" },
+						},
+						required: ["language", "code"],
+					},
+					{ type: "object", properties: { action: { type: "string", const: "list" } } },
+					{
+						type: "object",
+						properties: {
+							action: {
+								anyOf: [
+									{ type: "string", const: "peek" },
+									{ type: "string", const: "stop" },
+								],
+							},
+							cell_id: { type: "string" },
+						},
+						required: ["action", "cell_id"],
+					},
+				],
+			};
+
+			const normalized = normalizeToolParametersForOpenAICompat(schema);
+
+			expect(normalized.required).toBeUndefined();
+			expect(normalized.description).toEqual(expect.stringContaining("Run code or control cells."));
+			expect(normalized.description).toEqual(expect.stringContaining("REQUIRED for action=run: language, code."));
+			expect(normalized.description).toEqual(
+				expect.stringContaining("REQUIRED for action=peek|stop: action, cell_id."),
+			);
+			expect(normalized.description).not.toEqual(expect.stringContaining("action=list"));
+		});
 	});
 
 	describe("normalizeToolParametersForMoonshot", () => {
@@ -158,6 +203,7 @@ describe("tool-schema-compat", () => {
 
 			expect(normalized).toEqual({
 				type: "object",
+				description: "REQUIRED for option 1: element_index. REQUIRED for option 2: x, y.",
 				required: ["app"],
 				properties: {
 					app: { type: "string" },

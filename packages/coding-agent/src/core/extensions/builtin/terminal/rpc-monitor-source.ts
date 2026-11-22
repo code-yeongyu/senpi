@@ -4,9 +4,15 @@
  * file watches. A paused watch counts the lines it drops; a line identical to the previous one is
  * dropped (consecutive dedupe), on top of the notifier's same-batch rule.
  */
-import { allocateMonitorId, type MonitorRecordBase, type MonitorSourceHost } from "./monitor-types.ts";
+import {
+	allocateMonitorId,
+	type MonitorEndedReason,
+	type MonitorRecordBase,
+	type MonitorSourceHost,
+} from "./monitor-types.ts";
 import type { RpcEvents, RpcTarget } from "./rpc-monitor-targets.ts";
 import { type RpcMonitorCheckpoint, RpcMonitorWatch } from "./rpc-monitor-watch.ts";
+import type { RpcRemoteSource } from "./rpc-remote-source.ts";
 
 /**
  * The summary an RPC watch settles with when its own deadline fires. An RPC watch observes
@@ -30,6 +36,8 @@ export interface RegisterRpcMonitorOptions {
 	readonly agentDir: string;
 	/** Endpoint discovery override (tests); defaults to the endpoints registered under `agentDir`. */
 	readonly endpoints?: () => Promise<readonly string[]>;
+	/** Remote source override (tests); defaults to the one an extension registered. */
+	readonly remoteSource?: RpcRemoteSource;
 	/** A restore's saved view: the lines for what changed are injected once the watch has joined. */
 	readonly restoredFrom?: RpcMonitorCheckpoint;
 	readonly onCheckpoint?: (monitorId: string, checkpoint: RpcMonitorCheckpoint) => void;
@@ -74,6 +82,9 @@ export class RpcMonitorSource {
 			events: options.events,
 			exclude: options.exclude,
 			...(options.endpoints === undefined ? {} : { endpoints: options.endpoints }),
+			...(options.remoteSource === undefined ? {} : { remoteSource: options.remoteSource }),
+			...(options.restoredFrom === undefined ? {} : { restoredFrom: options.restoredFrom }),
+			ended: (summary) => this.settle(id, summary, "exit"),
 			line: (line) => this.#line(id, line),
 			...(options.onCheckpoint === undefined
 				? {}
@@ -104,14 +115,21 @@ export class RpcMonitorSource {
 		};
 		this.#records.set(id, record);
 		this.#host.changed();
-		const rows = await watch.start();
+		const rows = await watch.start().catch((error: unknown) => {
+			// Only a remote open rejects: the watch never ran, so it leaves without a summary or an ended event.
+			watch.stop();
+			clearTimeout(record.deadline);
+			this.#records.delete(id);
+			this.#host.changed();
+			throw error;
+		});
 		if (options.restoredFrom !== undefined)
 			for (const line of watch.diffSince(options.restoredFrom)) this.#line(id, line);
 		return { id, monitorId, rows };
 	}
 
 	/** Ends one watch; false when the id is not a live rpc watch. */
-	settle(id: string, summary: string): boolean {
+	settle(id: string, summary: string, reason?: MonitorEndedReason): boolean {
 		const record = this.#records.get(id);
 		if (record === undefined || record.settled) return false;
 		record.settled = true;
@@ -123,7 +141,12 @@ export class RpcMonitorSource {
 			this.#host.emit(record, { type: "summary", id, description: record.description, summary });
 		this.#host.ended(
 			record,
-			summary === RPC_WATCHER_TIMED_OUT_SUMMARY ? "timeout" : summary === "watcher disposed" ? "disposed" : "killed",
+			reason ??
+				(summary === RPC_WATCHER_TIMED_OUT_SUMMARY
+					? "timeout"
+					: summary === "watcher disposed"
+						? "disposed"
+						: "killed"),
 			null,
 		);
 		return true;

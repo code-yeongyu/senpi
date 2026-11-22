@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
+import type { RecoveryAdmission } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { EVENT_RESYNC_CAPABILITY } from "../../../src/modes/rpc/socket-peer-recovery.ts";
 import { heldPeer as peer, LaneProducer, update, usage } from "./4272-legacy-view-support.ts";
@@ -43,6 +44,15 @@ it("T5 the attach is the real producer: it mints the admission and freezes C in 
 	});
 	expect(token?.admission.admissionId.length).toBeGreaterThan(0);
 	expect(token?.admission.socketEpoch.length).toBeGreaterThan(0);
+	expect(token?.admission).toEqual({
+		socketEpoch: writer.socketEpochOf("late") ?? expect.unreachable("missing peer epoch"),
+		admissionId: "attach-1",
+		routeKind: "ordinary",
+		peer: "late",
+		sessionId: "s",
+		sessionEpoch: lane.sessionEpoch,
+		generation: 1,
+	} satisfies RecoveryAdmission);
 	// A repeated hold adds no cut; content accepted behind the barrier is the suffix, not the baseline.
 	writer.attachConnectionToSession("late", "s");
 	expect(writer.recoveryCheckpoints.tokens()).toHaveLength(1);

@@ -24,6 +24,13 @@ export type { Model } from "./model.ts";
 export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
 export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
 	/**
+	 * The selected credential uses Sign in with ChatGPT plan usage on the public Responses API.
+	 * Set per credential route, not by token prefix or provider id. Forces HTTP/SSE and SIWC
+	 * request restrictions; deferred tools use additional_tools when supported, otherwise eager tools.
+	 * Default: false. Never set for API keys or the ChatGPT backend/Codex route.
+	 */
+	siwc?: boolean;
+	/**
 	 * Exact native search type for a compatible Responses endpoint.
 	 * OpenAI supports both names; xAI documents only web_search.
 	 * https://developers.openai.com/api/docs/guides/tools-web-search
@@ -304,6 +311,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * session-aware features. Ignored by providers that don't support it.
 	 */
 	sessionId?: string;
+	/**
+	 * Opaque, non-identifying routing key for the session. When set, Anthropic Messages sends it in
+	 * the session-affinity header instead of `sessionId`, so a gateway keeps the session on one
+	 * upstream account without learning the session id. Other providers ignore it.
+	 */
+	sessionAffinityKey?: string;
 	/**
 	 * Optional custom fields to merge into the outgoing provider request body.
 	 * Applied before `onPayload` so `onPayload` can observe/override them.
@@ -1151,6 +1164,8 @@ export interface OpenAICompletionsCompat {
 	supportsMidConvoToolAdditions?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: false; generated capable models enable it explicitly. */
 	supportsStrictMode?: boolean;
+	/** Whether function tools may mix strict and non-strict sampling in one request. Default: true. */
+	mixedStrictTools?: boolean;
 	/**
 	 * Provider-specific JSON Schema flavor for tool parameters. `"moonshot-mfjs"`
 	 * normalizes schemas for Moonshot / Kimi backends that enforce a stricter subset.

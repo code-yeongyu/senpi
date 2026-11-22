@@ -6,10 +6,14 @@ import { join } from "node:path";
 import { evidenceDir } from "../../../../scripts/lib/common.mjs";
 
 export function printChecks(label, verdict) {
-	for (const c of verdict.checks)
+	for (const c of verdict.checks) {
 		process.stdout.write(
 			`[${c.pass ? "PASS" : "FAIL"}] ${label} ${c.id}: ${Array.isArray(c.detail) ? c.detail.join("; ") : c.detail}\n`,
 		);
+		// A passing G1 names its exclusions in detail; a failing one lists only failures, so name them here too.
+		if (!c.pass && c.excluded?.count)
+			process.stdout.write(`       ${c.id} excluded ${c.excluded.count} ${c.excluded.origin} session(s): ${c.excluded.sessions.join(", ")}\n`);
+	}
 }
 
 export function writeEvidence(slug, receipt, session) {

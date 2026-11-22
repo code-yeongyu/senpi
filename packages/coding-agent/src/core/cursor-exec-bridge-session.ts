@@ -1,18 +1,29 @@
-import type {
-	Agent,
-	AgentEvent,
-	AgentTool,
-	AgentToolCall,
-	AgentToolResult,
-	BeforeToolCallResult,
+import {
+	type Agent,
+	type AgentEvent,
+	type AgentTool,
+	type AgentToolCall,
+	type AgentToolResult,
+	BatchStoreMissingError,
+	type BeforeToolCallResult,
 } from "@earendil-works/pi-agent-core";
 import { createCursorExecBridge } from "./cursor-exec-bridge.ts";
 
-type CursorBridgeAgent = Pick<Agent, "emitExternalEvent" | "signal">;
+type CursorBridgeAgent = Pick<
+	Agent,
+	"emitExternalEvent" | "signal" | "batchStoreFactory" | "executionScope" | "getExecutionScope" | "onExecutionPipeline"
+>;
 
 export interface CursorExecBridgeSession {
 	getRegisteredTool(name: string): AgentTool | undefined;
-	preflightToolCall(toolCall: AgentToolCall, args: unknown): Promise<BeforeToolCallResult | undefined>;
+	/** `execBridge` marks the call as issued by the model through the exec channel until it is released. */
+	preflightToolCall(
+		toolCall: AgentToolCall,
+		args: unknown,
+		options?: { execBridge?: boolean },
+	): Promise<BeforeToolCallResult | undefined>;
+	/** The exec-frame call ended on any path; its preflight marked it model-issued with `execBridge`. */
+	releaseExecBridgeToolCall(toolCallId: string): void;
 	emitExecBridgeToolResult(
 		toolName: string,
 		toolCallId: string,
@@ -51,9 +62,11 @@ export function createSessionCursorExecBridge(
 					arguments: event.input as AgentToolCall["arguments"],
 				},
 				event.input,
+				{ execBridge: true },
 			),
 		emitEvent: async (event: AgentEvent, runSignal: AbortSignal) =>
 			await getAgent().emitExternalEvent(event, runSignal),
+		settleToolCall: (toolCallId) => sessionRef.current?.releaseExecBridgeToolCall(toolCallId),
 		emitToolResult: async ({ toolName, toolCallId, args, result, isError }) => {
 			await sessionRef.current?.emitExecBridgeToolResult(toolName, toolCallId, args, result, isError);
 		},
@@ -61,5 +74,15 @@ export function createSessionCursorExecBridge(
 			if (runSignal === undefined || runSignal.aborted) return undefined;
 			return runSignal === getAgent().signal ? runSignal : undefined;
 		},
+		openBatchStore: () => {
+			const open = getAgent().batchStoreFactory;
+			if (open === undefined) throw new BatchStoreMissingError();
+			return open();
+		},
+		getExecutionScope: () => {
+			const agent = getAgent();
+			return agent.getExecutionScope?.() ?? agent.executionScope;
+		},
+		recordWitness: (witness) => getAgent().onExecutionPipeline?.(witness),
 	});
 }

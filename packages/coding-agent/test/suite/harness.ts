@@ -20,6 +20,7 @@ import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profi
 import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
 import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
+import { settledFallbackLoggers } from "../../src/core/retry-fallback/log.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
 import type { SessionStartEvent } from "../../src/core/extensions/types.ts";
@@ -92,6 +93,7 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		custom: async <T>() => undefined as T,
 		pasteToEditor: () => {},
 		setEditorText: () => {},
@@ -113,6 +115,8 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 }
 
 export interface HarnessOptions {
+	/** Hosted step commit forwarded to the Agent (custody C.P3); unset for every fused test. */
+	commitStep?: AgentOptions["commitStep"];
 	models?: FauxModelDefinition[];
 	api?: string;
 	provider?: string;
@@ -262,6 +266,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	}
 
 	const agent = new Agent({
+		...(options.commitStep ? { commitStep: options.commitStep } : {}),
 		getApiKey: () => (withConfiguredAuth ? "faux-key" : undefined),
 		streamFn: streamSimple,
 		initialState: {
@@ -333,6 +338,10 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 		...(options.sessionStartEvent !== undefined ? { sessionStartEvent: options.sessionStartEvent } : {}),
 	});
+
+	// The session's fallback logger removes earlier log generations asynchronously on its first start and queues the
+	// lines logged meanwhile; wait until it has flushed them so a test can read fallback.log as soon as the harness exists.
+	await settledFallbackLoggers();
 
 	const events: AgentSessionEvent[] = [];
 	session.subscribe((event) => {

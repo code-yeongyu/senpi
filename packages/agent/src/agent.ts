@@ -167,6 +167,13 @@ export interface AgentOptions {
 	streamKeepAliveTimeoutMs?: number;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	toolHost?: AgentLoopConfig["toolHost"];
+	batchStoreFactory?: AgentLoopConfig["batchStoreFactory"];
+	afterToolFreeze?: AgentLoopConfig["afterToolFreeze"];
+	executionScope?: AgentLoopConfig["executionScope"];
+	/** Makes each finished model step durable before the loop acts on it (hosted custody, C6 C.P3); unset on fused and split-local. */
+	commitStep?: AgentLoopConfig["commitStep"];
+	onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
 	removedToolHints?: Record<string, string>;
 	resolveUnknownToolCall?: AgentLoopConfig["resolveUnknownToolCall"];
 	abortServerSideFallback?: boolean;
@@ -248,6 +255,11 @@ class PendingMessageQueue {
 		return this.messages.slice(0, end);
 	}
 
+	/** Every queued message, whatever the drain mode. */
+	all(): AgentMessage[] {
+		return this.messages.slice();
+	}
+
 	drain(): AgentMessage[] {
 		const drained = this.peek();
 		this.messages = this.messages.slice(drained.length);
@@ -299,6 +311,8 @@ export class Agent {
 	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
 	private readonly steeringQueue: PendingMessageQueue;
 	private readonly followUpQueue: PendingMessageQueue;
+	/** The last run ended in a provider error with follow-ups queued: the next run takes them at its first turn. */
+	private followUpsParked = false;
 
 	public convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
@@ -341,6 +355,13 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	public toolHost?: AgentLoopConfig["toolHost"];
+	public batchStoreFactory?: AgentLoopConfig["batchStoreFactory"];
+	public afterToolFreeze?: AgentLoopConfig["afterToolFreeze"];
+	public executionScope: NonNullable<AgentLoopConfig["executionScope"]>;
+	private readonly commitStep?: AgentLoopConfig["commitStep"];
+	public getExecutionScope?: () => NonNullable<AgentLoopConfig["executionScope"]>;
+	public onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
 	/** Migration guidance returned when a removed tool name is called. */
 	public removedToolHints: Record<string, string>;
 	/** Optional call-time resolver for tools absent from the request context. */
@@ -387,6 +408,12 @@ export class Agent {
 		this.streamKeepAliveTimeoutMs = runtimeOptions.streamKeepAliveTimeoutMs;
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.toolHost = runtimeOptions.toolHost;
+		this.batchStoreFactory = runtimeOptions.batchStoreFactory;
+		this.afterToolFreeze = runtimeOptions.afterToolFreeze;
+		this.executionScope = runtimeOptions.executionScope ?? { id: crypto.randomUUID(), root: "" };
+		this.commitStep = runtimeOptions.commitStep;
+		this.onExecutionPipeline = runtimeOptions.onExecutionPipeline;
 		this.removedToolHints = runtimeOptions.removedToolHints ?? {};
 		this.resolveUnknownToolCall = runtimeOptions.resolveUnknownToolCall;
 		this.abortServerSideFallback = runtimeOptions.abortServerSideFallback;
@@ -478,8 +505,9 @@ export class Agent {
 
 	/** Preview next-turn messages, or both queues with { all: true }, without consuming them. */
 	peekQueuedMessages(options?: { all?: boolean }): AgentMessage[] {
+		// `all` is every queued message: in `one-at-a-time` mode a queue's next drain is only its head (omo#14428).
+		if (options?.all) return [...this.steeringQueue.all(), ...this.followUpQueue.all()];
 		const steering = this.steeringQueue.peek();
-		if (options?.all) return [...steering, ...this.followUpQueue.peek()];
 		return steering.length > 0 ? steering : this.followUpQueue.peek();
 	}
 
@@ -651,7 +679,9 @@ export class Agent {
 			await runAgentLoop(
 				messages,
 				this.createContextSnapshot(),
-				this.createLoopConfig(options),
+				// A run started from new input takes follow-ups an error-ended run parked; a retry or other continuation
+				// leaves them for that run (omo#14428).
+				this.createLoopConfig({ ...options, takeParkedFollowUps: true }),
 				(event) => this.processEvents(event),
 				signal,
 				this.streamFunction,
@@ -669,6 +699,8 @@ export class Agent {
 	): Promise<void> {
 		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
 		const port = this.queuedInputPort;
+		// This run starts from the queue itself, so it takes the parked input in the queue's own drain order.
+		this.followUpsParked = false;
 		if (!port) {
 			await this.runPromptMessages(pendingQueue.drain(), options);
 			return;
@@ -757,9 +789,12 @@ export class Agent {
 			skipInitialSteeringPoll?: boolean;
 			initialRequestTimeoutMs?: number;
 			initialRequestStreamStartTimeoutMs?: number;
+			takeParkedFollowUps?: boolean;
 		} = {},
 	): InternalLoopConfig {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
+		const takeFollowUpsAtStart = options.takeParkedFollowUps === true && this.followUpsParked;
+		if (takeFollowUpsAtStart) this.followUpsParked = false;
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const finishTurn = this.finishTurn;
@@ -787,6 +822,12 @@ export class Agent {
 			abortServerSideFallback: this.abortServerSideFallback,
 			cursorExecHandlers: this.cursorExecHandlers,
 			toolExecution: this.toolExecution,
+			toolHost: this.toolHost,
+			batchStoreFactory: this.batchStoreFactory,
+			afterToolFreeze: this.afterToolFreeze,
+			executionScope: this.getExecutionScope?.() ?? this.executionScope,
+			...(this.commitStep ? { commitStep: this.commitStep } : {}),
+			onExecutionPipeline: this.onExecutionPipeline,
 			removedToolHints: this.removedToolHints,
 			resolveUnknownToolCall: this.resolveUnknownToolCall,
 			beforeToolCall: this.beforeToolCall,
@@ -824,6 +865,7 @@ export class Agent {
 				};
 				return queuedInputPort ? queuedInputPort.claim("steering", drain) : drain();
 			},
+			takeFollowUpsAtStart,
 			getFollowUpMessages: async () => {
 				const drain = () => {
 					followUpQueueGeneration = this.followUpQueue.getClearGeneration();
@@ -871,11 +913,24 @@ export class Agent {
 			) {
 				await this.runQueuedMessagesAfterAgentEnd(abortController.signal);
 			}
+			// Follow-ups an error-ended run parked join the next run's first turn boundary, so their entries are
+			// written even when that run's provider request fails too (omo#14428). A suppressed drain only hands this
+			// run's post-run decision to its owner (a retry, a compaction, agent_before_settle); the mark affects only
+			// the next run, so it holds either way.
+			this.followUpsParked =
+				!abortController.signal.aborted &&
+				this.followUpQueue.hasItems() &&
+				this.lastAssistantStopReason() === "error";
 		} catch (error) {
 			await this.handleRunFailure(error, abortController.signal.aborted);
 		} finally {
 			this.finishRun();
 		}
+	}
+
+	private lastAssistantStopReason(): string | undefined {
+		const lastMessage = this._state.messages.at(-1);
+		return lastMessage?.role === "assistant" ? lastMessage.stopReason : undefined;
 	}
 
 	private canDrainQueuedMessagesAfterRun(): boolean {

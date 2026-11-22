@@ -164,7 +164,7 @@ describe("Anthropic auth token env", () => {
 		expect(mockState.createParams?.system).toEqual([expect.objectContaining({ text: "System prompt." })]);
 	});
 
-	it("preserves OAuth request shaping for ANTHROPIC_OAUTH_TOKEN", async () => {
+	it("refuses a Claude OAuth token from ANTHROPIC_OAUTH_TOKEN before any request (senpi#5131)", async () => {
 		const models = createModels({
 			authContext: {
 				env: async (name) => (name === "ANTHROPIC_OAUTH_TOKEN" ? "sk-ant-oat-test" : undefined),
@@ -173,11 +173,12 @@ describe("Anthropic auth token env", () => {
 		});
 		models.setProvider(anthropicProvider());
 
-		await models.streamSimple(anthropicModel, context).result();
+		const message = await models.streamSimple(anthropicModel, context).result();
 
-		expect(mockState.constructorOpts?.apiKey).toBeNull();
-		expect(mockState.constructorOpts?.authToken).toBe("sk-ant-oat-test");
-		expect(mockState.createParams?.betas).toContain("oauth-2025-04-20");
+		expect(message.stopReason).toBe("error");
+		expect(message.errorMessage).toContain("/login anthropic-subscription");
+		expect(mockState.constructorOpts).toBeUndefined();
+		expect(mockState.createParams).toBeUndefined();
 	});
 
 	it("lets explicit request headers override ANTHROPIC_AUTH_TOKEN", async () => {

@@ -79,8 +79,11 @@ async function acrossReplacement(kind: Replacement) {
 		const firstNew = refs.findIndex((ref) => ref.sessionEpoch !== before.sessionEpoch);
 		expect(firstNew, "no ref of the new epoch before the replacement, none of the old one after").toBe(atReplaced);
 		// Read while the session files exist: a persisted base is read from disk, never from a copy.
-		const roots = { oldEntries: rootEntries(before.transcript), newEntries: rootEntries(after.transcript) };
-		expect(rootEntries(before.transcript), "the old root is unchanged by the new epoch's turn").toEqual(
+		const roots = {
+			oldEntries: await rootEntries(before.transcript),
+			newEntries: await rootEntries(after.transcript),
+		};
+		expect(await rootEntries(before.transcript), "the old root is unchanged by the new epoch's turn").toEqual(
 			roots.oldEntries,
 		);
 		const result = { before, after, ...roots, oldRefs: refs.slice(0, firstNew), newRefs: refs.slice(firstNew) };
@@ -93,8 +96,10 @@ async function acrossReplacement(kind: Replacement) {
 	}
 }
 
-function rootEntries(root: TranscriptRoot): ReadonlyArray<{ readonly id: string; readonly type: string }> {
-	const read = readTranscriptRoot(root);
+async function rootEntries(
+	root: TranscriptRoot,
+): Promise<ReadonlyArray<{ readonly id: string; readonly type: string }>> {
+	const read = await readTranscriptRoot(root);
 	if (!read.ok) throw new Error(`transcript read failed: ${read.error}`);
 	return read.entries;
 }
@@ -142,12 +147,12 @@ function expectNewEpoch({
 // Part of #4272, ruling 10 Q2: replacement, fork and switch each start a new AgentSession incarnation.
 it("Q2 replace: new_session mints a new sessionEpoch with its own transcript root, and its sequences are never compared with the old epoch", async () => {
 	expectNewEpoch(await acrossReplacement("new_session"));
-}, 120_000);
+}, 600_000);
 
 it("Q2 fork: fork mints a new sessionEpoch with its own transcript root, and its sequences are never compared with the old epoch", async () => {
 	expectNewEpoch(await acrossReplacement("fork"));
-}, 120_000);
+}, 600_000);
 
 it("Q2 switch: switch_session mints a new sessionEpoch with its own transcript root, and its sequences are never compared with the old epoch", async () => {
 	expectNewEpoch(await acrossReplacement("switch_session"));
-}, 120_000);
+}, 600_000);

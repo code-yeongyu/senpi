@@ -6,6 +6,17 @@ import { changelogAfterPinnedRelease } from "./release-pinned-changelog.mjs";
  * performs them too and previews a bad sha as an error; only the checkout is previewed.
  */
 export function pinReleaseCommit(sha, dryRun, runCommand, log, dryRunLog, capture) {
+	assertReleasableCommit(sha, runCommand, log, capture);
+	if (dryRun) {
+		dryRunLog(`git checkout -B main ${sha}`);
+		return;
+	}
+	log(`releasing the pinned commit ${sha.slice(0, 12)} (main may have moved past it)`);
+	runCommand("git", ["checkout", "-B", "main", sha]);
+}
+
+/** The read-only half of `pinReleaseCommit`: `sha` is a full sha on main's own first-parent history. */
+export function assertReleasableCommit(sha, runCommand, log, capture) {
 	if (!/^[0-9a-f]{40}$/.test(sha)) {
 		throw new Error(`--sha needs a full 40-character commit sha, got ${JSON.stringify(sha)}`);
 	}
@@ -23,17 +34,11 @@ export function pinReleaseCommit(sha, dryRun, runCommand, log, dryRunLog, captur
 			`${sha.slice(0, 12)} is not one of main's own commits (it reached main through a merged branch); pin a commit on main's first-parent history`,
 		);
 	}
-	if (dryRun) {
-		dryRunLog(`git checkout -B main ${sha}`);
-		return;
-	}
-	log(`releasing the pinned commit ${sha.slice(0, 12)} (main may have moved past it)`);
-	runCommand("git", ["checkout", "-B", "main", sha]);
 }
 
 /**
  * Pin the release, then reinstall and rebuild when the pinned tree differs from the job's checkout: the job installed
- * and built main's tip, and the forced suite and catalog regeneration must run the pinned code on its own dependencies.
+ * and built main's tip, and the forced suite, check and build must run the pinned code on its own dependencies.
  */
 export function preparePinnedRelease({ sha, dryRun, runCommand, capture, build, driftPaths, log, dryRunLog }) {
 	const before = capture("git", ["rev-parse", "HEAD"]).trim();

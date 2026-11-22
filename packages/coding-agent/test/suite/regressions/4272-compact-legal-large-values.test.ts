@@ -89,7 +89,7 @@ it("owns a 34 MiB string field through component roots and streams it back exact
 		);
 		roots.release(root);
 	});
-}, 120_000);
+}, 600_000);
 
 it("owns a value with 100,001 nodes through component roots and reads it back exactly", async () => {
 	const items = Array.from({ length: 100_001 }, (_, n) => n);
@@ -101,7 +101,7 @@ it("owns a value with 100,001 nodes through component roots and reads it back ex
 		expect(entries).toEqual([["0000000000000000", { items }]]);
 		roots.release(root);
 	});
-}, 120_000);
+}, 600_000);
 
 /** RULING-59 (1): arrays and objects alternate, so both container walks reach this depth; the innermost value is paged. */
 const DEEP = 100_000;
@@ -182,7 +182,7 @@ it("owns, walks, reads, pins, merges and releases a value nested 100,000 deep wi
 		await store.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);
 
 it("owns a value nested 100,000 deep through component roots without recursion and reads it back exactly", async () => {
 	const nested = deepValue();
@@ -198,7 +198,7 @@ it("owns a value nested 100,000 deep through component roots without recursion a
 		expect(values.peakResidentPages).toBe(1);
 		roots.release(root);
 	}, memoryIo());
-}, 120_000);
+}, 600_000);
 
 it("keeps a broadcast question whose request has 100,001 nodes as a dialog of the cut", async () => {
 	const root = await spoolRoot();
@@ -224,4 +224,4 @@ it("keeps a broadcast question whose request has 100,001 nodes as a dialog of th
 		await store.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

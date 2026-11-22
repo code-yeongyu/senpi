@@ -24,7 +24,9 @@ if (process.argv[2] === "hop" || process.argv[2] === "local-hop") {
 		{},
 		{ kind: "entries", entries: parsed.entries },
 	);
-	const child = spawn(process.execPath, local ? [import.meta.filename, "local-engine"] : ["engine"], transfer.options);
+	const engineMode = local ? "local-engine" : "engine";
+	const args = local || process.argv[1] === import.meta.filename ? [import.meta.filename, engineMode] : [engineMode];
+	const child = spawn(process.execPath, args, transfer.options);
 	transfer.close();
 	child.once("error", () => process.exit(2));
 	child.once("exit", (code) => process.exit(code ?? 2));

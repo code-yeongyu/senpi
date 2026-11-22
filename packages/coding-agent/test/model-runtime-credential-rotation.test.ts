@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -29,8 +30,8 @@ beforeEach(() => {
 	repository = new CredentialSlotRepository(join(dir, "credential-pool-state.json"));
 });
 
-afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+	await rm(dir, { recursive: true, force: true });
 });
 
 function pooled(): PooledCredential {
@@ -165,7 +166,7 @@ describe("credential rotation over a pooled provider", () => {
 		const events = await collectClosedRuntimeEvents(runtime.stream(faux.getModel(), { messages: [], tools: [] }));
 		expect(events.some((event) => event.type === "done")).toBe(true);
 		expect(faux.getCallLog()).toHaveLength(1);
-		rmSync(dir, { recursive: true, force: true });
+		await rm(dir, { recursive: true, force: true });
 	});
 
 	test("a pool holding a poisoned sentinel slot never attempts it and serves the healthy account", async () => {
@@ -219,7 +220,7 @@ describe("credential rotation over a pooled provider", () => {
 		expect(attempted).toHaveLength(1);
 		expect(attempted[0]).not.toBe("login-2");
 		expect(events.some((event) => event.type === "text_delta")).toBe(true);
-		rmSync(sentinelDir, { recursive: true, force: true });
+		await rm(sentinelDir, { recursive: true, force: true });
 	});
 
 	test("runtime admits one canonical env slot plus one policy slot", async () => {
@@ -260,7 +261,7 @@ describe("credential rotation over a pooled provider", () => {
 				.map((call) => call.options?.apiKey)
 				.sort(),
 		).toEqual(["key-env", "key-policy"]);
-		rmSync(configDir, { recursive: true, force: true });
+		await rm(configDir, { recursive: true, force: true });
 	});
 
 	test("ordinary streamSimple requests rotate before output", async () => {
@@ -394,8 +395,13 @@ describe("credential rotation over a pooled provider", () => {
 		const sources = { providerId: "openai", credential: undefined, env, repository, now: () => NOW };
 		const first = await listRotationSlots(sources);
 		const second = await listRotationSlots(sources);
-		expect(first.find((slot) => slot.name === "env")?.lease).toBeDefined();
-		expect(second.some((slot) => slot.name === "env")).toBe(false);
+		const lease = first.find((slot) => slot.name === "env")?.lease;
+		expect(lease).toBeDefined();
+		// The second caller is not admitted to probe; it sees the slot blocked until the probe's lease expires.
+		const waiting = second.find((slot) => slot.name === "env");
+		expect(waiting?.blockReason).toBe("probe_in_flight");
+		expect(waiting?.blockedUntil).toBe(lease?.expiresAt);
+		expect(waiting?.lease).toBeUndefined();
 	});
 
 	test("policy cooldown base controls the first rate limit cooldown", async () => {

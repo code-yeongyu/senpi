@@ -30,6 +30,8 @@ export interface BashExecutorOptions {
 	signal?: AbortSignal;
 	/** Redact credentials before callbacks, retention and spill writes. Default off. */
 	redactSecretsInOutput?: boolean;
+	/** The command's environment; absent lets the operations choose (the agent shell environment by default). */
+	env?: NodeJS.ProcessEnv;
 }
 
 export interface BashResult {
@@ -317,6 +319,7 @@ export async function executeBashWithOperations(
 			onData,
 			signal: executionSignal,
 			redactSecretsInOutput: options?.redactSecretsInOutput === true,
+			...(options?.env === undefined ? {} : { env: options.env }),
 		});
 	} catch (err) {
 		if (options?.signal?.aborted && !hasCallbackError) {

@@ -1,5 +1,23 @@
 # changes
 
+## 2026-10-28 - One recovery repair advice schema (S14, part of #4272)
+
+### What changed
+
+- `packages/protocol/src/index.ts`: exports `RecoveryRepairAdviceSchema`, its type and validator from `packages/protocol/src/recovery-repair.ts`.
+
+### Why
+
+- `packages/protocol/src/index.ts`: the producer and client controller must consume exactly one shared wire schema (RULING-84).
+
+### Why an extension could not handle it
+
+- `packages/protocol/src/index.ts`: shared protocol types are below extension boundaries.
+
+### Expected merge conflict zones
+
+- `packages/protocol/src/index.ts`: protocol export list only; no protocol-version change or public admission route.
+
 ## 2026-10-29 - Run certified Vitest suites on Bun (senpi#4763)
 
 ### What changed

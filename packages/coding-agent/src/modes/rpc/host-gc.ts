@@ -14,6 +14,7 @@
  *     live_generation   a generation pidfile (any, the pointer's included) names a live process
  *     live_claim        a session-path claim in `reservations/` has a live owner
  *     reachable         the socket (or a `.next-*` successor bind) did not refuse the connection
+ *     credential_unavailable  win32: the socket secret cannot be read, so its pipe cannot be proven silent
  *     locked            the ensure lock was not free within 2 s
  *     legacy_layout     the agent dir predates layout 2; its flat files belong to a legacy host
  *     unknown_identity  nothing in the directory names its socket, so its lock cannot be taken
@@ -22,7 +23,8 @@
  * A removal goes siblings first, the socket next and the endpoint directory LAST: until the directory
  * is gone the endpoint is still listed, so a removal that fails part-way is finished by a later gc
  * instead of leaving a socket nothing names. A sibling that is a directory is not a socket's leftover
- * and not gc's to delete; it stays, and is reported under `skipped`. One endpoint's failure is recorded
+ * and not gc's to delete; it stays, and is reported under `skipped` - except a `<socket>.bind-*`
+ * directory a crashed bind left, removed while it holds nothing but that bind's own socket. One endpoint's failure is recorded
  * and the run goes on to the next.
  *
  * `kinds` narrows a run to endpoints of those `endpoint_kind`s - a TUI reaping dead `tui` endpoints at
@@ -36,7 +38,7 @@
  * is collected by a later run, once the three-part evidence holds. Without the option nothing running
  * is ever judged, and a judged host that is not stale is kept with the `stale_*` reason that saved it.
  */
-import { lstat, rm } from "node:fs/promises";
+import { lstat, readdir, rm, rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type EndpointKind, HOST_DAEMON_LAYOUT, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
@@ -47,6 +49,7 @@ import { type EndpointInUse, endpointInUse, type SocketSilence, socketSiblings }
 import { judgeStaleEngine, type StaleEngineKeep, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { stopHost } from "./host-stop.ts";
 import { gcRpcPublicKeys } from "./rpc-public-key.ts";
+import { BIND_SCRATCH_SOCKET, isBindScratchName } from "./socket-ownership.ts";
 
 export type HostGcKeptReason =
 	| EndpointInUse
@@ -136,7 +139,11 @@ export async function gcEndpoint(
 	try {
 		await options._test?.afterLockAcquired?.(socket);
 		const evidence = await endpointInUse(hostDaemonDirectoryPaths(dir), socket);
-		if (evidence.inUse === "live_claim" || (evidence.inUse !== undefined && options.staleEngine === undefined)) {
+		if (
+			evidence.inUse === "live_claim" ||
+			evidence.inUse === "credential_unavailable" ||
+			(evidence.inUse !== undefined && options.staleEngine === undefined)
+		) {
 			return { removed: false, reason: evidence.inUse };
 		}
 		if (evidence.inUse !== undefined)
@@ -186,12 +193,33 @@ async function removeEndpoint(socket: string, dir: string): Promise<readonly Hos
 			if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
 			throw error;
 		});
-		if (entry?.isDirectory()) skipped.push({ path, type: "directory" });
-		else if (entry !== undefined) await rm(path, { force: true });
+		if (entry?.isDirectory()) {
+			if (!isBindScratchName(sibling) || !(await reclaimBindDir(path))) skipped.push({ path, type: "directory" });
+		} else if (entry !== undefined) await rm(path, { force: true });
 	}
 	await rm(socket, { force: true });
 	await rm(dir, { recursive: true, force: true });
 	return skipped;
+}
+
+/**
+ * A bind directory a crashed `listen` left: removed only while it holds nothing but that bind's socket. One it cannot
+ * read or empty (another user's, a permission change) is left and reported like any other directory sibling.
+ */
+async function reclaimBindDir(path: string): Promise<boolean> {
+	try {
+		const inside = await readdir(path);
+		if (inside.some((name) => name !== BIND_SCRATCH_SOCKET)) return false;
+		const bound = join(path, BIND_SCRATCH_SOCKET);
+		if (inside.length > 0) {
+			if (!(await lstat(bound)).isSocket()) return false;
+			await unlink(bound);
+		}
+		await rmdir(path);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /** The ensure lock of `socket`, taken exactly as `ensureHost` takes it; `undefined` when not free in time. */

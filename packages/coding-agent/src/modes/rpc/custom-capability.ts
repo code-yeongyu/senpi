@@ -23,6 +23,8 @@ export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
 /** Host protocol support; a session without codemode returns `eval_cells_unavailable`. */
 export const EVAL_CELLS_CAPABILITY = "eval_cells";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
+/** `unload_session { graceful, waitMs }` on a host and on a terminal's control endpoint (oh-my-openagent#14313). */
+export const UNLOAD_GRACEFUL_CAPABILITY = "unload_graceful";
 /** Host capability: the `continue_from_leaf` command starts a turn with no new prompt (#1930). */
 export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 /** HOST capability: the shared router guards foreign holders at every writing RPC admission. */
@@ -36,6 +38,11 @@ export const ATTENDED_CAPABILITY = "attended";
  * placeholders for this connection; the client fetches a block on demand with `get_media`.
  */
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
+/**
+ * Opt-in, honored only behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` and never advertised (S13; S17 owns the public
+ * selection): a record past F reaches this connection as an `eventLease` envelope paged through `get_recovery_page`.
+ */
+export const COMPACT_EVENTS_CAPABILITY = "compact_events";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
 /** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
@@ -52,6 +59,30 @@ export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
  * that flag survives its last client's disconnect instead of being closed with it.
  */
 export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
+
+/** An `open_session` that names a session file and no `cwd` works where that file's header says (senpi#6427). */
+export const OPEN_SESSION_HEADER_CWD_CAPABILITY = "open_session_header_cwd";
+
+/**
+ * HOST capability: a connection that proved the launch key can `declare_delegation`, and the host then enforces its own
+ * method-class table on every record of that connection before dispatch; `classify_record` answers (senpi#5632).
+ */
+export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
+/**
+ * A host whose delegated connections take `declare_delegation.roles` (omo-relay-daemon#307): an authority word per
+ * incarnation, `relayExec` and the `authority` receipt.
+ */
+export const DELEGATION_ROLES_CAPABILITY = "delegation_roles_v1";
+/** A host-mode delegation may carry the forwarder-granted `peer_agent` role (senpi#6305). */
+export const PEER_AGENT_ROLE_CAPABILITY = "peer_agent_role_v1";
+/** A delegation may state `principal.sameAccount`, so that device's turns follow this host's own setting (senpi#6342). */
+export const SAME_ACCOUNT_DELEGATION_CAPABILITY = "same_account_delegation_v1";
+
+/**
+ * Client opt-in (D11 S3-5): the connection renders the value-free `secret_input_notice` and `grant_select_notice` of a
+ * raiser-only dialog another connection presents, and their `*_notice_settled` records. It never answers them.
+ */
+export const RAISER_NOTICE_CAPABILITY = "raiser_notice_v1";
 
 /**
  * Advertised by a multi-session host that answers `detach_connection`: it drops every attachment the
@@ -105,6 +136,8 @@ export const AUTO_TITLE_PER_SESSION_CAPABILITY = "auto_title_per_session";
  * cwd, kind and context needs without opening a session. Advertised only by an in-process runtime.
  */
 export const WARM_CAPABILITY = "warm";
+/** HOST capability: invisible speculative sessions and single-use claim, in-process registries only. */
+export const PARK_CLAIM_CAPABILITY = "park_claim";
 
 /**
  * HOST capability: this host honors `open_session.durableSessionId`, so a caller that already
@@ -113,6 +146,8 @@ export const WARM_CAPABILITY = "warm";
  * header id stays authoritative.
  */
 export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
+/** A headless engine with a hand directory: `list_hands` and `select_hand` (R4). */
+export const HAND_SELECTION_CAPABILITY = "hand_selection";
 
 /**
  * HOST capability: this engine runs the builtin `moved-path-guard` and resolves paths the OmO desktop moved
@@ -135,6 +170,14 @@ export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
  * value reaches every consumer, so a client may rely on it the moment it sees this name.
  */
 export const BROWSER_ENGINE_CAPABILITY = "browser_engine";
+
+/**
+ * HOST capability: every session on this host registers its host tools (show_html_page) through
+ * `attachHostTools`, so a host bridge can route their calls to an app that serves them, and the
+ * public SDK exports the writer such an app calls back (`writeHtmlPage`). A client offers a host
+ * tool attachment only to a host that names this (senpi#5045).
+ */
+export const HOST_TOOLS_CAPABILITY = "host_tools";
 
 /**
  * HOST capability: this host honors `open_session.env` (senpi#4381), the per-spawn caller env channel.
@@ -170,8 +213,9 @@ export const PROMPT_SURFACE_CHAT_CAPABILITY = "prompt_surface_chat";
  * Env var carrying client capabilities to a single-connection stdio RPC host
  * (comma-separated). A launcher may set it from a client handshake; a plain
  * stdio client leaves it unset and sees byte-identical default behavior.
+ * Owned by the host hand-off list, which keeps it out of agent children (senpi#7034).
  */
-export const RPC_CLIENT_CAPABILITIES_ENV = "SENPI_RPC_CLIENT_CAPABILITIES";
+export { RPC_CLIENT_CAPABILITIES_ENV } from "./host-identity-env.ts";
 
 /** Parse the comma-separated capabilities env value into a trimmed list. */
 export function parseClientCapabilities(value: string | undefined): string[] {
@@ -212,6 +256,8 @@ export function buildCustomUnsupportedRequest(
 export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
 /** `test_provider_account`: re-run the sign-in connection test on one Claude subscription account (senpi#4436). */
 export const PROVIDER_ACCOUNT_TEST_CAPABILITY = "provider_account_test";
+/** `account_reset`: reset one named account's local health, keeping its credentials (senpi#4879, senpi#5698). */
+export const ACCOUNT_RESET_CAPABILITY = "account_reset";
 
 /** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
 export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";
