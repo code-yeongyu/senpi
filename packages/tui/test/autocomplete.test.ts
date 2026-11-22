@@ -671,24 +671,30 @@ describe("CombinedAutocompleteProvider", () => {
 	describe("fd listing budget", { skip: process.platform === "win32" }, () => {
 		// A listing that runs past its budget (fd over a huge tree such as $HOME) is killed and the
 		// query answers with what was read, instead of waiting for the walk to finish.
-		it("answers from a listing that fd is still writing when its time budget runs out", {
-			timeout: 5000,
-		}, async (t) => {
-			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-latency-"));
-			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
-			const fakeFd = join(baseDir, "fake-fd.sh");
-			writeFileSync(fakeFd, '#!/bin/sh\necho "Developer/"\necho "deep/Dev.txt"\nexec sleep 30\n', { mode: 0o755 });
-			const provider = new CombinedAutocompleteProvider([], baseDir, fakeFd);
+		it(
+			"answers from a listing that fd is still writing when its time budget runs out",
+			{
+				timeout: 5000,
+			},
+			async (t) => {
+				const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-latency-"));
+				t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+				const fakeFd = join(baseDir, "fake-fd.sh");
+				writeFileSync(fakeFd, '#!/bin/sh\necho "Developer/"\necho "deep/Dev.txt"\nexec sleep 30\n', {
+					mode: 0o755,
+				});
+				const provider = new CombinedAutocompleteProvider([], baseDir, fakeFd);
 
-			const result = await provider.getSuggestions(["@Dev"], 0, 4, { signal: new AbortController().signal });
+				const result = await provider.getSuggestions(["@Dev"], 0, 4, { signal: new AbortController().signal });
 
-			// Resolving at all proves the 30 s walk was not awaited (the budget is 3 s); both lines were
-			// written before fd stalled.
-			assert.deepStrictEqual(
-				result?.items.map((item) => item.value),
-				["@Developer/", "@deep/Dev.txt"],
-			);
-		});
+				// Resolving at all proves the 30 s walk was not awaited (the budget is 3 s); both lines were
+				// written before fd stalled.
+				assert.deepStrictEqual(
+					result?.items.map((item) => item.value),
+					["@Developer/", "@deep/Dev.txt"],
+				);
+			},
+		);
 	});
 
 	describe("dot-slash path completion", () => {
