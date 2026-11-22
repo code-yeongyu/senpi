@@ -20,6 +20,12 @@
 import { StringDecoder } from "node:string_decoder";
 import { EventEmitter } from "events";
 import { isStaleEscape } from "./escape-window.ts";
+import {
+	continuesStringSequence,
+	introducerRemainderLength,
+	normalizeC1StringControls,
+	scanStringTail,
+} from "./terminal-string-tail.ts";
 
 const ESC = "\x1b";
 const DEFAULT_SEQUENCE_TIMEOUT_MS = 50;
@@ -317,6 +323,10 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private readonly escapeTimeoutMs: number;
 	private mouseFragmentStartedAt?: number;
 	private discardingMouseFragment = false;
+	/** What the flush timer last released, until the next read decides whether it continues it. */
+	private timerReleased: string | undefined;
+	/** Set while dropping the tail of a string sequence whose head the flush timer released. */
+	private stringTail: { afterEsc: boolean } | undefined;
 	private pasteMode: boolean = false;
 	private pasteBuffer: string = "";
 	private pendingKittyPrintableCodepoint: number | undefined;
@@ -359,6 +369,9 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		} else {
 			str = data;
 		}
+		if (!this.pasteMode) {
+			str = normalizeC1StringControls(str);
+		}
 
 		if (str.length === 0 && this.buffer.length === 0) {
 			if (!decodedFromBuffer) {
@@ -378,6 +391,24 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			}
 			this.discardingMouseFragment = false;
 		}
+		if (str.length > 0) {
+			const released = this.timerReleased;
+			this.timerReleased = undefined;
+			if (released !== undefined && continuesStringSequence(released, str)) {
+				this.stringTail = { afterEsc: released.length > 2 && released.endsWith(ESC) };
+				str = str.slice(introducerRemainderLength(released));
+			}
+		}
+		if (this.stringTail) {
+			const scan = scanStringTail(str, this.stringTail.afterEsc);
+			if (scan.kind === "pending") {
+				this.stringTail = { afterEsc: scan.afterEsc };
+				return;
+			}
+			this.stringTail = undefined;
+			str = str.slice(scan.index);
+			if (str.length === 0) return;
+		}
 		// Only a read that adds input takes over a held line break. A read that leaves above (an empty
 		// decode of half a multibyte character, a dropped mouse fragment) must keep its release timer running.
 		if (this.burstTimer) {
@@ -389,7 +420,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		if (chunkAt !== undefined) {
 			this.lastInputAt = chunkAt;
 		}
-		if (isStaleEscape(this.buffer, burstGap, this.escapeTimeoutMs)) {
+		if (isStaleEscape(this.buffer, burstGap, this.escapeTimeoutMs) && !continuesStringSequence(ESC, str)) {
 			this.buffer = "";
 			this.emitDataSequence(ESC);
 		}
@@ -494,6 +525,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 				for (const sequence of flushed) {
 					this.emitDataSequence(sequence);
 				}
+				this.timerReleased = flushed.at(-1);
 			}, timeoutMs);
 		}
 	}
@@ -645,6 +677,8 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		this.pasteBuffer = "";
 		this.mouseFragmentStartedAt = undefined;
 		this.discardingMouseFragment = false;
+		this.timerReleased = undefined;
+		this.stringTail = undefined;
 		this.pendingKittyPrintableCodepoint = undefined;
 		this.decoder = new StringDecoder("utf8");
 	}
