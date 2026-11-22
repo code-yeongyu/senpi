@@ -1,6 +1,7 @@
 import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { rotateLogIfNeeded } from "../log-file-rotation.ts";
 import { redactSecrets, redactSensitiveTokenValues } from "../sensitive-output.ts";
 
@@ -30,7 +31,34 @@ export interface SettledFallbackLogger extends FallbackLogger {
 }
 
 const unsettledLoggers = new Set<Promise<void>>();
-const pendingRetirements = new Map<string, Promise<void>>();
+
+/**
+ * The first-start removal in flight per log path, shared by every engine copy in the realm (omo#12965): two copies
+ * starting on one agent dir must run one removal, or the later one deletes lines the earlier one already wrote
+ * (senpi#6351). A settled removal leaves the table, so a removal that failed runs again on the next start.
+ */
+interface FallbackLogRetirements {
+	once(filePath: string, start: () => Promise<void>): Promise<void>;
+}
+
+const retirements = realmRegistry(
+	"@code-yeongyu/senpi/fallback-log-retirements/v1",
+	(): FallbackLogRetirements => {
+		const pending = new Map<string, Promise<void>>();
+		return {
+			once: (filePath, start) => {
+				const inFlight = pending.get(filePath);
+				if (inFlight) return inFlight;
+				const retirement = start().finally(() => {
+					if (pending.get(filePath) === retirement) pending.delete(filePath);
+				});
+				pending.set(filePath, retirement);
+				return retirement;
+			},
+		};
+	},
+	(value): value is FallbackLogRetirements => hasFunctions(value, ["once"]),
+);
 
 /** Resolves once every fallback logger created so far has finished its first-start removal and flushed its queue. */
 export async function settledFallbackLoggers(): Promise<void> {
@@ -143,13 +171,8 @@ async function retireUnsharedRegistryGenerations(filePath: string): Promise<void
 }
 
 function retireOnce(filePath: string): Promise<void> {
-	const pending = pendingRetirements.get(filePath);
-	if (pending) return pending;
-	const retirement = retireUnsharedRegistryGenerations(filePath).finally(() => {
-		pendingRetirements.delete(filePath);
-	});
-	pendingRetirements.set(filePath, retirement);
-	return retirement;
+	// Another copy's promise crosses here, so adopt it rather than trust its identity.
+	return Promise.resolve(retirements.once(filePath, () => retireUnsharedRegistryGenerations(filePath)));
 }
 
 function validMaxBytes(value: number | undefined): number {

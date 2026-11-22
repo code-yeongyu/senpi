@@ -161,4 +161,22 @@ describe("fallback log generations from before the shared registry", () => {
 		expect(warning).not.toContain(agentDir);
 		expect(warning).not.toContain("blocked");
 	});
+
+	it("runs the removal again on the next start once the obstruction is gone", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-fallback-generations-"));
+		dirs.push(agentDir);
+		const logs = join(agentDir, "logs");
+		mkdirSync(join(logs, "fallback.log.1", "blocked"), { recursive: true });
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		await createFallbackLogger(agentDir).settled();
+		error.mockRestore();
+		expect(existsSync(join(logs, ".fallback-log-v2"))).toBe(false);
+
+		rmSync(join(logs, "fallback.log.1"), { recursive: true, force: true });
+		writeFileSync(join(logs, "fallback.log.1"), "rotated before the fix\n");
+		await createFallbackLogger(agentDir).settled();
+
+		expect(existsSync(join(logs, "fallback.log.1"))).toBe(false);
+		expect(existsSync(join(logs, ".fallback-log-v2"))).toBe(true);
+	});
 });
