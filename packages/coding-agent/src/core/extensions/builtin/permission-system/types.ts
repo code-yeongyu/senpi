@@ -46,7 +46,13 @@ export type Request = {
 export type ReplyInput = {
 	requestID: string;
 	reply: Reply;
+	/** With reply "reject": the user's feedback, delivered as a correction the model should follow. */
 	message?: string;
+	/**
+	 * With reply "reject": a refusal no user made (no UI to ask). Delivered to the model as is, never framed as the
+	 * user's feedback (senpi#4401). Takes precedence over `message`.
+	 */
+	refusal?: string;
 	/** With reply "always": the patterns to approve instead of the request's own (a wider scope). */
 	always?: string[];
 };
@@ -105,12 +111,22 @@ export class DeniedError extends Error {
 	}
 }
 
+/** A refusal the system made with no user to ask; its message is the full model-facing reason. */
+export class RefusedError extends Error {
+	readonly _tag = "PermissionRefusedError";
+
+	constructor(reason: string) {
+		super(reason);
+		this.name = "RefusedError";
+	}
+}
+
 /** Union of all permission-related errors */
-export type PermissionError = RejectedError | CorrectedError | DeniedError;
+export type PermissionError = RejectedError | CorrectedError | DeniedError | RefusedError;
 
 /** Internal pending request entry */
 export type PendingEntry = {
 	info: Request;
 	resolve: () => void;
-	reject: (err: RejectedError | CorrectedError) => void;
+	reject: (err: RejectedError | CorrectedError | RefusedError) => void;
 };

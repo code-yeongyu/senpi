@@ -41,6 +41,7 @@ export function buildContinuationPrompt(goal: Goal, options: ContinuationPromptO
 		"- Match the verification scope to the requirement's scope: a narrow check never supports a broad claim, and a manifest, verifier, test suite, or green status counts only where it covers the requirement.",
 		"- Verify every todo task is completed or dropped; update_goal rejects completion while todo tasks remain open.",
 		"- The audit has to prove completion; failing to find remaining work is not proof. Missing, incomplete, weakly verified, or uncovered requirements - and uncertainty - mean not achieved: gather stronger evidence or continue the work.",
+		"- A part a permission denial, a refusal by the user, or a permission rule refused is a user-owned exclusion, not a missing requirement: say it was left out and why, and audit the rest.",
 		'The audit is decisive in both directions: if any requirement fails it, keep working; if every requirement passes it, call update_goal with status "complete" in this same turn, then report the final elapsed time to the user.',
 		"",
 		"No-progress check - run this whenever a turn ended without moving the objective:",
@@ -75,7 +76,7 @@ function buildGpt6AstraContinuationPrompt(goal: Goal): string {
 		"Open todo tasks are the remaining goal work. Evidence already captured for the current state stands; rerun a check only when its input changed or it failed.",
 		'End this turn one of four ways: a concrete action toward the objective; update_goal with status "complete" once every requested deliverable is observably done and no todo task is open, then report the final elapsed time; a question through the question tool (request_user_input / ask_user_question) when only the user can supply the next decision or fact; or ending the turn while a live resumption channel (an active monitor, scheduled continuation, or background child) is on duty for what the objective waits on - let it wake the goal.',
 		'update_goal with status "blocked" only when no live channel can still deliver, you asked the user and they did not answer within the wait, and the same blocker survived three goal turns since the goal became active or the user last spoke. Hard, slow, or uncertain work is not a reason to block.',
-		"A permission denial or a refusal by the user is final for what that call was meant to do: never reach that result with another tool, command, path or host; ask the user or leave that part out.",
+		"A permission denial, a refusal by the user, or a call a permission rule blocked is final for what that call was meant to do: never reach that result with another tool, command, path or host; ask the user or leave that part out.",
 	].join("\n");
 }
 

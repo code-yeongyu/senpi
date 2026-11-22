@@ -1,6 +1,14 @@
 import type { DecisionOptions } from "./decide-target.ts";
 import type { PermissionEventEmitter } from "./events.ts";
-import { CorrectedError, type PendingEntry, RejectedError, type ReplyInput, type Request, type Rule } from "./types.ts";
+import {
+	CorrectedError,
+	type PendingEntry,
+	RefusedError,
+	RejectedError,
+	type ReplyInput,
+	type Request,
+	type Rule,
+} from "./types.ts";
 
 export interface PendingRequestsDeps {
 	readonly emitter: PermissionEventEmitter;
@@ -53,7 +61,13 @@ export class PendingRequests {
 		this.deps.emitter.emitReplied(existing.info.id, existing.info.sessionID, input.reply);
 
 		if (input.reply === "reject") {
-			existing.reject(input.message ? new CorrectedError(input.message) : new RejectedError());
+			existing.reject(
+				input.refusal !== undefined
+					? new RefusedError(input.refusal)
+					: input.message
+						? new CorrectedError(input.message)
+						: new RejectedError(),
+			);
 			this.rejectPendingInSession(existing.info.sessionID);
 			return;
 		}

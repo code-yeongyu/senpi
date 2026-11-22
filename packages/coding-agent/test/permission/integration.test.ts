@@ -1343,7 +1343,7 @@ describe("permission integration", () => {
 				expect(result).toEqual({
 					requestID: "req-noui-3",
 					reply: "reject",
-					message: `Permission required for bash (ls, pwd), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
+					refusal: `Permission required for bash (ls, pwd), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
 				});
 			});
 		});
