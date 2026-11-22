@@ -42,7 +42,7 @@ import { processFileArguments } from "./cli/file-processor.ts";
 import { resolveHelpExtensionFlags } from "./cli/help-extension-flags.ts";
 import { helpFlagsScope, isPlainHelpRequest, resolveHelpProjectTrust } from "./cli/help-fast-path.ts";
 import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
-import { buildInitialMessage } from "./cli/initial-message.ts";
+import { buildInitialMessage, hasPrintInput } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
@@ -1674,6 +1674,18 @@ export async function main(args: string[], options?: MainOptions) {
 		stdinContent,
 	);
 	time("prepareInitialMessage");
+	// An empty print run used to exit 0 without output, so a caller could not tell it from a quiet success (senpi#3521).
+	if (
+		(appMode === "print" || appMode === "json") &&
+		!hasPrintInput({ initialMessage, initialImages }, parsed.messages)
+	) {
+		console.error(
+			chalk.red(
+				"Error: print mode needs a prompt. Pass it as an argument, pipe it on stdin, or attach a file with @path.",
+			),
+		);
+		process.exit(1);
+	}
 	if (parsed.grokNeo && appMode === "interactive") {
 		applyGrokNeoThemeFallback(settingsManager);
 	}
