@@ -129,6 +129,7 @@ import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../v
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type { RpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import type { McpServerRegistry } from "./mcp-server-registry.ts";
+import type { ReportedToolResult, ReportedToolResultOutcome } from "./reported-tool-result.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
@@ -854,6 +855,16 @@ export interface ExtensionToolContext extends ExtensionContext {
 	 * errors come back as `isError: true`.
 	 */
 	executeTool(name: string, args: unknown, options?: ExecuteToolOptions): Promise<AgentToolCallOutcome>;
+	/**
+	 * Run the session's `tool_result` handlers for work this call already did outside the tool pipeline, for example
+	 * a file a codemode cell wrote on its own. No tool runs and no `tool_call` handler is asked: nothing is left to
+	 * gate. The event carries the id `<calling id>/reported-<n>` and `parentToolCallId`, like the result of a call
+	 * made through {@link executeTool}; it emits no `tool_execution_*` event and leaves no `nestedCalls` record.
+	 *
+	 * Never rejects for a handler failure: a handler that throws, times out or is interrupted is listed in
+	 * `failures` (and reported to the extension error listeners) while the remaining handlers still run.
+	 */
+	reportToolResult(report: ReportedToolResult): Promise<ReportedToolResultOutcome>;
 	/**
 	 * Whether the model issued this call, through the agent loop or a provider's exec channel (Cursor), so its result
 	 * joins the transcript. On a hand (brain/hand split) a call the brain's agent loop dispatched counts too. False for a

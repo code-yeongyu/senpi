@@ -3490,6 +3490,8 @@ Add these fields to `pi.registerTool(...)`:
 
 A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
 
+A tool that already did the work itself can still run the `tool_result` handlers for it with `ctx.reportToolResult({ toolName, input, content, details?, isError? })`. No tool runs and no `tool_call` handler is asked; the event carries `parentToolCallId` and an id of the form `<calling id>/reported-<n>`. It resolves to `{ toolCallId, result, failures }`: `result` is what the handlers changed (undefined when none changed anything), and `failures` lists the handlers that threw, timed out or were interrupted, which never rejects the call. Code mode uses it for the files an `eval` cell wrote without calling `write` or `edit`.
+
 `ctx.issuedByModel` says whether the model issued the running call, either through the agent loop or through a provider's exec channel (Cursor), so its result joins the transcript. On a hand (brain/hand split), a call the brain's agent loop dispatched counts too. It is `false` for a call made through `ctx.executeTool()` or `pi.executeTool()`.
 
 `ctx.promptSurface` is the prompt surface (`"terminal"`, `"app"` or `"chat"`) of the session the running call belongs to, which says what that session's host does with a result. On a hand it is the brain session's, sent with the call. It is absent when the runtime knows none.

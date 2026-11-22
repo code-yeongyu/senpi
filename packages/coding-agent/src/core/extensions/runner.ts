@@ -59,6 +59,7 @@ import {
 } from "./handler-budget.ts";
 import { activeKernelToolInvoker, activeKernelTools, type ExtensionKernelTools } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
+import { emitReportedToolResult, type ReportedToolResult } from "./reported-tool-result.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
 import { isPresentationOnly } from "./ui-presentation.ts";
@@ -2090,6 +2091,8 @@ export class ExtensionRunner {
 		baseContext: ExtensionContext = this.createContext(),
 	): ExtensionToolContext {
 		const runner = this;
+		// One context per call, so this numbers the results the call reports.
+		let reportedResults = 0;
 		// createContext() returns a fresh object, so adding properties does not affect other contexts.
 		return Object.defineProperties(baseContext as ExtensionToolContext, {
 			issuedByModel: { value: runner.isModelIssuedToolCallFn(toolCallId) },
@@ -2118,6 +2121,17 @@ export class ExtensionRunner {
 						};
 					}
 					return runner.executeToolFn(toolCallId, name, args, { ...options, signal: options.signal ?? signal });
+				},
+			},
+			reportToolResult: {
+				value: async (report: ReportedToolResult) => {
+					runner.assertActive();
+					return emitReportedToolResult(
+						(event, options) => runner.emitToolResult(event, options),
+						toolCallId,
+						++reportedResults,
+						report,
+					);
 				},
 			},
 		});
@@ -2554,12 +2568,14 @@ export class ExtensionRunner {
 					if (waited.kind === "aborted") {
 						endStatus = "failed";
 						errorMessage = "interrupted";
+						options.onHandlerFailure?.({ extensionPath: ext.path, error: errorMessage });
 						continue;
 					}
 					if (waited.kind === "timed_out") {
 						endStatus = "failed";
 						errorMessage = `handler timed out after ${waited.elapsedMs}ms; the tool result continues without it`;
 						this.emitError({ extensionPath: ext.path, event: "tool_result", error: errorMessage });
+						options.onHandlerFailure?.({ extensionPath: ext.path, error: errorMessage });
 						continue;
 					}
 					if (waited.kind === "failed") throw waited.error;
@@ -2599,6 +2615,7 @@ export class ExtensionRunner {
 						error: message,
 						stack,
 					});
+					options.onHandlerFailure?.({ extensionPath: ext.path, error: message });
 				} finally {
 					hookRun.end(endStatus, errorMessage);
 				}
