@@ -4,6 +4,7 @@ import { createConnection, createServer, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
+import { MAX_SOCKET_PATH_BYTES } from "../../src/modes/rpc/socket-ownership.ts";
 import { createHerdrExtension, type HerdrDependencies } from "../../src/core/extensions/builtin/herdr/index.ts";
 import { noOpUIContext } from "../../src/core/extensions/runner.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
@@ -40,8 +41,15 @@ export function acknowledge(socket: Socket, request: HerdrRequest) {
 }
 const cleanups: Array<() => Promise<void> | void> = [];
 
+// senpi#5365: a deep per-job TMPDIR pushes `<tmpdir>/herdr-reporter-XXXXXX/sock` past sun_path and `listen` fails with
+// EINVAL, so the socket directory falls back to /tmp when the OS temp directory is too long (as in senpi#3487).
+function socketParent(): string {
+	const sample = (root: string) => Buffer.byteLength(join(root, "herdr-reporter-XXXXXX", "sock"));
+	return process.platform === "win32" || sample(tmpdir()) <= MAX_SOCKET_PATH_BYTES ? tmpdir() : "/tmp";
+}
+
 export async function herdrReporterFixture(overrides: Partial<HerdrDependencies> = {}) {
-	const dir = mkdtempSync(join(tmpdir(), "herdr-reporter-"));
+	const dir = mkdtempSync(join(socketParent(), "herdr-reporter-"));
 	const path =
 		process.platform === "win32" ? `\\\\.\\pipe\\herdr-reporter-${dir.split(/[\\/]/).pop()}` : join(dir, "sock");
 	const requests: HerdrRequest[] = [];
