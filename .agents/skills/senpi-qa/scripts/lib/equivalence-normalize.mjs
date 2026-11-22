@@ -145,8 +145,15 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 		const embedded = [...maps.id.keys()]
 			.filter((raw) => raw.length >= EMBEDDED_ID_MIN && /\d/.test(raw))
 			.sort((a, b) => b.length - a.length);
-		const replaceIds = (text) =>
-			embedded.reduce((out, raw) => (out.includes(raw) ? out.split(raw).join(maps.id.get(raw)) : out), text);
+		const replaceIds = (text, field) => {
+			// These fields reference generated entry ids even when the eight hex characters contain no digit.
+			if (field === "transcriptEntryId" && maps.id.has(text)) return maps.id.get(text);
+			if (field === "turnKey") {
+				const match = /^(\d+):([a-f\d]{8})$/.exec(text);
+				if (match && maps.id.has(match[2])) return `${match[1]}:${maps.id.get(match[2])}`;
+			}
+			return embedded.reduce((out, raw) => (out.includes(raw) ? out.split(raw).join(maps.id.get(raw)) : out), text);
+		};
 		return walkValue(value, (_epoch, namespace) => `<ts:${namespace}:${rank(namespace)}>`, token, replaceIds);
 	};
 
@@ -156,8 +163,8 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 	 * namespace is `<parent key>.<key>` (an array element takes the array's key; `text` for an object key).
 	 */
 	function walkValue(root, onTimestamp, onId, replaceIds = (text) => text) {
-		const rewriteString = (text, key) =>
-			replaceIds(replaceLiterals(text))
+		const rewriteString = (text, key, field) =>
+			replaceIds(replaceLiterals(text), field)
 				.replace(DATETIME, (match) => {
 					const epoch = datetimeEpoch(match);
 					return epoch === undefined ? match : onTimestamp(epoch, key ?? "text");
@@ -168,7 +175,7 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 			if (typeof node === "string") {
 				if (key !== undefined && ID_KEYS.has(key) && !PURE_UUID.test(node)) return onId("id", node);
 				const text = key === "statusText" ? node.replace(EVAL_STATUS_ELAPSED, "$1(<elapsed>)") : node;
-				return rewriteString(text, namespace);
+				return rewriteString(text, namespace, key);
 			}
 			if (typeof node === "number") {
 				const epoch = key !== undefined && TIME_KEY.test(key) ? epochOfNumber(node) : undefined;
