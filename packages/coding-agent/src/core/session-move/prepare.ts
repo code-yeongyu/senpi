@@ -1,12 +1,13 @@
 /**
  * The receiver's readying step (senpi#6435). A move whose folder is not a checkout of the repository the session
- * recorded is refused HERE, before the sender releases anything, by the comparison the import makes. The folder is
+ * recorded is refused HERE, before the sender releases anything, by the comparison the import makes (a folder missing on
+ * this device as `workspace_missing`). The folder is
  * kept on the move's record, so the import lands only where this step checked.
  */
 import type { RepositoryIdentity } from "../repository-identity.ts";
 import type { MoveLedger, MoveRecord } from "./move-ledger.ts";
 import type { MoveId } from "./ownership.ts";
-import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
+import { checkoutRefusal, checkoutVerdict } from "./repository-check.ts";
 
 export interface PrepareMoveOptions {
 	readonly ledger: MoveLedger;
@@ -19,6 +20,7 @@ export interface PrepareMoveOptions {
 
 export async function prepareMove(options: PrepareMoveOptions): Promise<MoveRecord> {
 	if (options.cwd === undefined) return options.ledger.prepare(options.moveId);
-	if (!(await isCheckoutOfRepository(options.cwd, options.repository))) throw new MoveRefusedError(options.cwd);
+	const verdict = await checkoutVerdict(options.cwd, options.repository);
+	if (verdict !== "same") throw checkoutRefusal(verdict, options.cwd);
 	return options.ledger.prepare(options.moveId, options.cwd);
 }

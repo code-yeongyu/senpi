@@ -10,7 +10,8 @@
  *   I2 - compatibility is `protocolVersion` + capabilities, NEVER a version-string compare,
  *        and "is my build newer?" is `compareEngineOrdinal`, never `serverVersion`. An
  *        ordinal that cannot be compared (a build without git metadata, a host that reports
- *        none) is EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
+ *        none, an ordinal outside senpi CalVer such as a compiled omo's `[5, 1, 78]`, senpi#7040) is
+ *        EQUAL, and since a handoff needs STRICTLY greater, such a pair attaches.
  *
  * The profile rule is the third guard: a handoff additionally requires the candidate's
  * extension set to be a SUPERSET of the running host's. Handing off to a narrower generation
@@ -21,6 +22,7 @@
 import {
 	compareEngineOrdinal,
 	type EngineBuildIdentity,
+	engineIdentityOf,
 	type EngineOrdinal,
 } from "../../core/engine-build-identity.ts";
 import {
@@ -236,12 +238,8 @@ export function decideHostAction(
 /** A strictly newer build whose extensions cover everything the host loads - the only handoff candidate. */
 function supersedes(client: HostDecisionClient, host: HostProtocolInfo): boolean {
 	if (host.engineOrdinal === undefined) return false;
-	const hostIdentity: EngineBuildIdentity = {
-		text: host.engineVersion ?? "",
-		ordinal: host.engineOrdinal,
-		scheme: host.engineOrdinal[4] > 0 ? "epoch" : "nodef",
-	};
-	if (compareEngineOrdinal(client.identity, hostIdentity) <= 0) return false;
+	if (compareEngineOrdinal(client.identity, engineIdentityOf(host.engineVersion ?? "", host.engineOrdinal)) <= 0)
+		return false;
 	return covers(client.launchProfile, host.launch_profile);
 }
 

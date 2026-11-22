@@ -77,6 +77,8 @@ export interface CreateEvalToolOptions {
 	readonly jsEnvironments?: JsEnvironments;
 	/** Contributions whose documentation lines the description lists; snapshot taken when the tool is (re)registered. */
 	readonly promptKernelPreludes?: readonly KernelPreludeContribution[];
+	/** Tools the session reaches only through eval; the description names them. Snapshot taken at (re)registration. */
+	readonly evalOnlyTools?: readonly string[];
 }
 
 export interface EvalCellInvocation {

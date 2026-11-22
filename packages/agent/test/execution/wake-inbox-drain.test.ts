@@ -59,6 +59,35 @@ describe("a wake re-sent after its ack was lost (review round 3, M1)", () => {
 	});
 });
 
+describe("a wake re-sent after its scope's binding changed (#6767 review round 4, L1)", () => {
+	it.each([
+		["was removed", undefined],
+		["moved to another hand", "other-hand"],
+	])("still gets its original receipt when the binding %s", async (_case, rebound) => {
+		let owner: string | undefined = "hand";
+		const medium = createMemoryStoreMedium();
+		await openMemoryStore(medium).claim(0, 1);
+		const inbox = createWakeInbox({
+			issuer: "brain",
+			store: openMemoryStore(medium),
+			epoch: 1,
+			admission: createAdmissionLine(),
+			clock: () => 0,
+			owner: () => owner,
+		});
+		const wake: WakeEvent = { eventId: "h:1", scope: "s", source: "notice", payload: { message: "late" } };
+
+		const first = await inbox.receive("hand", wake);
+		owner = rebound;
+		const resent = await inbox.receive("hand", wake);
+
+		expect([first, resent]).toEqual([
+			{ kind: "ack", eventId: "h:1", duplicate: false },
+			{ kind: "ack", eventId: "h:1", duplicate: true },
+		]);
+	});
+});
+
 describe("draining a brain's wake inbox", () => {
 	it("delivers the wakes behind one the loop cannot take, reports each failure, and poisons it after its attempts", async () => {
 		const failures: unknown[] = [];

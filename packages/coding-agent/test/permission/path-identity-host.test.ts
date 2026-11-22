@@ -20,7 +20,7 @@ import {
 import type { ResolverRequest } from "../../src/core/extensions/builtin/permission-system/path-identity-protocol.ts";
 import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.ts";
 import { DeniedError, type Rule } from "../../src/core/extensions/builtin/permission-system/types.ts";
-import { type FixtureTransport, fixtureTransport } from "./path-identity-fixtures.ts";
+import { confirmableFixtureRoot, type FixtureTransport, fixtureTransport } from "./path-identity-fixtures.ts";
 
 const DEADLINE = resolverDeadlineMs(2000);
 const requestPath = (request: ResolverRequest): string =>
@@ -68,7 +68,7 @@ describe("path identity resolver worker (design 6.7 / 11.1.3)", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		events.length = 0;
-		root = mkdtempSync(join(tmpdir(), "resolver-host-"));
+		root = confirmableFixtureRoot("resolver-host-");
 		real = realpathSync.native(root);
 		mkdirSync(join(root, "real"));
 		writeFileSync(join(root, "real", "secret"), "S");
@@ -457,7 +457,7 @@ describe("permission service with a wedged or slow resolver (design 6.5, 6.5.1 /
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		root = mkdtempSync(join(tmpdir(), "resolver-service-"));
+		root = confirmableFixtureRoot("resolver-service-");
 		real = realpathSync.native(root);
 		mkdirSync(join(root, "real", "dir"), { recursive: true });
 		mkdirSync(join(root, "plain"));

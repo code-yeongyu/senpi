@@ -2,7 +2,9 @@ import chalk from "chalk";
 import {
 	checkSessionHolders,
 	describeSessionHolders,
+	hostAttachSocket,
 	SESSION_HOLDER_LOOKUP_FAILED,
+	sessionIdFromFile,
 	sessionHolderWarning,
 	stopSessionHolders,
 	takeOverRefusal,
@@ -18,7 +20,13 @@ export async function prepareSessionOpening(manager: SessionManager, mode: AppMo
 	}
 }
 
-export type StartupAdmission = "open" | "cancelled" | "refused";
+/** A live session on this machine's multi-session host that the terminal attaches to instead of opening it. */
+export interface HostAttachTarget {
+	readonly socket: string;
+	readonly sessionId: string;
+}
+
+export type StartupAdmission = "open" | "cancelled" | "refused" | { readonly attach: HostAttachTarget };
 
 /**
  * Exit code of a startup refused because another live process holds the session. The schedule runner reads it to
@@ -31,6 +39,8 @@ export interface StartupAdmissionIo {
 	readonly confirm: (question: string) => Promise<boolean>;
 	readonly err: (line: string) => void;
 	readonly lookup?: typeof checkSessionHolders;
+	/** The opening can be served by attaching to a host that holds it (not for a rebind, which rewrites the file). */
+	readonly canAttach?: boolean;
 }
 
 const RETRY = "then open it again";
@@ -52,6 +62,11 @@ export async function admitStartupSession(
 	}
 	const { holders } = check;
 	if (holders.length === 0) return "open";
+	// #6059: held by this machine's multi-session host (the OmO desktop's engine): a terminal follows that live session
+	// over the host, so what either side does shows on the other, instead of being refused or a second writer.
+	const socket = io.canAsk && io.canAttach === true ? hostAttachSocket(holders) : undefined;
+	const sessionId = socket === undefined ? undefined : await sessionIdFromFile(sessionFile);
+	if (socket !== undefined && sessionId !== undefined) return { attach: { socket, sessionId } };
 	const held = `This session is open in another process (${describeSessionHolders(holders)}); opening it here would start a second run of the same session.`;
 	const refusal = takeOverRefusal(holders, RETRY);
 	if (!io.canAsk || refusal !== undefined) {

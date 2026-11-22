@@ -10,7 +10,11 @@ export type {
 } from "@code-yeongyu/senpi-machine-ops";
 export { type CoreBashToolOptions, createCoreBashTool, createCoreBashToolDefinition } from "./core/tools/bash-core.ts";
 export type { BashToolDetails, BashToolInput, BashToolOutput } from "./core/tools/bash-schema.ts";
-export { type CoreCodingToolsOptions, createCoreCodingTools } from "./core/tools/coding-tools-core.ts";
+export {
+	type CoreCodingTools,
+	type CoreCodingToolsOptions,
+	createCoreCodingTools,
+} from "./core/tools/coding-tools-core.ts";
 export {
 	type CoreEditToolOptions,
 	createCoreEditTool,

@@ -1,3 +1,174 @@
+## 2026-11-21 - Pilot exact npm tree caching for Linux coding-agent CI (senpi#7193)
+
+### What changed
+
+- `.github/workflows/ci.yml`: use blobless checkout in the coding-agent build and shard jobs, and share an exact npm tree cache seeded by the build before it writes outputs.
+- `.github/actions/install-ci-npm-tree/action.yml`: key the tree on the Linux runner image, architecture, Node, npm, Bun, npm configuration, and lock/workspace manifests. Run `npm ci --ignore-scripts` on a miss.
+
+### Why
+
+- The build and its shards independently materialize the same npm dependency tree. Measure whether the transfer and restore cost less than the install they replace.
+
+### Why an extension could not handle it
+
+- Dependency setup and checkout are controlled by the repository's hosted CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the checkout and dependency install steps in the coding-agent build and test jobs in `.github/workflows/ci.yml`.
+
+## 2026-11-21 - CI job timeouts use measured runner duration (senpi#7191)
+
+### What changed
+
+- `.github/workflows/ci.yml`: set eligible job timeouts to twice the runner-duration p95 measured on 2026-11-21 across 51 CI runs, rounded up to whole minutes with a five-minute floor. Shared matrix caps use the slowest leg. Cap longer steps in `fused-equivalence`, `test-workspaces`, `webview-kernel`, and `process-kernel` at their new job limits.
+- `.github/workflows/ci.yml`: `grep-native-contract`, `socket-secret-native-windows`, and `test-scripts` are held at 30 minutes: cold-build duration not measured. Hold `macos-combined` at 99 minutes (sum of suite caps plus 10 minutes for setup), with its suite caps unchanged pending #7192. The two coding-agent jobs remain out of scope.
+
+### Why
+
+- `.github/workflows/ci.yml`: slow or hung jobs should fail promptly without timing out short jobs on ordinary runner hiccups.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: GitHub Actions enforces the runner budget at the job level.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job-level timeout declarations and the four step caps aligned to them, excluding `build-coding-agent` and `test-coding-agent`.
+
+## 2026-11-21 - Balance coding-agent CI shards using recorded file timings (senpi#7183)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the build job freezes a plan from Vitest discovery and the latest verified timing cache. The ten shard jobs use exact planned file identities, or the existing Vitest hash split without usable timings. `Check and test` verifies the finished file reports against discovery and saves new timings only after a green default-branch push.
+
+### Why
+
+- `.github/workflows/ci.yml` used file-count sharding, leaving the aggregate gate waiting for whichever shard drew the most expensive files. Planning against measured file cost reduces that imbalance without changing the shard count, runners, or test scope.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` schedules and verifies hosted CI jobs before any product extension runs.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: coding-agent build and test shard steps and the `Check and test` fan-in.
+
+## 2026-11-16 - Build Binaries no longer holds a runner while npm publishes (senpi#6851)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `publish-npm` job only dispatches `publish-npm.yml` (now with `-f build_run_id=<this run>`) and finds the run. The "Await publish-npm.yml completion" step is gone, and the timeout drops from 360 to 15 minutes. `report-smoke-failure-after-npm`, `publish-github-release` and `cleanup-draft-github-release` are replaced by one `finalize-release` job. It needs `build`, `smoke-test-binaries`, `stage-github-release` and `publish-npm`, runs `if: always()` unless it is a dry run or nothing was dispatched, uses the concurrency group `release-finalize-<tag>` (never cancelled), and runs `scripts/release-finalize.mjs`. It is now the only job with `issues: write`.
+- `.github/workflows/publish-npm.yml`: a new `build_run_id` input (default empty), and a new `finalize-github-release` job. The job needs `release` and runs only in a publish-only, non-dry run that names a Build Binaries run. It has job-level `actions: read`, `contents: write` and `issues: write` (so neither id-token nor the push token), shares the same concurrency group, and runs the same script.
+- `.github/agent/skills/release-publish/SKILL.md`: the publish watch, the recovery command and the post-release checklist describe the two finalize jobs.
+
+### Why
+
+- The awaiting job idled on a hosted runner for a median 12.9 min and up to 54.1 min per release (24 of Build Binaries' 26.7 Linux runner-minutes). Each half now finishes the release when it ends, so the ordering does not change: the GitHub Release is public only after the full smoke, staging and npm all succeeded. The failure handling does not change either: the smoke rollback issue and the draft cleanup still run.
+
+### Why an extension could not handle it
+
+- These are the repository's own release workflows.
+
+### Expected merge conflict zones
+
+- MEDIUM: the jobs after `stage-github-release` in `build-binaries.yml`. LOW: the `workflow_dispatch` inputs of `publish-npm.yml`.
+
+## 2026-11-18 - CI installs APT packages from a .deb set cached per runner image (senpi#4552)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the five `Install system dependencies` steps use the new composite action `.github/actions/install-ci-system-deps` with their own package lists and keep the five-minute cap; linking `fdfind` to `fd` is its own `Link fd` step. The action computes a cache key from the runner image (`ImageOS`, `ImageVersion`), the architecture and the package list, restores that key with `actions/cache`, and runs `scripts/install-ci-system-deps.sh` with `APT_DEB_CACHE_DIR`, which keeps apt's package lists and downloaded .deb files there: a restored set installs with `apt-get --no-download install` (no mirror contact), a set that does not install is dropped after `dpkg --configure -a`, and a miss downloads into the cache directory. The mirror fallback now rewrites any regional `*.archive.ubuntu.com` host.
+
+### Why
+
+- On main runs 44193378988, 44198464791, 44201755928 and 44201998815 every failed `Test (coding-agent N/10)` job (13 jobs) exited 124 inside the APT step before a test ran. Hosted runners resolve through an EC2 region mirror that the Azure-only fallback did not rewrite, so the retry hit the same slow mirror; every shard also downloaded the same packages again.
+
+### Why an extension could not handle it
+
+- CI workflow configuration is repository infrastructure, not runtime behavior an extension can change.
+
+### Expected merge conflict zones
+
+- LOW: the `Install system dependencies` steps in `.github/workflows/ci.yml`.
+
+## 2026-11-16 - A blank or space-padded CI-basis receipt is refused (senpi#6859 follow-up)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: the "Accept or refuse the CI-basis receipt" step also refuses a `ci_basis_receipt` that is blank or has leading or trailing whitespace, with its own `::error::`. Before, a whitespace-only id passed the empty and printable checks and logged a waiver with no receipt in it.
+
+### Why
+
+- Review of senpi#6861 (LOW L1): the ruling's "receipt id non-empty" must hold for the id a reader sees, not only for its byte length.
+
+### Why an extension could not handle it
+
+- Release workflow steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the receipt checks inside the "Accept or refuse the CI-basis receipt" step.
+
+## 2026-11-16 - A pinned release can waive the hosted CI wait with an accepted CI-basis receipt (senpi#6859)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: two new `workflow_dispatch` inputs, `ci_basis_receipt` and `ci_basis_head` (both default empty). A new release-job step, "Accept or refuse the CI-basis receipt", runs before Checkout only when `ci_basis_receipt` is non-empty. It accepts the receipt only when the `sha` input is set, `ci_basis_head` equals it as 40 lowercase hex, the triggering actor's repository role (`GET /repos/{repo}/collaborators/{actor}/permission`, `role_name`, with `GITHUB_TOKEN`) is `admin` or `maintain`, and the receipt id is printable ASCII of at most 200 characters; a `force_tests` or `publish-only` dispatch is refused because neither waits for hosted CI. Each refusal prints its own `::error::` and fails the job. An accepted receipt writes its id, head, actor and `hosted CI wait waived by ci_basis_receipt` to the log and the run summary, and `Run release` passes `--ci-basis-receipt` to `release.mjs`. An empty receipt skips the step and leaves the release arguments unchanged.
+
+### Why
+
+- senpi#6859: when hosted CI for a pinned release commit is backlogged, a maintainer holding an equivalent CI-basis receipt for that exact commit had no auditable way to skip the 40-minute wait other than re-running the whole suite with `force_tests`.
+
+### Why an extension could not handle it
+
+- Release workflow inputs and job steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the `workflow_dispatch` inputs right after `sha`, the step after "Refuse a live release from any ref but main", and the env and argument lines of "Run release".
+
+## 2026-11-16 - platform-red never drops or duplicates a report; only the label call builds macOS/Windows native targets (senpi#6847)
+
+### What changed
+
+- `.github/workflows/platform-red.yml`: no concurrency group at any level. The reporter (`scripts/ci-platform-red.mjs`) lists the open tracking issue by its `platform-red` label instead of the search index. A report that loses a race to open the issue comments on the oldest open one and closes its own as a duplicate.
+- `.github/workflows/native-prebuilds.yml`: a new `full_ci` `workflow_call` input (default false). On a pull request the plan step passes the PR's labels to the classifier only when `full_ci` is set, so a labelled PR's own path-filtered run stays on Linux.
+- `.github/workflows/ci-full-label.yml`: the `native-prebuilds` call passes `full_ci: true`.
+
+### Why
+
+- Review LOWs of senpi#6836. A job-level group cancels a pending report when a newer one queues (L1). The search index lags behind a just-created issue (L2). A labelled native PR built darwin/win32 twice per push (L4).
+
+### Why an extension could not handle it
+
+- Workflow configuration and its CI scripts; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the `report` job of `platform-red.yml`, the `workflow_call` inputs and plan scope step of `native-prebuilds.yml`, and the `native-prebuilds` job of `ci-full-label.yml`.
+
+## 2026-11-16 - Pull requests run Linux only; macOS/Windows run on main, in releases and with run-full-ci (senpi#6834)
+
+### What changed
+
+- `.github/workflows/ci.yml`, `.github/workflows/read-summary-binary-parity.yml`, `.github/workflows/session-worker-compile.yml`: the `platform-scope` job no longer lists the PR's changed files; it classifies from the event and the `run-full-ci` label only (`scripts/ci-platform-scope.mjs`), so an unlabelled pull request never schedules a macOS/Windows job or matrix leg. The job drops `pull-requests: read`.
+- `.github/workflows/native-prebuilds.yml`: on a pull request the plan job runs the same classifier and `select` (`scripts/native-prebuild-reuse.mjs`, `FULL`) leaves the darwin/win32 targets out of the build matrix unless the PR is labelled; every other event builds all targets. Concurrency is per PR (cancelled by a newer head) and per commit elsewhere (never cancelled), so the next native push to main no longer cancels the previous main build. The record step declares and exports `RUSTC_VV` separately (SC2155).
+- `.github/workflows/ci-full-label.yml`: the `run-full-ci` label also calls `native-prebuilds.yml`, so the label stays the one opt-in for every macOS/Windows leg.
+- `.github/workflows/platform-red.yml` (new): on a failed main push run of CI, Native Prebuilds, Read summary binary parity or Compiled session worker, `scripts/ci-platform-red.mjs report` opens one tracking issue ("Default-branch macOS/Windows CI is red") naming the merged PR and each failed macOS/Windows job, or comments on it while it is open. Only the report job has a concurrency group (`platform-red-report`, never cancelled), so a later green completion can never replace a pending red report.
+
+### Why
+
+- senpi#6834: in one 2h10m window 49 of 55 PR runs started a macOS job while 10-16 macOS jobs sat queued and a release's macOS jobs waited 91-97 minutes. The path rule (senpi#3957) put most coding-agent PRs on macOS/Windows. Platform regressions now surface on main, so a red there files an issue and blocks the next release.
+
+### Why an extension could not handle it
+
+- Workflow triggers, job conditions and concurrency are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `platform-scope` jobs of the three workflows, the `concurrency` block and plan job of `native-prebuilds.yml`, and the job list of `ci-full-label.yml`.
+
 ## 2026-11-13 - The workspace matrix comment names the job that owns the senpi-codemode suite (senpi#6631)
 
 ### What changed

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -79,6 +80,26 @@ export function defineProcessCases(runner: ConformanceRunner, target: Conformanc
 				assert.equal(result.stdout.byteLength, 8 * MIB);
 			}),
 		);
+		if (process.platform === "linux") {
+			it(
+				"on Linux a command starts as the preferred OOM victim (oom_score_adj 1000)",
+				withFixture(target, async ({ ops, ctx }) => {
+					const controller = new AbortController();
+					const score = deferred<string>();
+					const running = ops.process.exec(
+						{
+							command: "sleep 30",
+							onSpawn: (pid) => score.resolve(readFileSync(`/proc/${pid}/oom_score_adj`, "utf8").trim()),
+						},
+						ctx({ signal: controller.signal }),
+					);
+					const value = await within(score.promise, 10_000, "the spawned command's oom_score_adj");
+					controller.abort();
+					await running;
+					assert.equal(value, "1000");
+				}),
+			);
+		}
 		it(
 			"an abort signal kills the group and leaves no child",
 			withFixture(target, async ({ ops, ctx }) => {

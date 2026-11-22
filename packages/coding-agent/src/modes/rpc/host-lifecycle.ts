@@ -18,7 +18,12 @@ import {
 } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
-import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
+import {
+	drainOnPublicSocketLoss,
+	recordDrainOverdue,
+	SupervisorDrain,
+	watchWin32ChildIdentity,
+} from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
 	HOST_CHILD_WATCH_FD,
@@ -200,6 +205,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		() => state.shuttingDown,
 		() => admission.stop(),
 		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId) },
+		(drainingForMs) => recordDrainOverdue(paths.dir, instanceId, drainingForMs),
 	);
 	const server = createPublicProxy({
 		internalSocket,

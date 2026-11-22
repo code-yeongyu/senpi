@@ -297,8 +297,7 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 		settings: { autoCompactEnabled: !senpiOwnsCompaction },
 		settingSources: resolveSettingSources(providerSettings, mode, authLane),
 	};
-	const environment = claudeCodeQueryEnvironment(input.model, senpiOwnsCompaction);
-	if (environment) queryOptions.env = environment;
+	queryOptions.env = claudeCodeQueryEnvironment(input.model, senpiOwnsCompaction);
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
 	if (toolLessRequest) queryOptions.maxTurns = 1;
 	if (strictMcpConfig) queryOptions.extraArgs = { "strict-mcp-config": null };

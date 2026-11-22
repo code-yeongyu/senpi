@@ -1,3 +1,21 @@
+## 2026-11-18 - GPT-6.2 Astra and Sol are documented Ultrafast models (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: `ULTRAFAST_DOCUMENTED_MODEL_IDS` gains `gpt-6.2-astra` and `gpt-6.2-sol`.
+
+### Why
+
+- Both 6.2 model pages document Ultrafast. Without the entry, an Ultrafast request on either model was priced at the Standard rate. OpenAI prices 6.2 API Ultrafast at 3x through 2027-02-28 and 6x after that. The shared 6x API multiplier therefore overstates the API cost until March; the subscription multiplier stays at 8x.
+
+### Why an extension could not handle it
+
+- Both pricing adapters read this one list. No extension hook can change the service-tier multiplier.
+
+### Expected merge conflict zones
+
+- LOW: the one `Set` literal.
+
 ## 2026-11-15 - shared-subscription item-limit 400s surface a typed route+remedy error (senpi#6718)
 
 ### What changed

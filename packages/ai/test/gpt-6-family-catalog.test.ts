@@ -15,15 +15,20 @@ import type { Api, Model } from "../src/types.ts";
  * Sol's window, output limit and input/output prices, halves cached input to 0.1,
  * and documents low/medium/high/xhigh/max only: like Astra, it has no `none`.
  *
+ * GPT-6.2 Astra and GPT-6.2 Sol (developers.openai.com/api/docs/models/gpt-6.2-astra, gpt-6.2-sol,
+ * 2026-11-17) document the same window, input cap and output limit, and like 6.1 Sol reject `none`.
+ *
  * Published list prices per MTok: Sol 2 / 10 (cache read 0.2, write 2.5),
- * 6.1 Sol 2 / 10 (cache read 0.1, write 2.5), Luna 0.1 / 0.5 (cache read 0.01,
- * write 0.125).
+ * 6.1 Sol and 6.2 Sol 2 / 10 (cache read 0.1, write 2.5), 6.2 Astra 8 / 40 (cache read 0.4,
+ * write 10), Luna 0.1 / 0.5 (cache read 0.01, write 0.125).
  *
  * Project defaults for the prompt budget (`contextWindow` is the prompt budget,
- * not the documented window): Luna ships the full 922,000 input cap, Sol and
- * 6.1 Sol ship 400,000, Astra keeps 600,000. The subscription 6.1 Sol default is
- * 500,000 per the live Codex catalog fetched 2026-10-12T00:15Z (issue #3150).
+ * not the documented window): Luna ships the full 922,000 input cap, Sol, 6.1 Sol
+ * and 6.2 Sol ship 400,000, Astra and 6.2 Astra keep 600,000. The subscription 6.1 Sol
+ * default is 500,000 per the live Codex catalog fetched 2026-10-12T00:15Z (issue #3150);
+ * openai/codex's models.json gives 6.2 Sol the same 500,000 (issue #6942).
  */
+const ASTRA_CONTEXT_WINDOW = 600_000;
 const SOL_CONTEXT_WINDOW = 400_000;
 const SUBSCRIPTION_SOL_CONTEXT_WINDOW = 500_000;
 const LUNA_CONTEXT_WINDOW = 922_000;
@@ -53,6 +58,30 @@ const EXPECTED = {
 			tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
 		},
 	},
+	"gpt-6.2-sol": {
+		name: "GPT-6.2 Sol",
+		contextWindow: SOL_CONTEXT_WINDOW,
+		supportsNone: false,
+		cost: {
+			input: 2,
+			output: 10,
+			cacheRead: 0.1,
+			cacheWrite: 2.5,
+			tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+		},
+	},
+	"gpt-6.2-astra": {
+		name: "GPT-6.2 Astra",
+		contextWindow: ASTRA_CONTEXT_WINDOW,
+		supportsNone: false,
+		cost: {
+			input: 8,
+			output: 40,
+			cacheRead: 0.4,
+			cacheWrite: 10,
+			tiers: [{ inputTokensAbove: 272000, input: 16, output: 60, cacheRead: 0.8, cacheWrite: 20 }],
+		},
+	},
 	"gpt-6-luna": {
 		name: "GPT-6 Luna",
 		contextWindow: LUNA_CONTEXT_WINDOW,
@@ -71,7 +100,7 @@ type FamilyId = keyof typeof EXPECTED;
 const FAMILY_IDS = Object.keys(EXPECTED) as FamilyId[];
 
 function expectedContextWindow(provider: string, id: FamilyId): number {
-	return provider === "chatgpt-subscription" && id === "gpt-6.1-sol"
+	return provider === "chatgpt-subscription" && (id === "gpt-6.1-sol" || id === "gpt-6.2-sol")
 		? SUBSCRIPTION_SOL_CONTEXT_WINDOW
 		: EXPECTED[id].contextWindow;
 }
@@ -97,7 +126,7 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 
 			it("exposes the documented reasoning efforts, with minimal absent and off only where none is documented", () => {
 				const model = getModel(provider, id)!;
-				// Sol and Luna accept `none`; Astra and 6.1 Sol do not; the GPT-6 ladder has no `minimal` anywhere.
+				// Sol and Luna accept `none`; Astra, 6.1 Sol and 6.2 do not; the GPT-6 ladder has no `minimal` anywhere.
 				expect(model.thinkingLevelMap).toMatchObject({
 					minimal: null,
 					low: "low",
@@ -139,22 +168,22 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 	}
 }
 
-describe("ChatGPT Subscription GPT-6.1 Sol Ultrafast", () => {
+describe.each(["gpt-6.1-sol", "gpt-6.2-sol"] as const)("ChatGPT Subscription %s Ultrafast", (id) => {
 	it("ships a subscription-only alias with Sol capabilities and unchanged cost metadata", () => {
-		const base = getModel("chatgpt-subscription", "gpt-6.1-sol");
-		const ultrafast = getModel("chatgpt-subscription", "gpt-6.1-sol-ultrafast");
+		const base = getModel("chatgpt-subscription", id);
+		const ultrafast = getModel("chatgpt-subscription", `${id}-ultrafast`);
 		expect(ultrafast).toEqual({
 			...base,
-			id: "gpt-6.1-sol-ultrafast",
-			name: "GPT-6.1 Sol Ultrafast",
-			upstreamModelId: "gpt-6.1-sol",
+			id: `${id}-ultrafast`,
+			name: `${EXPECTED[id].name} Ultrafast`,
+			upstreamModelId: id,
 			serviceTier: "ultrafast",
 			defaultThinkingLevel: "xhigh",
 		});
-		expect(ultrafast?.cost).toEqual(EXPECTED["gpt-6.1-sol"].cost);
+		expect(ultrafast?.cost).toEqual(EXPECTED[id].cost);
 		expect(ultrafast?.contextWindow).toBe(SUBSCRIPTION_SOL_CONTEXT_WINDOW);
 		expect(ultrafast && getSupportedThinkingLevels(ultrafast)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-		expect(getModels("openai").some((model) => model.id === "gpt-6.1-sol-ultrafast")).toBe(false);
+		expect(getModels("openai").some((model) => model.id === `${id}-ultrafast`)).toBe(false);
 	});
 });
 
