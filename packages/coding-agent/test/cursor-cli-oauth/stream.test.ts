@@ -476,6 +476,47 @@ describe("cursor-cli-oauth stream mapping", () => {
 		);
 	});
 
+	it("attaches the typed pool diagnostic when every account is blocked (senpi#4092)", async () => {
+		const directory = temporaryDirectory();
+		const fixture = fixtureExecutable(directory, "happy");
+		process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE = fixture.executable;
+		const soon = NOW + 120_000;
+		const deps = (store: InMemoryCredentialStore): CursorCliStreamDeps => ({
+			cwd: directory,
+			agentDir: join(directory, "agent"),
+			store,
+			settings: enabledSettings(),
+			now: () => NOW,
+		});
+
+		const limited = await makeStore([
+			{ ...account("alpha"), blockedUntil: soon, blockReason: "rate_limit" },
+			{ ...account("bravo"), blockReason: "auth_error" },
+		]);
+		const limitedFailure = errorEvent(await collect(runTurn(deps(limited), "blocked turn", "stream-pool-limited")));
+		expect(limitedFailure.error.stopReason).toBe("error");
+		expect(limitedFailure.error.providerDiagnostic).toEqual({
+			category: "rate_limit",
+			code: "account_pool_blocked",
+			evidence: "structured_code",
+			resetsAt: soon,
+		});
+
+		const loggedOut = await makeStore([
+			{ ...account("alpha"), blockReason: "auth_error" },
+			{ ...account("bravo"), blockReason: "auth_error" },
+		]);
+		const loggedOutFailure = errorEvent(
+			await collect(runTurn(deps(loggedOut), "blocked turn", "stream-pool-logged-out")),
+		);
+		expect(loggedOutFailure.error.providerDiagnostic).toEqual({
+			category: "auth",
+			code: "account_pool_auth_blocked",
+			evidence: "structured_code",
+		});
+		expect(existsSync(fixture.dump)).toBe(false);
+	});
+
 	it("resumes the sticky chat on the second same-model turn", async () => {
 		const directory = temporaryDirectory();
 		const fixture = fixtureExecutable(directory, "happy");

@@ -25,7 +25,7 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 	vi.restoreAllMocks();
 	vi.useRealTimers();
-});
+}, EVENT_SAFETY_MS);
 
 const rows = (cut: ReadonlyMap<string, Record<string, unknown>>, kind: string) =>
 	[...cut].filter(([key]) => key.startsWith(`${kind}/`)).map(([, row]) => row);
@@ -37,9 +37,10 @@ const terminalOf = (row: Record<string, unknown>) =>
  * member after the run, sorted by member id. Both families' ids are sequence-derived, so that order, and the uuid
  * aliases the normalizer assigns in it, are stable; the catalog pages settled rows in another order (by message id).
  * Keys are pinned as their rank and `hookRunId` (a host-wide hook counter) is masked, like golden j. A started call's
- * `startSequence` is masked too: docs/rpc.md (#5348) lists it among the per-id fields of a marked row and says
- * sequence-derived values are not stable across engine versions, and where the first session flush lands against the
- * first start is not ordered (senpi#5800). `null`, a call that never started, stays pinned.
+ * `startSequence` is masked too: docs/rpc.md (#5348) lists it among the per-id fields of a marked row that must not
+ * be presented as that call's state, and its value is a record sequence that no contract orders against the session's
+ * first flush, which the prepared pipeline can sequence before the first start (senpi#5800). `null`, a call that never
+ * started, stays pinned.
  */
 function golden(...cuts: ReadonlyMap<string, Record<string, unknown>>[]): unknown {
 	const keys: unknown[] = [];

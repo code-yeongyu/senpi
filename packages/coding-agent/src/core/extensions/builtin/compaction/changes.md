@@ -1,3 +1,134 @@
+## 2026-11-20 - Context budget notice removed (senpi#7113, senpi#3241)
+
+### What changed
+
+The context budget notice is gone: `token-budget-reminder.ts`, its `before_agent_start` delivery (`resolveBeforeAgentStartMessage`), the `context`-event injection (`injectTokenBudgetReminder`) and the `compaction.reminderEnabled` setting. `before_agent_start` now returns only the restoration directive. Sessions that already hold a persisted `compaction-token-budget` custom message keep it as history; nothing reads its `tokenBudgetReminderEpoch` any more.
+
+### Why
+
+Background compaction is meant to be silent to the model. The notice told the model to wrap up shortly before compaction, against the core prompts, and its text changed every turn inside its zone, which re-wrote the prompt cache near the threshold (senpi#3241).
+
+### Why an extension could not handle it
+
+This builtin owned the notice.
+
+### Expected merge conflict zones
+
+`onBeforeAgentStart` in `index.ts`, the head of `orchestration.ts`, and the outgoing step of `buildCompactionContext` in `context-pipeline.ts`.
+
+## 2026-11-18 - The hard-limit emergency prune leaves an append-only transcript untouched (senpi#6949)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: `buildCompactionContext` skips `hardLimitEmergencyPrune` when `appendOnlyTranscript === true`, as it already does when the lane owns compaction. The messages pass through unpruned, with `needsAggressiveCompaction: false`.
+- `packages/coding-agent/test/compaction/omo-14073-append-only-hard-limit-prune.test.ts`: an append-only transcript keeps its sent prefix past the hard limit, and a lane that isn't append-only is still pruned.
+
+### Why
+
+- senpi#6949 / oh-my-openagent#14073. The 2026-10-04 append-only entry exempted the per-turn context reduction but left the latched hard-limit prune running. Past 95% of the window, the prune dropped already-sent messages, so the resident anthropic-subscription lane diverged (`sent_stream_diverged`) and cold-seeded the whole history, and the compaction that followed re-sent it again (`tainted_compaction`). Measured on a scripted 40-turn fixture with 9 compactions: flattens fell from 18 to 9, re-sent cold-seed tokens from 650,593 to 217,357, and total payload by 39%.
+
+### Why an extension could not handle it
+
+- The context pipeline is the builtin compaction extension's own policy.
+
+### Expected merge conflict zones
+
+- LOW: the `emergency` assignment in `buildCompactionContext`.
+
+## 2026-11-16 - The core route rejects a transient summary failure as `transient-failure` (senpi#6760)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: when the core-route summary generation fails and no deterministic recovery applies, a failure that `isRetryableSummaryAttempt` accepts is cancelled with `rejectionCause: "transient-failure"` (the reason text is unchanged).
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `isRetryableSummaryAttempt` is exported so the rejection and the in-request retry share one definition of a transient provider failure.
+
+### Why
+
+- The bare cancel was recorded as `cancelled-by-extension`, which the session answered by latching admission. The rejected `session_compact` event still records a circuit-breaker failure, so three consecutive transient rejections still cool automatic compaction down for 60 s; the session does not latch on that cooldown rejection either.
+
+### Why an extension could not handle it
+
+- This is the builtin compaction extension's own policy.
+
+### Expected merge conflict zones
+
+- LOW: the generator-failure `catch` of the `session_before_compact` handler in `index.ts`; the `isRetryableSummaryAttempt` declaration in `speculative.ts`.
+
+## 2026-11-07 - Valid configurationUpdate messages are replay-safe in retained suffixes (senpi#8566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/retained-message-safety.ts`: `hasUnsafeRetainedContent` gains a `configurationUpdate` case. A bounded shape is accepted — `effort` in the ThinkingLevel enum (`off`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`, the values `appendConfigurationUpdate` writes), empty `content`, finite numeric `timestamp` — and returns safe. Malformed shapes still fall through to unsafe.
+- `packages/coding-agent/test/suite/regressions/8566-configuration-update-retained-safety.test.ts`: new regression coverage at the validator, the live session projection, and the deterministic fallback boundary.
+
+### Why
+
+- senpi#8566: a reasoning-effort change projects to a `configurationUpdate` message that normal request conversion accepts, but the safety checker rejected it through its default branch. On current `main` the omit-unsafe repair then silently discarded the latest reasoning configuration from the retained suffix instead of keeping it.
+
+### Why an extension could not handle it
+
+- The retained-suffix safety check runs in the builtin compaction policy before any provider request, and no extension hook sits between the projection and the fallback's suffix validation.
+
+### Expected merge conflict zones
+
+- LOW: the `configurationUpdate` case in `retained-message-safety.ts` and its regression test.
+
+## 2026-11-05 - Summary request estimate: stale usage, cut input and activated tools (senpi#5905, PR #5948)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: `estimateSummaryRequestTokens` no longer trusts provider usage from a message that predates the branch's latest compaction or context edit (a message kept through an earlier compaction); that request is estimated whole, system prompt and tools included, like a transcript without usage. When pruning, input bounding or an overflow shrink cut messages before the usage message, their estimated size is taken off the usage figure. Tool schemas a later tool result activated (`addedToolNames`) are counted on top of the usage, as pi-ai's estimator does.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `runExtensionCompaction` passes the uncut summarization input so the estimate can measure what was cut.
+
+### Why
+
+- The usage figure measured the transcript before it was cut, or a context an earlier compaction replaced, so the attempt budget could be sized for a much larger request than the one sent. Tools activated after the last usage were never billed in it, so they were missing from the estimate.
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own summary route.
+
+### Expected merge conflict zones
+
+- LOW: `estimateSummaryRequestTokens` in `speculative-summary.ts`; the `sourceMessages` setup before `boundSummarizationInput` in `runExtensionCompaction`.
+
+## 2026-11-05 - Summary budget sized to the request it sends (senpi#5905, PR #5909)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: new `estimateSummaryRequestTokens` sizes a summary request from the last provider-reported usage inside the summarized transcript plus an estimate of what follows it; with no usage it estimates the whole request, system prompt and tools included. `generateSummaryMessage` uses it for its default budget.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `runExtensionCompaction` sizes each attempt budget with it instead of the transcript's chars/4 estimate.
+
+### Why
+
+- The request carries the agent system prompt, the tool schemas and replayed reasoning, which the transcript estimate never saw: on large OpenAI sessions it measured a third of the provider-reported context, so a ~145k-token compaction stayed on the 120s floor and failed with "Summarization stream exceeded its 120000ms wall-clock budget" (senpi#5905).
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own summary route.
+
+### Expected merge conflict zones
+
+- LOW: the `attemptBudgetMs` computation in `runExtensionCompaction`; the default budget in `generateSummaryMessage`.
+
+## 2026-10-30 - SIWC remote compaction never falls through to the compact endpoint (senpi#5101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: retains the Responses v2 stream route for SIWC, then returns to local summarization if v2 is disabled or produces no checkpoint; timeout metadata names that same next step.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: SIWC plan usage supports streaming POST `/v1/responses`, not `/v1/responses/compact` or a WebSocket fallback.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: the builtin remote-compaction runner owns the transport fallback chain.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts` v2 timeout next-step selection and fallback boundary.
+
 ## 2026-11-02 - Speculative warm summaries are kept across turns (senpi#5481, PR #5504)
 
 ### What changed

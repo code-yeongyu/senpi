@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { loadTargets } from "./native-prebuild-key.mjs";
+import { recordFileName, verifyRecord, writeRecord } from "./native-prebuild-record.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
 import { assertPublishedWorkspacePackFiles, nativePrebuildFile } from "./senpi-publish-pack-checks.mjs";
 
@@ -189,6 +191,53 @@ describe("native prebuild staging (producer -> download -> pty package)", () => 
 			const staged = readFileSync(join(swappedDir, "native/prebuilds", target.host, `senpi_pty.${target.host}.node`));
 			assert.notDeepEqual(staged, ptyBytes(target.host), "swapped producer must not pass as the PTY addon");
 			assert.deepEqual(staged, grepBytes(target.host));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// senpi#6622: a release may download every target as a reused artifact (re-uploaded by the plan job
+// from the cache, record included). The publish-only staging must still stage all six targets.
+describe("release staging from reused prebuilds", () => {
+	it("stages all six PTY prebuilds and both socket-secret bridges, and leaves the records in the scratch root", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-reused-staging-"));
+		try {
+			const rows = loadTargets(repoRoot);
+			const rustc = "release: 1.91.0 commit-hash: f8297e351a40c1439a467bbbb6879088047f50b3";
+			const artifactDirs = rows.map((row) => {
+				const host = `${row.node_platform}-${row.node_arch}`;
+				const built = row.rust_target.includes("linux") ? `${host}-gnu` : row.node_platform === "win32" ? `${host}-msvc` : host;
+				const { result, artifactDir } = stageArtifact(root, { host, platform: row.node_platform, arch: row.node_arch, napi: row.napi_target, rust: row.rust_target, built });
+				assert.equal(result.status, 0, `${host}: ${result.stderr}`);
+				const key = `native-prebuild-v1-${row.artifact}-${"0".repeat(64)}`;
+				writeRecord({ artifactDir, target: row, key, rustc });
+				assert.deepEqual(verifyRecord({ artifactDir, target: row, key, rustc }), { ok: true });
+				return artifactDir;
+			});
+
+			const checkout = join(root, "checkout");
+			const packageDir = join(checkout, "packages/pty");
+			writePtyPackageFixture(packageDir);
+			mkdirSync(join(checkout, "packages/coding-agent"), { recursive: true });
+			mergeArtifacts(artifactDirs, join(packageDir, ".native-prebuild-artifacts"));
+			for (const step of ["Stage PTY prebuilds into the pty package", "Stage the socket-secret bridge into the coding-agent package"]) {
+				const consumer = runBash(stepRunBlock(consumerWorkflow, step), { cwd: checkout, env: {} });
+				assert.equal(consumer.status, 0, `${step}: ${consumer.stderr}`);
+			}
+
+			const hosts = rows.map((row) => `${row.node_platform}-${row.node_arch}`);
+			for (const host of hosts) {
+				assert.deepEqual(readFileSync(join(packageDir, "native/prebuilds", host, `senpi_pty.${host}.node`)), ptyBytes(host), `${host}: PTY prebuild`);
+				assert.ok(existsSync(join(packageDir, ".native-prebuild-artifacts", recordFileName({ node_platform: host.split("-")[0], node_arch: host.split("-")[1] }))));
+			}
+			for (const host of ["win32-x64", "win32-arm64"]) {
+				const bridge = join(checkout, "packages/coding-agent/native/socket-secret/prebuilds", host, `senpi_socket_secret.${host}.node`);
+				assert.deepEqual(readFileSync(bridge), secretBytes(host), `${host}: socket-secret bridge`);
+			}
+			const packedPaths = new Set(packedFiles(packageDir).files.map((file) => file.path.replace(/^package\//, "")));
+			assert.ok(![...packedPaths].some((path) => path.includes("native-prebuild-record")), "a reuse record leaked into the pty tarball");
+			for (const host of hosts) assert.ok(packedPaths.has(nativePrebuildFile(host, "@earendil-works/pi-pty")), `${host}: prebuild missing from the tarball`);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

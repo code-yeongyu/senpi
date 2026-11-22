@@ -218,13 +218,13 @@ export class StreamStartTimeoutError extends Error {
 async function runLoop(
 	initialContext: AgentContext,
 	newMessages: AgentMessage[],
-	initialConfig: AgentLoopConfig,
+	initialConfig: InternalLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
 ): Promise<void> {
 	let currentContext = initialContext;
-	let config: AgentLoopConfig = {
+	let config: InternalLoopConfig = {
 		...initialConfig,
 		executionScope: initialConfig.executionScope ?? { id: crypto.randomUUID(), root: "" },
 	};
@@ -258,6 +258,8 @@ async function runLoop(
 	};
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = await drainSteering();
+	// Follow-ups an error-ended run parked are taken here, so this run writes them even if its request fails.
+	if (pendingMessages.length === 0 && config.takeFollowUpsAtStart) pendingMessages = await drainFollowUp();
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {

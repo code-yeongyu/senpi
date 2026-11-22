@@ -67,6 +67,12 @@ class PlainTextComponent implements EvalRenderComponent {
 	#live = false;
 	#invalidate: (() => void) | undefined;
 	#idleTicks = 0;
+	// While a cell runs, the row never shrinks (senpi#6390): nested calls of different heights slide through the
+	// collapsed window, and a shrinking block moves every line below it. The floor resets when the cell stops
+	// running, the width changes, or the layout (expanded/collapsed) changes.
+	#heightFloor = 0;
+	#floorKey = "";
+	#layoutKey = "";
 
 	setBlocks(blocks: readonly RenderBlock[]): void {
 		this.#blocks = blocks;
@@ -81,8 +87,9 @@ class PlainTextComponent implements EvalRenderComponent {
 	 * rebuild, session switch) stops itself after LIVE_TICKER_MAX_IDLE_TICKS and rearms on
 	 * the next render, so dropped rows cannot accumulate intervals.
 	 */
-	syncLiveTicker(isLive: boolean, invalidate: () => void): void {
+	syncLiveTicker(isLive: boolean, invalidate: () => void, layoutKey = ""): void {
 		this.#live = isLive;
+		this.#layoutKey = layoutKey;
 		this.#invalidate = invalidate;
 		if (!isLive) {
 			this.stopLiveTicker();
@@ -134,6 +141,21 @@ class PlainTextComponent implements EvalRenderComponent {
 					assertNever(block);
 			}
 		}
+		return this.#holdLiveHeight(lines, width);
+	}
+
+	#holdLiveHeight(lines: string[], width: number): string[] {
+		if (!this.#live) {
+			this.#heightFloor = 0;
+			return lines;
+		}
+		const key = `${width}|${this.#layoutKey}`;
+		if (key !== this.#floorKey) {
+			this.#floorKey = key;
+			this.#heightFloor = 0;
+		}
+		while (lines.length < this.#heightFloor) lines.push("");
+		this.#heightFloor = lines.length;
 		return lines;
 	}
 

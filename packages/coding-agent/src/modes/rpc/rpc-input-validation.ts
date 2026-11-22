@@ -1,6 +1,7 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
 import { MAX_TOOL_BARRIER_ID_LENGTH, toolBarrierSpecError } from "../../core/tool-barrier.ts";
+import { admitExternalMessageFieldError } from "./admit-external-message-wire.ts";
 import { validatePauseCommand } from "./pause-command-validation.ts";
 
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
@@ -153,8 +154,14 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	if (value.type === "unload_session") {
 		if (value.children !== undefined && value.children !== "refuse" && value.children !== "detach")
 			return 'children must be "refuse" or "detach".';
-		for (const flag of ["interrupt", "clearQueue", "force"] as const)
+		if (value.deliveries !== undefined && value.deliveries !== "refuse")
+			return 'deliveries must be "refuse"; omit it to hand unwritten deliveries back on an interrupt.';
+		for (const flag of ["interrupt", "clearQueue", "force", "graceful"] as const)
 			if (value[flag] !== undefined && typeof value[flag] !== "boolean") return `${flag} must be a boolean.`;
+		if (value.waitMs !== undefined && !(Number.isSafeInteger(value.waitMs) && Number(value.waitMs) > 0))
+			return "waitMs must be a positive integer of milliseconds.";
+		if (value.graceful === true && value.interrupt === true)
+			return "graceful and interrupt exclude each other: a graceful close never interrupts the turn.";
 	}
 	if (
 		(value.type === "steer" || value.type === "follow_up") &&
@@ -181,8 +188,8 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "effectId must be a non-empty string of at most 256 characters.";
 	}
-	const pauseFieldError = validatePauseCommand(value);
-	if (pauseFieldError !== undefined) return pauseFieldError;
+	const fieldError = validatePauseCommand(value) ?? admitExternalMessageFieldError(value, MAX_RPC_MESSAGE_CHARACTERS);
+	if (fieldError !== undefined) return fieldError;
 	if (value.type === "get_pending_inputs" && value.knownClientMessageIds !== undefined) {
 		const ids: unknown = value.knownClientMessageIds;
 		if (
@@ -201,6 +208,12 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	}
 	if (value.type === "append_session_entry" && !validSessionEntry(value.entry)) {
 		return "append_session_entry entry is malformed.";
+	}
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		typeof value.message !== "string"
+	) {
+		return "message must be a string.";
 	}
 	return undefined;
 }

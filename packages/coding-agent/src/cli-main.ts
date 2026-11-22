@@ -7,6 +7,7 @@ import "./modes/rpc/host-startup-beacon.ts";
 import "./private-fds.ts";
 // Third, and before anything that can touch process.stdin: the guards above only change directory and read env.
 import "./modes/rpc/internal-bootstrap.ts";
+import "./windows-power-throttling-startup.ts";
 import "./internal-role.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import { APP_NAME } from "./config.ts";
@@ -15,8 +16,10 @@ import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { installStaleExtensionContainment } from "./core/stale-extension-containment.ts";
 import { installEarlyInspectorVmImportRecovery } from "./inspector-policy.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
+import { dispatchSessionOfPidCommand } from "./cli/session-of-pid-command.ts";
 
 await dispatchAgentDirectoryCommand(process.argv.slice(2));
+await dispatchSessionOfPidCommand(process.argv.slice(2));
 
 // A direct `cli-main` invocation (the bun binary, `--inspect` runs, tests) has no launcher parent to
 // inherit the cache from. Enabling it here is a no-op when cli.ts already published the directory.

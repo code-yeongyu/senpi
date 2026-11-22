@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
-import { appendLoginSlot, listSlots, type PooledCredential } from "../src/auth/pool/slots.ts";
+import {
+	appendLoginSlot,
+	listSlots,
+	type PooledCredential,
+	ReauthorizeAccountMismatchError,
+} from "../src/auth/pool/slots.ts";
 import type { OAuthCredential } from "../src/auth/types.ts";
 import { createModels, createProvider } from "../src/models.ts";
 import { chatgptSubscriptionProvider } from "../src/providers/chatgpt-subscription.ts";
@@ -187,5 +192,116 @@ describe("Models.login stores a ChatGPT re-login over the saved account (omo#963
 
 		const stored = (await store.read(provider.id)) as PooledCredential | undefined;
 		expect(listSlots(stored).map((slot) => [slot.name, slot.refresh])).toEqual([["default", "refresh-new"]]);
+	});
+});
+
+// #5974 review HIGH: reauthorizing a signed-out account restored nothing and appended a duplicate login-N.
+describe("reauthorizing a named saved account restores it in place (#5003)", () => {
+	const signedOut = { access: "", refresh: "", expires: 0, signedOut: true as const };
+
+	test("a one-account sign-out is restored, not duplicated, and its sibling is untouched", () => {
+		const work = { ...login(personA, "work", 1), name: "work", source: "login" as const, displayName: "Work" };
+		const home = { ...login(personB, "home", 1), name: "home", source: "login" as const };
+		const stored: PooledCredential = {
+			...home,
+			accounts: [{ ...work, ...signedOut }, home],
+		};
+		let allocated: string | undefined;
+		const next = appendLoginSlot(
+			stored,
+			login(personA, "fresh", 9),
+			(name) => {
+				allocated = name;
+			},
+			{ accountIdentity: identity, reauthorizeSlot: "work" },
+		) as PooledCredential;
+
+		expect(allocated).toBe("work");
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["work", "home"]);
+		const restored = listSlots(next).find((slot) => slot.name === "work");
+		expect(restored).toMatchObject({ refresh: "refresh-fresh", expires: 9, displayName: "Work", source: "login" });
+		expect(restored).not.toHaveProperty("signedOut");
+		expect(listSlots(next).find((slot) => slot.name === "home")).toEqual(home);
+		expect(next).toMatchObject({ refresh: home.refresh });
+	});
+
+	test("a whole signed-out credential takes the restored account as its projection", () => {
+		const only = { ...login(personA, "old", 1), name: "default", source: "login" as const };
+		const stored: PooledCredential = { ...only, ...signedOut, accounts: [{ ...only, ...signedOut }] };
+		const next = appendLoginSlot(stored, login(personA, "fresh", 9), undefined, {
+			accountIdentity: identity,
+			reauthorizeSlot: "default",
+		}) as PooledCredential;
+
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["default"]);
+		expect(next).toMatchObject({ refresh: "refresh-fresh", expires: 9 });
+		expect(next).not.toHaveProperty("signedOut");
+		expect(listSlots(next)[0]).not.toHaveProperty("signedOut");
+	});
+});
+
+// #5974 review MEDIUM: a reauthorization must not swap a different ChatGPT account into the chosen slot.
+describe("reauthorizing a saved account refuses a different signed-in account (#5003)", () => {
+	const options = (slot: string) => ({ accountIdentity: identity, reauthorizeSlot: slot });
+
+	test("legacy route: another person's token is refused and nothing changes", () => {
+		const work = { ...login(personA, "work", 1), name: "work", source: "login" as const };
+		const stored: PooledCredential = { ...work, accounts: [work] };
+		expect(() => appendLoginSlot(stored, login(personB, "other", 9), undefined, options("work"))).toThrow(
+			ReauthorizeAccountMismatchError,
+		);
+	});
+
+	test("legacy route, signed out: a different workspace is refused; the same workspace is restored", () => {
+		const cleared = { access: "", refresh: "", expires: 0, signedOut: true as const };
+		const work = { ...login(personA, "work", 1), ...cleared, name: "work", source: "login" as const };
+		const stored: PooledCredential = { ...work, accounts: [work] };
+		const otherWorkspace = { ...login(personA, "x", 9), accountId: "ws-2" };
+		expect(() => appendLoginSlot(stored, otherWorkspace, undefined, options("work"))).toThrow(
+			ReauthorizeAccountMismatchError,
+		);
+		const next = appendLoginSlot(stored, login(personA, "fresh", 9), undefined, options("work")) as PooledCredential;
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["work"]);
+		expect(next).toMatchObject({ refresh: "refresh-fresh" });
+	});
+
+	test("SIWC route: a different subject or a route switch is refused", () => {
+		const siwc = {
+			route: "siwc" as const,
+			issuer: "https://auth.openai.com",
+			subject: "sub-a",
+			clientId: "client-1",
+		};
+		const work = { ...login(personA, "work", 1), ...siwc, name: "work", source: "login" as const };
+		const stored: PooledCredential = { ...work, accounts: [work] };
+		expect(() =>
+			appendLoginSlot(stored, { ...login(personA, "x", 9), ...siwc, subject: "sub-b" }, undefined, options("work")),
+		).toThrow(ReauthorizeAccountMismatchError);
+		expect(() => appendLoginSlot(stored, login(personA, "x", 9), undefined, options("work"))).toThrow(
+			ReauthorizeAccountMismatchError,
+		);
+	});
+
+	test("Models.login surfaces the refusal itself and leaves the stored account untouched", async () => {
+		const work = { ...login(personA, "work", 1), name: "work", source: "login" as const };
+		const stored: PooledCredential = { ...work, accounts: [work] };
+		const provider = createProvider({
+			id: "chatgpt-reauth-mismatch",
+			name: "ChatGPT reauthorize mismatch",
+			baseUrl: "https://chatgpt.example/v1",
+			auth: { oauth: { ...shippedOAuth, login: async () => login(personB, "other", 9) } },
+			models: [],
+			api: "openai-responses" as never,
+		});
+		const store = new InMemoryCredentialStore();
+		await store.modify(provider.id, async () => stored);
+		const models = createModels({ credentials: store });
+		models.setProvider(provider);
+		const interaction = { signal: AbortSignal.timeout(5_000), prompt: async () => "", notify: () => {} };
+
+		await expect(
+			models.login(provider.id, "oauth", interaction, { reauthorize: work, reauthorizeSlot: "work" }),
+		).rejects.toBeInstanceOf(ReauthorizeAccountMismatchError);
+		expect(await store.read(provider.id)).toEqual(stored);
 	});
 });

@@ -14,6 +14,11 @@ export interface WorkerCredit {
 	post(build: () => SessionWorkerToHost): void;
 	/** Moves every later payload message onto the host's permit transport; without one nothing changes (flag OFF). */
 	installTransport(transport: WorkerTransfer): void;
+	/**
+	 * Declares a connection's capabilities on the host (omo-relay-daemon#307): `stale` is the host's command-local
+	 * refusal of a declaration from a retired incarnation; a conflict still fails the worker.
+	 */
+	declareOnHost(message: CreditRequest): "declared" | "stale";
 	/** Installs the isolate's session-write grant, reporting denials as domain errors. */
 	installWriteReservation(canonical: (path: string) => string): void;
 }
@@ -49,6 +54,12 @@ export function createWorkerCredit(
 			settle(request(message, new SharedArrayBuffer(4), true), "session_worker_output_denied");
 		},
 		post,
+		declareOnHost(message) {
+			const result = request(message, new SharedArrayBuffer(4));
+			if (result === WORKER_CREDIT_CODES.stale) return "stale";
+			settle(result, "session_worker_capabilities_denied");
+			return "declared";
+		},
 		installTransport(installed) {
 			transport = installed;
 		},

@@ -9,6 +9,7 @@ import {
 	type DeviceRunRequest,
 	type DeviceRunResult,
 	FILE_CHANNEL_MAX_BYTES,
+	LOCAL_DEVICE_FILES,
 } from "./device-files.ts";
 
 function deviceError(error: unknown, path: string): DeviceFileError {
@@ -151,5 +152,6 @@ export function localDeviceFiles(): DeviceFiles {
 				await mkdir(path, { recursive: true });
 			}),
 		run: (request, options) => runDirect(request, options?.signal),
+		[LOCAL_DEVICE_FILES]: true,
 	};
 }

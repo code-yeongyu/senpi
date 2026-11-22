@@ -13,6 +13,11 @@ import type { EventPageAnswer, RecoveryPageAnswer } from "./compact-recovery-req
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 
 import type { EffectStatus } from "./effect-record.ts";
+import type { RpcProjectFile } from "./project-file-commands.ts";
+import type { RpcProjectMcpServers } from "./project-mcp-commands.ts";
+import type { RpcProjectSkillFile } from "./project-skill-commands.ts";
+import type { RpcUserSkillFile } from "./user-skill-commands.ts";
+import type { RpcProjectSettings, RpcProjectTrust } from "./project-workspace-commands.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 import type { RpcEvalCell, RpcEvalCellSnapshot } from "./rpc-result-types.ts";
 import type {
@@ -148,6 +153,12 @@ export type RpcReadResponse =
 			success: true;
 			data: { extensions: RpcLoadedExtension[]; mcpServers: RpcLoadedMcpServer[] };
 	  }
+	| { id?: string; type: "response"; command: "get_project_trust"; success: true; data: RpcProjectTrust }
+	| { id?: string; type: "response"; command: "get_project_settings"; success: true; data: RpcProjectSettings }
+	| { id?: string; type: "response"; command: "read_project_file"; success: true; data: RpcProjectFile }
+	| { id?: string; type: "response"; command: "get_project_mcp_servers"; success: true; data: RpcProjectMcpServers }
+	| { id?: string; type: "response"; command: "read_project_skill_file"; success: true; data: RpcProjectSkillFile }
+	| { id?: string; type: "response"; command: "read_user_skill_file"; success: true; data: RpcUserSkillFile }
 	| { id?: string; type: "response"; command: "eval_cells.list"; success: true; data: RpcEvalCell[] }
 	| {
 			id?: string;
@@ -161,7 +172,12 @@ export type RpcReadResponse =
 			type: "response";
 			command: "get_auth_providers";
 			success: true;
-			data: { providers: RpcAuthProvider[]; storeError?: RpcAuthStoreError };
+			data: {
+				providers: RpcAuthProvider[];
+				storeError?: RpcAuthStoreError;
+				/** Another process holds auth.json's lock: rows come from the file read without it (#6841). */
+				storeBusy?: true;
+			};
 	  }
 	| {
 			id?: string;

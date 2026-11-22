@@ -3,6 +3,21 @@ import { queuedForm } from "../../core/extensions/builtin/mcp/modern/consent-que
 import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import type { McpFormBinding, McpFormInput } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority } from "../rpc/mcp-presenter-authority.ts";
+import type { TerminalSealedSecrets } from "./terminal-sealed-secrets.ts";
+
+/**
+ * The terminal's form binding plus what its control endpoint needs to add presenters to the same authority (D11 S3-6b):
+ * the `local_tui` grant stays one holder among them, and the binding's one FIFO orders every form.
+ */
+export interface LocalMcpPresenter extends McpFormBinding {
+	readonly authority: McpPresenterAuthority;
+	readonly binding: McpFormBinding;
+	readonly sessionId: string;
+	/** Admits a human answer on the terminal's session. */
+	readonly admit: () => void;
+	/** The session's sealed secret prompts while a presenter control with sealed holders is attached (S3-6b parity). */
+	sealed?: TerminalSealedSecrets;
+}
 
 /** The terminal itself is the principal; an RPC attachment never receives this handle. */
 export function registerLocalMcpPresenter(
@@ -10,7 +25,7 @@ export function registerLocalMcpPresenter(
 	sessionId: string,
 	lifetime: AbortSignal,
 	admit: () => void,
-): McpFormBinding {
+): LocalMcpPresenter {
 	const authority = new McpPresenterAuthority();
 	const binding = authority.bind(sessionId, sessionId, admit);
 	let activeInput: { input: McpFormInput; fail: () => void } | undefined;
@@ -58,7 +73,11 @@ export function registerLocalMcpPresenter(
 		drafts.clear();
 	};
 	lifetime.addEventListener("abort", dispose, { once: true });
-	const privateForms: McpFormBinding = {
+	const privateForms: LocalMcpPresenter = {
+		authority,
+		binding,
+		sessionId,
+		admit,
 		epoch: binding.epoch,
 		signal: binding.signal,
 		capture: () => {

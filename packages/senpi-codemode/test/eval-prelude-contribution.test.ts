@@ -59,6 +59,8 @@ class PreludeHostPi implements CodemodeExtensionAPI {
 		readonly handler: (event: unknown, ctx: ExtensionContext) => unknown;
 	}> = [];
 	readonly active = new Set<string>(["eval"]);
+	/** Registered tools the session reports as eval-only (`ToolInfo.evalOnly`). */
+	readonly evalOnly = new Set<string>();
 	evalTool: EvalTool | undefined;
 
 	registerTool(tool: EvalTool): void {
@@ -72,7 +74,11 @@ class PreludeHostPi implements CodemodeExtensionAPI {
 		return [...this.active];
 	}
 	getAllTools() {
-		return [{ name: "eval" }, { name: "fx", description: "fixture", kernelPrelude: FIXTURE_PRELUDE }];
+		return [
+			{ name: "eval" },
+			{ name: "fx", description: "fixture", kernelPrelude: FIXTURE_PRELUDE },
+			...[...this.evalOnly].map((name) => ({ name, exposure: "eval", evalOnly: true })),
+		];
 	}
 	executeTool = Object.assign(
 		async (toolName: string): Promise<AgentToolResult<unknown>> => {
@@ -200,5 +206,24 @@ describe("kernel prelude contribution in the eval prompt", () => {
 		expect(inactiveDescription).not.toContain(FIXTURE_DOC);
 		expect(activeDescription).toContain(FIXTURE_DOC);
 		expect(session.pi.evalTool?.description).not.toContain(FIXTURE_DOC);
+	});
+
+	// senpi#6886: a tool that becomes eval-only after the session started is named from the next turn on.
+	it("re-registers eval at the next turn when the eval-only tool set changes", async () => {
+		// Given
+		const session = await startSession();
+		const before = session.pi.evalTool?.description;
+		session.pi.evalOnly.add("thread_list");
+		await session.pi.emit("turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, session.ctx);
+		const added = session.pi.evalTool?.description;
+		session.pi.evalOnly.delete("thread_list");
+
+		// When
+		await session.pi.emit("turn_start", { type: "turn_start", turnIndex: 2, timestamp: 0 }, session.ctx);
+
+		// Then
+		expect(before).not.toContain("thread_list");
+		expect(added).toContain("Eval-only tools (absent from your direct tool list, reachable only here): thread_list.");
+		expect(session.pi.evalTool?.description).not.toContain("thread_list");
 	});
 });

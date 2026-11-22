@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { McpPresenterControl } from "./mcp-presenter-control.ts";
-import type { SessionEventWriter } from "./session-event-writer.ts";
+import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
 
 /**
  * The Windows presenter control pipe. Its name comes from its own random value, never the host's public
@@ -27,7 +27,7 @@ export interface McpPresenterControlStart {
  * control exists. A failed start leaves the host without a presenter.
  */
 export async function startMcpPresenterControl(
-	writer: SessionEventWriter,
+	host: PresenterHostSurface,
 	options: {
 		readonly enforcement?: boolean | undefined;
 		readonly bootstrap?: Duplex | undefined;
@@ -43,7 +43,7 @@ export async function startMcpPresenterControl(
 	let control: McpPresenterControl | undefined;
 	try {
 		if (process.platform !== "win32") dir = await mkdtemp(join(tmpdir(), "senpi-presenter-"));
-		control = new McpPresenterControl(writer, dir ? join(dir, "control.sock") : presenterPipePath(), account);
+		control = new McpPresenterControl(host, dir ? join(dir, "control.sock") : presenterPipePath(), account);
 		await control.listen();
 		if (bootstrap) control.bootstrap(bootstrap);
 		return { control, ...(dir && { dir }) };

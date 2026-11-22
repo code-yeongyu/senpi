@@ -1,5 +1,41 @@
 # changes
 
+## 2026-11-21 - Run server tests with native Bun (senpi#4763)
+
+### What changed
+
+- `packages/server/package.json`: select native `bun test --isolate` through the existing temp-owning test launcher.
+
+### Why
+
+- Both runners execute the same 44 cases. The conformance tests retain their bounded assertions without relying on Vitest-only polling or unobserved promise rejections.
+
+### Why an extension could not handle it
+
+- The package manifest selects the runner before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/server/package.json`: preserve the native runner, isolation, and temp-owning launcher.
+
+## 2026-11-11 - Test alias for the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/server/vitest.config.ts`: aliases `@earendil-works/pi-realm-registry` to its source.
+
+### Why
+
+- pi-ai imports the helper, and this package's tests load pi-ai from source.
+
+### Why an extension could not handle it
+
+- Test configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the alias list.
+
 ## 2026-10-29 - Run certified Vitest suites on Bun (senpi#4763)
 
 ### What changed

@@ -94,6 +94,9 @@ def __senpi_bridge_request(path, payload, read_timeout: 60)
   request = Net::HTTP::Post.new(uri)
   request["authorization"] = "Bearer #{token}"
   request["content-type"] = "application/json"
+  # The run's secret routes the host's kernel tools and the tool's live output to this cell (#6167).
+  cell_token = $__senpi_cell_token
+  payload = payload.merge("cellToken" => cell_token) if path == "/call" && cell_token.is_a?(String) && !payload.key?("cellToken")
   request.body = JSON.generate(payload)
   __senpi_emit_status("timeout-pause", force: true)
   begin

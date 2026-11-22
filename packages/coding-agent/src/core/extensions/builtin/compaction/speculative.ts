@@ -15,7 +15,6 @@ import {
 	type CompactionResult,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
-	estimateTokens,
 	prepareCompaction,
 } from "../../../compaction/index.ts";
 import {
@@ -47,6 +46,7 @@ import {
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
 import {
+	estimateSummaryRequestTokens,
 	generateSummaryMessage,
 	getSummaryText,
 	hasSummarizationReasoningOverride,
@@ -172,7 +172,7 @@ const UPSTREAM_STREAM_TRUNCATED_PATTERN = /(?:^|[^A-Za-z0-9_])upstream_stream_tr
  * mirrored from that classifier rather than imported, because
  * `deterministic-fallback.ts` imports this module.
  */
-function isRetryableSummaryAttempt(error: unknown): boolean {
+export function isRetryableSummaryAttempt(error: unknown): boolean {
 	if (error instanceof StreamDurationBudgetError || error instanceof StreamIdleTimeoutError) return false;
 	if (error instanceof SummarizationTotalBudgetError) return false;
 	if (error instanceof SummarizationOverflowExhaustedError) return false;
@@ -315,12 +315,12 @@ export async function runExtensionCompaction(
 		customInstructions: requestSnapshot.customInstructions,
 	});
 	const promptTokens = approxTokens(prompt.user);
+	const sourceMessages = [
+		...requestSnapshot.preparation.messagesToSummarize,
+		...requestSnapshot.preparation.turnPrefixMessages,
+	];
 	let messages = boundSummarizationInput(
-		pruneToolResults(
-			[...requestSnapshot.preparation.messagesToSummarize, ...requestSnapshot.preparation.turnPrefixMessages],
-			requestSnapshot.contextWindow,
-			SUMMARIZATION_INPUT_BUDGET_RATIO,
-		),
+		pruneToolResults(sourceMessages, requestSnapshot.contextWindow, SUMMARIZATION_INPUT_BUDGET_RATIO),
 		requestSnapshot.contextWindow,
 		promptTokens,
 	);
@@ -353,7 +353,7 @@ export async function runExtensionCompaction(
 		// retry transient failures without the 120s-era retry budget disqualifying
 		// every slow attempt (#1068).
 		const attemptBudgetMs = summarizationMaxDurationMs(
-			messages.reduce((total, message) => total + estimateTokens(message), 0),
+			estimateSummaryRequestTokens(requestSnapshot, messages, prompt, sourceMessages),
 			snapshot.preparation.settings.summarizationMaxDurationMs,
 		);
 		try {

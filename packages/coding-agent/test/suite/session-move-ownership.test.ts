@@ -1,4 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { SessionManager } from "../../src/core/session-manager.ts";
 import {
 	SESSION_MOVED,
 	SESSION_MOVED_IN,
@@ -24,6 +28,12 @@ describe("sessionOwnership", () => {
 		expect(verdict).toEqual({ writable: false, state: "moving", moveId: "m1", target: "laptop" });
 	});
 
+	it("#given a move release whose entry carries no target field, as an earlier version or a hand-written entry leaves it #then the verdict's target is the empty string", () => {
+		const verdict = sessionOwnership([custom(SESSION_RELEASED, { reason: "move", move_id: "m1" })]);
+
+		expect(verdict).toEqual({ writable: false, state: "moving", moveId: "m1", target: "" });
+	});
+
 	it("#given a move release then session_moved #then the session stays read-only as moved", () => {
 		const verdict = sessionOwnership([
 			custom(SESSION_RELEASED, { reason: "move", move_id: "m1", target: "laptop" }),
@@ -47,5 +57,33 @@ describe("sessionOwnership", () => {
 			custom(SESSION_MOVED_IN, { move_id: "m1", from: "desktop" }),
 		]);
 		expect(verdict).toEqual({ writable: true });
+	});
+});
+
+// senpi#5922: admission reads `getOwnership()`, and the write path reads the same fold through `_persist`. A
+// session that persists nothing never reaches the write guard, so ownership must not refuse it either.
+describe("SessionManager.getOwnership", () => {
+	it("#given an in-memory session holding a move release #then it stays writable, as its writes do", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendCustomEntry(SESSION_RELEASED, { reason: "move", move_id: "m1", target: "laptop" });
+		expect(manager.getOwnership()).toEqual({ writable: true });
+	});
+
+	it("#given an in-memory session holding session_moved #then it stays writable, as its writes do", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendCustomEntry(SESSION_MOVED, { move_id: "m1", target: "laptop" });
+		expect(manager.getOwnership()).toEqual({ writable: true });
+	});
+
+	it("#given a persisted session holding session_moved #then it stays read-only", () => {
+		const root = mkdtempSync(join(tmpdir(), "5922-ownership-"));
+		try {
+			const manager = SessionManager.create(root, join(root, "sessions"));
+			manager.appendCustomEntry(SESSION_RELEASED, { reason: "move", move_id: "m1", target: "laptop" });
+			manager.appendCustomEntry(SESSION_MOVED, { move_id: "m1", target: "laptop" });
+			expect(manager.getOwnership()).toMatchObject({ writable: false, state: "moved" });
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

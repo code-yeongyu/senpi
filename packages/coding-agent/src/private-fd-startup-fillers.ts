@@ -3,7 +3,7 @@
  * the release of the ones this process inherited. Side-effect free and never imports `private-fds.ts`: the
  * startup stub releases its fillers before that module adopts the table at import.
  */
-import { closeSync } from "node:fs";
+import { closeSync, fstatSync, type Stats } from "node:fs";
 import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
 import { encodeStartupHandOff, parseStartupHandOff, STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
 import { decodePrivateFdTable, PRIVATE_FDS_TABLE_ENV } from "./private-fd-table.ts";
@@ -52,21 +52,51 @@ function namedPrivateSlots(encoded: string | undefined): ReadonlySet<number> | u
 	return slots;
 }
 
+function statOf(fd: number): Stats | undefined {
+	try {
+		return fstatSync(fd);
+	} catch {
+		return undefined;
+	}
+}
+
+const sameFile = (a: Stats, b: Stats): boolean => a.dev === b.dev && a.ino === b.ino;
+
+/**
+ * Whether a listed slot still holds the filler the spawn put there. On POSIX a "pipe" slot is an AF_UNIX socketpair
+ * end under Node and Bun, and neither runtime holds a socket of its own this early; the startup pipe the same spawn
+ * placed at `STARTUP_EVENT_FD` must still be there too. A process that replaced its image between the spawn and this
+ * entry lost both, because Bun marks every inherited descriptor from 4 up close-on-exec at startup, and its runtime
+ * reuses the numbers: the compiled launcher's trust exec left Bun's own copies of stdout and stderr at 5 and 6, and
+ * closing them by number failed the host's first stderr write with EBADF (senpi#6282). Windows keeps the plain list.
+ */
+function inheritedFillerCheck(): (slot: number) => boolean {
+	if (process.platform === "win32") return () => true;
+	const startup = statOf(STARTUP_EVENT_FD);
+	if (!startup?.isSocket()) return () => false;
+	const kept = [startup, ...[0, 1, 2].map(statOf).filter((stat): stat is Stats => stat !== undefined)];
+	return (slot) => {
+		const stat = statOf(slot);
+		return stat !== undefined && stat.isSocket() && !kept.some((other) => sameFile(stat, other));
+	};
+}
+
 /**
  * Closes the filler pipes this process inherited (they only kept libuv from aborting the spawn that created
  * them, see `withStartupPipe`) and removes their list from the hand-off, so a process this one re-executes or
  * spawns never closes a descriptor that is not a filler. A slot the #4749 private table names is that
  * channel's, never a filler, and stays open. A table that does not decode (the `unparseable` marker included)
- * cannot prove any slot free of a channel, so no filler is closed. Called first by every entry that can
- * receive a hand-off.
+ * cannot prove any slot free of a channel, so no filler is closed. A slot that no longer holds its filler is
+ * the runtime's own and stays open (`inheritedFillerCheck`). Called first by every entry that can receive a hand-off.
  */
 export function releaseInheritedStartupFillers(env: NodeJS.ProcessEnv): void {
 	const handOff = parseStartupHandOff(env[HOST_STARTUP_EVENTS_ENV]);
 	if (!handOff?.fillers?.length) return;
 	const privateSlots = namedPrivateSlots(env[PRIVATE_FDS_TABLE_ENV]);
 	if (privateSlots) {
+		const inherited = inheritedFillerCheck();
 		for (const slot of handOff.fillers) {
-			if (privateSlots.has(slot)) continue;
+			if (privateSlots.has(slot) || !inherited(slot)) continue;
 			try {
 				closeSync(slot);
 			} catch {

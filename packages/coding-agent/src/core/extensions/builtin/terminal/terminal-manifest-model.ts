@@ -23,6 +23,11 @@ export type MonitorDurabilityClass = "ephemeral" | "restartable-command" | "chec
 export interface TerminalManifestRpcCheckpoint {
 	readonly hosts: Readonly<Record<string, { readonly instanceId: string; readonly generation: string }>>;
 	readonly statuses: Readonly<Record<string, string>>;
+	/** A remote target's source cursor and the turn ids already reported per session. */
+	readonly remote?: {
+		readonly cursor?: string;
+		readonly settled: Readonly<Record<string, readonly string[]>>;
+	};
 }
 /**
  * File-monitor checkpoint persisted by the writer: the registry's live identity tuple. `digest`

@@ -2,6 +2,66 @@
 
 Vendored from [`code-yeongyu/pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) (see `external-versions.json`).
 
+## 2026-11-05 - Signed-in reads for user-listed hosts (senpi#5940)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/signed-in-hosts.ts`: reads `webfetch.signedInBrowser.hosts` and the optional `browser` pin from the GLOBAL settings file only, parse-only (no migration, no write); ASCII hosts only; a wildcard is dropped when it sits on a single label (`*.com`), on a country second-level domain (a generic second label such as `com`, `co` or `org` under a two-letter country code: `*.co.uk`, `*.com.tw`) or on a listed shared hosting suffix (`*.github.io`, `*.blogspot.com`); this is not a full public suffix list; IP literals (including the decimal and hex forms URL normalizes) and trailing-dot or IPv6 hosts never match; http(s) only.
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/browser-skill.ts`: a `browser` pin that matches no connected browser refuses the signed-in read (`integration_not_connected` / `pinned_browser_missing`) instead of reading through whichever browser connected last.
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts`: a URL on a listed host is read through the user's BrowserSkill-connected browser in a normal (signed-in) session before any anonymous request, scripts stripped in every format; a read that ends on an unlisted host is discarded; any skip falls back to the anonymous read with `details.signedInSkipped` (typed, including `host_not_allowed`); `details.route` names the route.
+
+### Why
+
+- Pages behind a sign-in came back as the login page. The owner ruled that the user's cookies are used only for domains the user lists, at request time, never stored or logged (senpi#5940; design in its issuecomment-6651347167).
+
+### Why an extension could not handle it
+
+- The route choice happens inside the builtin webfetch tool.
+
+### Expected merge conflict zones
+
+- MEDIUM: `tool.ts` execute body and `WebfetchDetails`.
+
+## 2026-11-05 - Render app shells through the user's connected browser (senpi#5939)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/content.ts`: `looksLikeAppShell` detects static HTML that runs scripts and shows almost no text; `stripScripts` removes script elements from rendered HTML.
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/content.lazy.ts`: lazy exports of both.
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/browser-skill.ts`: a client for the user's BrowserSkill integration (daemon socket from its own `daemon.json`, validated as a socket owned by this user or a named pipe; `system.status` with a 2 s cap; responsive-browser pick; `session.start` in an incognito Agent Window; `tool.navigate`; `tool.get_html` capped at 5 MiB, each read bracketed by `tool.tab_list` so only a page that held still at one URL in navigate's tab counts; `cancel` and `session.stop` on every exit; at most two sessions at once). It never starts the daemon or a browser.
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts`: `createWebfetchTool({ renderer })`; an app shell in markdown or text format is rendered through that client within the call's timeout, scripts stripped; `details.renderSkipped` carries a typed reason (`integration_not_connected` with the message "browser integration not connected; render skipped" and a `cause`, `incognito_unsupported`, `incognito_unavailable`, `timeout`, `render_failed`, `no_more_text`, `no_time_left`, `disabled`); `PI_WEBFETCH_BROWSER=0` turns it off.
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/renderers.ts`: `rendering` progress phase and `rendered` result tag.
+
+### Why
+
+- Client-rendered pages returned 0-12 characters (excalidraw.com, app.diagrams.net, open.spotify.com, web.telegram.org) with status 200 and no sign the page was never rendered (senpi#5939). The owner ruled that rendering happens only through the user's connected, in-use browser integration, never a browser webfetch starts itself.
+
+### Why an extension could not handle it
+
+- The conversion lives inside the builtin webfetch tool; an outside extension would have to replace the whole tool.
+
+### Expected merge conflict zones
+
+- MEDIUM: `tool.ts` execute body and `WebfetchDetails` when pi-webfetch is re-synced.
+
+## 2026-11-05 - webfetch runs loop-side on a split session (senpi#5882)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts`: the tool declares `runs: "brain"`.
+
+### Why
+
+On a split session (brain/hand, S32) webfetch runs where the agent loop runs, never on the hand: under the 2026-11-03 split, web search and fetch run loop-side, and senpi#5641 names `ask_user` a session tool. Fused sessions are unchanged.
+
+### Why an extension could not handle it
+
+The declaration belongs to the tool's own definition.
+
+### Expected merge conflict zones
+
+- LOW: the tool definition's field list.
+
 ## 2026-11-03 - Full webfetch guidelines for the Opus and Fable presets (senpi#5665)
 
 ### What changed

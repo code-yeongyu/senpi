@@ -1,3 +1,235 @@
+## 2026-11-18 - GPT-6.2 Astra and Sol are documented Ultrafast models (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: `ULTRAFAST_DOCUMENTED_MODEL_IDS` gains `gpt-6.2-astra` and `gpt-6.2-sol`.
+
+### Why
+
+- Both 6.2 model pages document Ultrafast. Without the entry, an Ultrafast request on either model was priced at the Standard rate. OpenAI prices 6.2 API Ultrafast at 3x through 2027-02-28 and 6x after that. The shared 6x API multiplier therefore overstates the API cost until March; the subscription multiplier stays at 8x.
+
+### Why an extension could not handle it
+
+- Both pricing adapters read this one list. No extension hook can change the service-tier multiplier.
+
+### Expected merge conflict zones
+
+- LOW: the one `Set` literal.
+
+## 2026-11-15 - shared-subscription item-limit 400s surface a typed route+remedy error (senpi#6718)
+
+### What changed
+
+- `packages/ai/src/api/subscription-sharing-items.ts` (new): detects the wire-evidenced ChatGPT shared-subscription item-limit error text ("User subscription sharing currently supports only...") and appends the route name and the switch-model remedy.
+- `packages/ai/src/api/openai-codex-responses.ts`: a 400 whose message matches the marker is enriched at the error-classification point, naming the provider and the remedy.
+- `packages/ai/src/api/openai-responses.ts`: the same enrichment in `formatOpenAIResponsesError` for the SIWC face.
+
+### Why
+
+- A shared ChatGPT subscription rejects requests carrying function-call items with a raw invalid_request 400, which surfaced to users as an unactionable provider error (senpi#6715). The reactive mapping names the route and the remedy at the exact failure, without refusing routes that accept the items (both subscription routes keep working per senpi#6607), and without adding any retry (a provider-level maxRetries still applies to the permanent 400).
+
+### Why an extension could not handle it
+
+- The mapping needs the provider identity and the raw error body inside each API client's error-classification step; extensions cannot intercept provider error handling.
+
+### Expected merge conflict zones
+
+- LOW: `openai-codex-responses.ts` around the SSE error assembly; `openai-responses.ts` inside `formatOpenAIResponsesError`.
+
+## 2026-11-13 - A missing-scope 401 listing other dotted scopes first still gets guidance (senpi#6643)
+
+### What changed
+
+- `packages/ai/src/utils/siwc-errors.ts`: `isSiwcMissingResponsesScope` matches `api.responses.write` anywhere in the rest of the `Missing scopes:` line instead of stopping at the first dot.
+
+### Why
+
+- Scope names are dotted, so a 401 such as "Missing scopes: api.model.read, api.responses.write" did not match: the account was still parked as `auth_error` and the user got no guidance (senpi#6653 review).
+
+### Why an extension could not handle it
+
+- The pattern is read by the Responses adapter's error formatting and by the credential-pool classifier, both before any extension sees the failed turn.
+
+### Expected merge conflict zones
+
+- LOW: the `MISSING_RESPONSES_SCOPE` pattern in `siwc-errors.ts`.
+
+## 2026-11-13 - A Sign in with ChatGPT 401 for a missing Responses scope says what to do (senpi#6643)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `formatOpenAIResponsesError` appends `SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE` (from `utils/siwc-errors.ts`) on the SIWC route when the error names the missing scope `api.responses.write`.
+
+### Why
+
+- The provider answers an account that is not entitled to the Responses API with a 401 and generic missing-scope prose; users read it as a sign-in failure and kept re-logging in.
+
+### Why an extension could not handle it
+
+- The error message is built inside the Responses adapter before any extension sees the failed turn.
+
+### Expected merge conflict zones
+
+- LOW: the SIWC branches of `formatOpenAIResponsesError`.
+
+## 2026-11-13 - Sign in with ChatGPT never sends configuration_update input items (senpi#6607)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: `convertResponsesMessages` skips `configurationUpdate` messages when the model carries `compat.siwc`, even on a catalog row flagged `supportsConfigurationUpdate`.
+- `packages/ai/src/api/openai-responses.ts`: on a SIWC model flagged `supportsConfigurationUpdate`, `buildParams` takes the newest `configurationUpdate` effort in the transcript as the requested reasoning effort (`off` means no requested effort), instead of the session's cache-baseline `reasoningEffort`.
+
+### Why
+
+- The Sign in with ChatGPT route rejects `configuration_update` input items with 400 `subscription_sharing_unsupported_capability`, so every turn after a thinking-level change failed on gpt-6.1-sol and gpt-6-astra. Upstream pi applies the same guard (`getConfigurationUpdateEffort` returns undefined for a ChatGPT sign-in) and sends the current level as `reasoning.effort`.
+
+### Why an extension could not handle it
+
+- The input items and request effort are built inside the Responses adapter after every extension payload hook has run; the route is chosen per credential below the session.
+
+### Expected merge conflict zones
+
+- LOW: the `configurationUpdate` branch in `convertResponsesMessages` and the reasoning-effort preamble of `buildParams`.
+
+## 2026-11-10 - One shared list of the models Ultrafast is documented for (senpi#2978)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: new export `ULTRAFAST_DOCUMENTED_MODEL_IDS` (`gpt-6-astra`, `gpt-6.1-sol`), the single list of the models Ultrafast is documented for.
+- `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts`: `getServiceTierCostMultiplier` reads the shared list instead of its own `["gpt-6-astra", "gpt-6.1-sol"]` literal. The multipliers are unchanged (6x Standard on the API, 8x of a ChatGPT plan's included usage).
+
+### Why
+
+- The same model set lived in three places (both adapters plus the selection warning in coding-agent), so the next Ultrafast model needed three matching edits (senpi#2978 item 2).
+
+### Why an extension could not handle it
+
+- Service-tier pricing is computed inside the wire adapters from the model and tier; no extension API owns the multiplier table.
+
+### Expected merge conflict zones
+
+- LOW: the `case "ultrafast"` line in each adapter's `getServiceTierCostMultiplier` only.
+
+## 2026-11-09 - OpenAI Responses `long` retention sends `prompt_cache_options.ttl: "12h"` (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `getPromptCacheOptions()` sends `{ ttl: "12h" }` for `cacheRetention: "long"` on GPT-5.6+ models that accept `prompt_cache_options`, instead of `{ ttl: "30m" }`.
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: `OpenAIPromptCacheOptionsPayload.ttl` accepts `"30m" | "12h"`.
+
+### Why
+
+- `"30m"` is OpenAI's default, so `long` bought nothing; `"12h"` is the longest documented value (write 2.5x, reads unchanged).
+
+### Why an extension could not handle it
+
+- The field is built inside the provider adapter and reserved from `extraBody`.
+
+### Expected merge conflict zones
+
+- LOW: one line in `getPromptCacheOptions()` and the payload type.
+
+## 2026-11-07 - Codex turns are priced at the tier that was sent when the backend echoes auto/default (senpi#6156)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `resolveCodexServiceTier` treats a `default`, `auto` or absent response echo as uninformative and resolves to the tier that was sent; `flex`, `priority`, `fast`, `ultrafast` and `scale` echoes stay authoritative.
+- `packages/ai/src/api/openai-codex-responses.ts`: the SSE path (`processStream`) now receives the sent tier from `body.service_tier` after `onPayload`, instead of the pre-hook `options.serviceTier`.
+- `packages/ai/src/api/openai-codex-responses.ts`: the websocket path prices against `requestBody.service_tier` of the frame just sent.
+- `packages/ai/test/chatgpt-subscription-stream.test.ts`: 6 new regression tests for senpi#2890 (auto/default echo with priority sent; explicit flex echo stays flex; `onPayload`-only priority tier on SSE and websocket).
+
+### Why
+
+- senpi#2890: ChatGPT-subscription Codex turns served at the Fast tier were recorded and priced as Standard (1x) when the backend echoed `auto`, and when `/fast` set the tier only through the `onPayload` payload hook. Port of the oh-my-pi v18.8.1 fixes (`204b8f3`, `6428580`).
+
+### Why an extension could not handle it
+
+- The service-tier resolution and the pricing fallback live inside the Codex Responses transport; an extension can only add the tier to the payload, it cannot change which tier the transport prices against.
+
+### Expected merge conflict zones
+
+- LOW: `resolveCodexServiceTier`, the `processStream` signature and its SSE call site, and the websocket `processResponsesStream` options.
+
+## 2026-11-02 - Honor explicit Anthropic long-cache retention on compatible proxies (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the `getCacheControl` wire-level `cache_control.ttl` decision delegates to the shared `allowsAnthropicLongCacheRetention()` helper, so an explicit `compat.supportsLongCacheRetention` value is authoritative on any host while an unset value keeps the `api.anthropic.com` hostname inference. The file no longer imports `isAnthropicApiBaseUrl`.
+
+### Why
+
+- A model routed through an Anthropic-compatible proxy could explicitly declare one-hour cache support, but the wire path still required the native Anthropic hostname and silently omitted `ttl: "1h"`. Sharing one helper with the TTL resolver keeps the request TTL and the internal cache accounting from drifting.
+
+### Why an extension could not handle it
+
+- The cache-control object is serialized inside the private Anthropic Messages request builder before dispatch; no extension hook can rewrite that provider-wire field or keep it synchronized with the core TTL accounting.
+
+### Expected merge conflict zones
+
+- LOW: the prompt-cache helper import and the `ttl` expression in `getCacheControl` in `packages/ai/src/api/anthropic-messages.ts`.
+
+## 2026-11-06 - The warm pre-flight accepts an opted-in Anthropic-compatible host (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/api/warm-prompt-cache.ts`: the Anthropic branch returns `{ supported: false }` for a host only through the shared `supportsAnthropicCacheWarming()` predicate instead of its own `isAnthropicApiBaseUrl` check, and the model cast moved above the guard so one predicate owns both decisions.
+
+### Why
+
+- `warmPromptCache` refused every non-native `anthropic-messages` base URL, so an explicitly opted-in gateway got `supported: false` and the keep-alive stopped with `unsupported-model` even after the retention decision learned to honour `compat.supportsLongCacheRetention` (senpi#1248).
+
+### Why an extension could not handle it
+
+- The warm request is assembled inside the provider package and its SDK client is constructed there; an extension cannot rewrite the refusal or the base URL it dials.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic branch guard in `warmPromptCache`.
+
+## 2026-10-30 - SIWC prewarm eligibility follows resolved cache support (senpi#5101)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: shares the SIWC-aware explicit-cache capability resolver between prewarm eligibility and the adapter.
+- `packages/ai/src/api/openai-responses.ts`: uses that resolver in `getCompat`.
+
+### Why
+
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: inherited explicit-cache support must not make SIWC plan usage eligible for prewarm.
+- `packages/ai/src/api/openai-responses.ts`: eligibility and request construction must resolve the same capability.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: eligibility runs before adapter loading or extension request hooks.
+- `packages/ai/src/api/openai-responses.ts`: the adapter owns resolved wire capabilities.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-responses-prompt-cache.ts` capability and eligibility helpers.
+- LOW: `packages/ai/src/api/openai-responses.ts` prompt-cache imports and `getCompat`.
+
+## 2026-10-30 - Shape public Responses requests for SIWC plan usage (senpi#5003 W8)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: opt-in `model.compat.siwc` selects HTTP/SSE, enforces `store: false` and `stream: true` after payload hooks, removes unsupported fields and continuation IDs, rewrites system items as developer items, and permits only local tools and web search. Flat local tools are supplied eagerly through `additional_tools`; namespaces remain intact. Non-streaming cache prewarm is rejected before sending.
+- `packages/ai/src/api/openai-responses-shared.ts`: SIWC uses developer messages regardless of the model's reasoning flag and disables tool-search loading. Deferred tools use `additional_tools` when supported, otherwise they are supplied eagerly.
+
+### Why
+
+- `packages/ai/src/api/openai-responses.ts`: OpenAI's SIWC preview rejects these fields, hosted tools and HTTP continuation. The fork retained its request builder during the September sync instead of adopting upstream's token-prefix heuristic.
+- `packages/ai/src/api/openai-responses-shared.ts`: client-executed `tool_search` is also unsupported on SIWC, so removing its declaration alone would lose deferred tool definitions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-responses.ts`: transport selection and the final request after hooks are adapter internals.
+- `packages/ai/src/api/openai-responses-shared.ts`: transcript conversion owns developer roles and placement of deferred tool definitions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-responses.ts`: compatibility resolution, final request preparation, and cache prewarm.
+- `packages/ai/src/api/openai-responses-shared.ts`: deferred mode resolution and instruction role selection.
+
 ## 2026-11-02 - openai-completions keeps proxy-returned thought signatures on replayed tool calls (senpi#4564)
 
 ### What changed

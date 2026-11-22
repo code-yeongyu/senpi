@@ -28,12 +28,12 @@ const SESSION_ID = "0199f0d4-1c3a-7bb1-9d2e-0a1b2c3d4e5f";
 
 function recordingFactory(cwds: string[]): CreateAgentSessionRuntimeFactory {
 	return async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		cwds.push(options.cwd);
 		return {
 			session: {
 				...fakeSessionBase(options),
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},
 				waitForIdle: async () => {},
@@ -117,7 +117,7 @@ describe("moved path resolution (#2898)", () => {
 
 	it("a holder claim on the old path is a claim on the new path", async () => {
 		const { newSession, oldSession } = movedSession();
-		const hold = holdSessionFile(oldSession, SESSION_ID, { expectExisting: true });
+		const hold = await holdSessionFile(oldSession, SESSION_ID, { expectExisting: true });
 		try {
 			expect((await liveSessionHolders(newSession, SESSION_ID)).map((holder) => holder.pid)).toEqual([process.pid]);
 			await expect(

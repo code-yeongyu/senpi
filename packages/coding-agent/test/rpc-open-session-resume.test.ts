@@ -44,7 +44,7 @@ interface CapturedFactoryCall {
 
 function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFactory {
 	return async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		calls.push({
 			cwd: options.cwd,
 			launchProfile: options.launchProfile as Readonly<RpcSessionLaunchProfile> | undefined,
@@ -53,7 +53,7 @@ function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFac
 		return {
 			session: {
 				...fakeSessionBase(options),
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},
 				waitForIdle: async () => {},
@@ -201,6 +201,35 @@ describe("open_session resume/create parity + close semantics", () => {
 		});
 		expect(response && "error" in response ? response.error : "").toContain(missingCwd);
 		expect(calls).toHaveLength(0);
+	});
+
+	test("#given a cwd that exists but is a file #when open_session names it #then it is refused session_cwd_not_directory naming the path, before any session is created", async () => {
+		const calls: CapturedFactoryCall[] = [];
+		const { dir, registry } = await makeRegistry(calls);
+		const fileCwd = join(dir, "hostname");
+		writeFileSync(fileCwd, "a file, not a folder\n");
+		const router = new SessionCommandRouter(registry, new SessionEventWriter(() => {}), { cwd: dir });
+
+		const response = await router.handle({
+			id: "file-cwd",
+			type: "open_session",
+			cwd: fileCwd,
+			sessionPath: join(dir, "file-cwd.jsonl"),
+			permissionPreset: "full",
+		});
+
+		expect(response).toMatchObject({
+			id: "file-cwd",
+			type: "response",
+			command: "open_session",
+			success: false,
+			error: "session_cwd_not_directory",
+			errorCode: "session_cwd_not_directory",
+			errorData: { cwd: fileCwd },
+		});
+		expect(calls).toHaveLength(0);
+		expect(registry.list()).toHaveLength(0);
+		expect(existsSync(join(dir, "file-cwd.jsonl"))).toBe(false);
 	});
 
 	test("per-session cwd: each runtime receives its own cwd", async () => {
