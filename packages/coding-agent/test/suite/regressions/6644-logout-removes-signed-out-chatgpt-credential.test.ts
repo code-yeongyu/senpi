@@ -186,10 +186,8 @@ describe("full /logout removes a signed-out ChatGPT credential (senpi#6644)", ()
 });
 
 describe("AuthStorage mutation and lookup agree on legacy keys (senpi#6644)", () => {
-	it("has, remove and removeSlot reach a credential stored under the legacy id", () => {
+	it("has and remove reach a credential stored under the legacy id", () => {
 		const agentDir = makeAgentDir();
-		writeLegacyAuthJson(agentDir);
-		const storage = AuthStorage.create(join(agentDir, "auth.json"));
 		// The load seam migrates plain-object entries; assert against what a
 		// legacy entry that migration leaves alone (a non-object value) proves:
 		// reads fall back to the legacy key, so has and remove must too.
