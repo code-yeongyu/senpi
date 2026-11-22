@@ -45,6 +45,7 @@ export async function installPythonPackages(input: {
 	readonly cwd: string;
 	readonly signal: AbortSignal;
 	readonly onOutput?: (stream: "stdout" | "stderr", data: string) => void;
+	readonly inheritedEnv?: () => Readonly<Record<string, string | undefined>>;
 }): Promise<InstallReceipt> {
 	const requested =
 		typeof input.requirements === "string"
@@ -60,6 +61,7 @@ export async function installPythonPackages(input: {
 				args: requested,
 				cwd: input.cwd,
 				signal: input.signal,
+				...(input.inheritedEnv === undefined ? {} : { inheritedEnv: input.inheritedEnv }),
 				onOutput: (stream, data) => {
 					if (stream === "stdout") stdout += data;
 					input.onOutput?.(stream, data);

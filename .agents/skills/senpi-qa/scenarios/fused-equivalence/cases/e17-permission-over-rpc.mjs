@@ -87,6 +87,8 @@ export default {
 			client.close();
 			if (client.child.exitCode === null) await new Promise((resolve) => client.child.once("close", resolve));
 		}
+		// The host still holds the session after its connections close; reopening before it exits races its release (senpi#6721).
+		await run.stopMultiSessionHost();
 		await run.reopenState();
 	},
 };

@@ -58,6 +58,7 @@ function createRunner(): FakeRunner {
 		setActiveTools: (next: string[]) => {
 			activeTools = next;
 		},
+		isLoopRemote: () => false,
 	} as unknown as ExtensionAPI;
 	return {
 		pi,

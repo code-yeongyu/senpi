@@ -234,12 +234,22 @@ export async function waitForGone(pidFile: DaemonPidFile, timeoutMs: number): Pr
 	return !(await processMatchesPidFile(pidFile));
 }
 
+/**
+ * The live start time of `pid` as one string, or undefined when the process is gone.
+ * Throws when the probe fails against a live pid.
+ *
+ * Probes read in UTC by default: a local-form start time is ambiguous in a DST fall-back
+ * hour, so a UTC-tagged record compared against a local probe can read one hour off and a
+ * live child stops counting as a holder (senpi#3067 L1). Legacy local-format records are
+ * still parsed as local time by `processStartTimeMs`.
+ */
 export async function readProcessStartTime(
 	pid: number,
 	platform: NodeJS.Platform = process.platform,
 	timeoutMs?: number,
+	timeZone: "UTC" = "UTC",
 ): Promise<string | undefined> {
-	return readProcessIdentity(pid, platform, timeoutMs).then((result) => {
+	return readProcessIdentity(pid, platform, timeoutMs, undefined, timeZone).then((result) => {
 		if (result.kind === "error") throw result.error;
 		return result.kind === "present" ? result.identity : undefined;
 	});

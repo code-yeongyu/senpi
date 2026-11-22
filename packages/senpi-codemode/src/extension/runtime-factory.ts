@@ -1,8 +1,10 @@
 import {
 	activeKillGuardEnvironment,
+	childEnvironmentOf,
 	type ExtensionContext,
 	readKillGuardSetting,
 	withBundledBunCommands,
+	withCredentialProxy,
 } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
@@ -100,7 +102,9 @@ export async function createRuntime(
 	// The kill guard's runtime layer (senpi#5349): kernels and their children get the shims first on PATH and
 	// bash's BASH_ENV wrapper, as the bash tool does.
 	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...pathEntry }) : {};
-	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...pathEntry, ...killGuardEnv };
+	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...pathEntry, ...killGuardEnv, ...withheldCredentialEntries() };
+	// Kernels and their children never see the RPC host's supervisor hand-off (senpi#5635).
+	const inheritedEnv = () => childEnvironmentOf(process.env);
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const pythonEnvironments =
@@ -110,6 +114,7 @@ export async function createRuntime(
 					cwd: ctx.cwd,
 					interpreter: availability.py.detected.path,
 					settings,
+					inheritedEnv,
 				})
 			: undefined;
 	const manager = await create({
@@ -117,6 +122,7 @@ export async function createRuntime(
 		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
 		sessionEnv,
+		inheritedEnv,
 		killGuard,
 		settings,
 		availability,
@@ -146,7 +152,7 @@ export async function createRuntime(
 			artifactsDir: artifacts.dir,
 			cwd: ctx.cwd,
 			runtime: jsRuntimeInfo().name,
-			env: { ...process.env, ...sessionEnv },
+			env: { ...inheritedEnv(), ...sessionEnv },
 			settings,
 		}),
 		...(pythonEnvironments === undefined ? {} : { pythonEnvironments }),
@@ -192,6 +198,15 @@ function bundledBunPathEntry(): Record<string, string> {
 	const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const value = env[pathKey];
 	return value === undefined ? {} : { [pathKey]: value };
+}
+
+// senpi#6820: kernels and their children get the bash tool's view of declared credentials (a placeholder plus the
+// proxy route). The session environment overrides each kernel's inherited environment, so the value never reaches one.
+function withheldCredentialEntries(): Record<string, string> {
+	const entries: Record<string, string> = {};
+	for (const [name, value] of Object.entries(withCredentialProxy(process.env)))
+		if (value !== undefined && value !== process.env[name]) entries[name] = value;
+	return entries;
 }
 
 function sessionIdFrom(event: unknown): string {

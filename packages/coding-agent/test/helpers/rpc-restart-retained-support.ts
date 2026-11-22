@@ -46,24 +46,35 @@ export async function startHost(qa: Scratch): Promise<ChildProcessWithoutNullStr
 	return host;
 }
 
-/** A retained session with one completed turn, so its transcript exists on disk. */
-export async function openWithTurn(peer: JsonlPeer, cwd: string, label: string): Promise<OpenedSession> {
-	const opened = await peer.request({ id: `open-${label}`, type: "open_session", cwd, retain_on_disconnect: true });
+/**
+ * A retained session with one completed turn, so its transcript exists on disk. `waitMs` bounds the open and the turn;
+ * a caller with a case budget passes what is left of it; without it, each wait keeps its usual bound.
+ */
+export async function openWithTurn(
+	peer: JsonlPeer,
+	cwd: string,
+	label: string,
+	waitMs?: number,
+): Promise<OpenedSession> {
+	const opened = await peer.request(
+		{ id: `open-${label}`, type: "open_session", cwd, retain_on_disconnect: true },
+		waitMs,
+	);
 	const handle = openedSessionId(opened);
 	const state = (opened.data as { state: { sessionId: string; sessionFile: string } }).state;
 	const prompt = `first-turn-${label}`;
-	await runTurn(peer, handle, prompt);
+	await runTurn(peer, handle, prompt, waitMs);
 	return { handle, durableId: state.sessionId, sessionFile: state.sessionFile, prompt };
 }
 
 /** One prompt on the session, resolved once its turn has settled. */
-export async function runTurn(peer: JsonlPeer, handle: string, prompt: string): Promise<void> {
+export async function runTurn(peer: JsonlPeer, handle: string, prompt: string, waitMs?: number): Promise<void> {
 	const seen = peer.messages.length;
 	const settled = peer.waitFor(
 		(value) => value.type === "agent_settled" && value.sessionId === handle && peer.messages.indexOf(value) >= seen,
-		RECORD_WAIT_MS,
+		waitMs ?? RECORD_WAIT_MS,
 	);
-	await peer.request({ id: `turn-${prompt}`, type: "prompt", sessionId: handle, message: prompt });
+	await peer.request({ id: `turn-${prompt}`, type: "prompt", sessionId: handle, message: prompt }, waitMs);
 	await settled;
 }
 
@@ -93,20 +104,27 @@ export async function stopHost(host: ChildProcessWithoutNullStreams, signal: "SI
  * Waits until the restarted host lists every durable id. Its reopen runs in the background after it binds, so a
  * session missing from the first listing is awaited through its `session_opened` broadcast, subscribed beforehand.
  */
-export async function waitListed(peer: JsonlPeer, durableIds: readonly string[]): Promise<readonly ListedRow[]> {
+export async function waitListed(
+	peer: JsonlPeer,
+	durableIds: readonly string[],
+	waitMs?: number,
+): Promise<readonly ListedRow[]> {
 	const list = async (id: string): Promise<readonly ListedRow[]> =>
-		((await peer.request({ id, type: "list_sessions", include_workers: true })).data as { sessions: ListedRow[] })
-			.sessions;
+		(
+			(await peer.request({ id, type: "list_sessions", include_workers: true }, waitMs)).data as {
+				sessions: ListedRow[];
+			}
+		).sessions;
 	const announced = durableIds.map((durableId) => {
 		const opened = peer.waitFor(
 			(value) => value.type === "session_opened" && value.durableSessionId === durableId,
-			RECORD_WAIT_MS,
+			waitMs ?? RECORD_WAIT_MS,
 		);
 		// Only the waits for sessions missing from the first listing are awaited; the rest must not reject unhandled.
 		opened.catch(() => {});
 		return opened;
 	});
-	await peer.request({ id: "subscribe", type: "subscribe_sessions", sessions: "all", include_workers: true });
+	await peer.request({ id: "subscribe", type: "subscribe_sessions", sessions: "all", include_workers: true }, waitMs);
 	const first = (await list("list-first")).map((row) => row.durableSessionId);
 	await Promise.all(durableIds.map((durableId, index) => (first.includes(durableId) ? undefined : announced[index])));
 	return list("list-restored");

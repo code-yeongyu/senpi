@@ -22,6 +22,7 @@ import type {
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
 import { releaseOnCredentialChange, releaseOnLimitReset } from "./credential-recovery.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { type UsageLimitScopeProbe, UnusableEntries } from "./unusable.ts";
@@ -103,6 +104,10 @@ export class RetryFallbackController {
 
 	releaseAccountHold(provider: string): boolean {
 		return this.unusable.releaseAccountHold(provider);
+	}
+
+	releaseAccountHoldShownServable(provider: string, usage: readonly AccountLimits[]): boolean {
+		return this.unusable.releaseAccountHoldShownServable(provider, usage);
 	}
 
 	resetTurn(): void {
@@ -464,18 +469,24 @@ export class RetryFallbackController {
 		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason, ...scope });
 	}
 
-	/** The chain governing `current`, when fallback is enabled; a model's own chain wins over an active one. */
+	/**
+	 * The chain governing `current`, when fallback is enabled. An active episode's chain wins over the
+	 * rung's own chain, so the walk continues down the chain it started on: Opus 5.5 -> Fable 5.2 -> Kimi
+	 * never detours through Fable's own chain, and a Fable session that reached Opus 5.5 never takes
+	 * Opus 5.5's chain off Anthropic (senpi#6699). Outside an episode the model's own chain governs.
+	 */
 	private managedChainKey(current: { model: Model<Api>; thinkingLevel?: ThinkingLevel }): string | undefined {
 		if (!this.deps.getSettings().modelFallback) return undefined;
 		const chains = this.canonicalChains();
-		const chainKey =
-			resolveChainKey(
-				current.model,
-				current.thinkingLevel,
-				chains,
-				fastSiblingOption(this.deps.registry, current.model),
-			) ?? this.state?.chainKey;
-		return chainKey && chains[chainKey] ? chainKey : undefined;
+		const active = this.state?.chainKey;
+		if (active && chains[active]) return active;
+		const own = resolveChainKey(
+			current.model,
+			current.thinkingLevel,
+			chains,
+			fastSiblingOption(this.deps.registry, current.model),
+		);
+		return own && chains[own] ? own : undefined;
 	}
 
 	private nextCandidate(

@@ -40,6 +40,10 @@ import type {
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { extractChatGptSubscriptionAccountId } from "../utils/chatgpt-subscription-auth.ts";
 import {
+	isSharedSubscriptionItemLimitMessage,
+	sharedSubscriptionItemLimitMessage,
+} from "./subscription-sharing-items.ts";
+import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
 	formatThrownValue,
@@ -483,6 +487,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					});
 					const info = await parseErrorResponse(fakeResponse, response.headers);
 					let errorMessage = info.friendlyMessage || info.message;
+					if (fakeResponse.status === 400 && isSharedSubscriptionItemLimitMessage(errorMessage)) {
+						errorMessage = sharedSubscriptionItemLimitMessage(model.provider, errorMessage);
+					}
 					if (response.status === 429) {
 						const hintMs = extract429RetryAfterMs({
 							status: response.status,
@@ -877,6 +884,9 @@ async function* mapCodexEvents(
 			const message = getCodexEventErrorMessage(event);
 			let errorText =
 				describeChatGptUsageLimitEvent(event) ?? `Codex error: ${message || code || JSON.stringify(event)}`;
+			if (isSharedSubscriptionItemLimitMessage(errorText)) {
+				errorText = sharedSubscriptionItemLimitMessage(model.provider, errorText);
+			}
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
@@ -893,6 +903,9 @@ async function* mapCodexEvents(
 			let errorText =
 				describeChatGptUsageLimitEvent({ ...event, error: getCodexEventError(event) }) ??
 				(message || "Codex response failed");
+			if (isSharedSubscriptionItemLimitMessage(errorText)) {
+				errorText = sharedSubscriptionItemLimitMessage(model.provider, errorText);
+			}
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);

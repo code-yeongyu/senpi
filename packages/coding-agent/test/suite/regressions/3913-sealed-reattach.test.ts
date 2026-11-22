@@ -15,7 +15,7 @@ it("refuses sealed reattach and answers old-handle commands instead of silently 
 	const registry = new RpcSessionRegistry({
 		agentDir: dir,
 		createRuntime: async (options) => {
-			new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+			await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 			return {
 				session: {
 					...fakeSessionBase(options),

@@ -15,6 +15,7 @@
  * Exit 1 `handover_reply_lost`: the host did not answer and the socket does not serve the target, so
  * the operation's fate is unknown until `host status` is read again.
  */
+import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { daemonEnvironment, daemonEnvOverrides } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { readHostRegistration } from "./host-daemon-registration.ts";
@@ -41,6 +42,8 @@ export interface IdleHandoverTerms {
 	readonly ifInstanceId: string;
 	readonly ifGeneration: number;
 	readonly targetRuntimeBuildId: string;
+	/** `--allow-downgrade`: the host may hand over even when this CLI's engine is older than its own (senpi#7018). */
+	readonly allowDowngrade?: boolean;
 }
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -116,6 +119,9 @@ function beginHandoverCommand(
 		if_instance_id: terms.ifInstanceId,
 		if_generation: terms.ifGeneration,
 		target_runtime_build_id: terms.targetRuntimeBuildId,
+		// The successor runs THIS CLI's runtime, so this CLI's engine is the one the host judges (senpi#7018).
+		target_engine: { text: engineBuildIdentity().text, ordinal: engineBuildIdentity().ordinal },
+		...(terms.allowDowngrade === true && { allow_downgrade: true }),
 		agent_dir: target.agentDir,
 		launch: { command: launch.command, args: launch.args, reports_startup: true },
 		host_args: spec.hostArgs,

@@ -129,7 +129,8 @@ export async function effectHostWorld() {
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
 	const bin = join(scratch, "bin");
-	await Promise.all([mkdir(cwd), mkdir(agentDir), mkdir(bin)]);
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	await Promise.all([mkdir(cwd), mkdir(agentDir, { mode: 0o700 }), mkdir(bin)]);
 	const extension = join(scratch, "faux-effect.mjs");
 	const releaseDir = join(scratch, "release");
 	await mkdir(releaseDir);

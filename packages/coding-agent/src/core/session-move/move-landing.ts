@@ -1,3 +1,4 @@
+import { hostname, uptime } from "node:os";
 import { resolvePath } from "../../utils/paths.ts";
 import { MOVE_RECORD_LOCK_STALE_MS } from "./move-ledger-lock.ts";
 import type { MoveRecord } from "./move-record.ts";
@@ -10,12 +11,66 @@ import type { MoveRecord } from "./move-record.ts";
  */
 export const COMMIT_SETTLE_AFTER_MS = 3 * MOVE_RECORD_LOCK_STALE_MS;
 
-/** How long ago a record was written, from its `at`; `undefined` when it carries none. */
-export function recordAge(value: unknown, now: number): number | undefined {
+/**
+ * `os.uptime()` reads whole seconds on one runtime and fractions on another, so a reader can read a little less than
+ * the writer did. An uptime lower than the stamp's by more than this means the machine restarted since the stamp.
+ */
+const UPTIME_RESOLUTION_MS = 2_000;
+
+/** The clocks a record is stamped and aged with. Tests replace them; nothing else does. */
+export interface StampClockOptions {
+	/** The wall clock, in ms. It can be stepped, in either direction. */
+	readonly now?: () => number;
+	/** Ms since this machine started: one clock for every process on it, which a wall-clock step does not move. */
+	readonly uptime?: () => number;
+	/** The machine `uptime` belongs to. */
+	readonly host?: string;
+}
+
+export type StampClock = Required<StampClockOptions>;
+
+export function stampClock(options: StampClockOptions = {}): StampClock {
+	return {
+		now: options.now ?? Date.now,
+		uptime: options.uptime ?? (() => uptime() * 1000),
+		host: options.host ?? hostname(),
+	};
+}
+
+/** What a record carries beside its `at`, so a reader on the same machine can age it without the wall clock. */
+export function stampFields(clock: StampClock): { readonly up: number; readonly host: string } {
+	return { up: Math.round(clock.uptime()), host: clock.host };
+}
+
+/** How long ago a record was written by the wall clock, from its `at`; `undefined` when it carries none. */
+function wallAge(value: unknown, now: number): number | undefined {
 	if (typeof value !== "object" || value === null || !("at" in value) || typeof value.at !== "string")
 		return undefined;
 	const at = Date.parse(value.at);
 	return Number.isNaN(at) ? undefined : now - at;
+}
+
+/**
+ * How long ago a record was written by its machine's uptime. `undefined` when that clock cannot say: another machine
+ * wrote the record, an older build did (no `up`), or this machine restarted since (its uptime reads lower).
+ */
+function machineAge(value: unknown, clock: StampClock): number | undefined {
+	if (typeof value !== "object" || value === null || !("up" in value) || !("host" in value)) return undefined;
+	if (typeof value.up !== "number" || value.host !== clock.host) return undefined;
+	const age = clock.uptime() - value.up;
+	return age < -UPTIME_RESOLUTION_MS ? undefined : Math.max(0, age);
+}
+
+/**
+ * The age a commit stamp is settled by. The wall clock alone misjudges it after a step: stepped forward, a healthy
+ * commit's stamp reads old at once and is settled failed while that commit can still land its file. So a stamp is old
+ * only when both clocks say so: while the machine's uptime calls it young that age is the answer, and otherwise the
+ * wall clock's is (negative after a step back, which `settledLanding` counts as old). Erring young only delays the
+ * settling of a commit that died, and by at most the bound of whichever clock is wrong.
+ */
+export function stampAge(value: unknown, clock: StampClock): number | undefined {
+	const machine = machineAge(value, clock);
+	return machine !== undefined && machine < COMMIT_SETTLE_AFTER_MS ? machine : wallAge(value, clock.now());
 }
 
 /** Whether a stored record is still the commit stamp that was written at `stamp`. */

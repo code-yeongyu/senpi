@@ -69,7 +69,7 @@ function probes(m: Machine, pid: number, host = m.host): WriterProbes {
 		host: () => host,
 		pidAlive: (candidate) => m.alive.has(candidate),
 		readProcessStartMs: async (candidate) => m.starts.get(candidate),
-		bootAtMs: () => m.boot,
+		bootAtMs: async () => m.boot,
 		self: () => ({ pid, processStartedAtMs: m.starts.get(pid) ?? 0 }),
 	};
 }
