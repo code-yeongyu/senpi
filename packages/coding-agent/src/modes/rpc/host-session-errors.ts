@@ -20,7 +20,7 @@ const BARE_CODE = /^[a-z][a-z0-9_]*$/;
 export function mapError(error: unknown, socket: string): HostOutcome {
 	const detail = error instanceof Error ? error.message : String(error);
 	if (error instanceof RpcCommandError) {
-		const code = error.errorCode ?? (BARE_CODE.test(detail) ? detail : undefined);
+		const code = stableCode(error.errorCode, detail);
 		if (code === undefined) return hostError(detail, socket);
 		const exitCode = USAGE_CODES.has(code)
 			? HOST_EXIT_USAGE
@@ -42,6 +42,23 @@ export function mapError(error: unknown, socket: string): HostOutcome {
 		return { exitCode: HOST_EXIT_ERROR, payload: { action: "error", reason: "transport_gone", detail, socket } };
 	}
 	return hostError(detail, socket);
+}
+
+/**
+ * The code an exit maps on. A refusal may carry its detail after the code (`invalid_launch_profile: <detail>`), in
+ * `errorCode` or in the message alone; the stable code is the part before the first `: ` (senpi#3283). Prose with no
+ * code stays unmapped, except that a usage refusal's own prefix still names its usage code.
+ */
+function stableCode(errorCode: string | undefined, detail: string): string | undefined {
+	if (errorCode !== undefined) return codePrefix(errorCode);
+	if (BARE_CODE.test(detail)) return detail;
+	const prefix = codePrefix(detail);
+	return USAGE_CODES.has(prefix) ? prefix : undefined;
+}
+
+function codePrefix(text: string): string {
+	const end = text.indexOf(": ");
+	return end === -1 ? text : text.slice(0, end);
 }
 
 function hostError(detail: string, socket: string): HostOutcome {
