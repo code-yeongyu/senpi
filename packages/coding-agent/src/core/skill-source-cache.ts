@@ -6,13 +6,15 @@ import { readSkillMarkdownSource, SKILL_FRONTMATTER_PREFIX_BYTES } from "./skill
  * the read before it. As git does for racy index entries, a read is reused only when the file was last
  * changed well before that read, so no later write can share its stamp. The change time is the later
  * of mtime and ctime: cp -p, tar, rsync -t and utimes restore an old mtime, and only ctime moves.
+ * A filesystem that mirrors mtime into ctime cannot distinguish such a rewrite from an unchanged
+ * file. Equal stamps are also normal on a newly created file, so equality alone cannot detect it.
  */
 const RACY_WRITE_WINDOW_MS = 3000;
 
 export interface SkillSourceCacheLimits {
 	/** A source larger than this (no closing `---` within the frontmatter prefix) is never kept. */
 	readonly maxEntryBytes: number;
-	/** Kept sources never exceed this in total; the oldest are dropped first. */
+	/** Kept sources never exceed this in total; the least recently read are dropped first. */
 	readonly maxTotalBytes: number;
 }
 
@@ -49,12 +51,16 @@ export function createSkillSourceCache(
 	return (filePath, stats) => {
 		const stamp = statStamp(stats);
 		const cached = sources.get(filePath);
-		if (cached?.stamp === stamp) return cached.source;
+		if (cached?.stamp === stamp) {
+			sources.delete(filePath);
+			sources.set(filePath, cached);
+			return cached.source;
+		}
 		const source = readSkillMarkdownSource(filePath);
 		forget(filePath);
 		// The local clock judges the file's change time, as in git; a share whose clock runs behind ours by
 		// more than the window can still make a just-written file look settled.
-		if (Math.max(stats.mtimeMs, stats.ctimeMs) > now() - RACY_WRITE_WINDOW_MS) return source;
+		if (stats.ctimeMs === 0 || Math.max(stats.mtimeMs, stats.ctimeMs) > now() - RACY_WRITE_WINDOW_MS) return source;
 		const bytes = Buffer.byteLength(source);
 		if (bytes > limits.maxEntryBytes) return source;
 		sources.set(filePath, { stamp, source, bytes });
