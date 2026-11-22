@@ -291,6 +291,10 @@ export class KernelPermissionHost {
 		try {
 			worker = new Worker(new URL("./permission-worker-entry.js", import.meta.url), {
 				...workerOptions,
+				// A custom worker environment replaces the host environment, but must not undo its EcoQoS preference.
+				...(typeof workerOptions.env === "object" && process.env.SENPI_KEEP_POWER_THROTTLING === "1"
+					? { env: { ...workerOptions.env, SENPI_KEEP_POWER_THROTTLING: "1" } }
+					: {}),
 				workerData: {
 					permission: { ...permission, messageKey },
 					enforced: token !== undefined,

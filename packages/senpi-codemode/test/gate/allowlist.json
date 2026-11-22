@@ -7109,7 +7109,7 @@
 				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut opts the kernel process and every child of both launchers out with ControlMask=EXECUTION_SPEED, StateMask=0",
 				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut never turns a launch into an exception when kernel32 throws"
 			],
-			"reason": "senpi#6131 (Fixes #6125): the JavaScript kernel entries (worker-entry.js, inline-worker-entry.js, process-entry.js) import power-throttling-startup.js first, which opts the kernel realm's children out of Windows EcoQoS throttling. Reviewed additions only: the two new modules in the firstKernel import graph (off Windows they import nothing and patch nothing) and the three contract titles of test/power-throttling.test.ts.",
+			"reason": "senpi#6131 (Fixes #6125): worker-entry.js, inline-worker-entry.js, process-entry.js and permission-worker-entry.js import power-throttling-startup.js first, which opts the kernel realm's children out of Windows EcoQoS throttling. Reviewed additions only: the two new modules in the firstKernel import graph (off Windows they import nothing and patch nothing) and the three original contract titles of test/power-throttling.test.ts.",
 			"changes": []
 		},
 		"senpi#6181": {
