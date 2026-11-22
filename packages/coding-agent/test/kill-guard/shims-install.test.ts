@@ -26,6 +26,7 @@ describe("killGuardEnvironment", () => {
 		expect(entries).toEqual({
 			PATH: `${f.shims}:/usr/bin:/bin`,
 			BASH_ENV: join(f.shims, "bash_env.sh"),
+			SENPI_KILL_GUARD_BASH_ENV: join(f.shims, "bash_env.sh"),
 			SENPI_KILL_GUARD_USER_BASH_ENV: "",
 			PROMPT_COMMAND: killGuardPromptCommand(f.shims),
 			SENPI_KILL_GUARD_USER_PROMPT_COMMAND: "",
@@ -62,6 +63,13 @@ describe("killGuardEnvironment", () => {
 		expect(nested.BASH_ENV).toBe(join(f.shims, "bash_env.sh"));
 		const ownFile = killGuardEnvironment(base({ BASH_ENV: "/home/u/rc/bash_env.sh" }), f.runtime());
 		expect(ownFile.SENPI_KILL_GUARD_USER_BASH_ENV).toBe("/home/u/rc/bash_env.sh");
+		// senpi#5437: the inherited chain key remains set when the user replaces BASH_ENV.
+		const inner = f.runtime({ dir: join(f.root, "inner-agent") });
+		const overridden = killGuardEnvironment({ ...user, BASH_ENV: "/home/u/rc/bash_env.sh" }, inner);
+		expect(overridden.SENPI_KILL_GUARD_USER_BASH_ENV).toBe("/home/u/rc/bash_env.sh");
+		expect(overridden.BASH_ENV).toBe(inner.bashEnv);
+		const { SENPI_KILL_GUARD_BASH_ENV: _marker, ...older } = user;
+		expect(killGuardEnvironment(older, inner).SENPI_KILL_GUARD_USER_BASH_ENV).toBe("/home/u/.bash_env");
 	});
 
 	it("keeps the user's PROMPT_COMMAND, also when the environment already carries a kill-guard hook (C1)", () => {
