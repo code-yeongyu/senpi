@@ -187,7 +187,7 @@ describe.skipIf(process.platform === "win32")("prepareSocketPath", () => {
 		const socketPath = await socketIn("regular");
 		await writeFile(socketPath, "not a socket");
 
-		await expect(prepareSocketPath(socketPath)).rejects.toThrow("not a socket");
+		await expect(prepareSocketPath(socketPath)).rejects.toThrow("occupied by a non-socket entry");
 		await expect(access(socketPath)).resolves.toBeUndefined();
 	});
 

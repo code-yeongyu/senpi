@@ -1,5 +1,6 @@
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult } from "../../types.ts";
+import { combinedToolCallSignal } from "../../tool-call-signal.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { decideAuto } from "./auto-policy.ts";
 import { createCellDecision, registerCellAuthorizer, updateCellEnforcement } from "./cell-decision.ts";
@@ -19,7 +20,7 @@ import {
 	toolOwnedPermissionRequests,
 } from "./parsers.ts";
 import { sharedPathIdentityResolver } from "./path-identity-host.ts";
-import { registerPermissionPresetReader } from "./preset-registry.ts";
+import { readDecisionPresetOverride, registerPermissionPresetReader } from "./preset-registry.ts";
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
@@ -236,7 +237,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		activeSettingsManager = settingsManager;
 		const permissionFlag = pi.getFlag("permission");
 		loadedPermissionFlag = permissionFlag;
-		const permissionPresetFlag = pi.getFlag("permission-preset");
+		const permissionPresetFlag = decisionPresetFlag();
 		loadedPresetFlag = { value: permissionPresetFlag };
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
 		const cliPreset =
@@ -267,6 +268,13 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		if (cellSession) updateCellEnforcement(cellSession, staticRuleset, activePreset);
 	};
 
+	// The core's delegated-default override wins over a valid or absent preset flag; an invalid one keeps refusing.
+	const decisionPresetFlag = (): boolean | string | undefined => {
+		const configured = pi.getFlag("permission-preset");
+		if (typeof configured === "string" && !parsePermissionPresetFlag(configured)) return configured;
+		return (cellSession === undefined ? undefined : readDecisionPresetOverride(cellSession)) ?? configured;
+	};
+
 	const applyToolDenials = (onlyWhenNarrowed = false): void => {
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
@@ -283,8 +291,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const followPresetFlag = (cwd: string, agentDir?: string): void => {
 		if (
 			loadedPresetFlag === undefined ||
-			(loadedPresetFlag.value === pi.getFlag("permission-preset") &&
-				loadedPermissionFlag === pi.getFlag("permission"))
+			(loadedPresetFlag.value === decisionPresetFlag() && loadedPermissionFlag === pi.getFlag("permission"))
 		) {
 			return;
 		}
@@ -313,8 +320,12 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const authorizeToolCall = async (
 		event: ToolCallEvent,
 		ctx: ExtensionContext,
-		signal?: AbortSignal,
+		dispatchSignal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
+		// A `tool_call` hook gets no signal argument, so its prompt ends with the turn: an abort releases a prompt
+		// nobody answers (a child's dialog forwarded to a host that never shows it), senpi#6670. The dispatch (call)
+		// signal does not replace the context's: the prompt runs under their union so a turn abort also ends it (senpi#6679).
+		const signal = combinedToolCallSignal(dispatchSignal, ctx.signal);
 		attachWithoutSession(ctx);
 		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {

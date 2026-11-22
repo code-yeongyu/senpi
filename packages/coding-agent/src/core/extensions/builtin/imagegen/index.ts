@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { resolveImageGenAuth } from "./auth.ts";
+import { imageGenAvailability } from "./auth.ts";
 import { imagegenSkillPath } from "./skill-path.ts";
 import { imageGenRegistryOverride } from "./state.ts";
 import { generateImageTool } from "./tool.ts";
@@ -11,8 +11,8 @@ const IMAGEGEN_BASE_DIR = dirname(fileURLToPath(import.meta.url));
 let loggedMissingSkill = false;
 
 async function isImageGenActive(ctx: ExtensionContext): Promise<boolean> {
-	const auth = await resolveImageGenAuth({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
-	return auth.kind !== "none";
+	const availability = await imageGenAvailability({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+	return availability.kind !== "none";
 }
 
 /**

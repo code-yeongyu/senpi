@@ -3,7 +3,7 @@ import { markMovedSessions, withMovedSessions } from "../../core/moved-sessions.
 import { resolveResumeTarget } from "../../core/resume-target.ts";
 import { type SessionInfo, type SessionListProgress, SessionManager } from "../../core/session-manager.ts";
 
-type SessionScopeSource = Pick<SessionManager, "getCwd" | "getSessionDir" | "usesDefaultSessionDir">;
+type SessionScopeSource = Pick<SessionManager, "getCwd" | "getHomeSessionDir" | "usesDefaultSessionDir">;
 
 export interface ResumeRebindUi {
 	readonly confirm: (title: string, message: string) => Promise<boolean>;
@@ -11,7 +11,7 @@ export interface ResumeRebindUi {
 }
 
 function sharedSessionDir(source: SessionScopeSource): { readonly sessionDir?: string } {
-	return source.usesDefaultSessionDir() ? {} : { sessionDir: source.getSessionDir() };
+	return source.usesDefaultSessionDir() ? {} : { sessionDir: source.getHomeSessionDir() };
 }
 
 export function currentScopeSessions(
@@ -21,7 +21,7 @@ export function currentScopeSessions(
 ): Promise<SessionInfo[]> {
 	const cwd = source.getCwd();
 	return withMovedSessions(
-		SessionManager.list(cwd, source.getSessionDir(), onProgress, signal),
+		SessionManager.list(cwd, source.getHomeSessionDir(), onProgress, signal),
 		cwd,
 		sharedSessionDir(source),
 	);
@@ -34,7 +34,7 @@ export async function allScopeSessions(
 ): Promise<SessionInfo[]> {
 	const sessions = source.usesDefaultSessionDir()
 		? await SessionManager.listAll(onProgress, signal)
-		: await SessionManager.listAll(source.getSessionDir(), onProgress, signal);
+		: await SessionManager.listAll(source.getHomeSessionDir(), onProgress, signal);
 	return markMovedSessions(sessions, source.getCwd());
 }
 

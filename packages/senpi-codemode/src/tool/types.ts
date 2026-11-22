@@ -15,6 +15,7 @@ import {
 } from "../config/settings.ts";
 import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
+import type { CellToolUpdateSink } from "./nested-tool-output.ts";
 
 export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
 export type EvalLanguage = (typeof evalLanguageOrder)[number];
@@ -208,7 +209,8 @@ export interface EvalKernelRunInput {
 	 */
 	readonly resolveAtStart?: () => CellSourceAtStart;
 	/**
-	 * Subprocess kernels attach this to the cell's host calls, and the host gives those calls the cell's kernel tools.
+	 * Subprocess kernels attach this to the cell's host calls, and the host gives those calls the cell's kernel tools
+	 * and streams their partial results into the cell's live update.
 	 * A fresh secret per run, sent only to the kernel that runs the cell; never a model-visible id.
 	 */
 	readonly bridgeCellToken?: string;
@@ -263,6 +265,8 @@ export interface EvalKernelManager {
 	 * the host over the bridge, outside the cell's async context). The returned release runs when the cell settles.
 	 */
 	bindCellKernelTools?(token: string, capability: KernelToolsCapability): () => void;
+	/** Streams the partial results of the tools a subprocess-kernel cell calls over the bridge into that cell (#6167). */
+	bindCellToolUpdates?(token: string, sink: CellToolUpdateSink): () => void;
 }
 
 export type ExecuteTool = (

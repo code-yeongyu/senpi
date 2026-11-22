@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { prepareAgentToolCallArguments } from "../src/agent-loop.ts";
+import { prepareAgentToolCallArguments } from "../src/index.ts";
 import type { AgentTool, AgentToolCall } from "../src/types.ts";
 
 const PARAMETERS = Type.Object({

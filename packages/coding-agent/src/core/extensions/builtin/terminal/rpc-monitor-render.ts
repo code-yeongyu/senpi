@@ -121,6 +121,11 @@ export function sessionKey(socket: string, record: RpcRecord): string {
 	return `${socket}#${String(record.sessionId)}`;
 }
 
+/** How a line about a session nobody watched names it: the first 8 characters of its key's session id. */
+export function detachedLabel(key: string): string {
+	return key.slice(key.lastIndexOf("#") + 1).slice(0, 8);
+}
+
 function labelOf(record: RpcRecord): string {
 	const task = contextTask(record);
 	if (task !== undefined) return task;

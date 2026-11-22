@@ -1,7 +1,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { validMcpFormContent } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
 import type { MrtrInputResponse } from "../../core/extensions/builtin/mcp/modern/elicitation.ts";
-import type { McpFormInput, McpFormOutcome, McpFormRequest, McpFormResolved } from "../../core/mcp-form-types.ts";
+import type { McpFormRequest, McpFormResolved, McpFormSettled } from "../../core/mcp-form-types.ts";
+import type { McpFormGroup } from "./mcp-presenter-form-group.ts";
+import type { McpPresenterSecretFrame } from "./secret-sealed.ts";
 
 export interface McpFormClock {
 	now(): number;
@@ -17,81 +19,50 @@ export const mcpFormClock: McpFormClock = {
 	},
 };
 
-type Termination = "presentation_lost" | "presentation_timeout" | "operation_aborted";
+export type McpPresenterFrame = McpFormRequest | McpFormResolved | McpFormSettled | McpPresenterSecretFrame;
 export type McpPresenterReply =
 	| { readonly ok: true; readonly form?: McpFormRequest }
 	| { readonly error: "presenter_not_authorized" | "invalid_form_response" | "form_stale" | "form_expired" };
 
-/** One private entry. Lifecycle closures retain this object even after its grant is removed. */
+export interface McpFormHolder {
+	readonly envelope: Omit<McpFormRequest, "type" | "server" | "message" | "schema" | "deadlineAtMs" | "dialogToken">;
+	readonly current: () => boolean;
+	readonly remove: () => void;
+	readonly send: (frame: McpPresenterFrame) => boolean;
+	/** The grant's signed acquire carried `elsewhere_v1`; nothing else may receive the negotiated additions. */
+	readonly negotiated: boolean;
+	readonly answeredBy: NonNullable<McpFormSettled["answeredBy"]>;
+}
+
+/** One holder's private view of a group. Lifecycle closures retain it even after its grant is removed. */
 export class McpFormDialog {
-	readonly result: Promise<McpFormOutcome>;
-	readonly deadline: number;
-	private stage: "prepared" | "presented" | "settled" = "prepared";
+	readonly holder: McpFormHolder;
+	private readonly group: McpFormGroup;
+	private delivered = false;
+	private presentedHere = false;
 	private request: McpFormRequest | undefined;
 	private readonly token = randomBytes(32);
-	private readonly cleanups: Array<() => void> = [];
-	private resolve: (outcome: McpFormOutcome) => void = () => {};
-	private readonly input: McpFormInput;
-	private readonly context: {
-		readonly clock: McpFormClock;
-		readonly envelope: Omit<
-			McpFormRequest,
-			"type" | "server" | "message" | "schema" | "deadlineAtMs" | "dialogToken"
-		>;
-		readonly current: () => boolean;
-		readonly remove: () => void;
-		readonly admit: () => void;
-		readonly send: (frame: McpFormRequest | McpFormResolved) => boolean;
-	};
 
-	constructor(
-		input: McpFormInput,
-		context: {
-			readonly clock: McpFormClock;
-			readonly envelope: Omit<
-				McpFormRequest,
-				"type" | "server" | "message" | "schema" | "deadlineAtMs" | "dialogToken"
-			>;
-			readonly current: () => boolean;
-			readonly remove: () => void;
-			readonly admit: () => void;
-			readonly send: (frame: McpFormRequest | McpFormResolved) => boolean;
-		},
-	) {
-		this.input = input;
-		this.context = context;
-		this.deadline = context.clock.now() + Math.max(0, input.deadlineMs);
-		this.result = new Promise((resolve) => {
-			this.resolve = resolve;
-		});
+	constructor(group: McpFormGroup, holder: McpFormHolder) {
+		this.group = group;
+		this.holder = holder;
 		this.request = {
-			...context.envelope,
+			...holder.envelope,
 			type: "mcp_form_request",
 			dialogToken: this.token.toString("hex"),
-			server: structuredClone(input.server),
-			message: input.message,
-			schema: structuredClone(input.schema),
-			deadlineAtMs: Date.now() + Math.max(0, input.deadlineMs),
+			server: structuredClone(group.input.server),
+			message: group.input.message,
+			schema: structuredClone(group.input.schema),
+			deadlineAtMs: Date.now() + Math.max(0, group.input.deadlineMs),
 		};
 	}
 
-	start(): void {
-		const watch = (signal: AbortSignal, cause: Termination) => {
-			const stop = () => this.terminate(cause);
-			signal.addEventListener("abort", stop, { once: true });
-			this.cleanups.push(() => signal.removeEventListener("abort", stop));
-			if (signal.aborted) stop();
-		};
-		watch(this.input.operationSignal, "operation_aborted");
-		watch(this.input.presentationSignal, "presentation_lost");
-		if (this.stage === "settled") {
-			for (const cleanup of this.cleanups.splice(0)) cleanup();
-			return;
-		}
-		const timer = this.context.clock.schedule(() => this.terminate("presentation_timeout"), this.input.deadlineMs);
-		this.cleanups.push(() => this.context.clock.cancel(timer));
-		if (!this.context.current() || !this.request || !this.context.send(this.request))
-			this.terminate("presentation_lost");
+	deliver(): void {
+		const request = this.request;
+		if (!request) return;
+		// Marked first: a presenter may answer synchronously inside `send` and must still see its resolution.
+		this.delivered = true;
+		if (!this.holder.current() || !this.holder.send(request)) this.revoked();
 	}
 
 	sync(): McpFormRequest | undefined {
@@ -109,13 +80,14 @@ export class McpFormDialog {
 
 	presented(): McpPresenterReply {
 		if (!this.live()) return { error: "form_expired" };
-		this.stage = "presented";
+		this.presentedHere = true;
+		this.group.markPresented();
 		return { ok: true };
 	}
 
 	respond(action: string, content: unknown): McpPresenterReply {
 		if (!this.live()) return { error: "form_expired" };
-		if (this.stage !== "presented" || !this.request) return { error: "invalid_form_response" };
+		if (!this.presentedHere || !this.request) return { error: "invalid_form_response" };
 		let result: MrtrInputResponse;
 		switch (action) {
 			case "accept":
@@ -135,68 +107,47 @@ export class McpFormDialog {
 				return { error: "invalid_form_response" };
 		}
 		if (!this.live()) return { error: "form_expired" };
-		this.commit({ kind: "result", result, source: "presenter_action", humanAdmission: true });
+		this.group.settle({ kind: "result", result, source: "presenter_action", humanAdmission: true }, this);
 		return { ok: true };
 	}
 
-	/** Internal-only: never called with a cause or entry reference decoded from RPC. */
-	terminate(cause: Termination): void {
-		const provenance = { source: "host_termination", humanAdmission: false } as const;
-		if (
-			cause === "operation_aborted" ||
-			this.input.operationSignal.aborted ||
-			this.input.operationCurrent?.() === false
-		) {
-			this.commit({ kind: "operation_aborted", ...provenance });
-		} else if (this.stage === "presented") {
-			this.commit({ kind: "result", result: { action: "cancel" }, ...provenance });
-		} else {
-			this.commit({ kind: "processing_failure", ...provenance });
+	/** Internal-only: holder loss ends this dialog alone; a binding teardown aborts the whole group. */
+	revoked(operation = false): void {
+		if (operation) {
+			this.group.terminate("operation_aborted");
+			return;
 		}
+		this.close();
+		this.group.leave(this);
+	}
+
+	close(): void {
+		this.request = undefined;
+		this.token.fill(0);
+		this.holder.remove();
+	}
+
+	resolved(reason: McpFormResolved["reason"], elsewhere: boolean): void {
+		if (!this.delivered || !this.holder.current()) return;
+		const { sessionId, grantId, dialogId } = this.holder.envelope;
+		this.holder.send({
+			type: "mcp_form_resolved",
+			sessionId,
+			grantId,
+			dialogId,
+			reason,
+			...(elsewhere && this.holder.negotiated ? { elsewhere: true } : {}),
+		});
+	}
+
+	settled(record: McpFormSettled): void {
+		if (this.delivered && this.holder.negotiated && this.holder.current()) this.holder.send(record);
 	}
 
 	private live(): boolean {
-		if (this.stage === "settled") return false;
-		if (this.input.operationSignal.aborted || this.input.operationCurrent?.() === false) {
-			this.terminate("operation_aborted");
-			return false;
-		}
-		if (this.context.clock.now() >= this.deadline || !this.context.current()) {
-			this.terminate("presentation_timeout");
-			return false;
-		}
-		return true;
-	}
-
-	private commit(outcome: McpFormOutcome): void {
-		if (this.stage === "settled") return;
-		this.stage = "settled";
-		const request = this.request;
-		this.request = undefined;
-		this.token.fill(0);
-		this.context.remove();
-		for (const cleanup of this.cleanups.splice(0)) cleanup();
-		// No callback, promise resolution or admission precedes the synchronous terminal claim.
-		if (outcome.humanAdmission) this.context.admit();
-		this.resolve(outcome);
-		if (request && this.context.current()) {
-			const reason =
-				outcome.kind === "result"
-					? outcome.result.action === "accept"
-						? "answered"
-						: outcome.result.action === "decline"
-							? "declined"
-							: "cancelled"
-					: outcome.kind === "operation_aborted"
-						? "operation_aborted"
-						: "processing_failed";
-			this.context.send({
-				type: "mcp_form_resolved",
-				sessionId: request.sessionId,
-				grantId: request.grantId,
-				dialogId: request.dialogId,
-				reason,
-			});
-		}
+		if (!this.group.live()) return false;
+		if (this.holder.current()) return true;
+		this.revoked();
+		return false;
 	}
 }

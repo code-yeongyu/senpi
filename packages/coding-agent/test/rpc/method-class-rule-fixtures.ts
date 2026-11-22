@@ -58,6 +58,11 @@ export const RULE_FIXTURES: Readonly<Record<string, ReadonlyArray<RuleCase>>> = 
 		["remembered for the model", { level: "high" }, "device_admin"],
 		["another scope", { level: "high", scope: "session" }, "device_admin"],
 	],
+	"set_model@1": [
+		["this session only", { provider: "p", modelId: "m", scope: "session" }, "drive"],
+		["persisted as the default", { provider: "p", modelId: "m" }, "device_admin"],
+		["another scope", { provider: "p", modelId: "m", scope: "turn" }, "device_admin"],
+	],
 	"new_session@1": [
 		["plain", {}, "thread"],
 		["parent session file", { parentSession: "/x/p.jsonl" }, "device_admin"],
