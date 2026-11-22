@@ -24,8 +24,19 @@ export function parseAccountStrategy(value: unknown, field: string): AccountStra
 }
 
 /**
+ * Accounts whose headroom is within this many points of the best one count as equally good, so a burst of
+ * new sessions spreads over them by the HRW base order instead of all landing on the single top account
+ * before its usage is reported again.
+ */
+const HEADROOM_TIE_BAND = 10;
+
+/** How far ahead headroom looks: usage in a window that resets within it is partly counted as available. */
+const HEADROOM_HORIZON_MS = 5 * 60 * 60 * 1000;
+
+/**
  * All strategies share the user's stored order; cache-affine and most-headroom use HRW as their base.
- * most-headroom then ranks by remaining usage, keeping that base order between equal accounts.
+ * most-headroom then puts the accounts within the tie band of the best headroom first, in that base order,
+ * and ranks the rest by headroom.
  */
 export function orderAccounts<T extends { readonly name: string }>(
 	accounts: readonly T[],
@@ -50,8 +61,14 @@ export function orderAccounts<T extends { readonly name: string }>(
 			const base = applyAccountOrder(accountOrder, ranked);
 			if (headroom === undefined) return base;
 			const remaining = new Map(base.map((account) => [account.name, remainingPercent(account.name, headroom)]));
+			const headroomOf = (account: T): number => remaining.get(account.name) ?? 0;
+			const best = Math.max(...base.map(headroomOf));
+			const top = base.filter((account) => headroomOf(account) > best - HEADROOM_TIE_BAND);
 			// Array sort is stable, so accounts with equal headroom keep the base order.
-			return base.sort((left, right) => (remaining.get(right.name) ?? 0) - (remaining.get(left.name) ?? 0));
+			const rest = base
+				.filter((account) => !top.includes(account))
+				.sort((left, right) => headroomOf(right) - headroomOf(left));
+			return [...top, ...rest];
 		}
 		default: {
 			const unsupported: never = strategy;
@@ -66,15 +83,28 @@ function isLiveWindow(window: { readonly resetsAt?: string }, now: number): bool
 }
 
 /**
- * Percent left in the account's tightest live window. An account with no reported usage counts as
- * unused, so a new or never-polled account gets tried and reports its usage.
+ * Percent a window leaves for the next few hours: what is unused now, plus the used part in proportion to
+ * how soon the window resets within the headroom horizon. A five-hour window that resets in 30 minutes
+ * barely limits a new session; a weekly window that resets in days counts at face value.
+ */
+function windowHeadroom(window: { readonly usedPercent: number; readonly resetsAt?: string }, now: number): number {
+	const left = 100 - window.usedPercent;
+	if (window.resetsAt === undefined) return left;
+	const returning = 1 - (Date.parse(window.resetsAt) - now) / HEADROOM_HORIZON_MS;
+	return left + window.usedPercent * Math.min(1, Math.max(0, returning));
+}
+
+/**
+ * Headroom of the account's tightest live window, so an account counts as roomy only when its short and
+ * weekly windows both are. An account with no reported usage counts as unused, so a new or never-polled
+ * account gets tried and reports its usage.
  */
 function remainingPercent(account: string, { provider, limits, now }: HeadroomReadings): number {
 	const windows =
 		limits
 			.find((limit) => limit.provider === provider && limit.account === account)
 			?.windows.filter((window) => isLiveWindow(window, now)) ?? [];
-	return 100 - Math.max(0, ...windows.map((window) => window.usedPercent));
+	return Math.min(100, ...windows.map((window) => windowHeadroom(window, now)));
 }
 
 /**

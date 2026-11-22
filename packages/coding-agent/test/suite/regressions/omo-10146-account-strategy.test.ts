@@ -210,6 +210,55 @@ describe.each(["generic", "claude"] as const)("%s account strategies", (lane) =>
 		expect(await choose("mh-sticky", "most-headroom")).toBe("beta");
 	});
 
+	it("counts usage in a window that resets soon as mostly available again", async () => {
+		const reportedAt = new Date(NOW).toISOString();
+		const inMinutes = (minutes: number): string => new Date(NOW + minutes * 60_000).toISOString();
+		vi.spyOn(subscriptionLimits, "snapshot").mockReturnValue([
+			{
+				provider,
+				account: "alpha",
+				windows: [
+					{ id: "5h", label: "5h", usedPercent: 70, resetsAt: inMinutes(30) },
+					{ id: "7d", label: "7d", usedPercent: 20, resetsAt: inMinutes(6 * 24 * 60) },
+				],
+				reportedAt,
+			},
+			{
+				provider,
+				account: "beta",
+				windows: [
+					{ id: "5h", label: "5h", usedPercent: 0, resetsAt: inMinutes(300) },
+					{ id: "7d", label: "7d", usedPercent: 60, resetsAt: inMinutes(6 * 24 * 60) },
+				],
+				reportedAt,
+			},
+			{
+				provider,
+				account: "gamma",
+				windows: [{ id: "5h", label: "5h", usedPercent: 70, resetsAt: inMinutes(240) }],
+				reportedAt,
+			},
+		]);
+		// alpha: its 5h window is back in 30 minutes, so the weekly 80% left decides; beta has 40% weekly left;
+		// gamma's 70% comes back only in four hours. Taken at face value, alpha (30% left) would rank last.
+		for (const key of ["mh-reset-soon-a", "mh-reset-soon-b", "mh-reset-soon-c"]) {
+			expect(await choose(key, "most-headroom", { order: ["beta", "gamma"] })).toBe("alpha");
+		}
+	});
+
+	it("spreads a burst of new sessions over accounts with nearly the same headroom", async () => {
+		reportUsage({ beta: 4, gamma: 50 });
+		const picks = new Set<string | undefined>();
+		for (let index = 0; index < 24; index++) {
+			const key = `mh-burst-${index}`;
+			const expected = rendezvousOrder(key, accounts).find((account) => account.name !== "gamma")?.name;
+			const picked = await choose(key, "most-headroom");
+			expect(picked).toBe(expected);
+			picks.add(picked);
+		}
+		expect(picks).toEqual(new Set(["alpha", "beta"]));
+	});
+
 	it("fills the first stored account even when HRW ranks another first", async () => {
 		const key = Array.from({ length: 20 }, (_, index) => `fill-${index}`).find(
 			(candidate) => rendezvousOrder(candidate, accounts)[0]?.name !== "alpha",

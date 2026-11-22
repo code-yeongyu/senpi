@@ -3519,6 +3519,10 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts#mostHeadroomChoices": {
+			"class": "per-copy-safe",
+			"reason": "most-headroom account choice per affinity key; a split only lets a session start on another account with headroom, not A1-A3 (design 3.3)"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane-boundary.ts#activeBoundary": {
 			"class": "per-copy-safe",
 			"reason": "test seam or dependency override set and read inside one copy"
