@@ -1,9 +1,15 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rememberResolvedReferenceValue } from "../../src/core/config-reference-redaction.ts";
 import { createFallbackLogger } from "../../src/core/retry-fallback/log.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const fs = await importOriginal<typeof import("node:fs/promises")>();
+	return { ...fs, access: vi.fn(fs.access) };
+});
 
 // omo#12965: fallback.log generations written by an engine without the shared redaction registry are removed the
 // first time an engine with it starts on that agent dir (AgentSession builds its fallback logger at construction);
@@ -57,6 +63,33 @@ describe("fallback log generations from before the shared registry", () => {
 		await logger.settled();
 
 		expect(readFileSync(join(agentDir, "logs", "fallback.log"), "utf8")).toContain("first_line");
+	});
+
+	it("keeps both loggers' fresh lines when first-start cleanups overlap (#6351)", async () => {
+		const { agentDir, logs } = agentDirWithLogs({ "fallback.log": "old generation\n" });
+		const release = Promise.withResolvers<void>();
+		const missing = Object.assign(new Error("marker absent"), { code: "ENOENT" });
+		// Both probes observed the missing marker. Deliver the second result only after the first logger flushes.
+		vi.mocked(access)
+			.mockRejectedValueOnce(missing)
+			.mockImplementationOnce(async () => {
+				await release.promise;
+				throw missing;
+			});
+		try {
+			const first = createFallbackLogger(agentDir);
+			const second = createFallbackLogger(agentDir);
+			first.info("from_first");
+			second.info("from_second");
+			await first.settled();
+			release.resolve();
+			await second.settled();
+			const lines = readFileSync(join(logs, "fallback.log"), "utf8").trimEnd().split("\n");
+			expect(lines.map((line) => JSON.parse(line).event)).toEqual(["from_first", "from_second"]);
+		} finally {
+			release.resolve();
+			vi.mocked(access).mockReset();
+		}
 	});
 
 	it("keeps a line logged during the first-start removal, in order, after the removed generations", async () => {

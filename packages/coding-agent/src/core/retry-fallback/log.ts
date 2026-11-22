@@ -1,6 +1,6 @@
 import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { rotateLogIfNeeded } from "../log-file-rotation.ts";
 import { redactSecrets, redactSensitiveTokenValues } from "../sensitive-output.ts";
 
@@ -30,6 +30,7 @@ export interface SettledFallbackLogger extends FallbackLogger {
 }
 
 const unsettledLoggers = new Set<Promise<void>>();
+const pendingRetirements = new Map<string, Promise<void>>();
 
 /** Resolves once every fallback logger created so far has finished its first-start removal and flushed its queue. */
 export async function settledFallbackLoggers(): Promise<void> {
@@ -44,7 +45,7 @@ function errorCode(failure: unknown): string {
 }
 
 export function createFallbackLogger(agentDir: string, options: FallbackLoggerOptions = {}): SettledFallbackLogger {
-	const filePath = join(agentDir, "logs", "fallback.log");
+	const filePath = resolve(agentDir, "logs", "fallback.log");
 	const maxBytes = validMaxBytes(options.maxBytes);
 	let reportedWriteFailure = false;
 	// Lines logged while the earlier generations are still being removed wait here, so the removal can never delete them.
@@ -63,7 +64,7 @@ export function createFallbackLogger(agentDir: string, options: FallbackLoggerOp
 		}
 	}
 
-	const settled = retireUnsharedRegistryGenerations(filePath)
+	const settled = retireOnce(filePath)
 		.then(() => undefined)
 		.catch((error: unknown) => {
 			reportedWriteFailure = true;
@@ -139,6 +140,16 @@ async function retireUnsharedRegistryGenerations(filePath: string): Promise<void
 	await rm(filePath, { force: true });
 	await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
 	await writeFile(marker, "", { mode: 0o600 });
+}
+
+function retireOnce(filePath: string): Promise<void> {
+	const pending = pendingRetirements.get(filePath);
+	if (pending) return pending;
+	const retirement = retireUnsharedRegistryGenerations(filePath).finally(() => {
+		pendingRetirements.delete(filePath);
+	});
+	pendingRetirements.set(filePath, retirement);
+	return retirement;
 }
 
 function validMaxBytes(value: number | undefined): number {
