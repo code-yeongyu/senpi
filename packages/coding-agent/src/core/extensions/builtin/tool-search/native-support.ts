@@ -4,7 +4,7 @@ export type AnthropicToolSearchModel = Pick<Model<Api>, "api" | "id" | "provider
 	Partial<Pick<Model<Api>, "compat">>;
 export type AnthropicToolSearchTarget = Api | AnthropicToolSearchModel | undefined;
 
-const CLAUDE_VERSIONED_MODEL_ID = /^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)/;
+const CLAUDE_VERSIONED_MODEL_ID = /^claude-(?:opus|sonnet|fable|mythos)-(\d+)(?:-(\d+))?(?:-|$)/;
 /** A trailing 8-digit group is a release date (claude-opus-4-5-20251101), not a minor version. */
 const MODEL_ID_DATE_SUFFIX_LENGTH = 8;
 
@@ -26,6 +26,7 @@ function isSupportedModel(model: AnthropicToolSearchModel): boolean {
  */
 function defaultSupportsToolSearch(model: AnthropicToolSearchModel): boolean {
 	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
+	if (model.id === "claude-mythos-preview") return true;
 	const version = model.id.match(CLAUDE_VERSIONED_MODEL_ID);
 	if (!version) return false;
 	const major = Number(version[1]);

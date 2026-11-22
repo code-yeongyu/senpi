@@ -70,6 +70,9 @@ describe("Anthropic native tool-search wire contract", () => {
 describe("Anthropic native tool-search model gate", () => {
 	it.each([
 		["claude-fable-5-1", true],
+		["claude-mythos-5-1", true], // senpi#7257
+		["claude-mythos-preview", true],
+		["claude-mythos-unknown", false],
 		["claude-opus-5", true],
 		["claude-opus-4-8", true],
 		["claude-sonnet-4-5-20250929", true],

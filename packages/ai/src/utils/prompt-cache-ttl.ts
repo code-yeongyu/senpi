@@ -79,7 +79,8 @@ const FORCED_TOOL_CHOICE_REJECTING_MODEL_ID = /^claude-(?:(?:fable|mythos)(?:-|$
  */
 function defaultSupportsToolReferences(model: Model<"anthropic-messages">): boolean {
 	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
-	const version = model.id.match(/^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)/);
+	if (model.id === "claude-mythos-preview") return true;
+	const version = model.id.match(/^claude-(?:opus|sonnet|fable|mythos)-(\d+)(?:-(\d+))?(?:-|$)/);
 	if (!version) return false;
 	const major = Number(version[1]);
 	const minor = version[2] && version[2].length < 8 ? Number(version[2]) : 0;
