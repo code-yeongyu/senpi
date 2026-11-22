@@ -34,6 +34,10 @@ cell grid. Prefixes encode role:
   (`node scripts/run-workspaces.mjs [--if-present] [--workspace <name|path>]... <script> [-- <args>]`):
   resolves the root `workspaces` field, runs `<pm> run <script>` per workspace sequentially in path
   order with the invoking manager, never re-enters the root, and prints a PASS / SKIP / FAIL summary.
+  `--parallel` starts every selected workspace at once; `--alongside <workspace>` runs that one workspace in
+  its own lane next to the others (still sequential among themselves) when `run-workspaces-lanes.mjs` finds room
+  (`os.availableParallelism()` >= 8 or `RUN_WORKSPACES_PARALLELISM`), else sequentially. The root `test` script
+  runs coding-agent alongside; `test:serial` keeps the strictly sequential run.
   Every root `package.json` delegation into a workspace goes through it (`root-workspace-scripts.test.mjs`).
 - `release.mjs`: CalVer release composing `calver.mjs` and
   `release-{packages,artifacts,changelog,git,test-gate}.mjs`. Preflight: on `main`, clean tree

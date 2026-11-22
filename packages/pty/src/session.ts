@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import process from "node:process";
 import { loadNativePty, type NativePtyLoadResult, type NativePtyUnavailableDiagnostic } from "./native-loader.ts";
+import { preferAsOomVictim } from "./oom-score.ts";
 import { PipeFallbackSession, shouldUsePipeFallback } from "./pipe-fallback.ts";
 import { stopLeftoverGroup } from "./process-tree.ts";
 import { createBunTerminalSession, isBunTerminalEnabled } from "./session-bun.ts";
@@ -156,6 +157,7 @@ export class TerminalSession {
 		if (backendHandle === null || backendValue === null) {
 			throw new Error("Terminal session backend did not initialize");
 		}
+		preferAsOomVictim(this.pid);
 
 		if (backendValue === "native" && backendHandle.onData) {
 			this.unsubscribeBackendData = backendHandle.onData((chunk) => this.emitData(chunk));

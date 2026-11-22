@@ -175,6 +175,7 @@ describe("background age delivery through the extension sinks", () => {
 		const pi = {
 			events: { emit: (name: string, data: unknown) => emitted.push({ via: "events", name, data }) },
 			rpc: { emit: (name: string, data: unknown) => emitted.push({ via: "rpc", name, data }) },
+			isLoopRemote: () => false,
 		} as unknown as ExtensionAPI;
 		const ctx = {
 			mode: "tui",

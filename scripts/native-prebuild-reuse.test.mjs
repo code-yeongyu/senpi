@@ -70,7 +70,7 @@ describe("native prebuild reuse steps", () => {
 		builtArtifact(join(cacheRoot, winX64.artifact), winX64);
 		writeFileSync(join(cacheRoot, winX64.artifact, "manifest.txt"), "tampered\n");
 
-		const { outputs, stderr } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(keys), RUSTC: rustc });
+		const { outputs, stderr } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(keys), RUSTC: rustc, FULL: "true" });
 
 		assert.deepEqual(JSON.parse(outputs.reused), [darwinArm64.artifact]);
 		const matrix = JSON.parse(outputs.matrix);
@@ -87,10 +87,21 @@ describe("native prebuild reuse steps", () => {
 	it("select builds nothing when every target verifies", () => {
 		const cacheRoot = scratch();
 		for (const target of targets) builtArtifact(join(cacheRoot, target.artifact), target);
-		const { outputs } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(keys), RUSTC: rustc });
+		const { outputs } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(keys), RUSTC: rustc, FULL: "true" });
 		assert.equal(outputs.missing_count, "0");
 		assert.deepEqual(JSON.parse(outputs.matrix), { include: [] });
 		assert.equal(JSON.parse(outputs.reused).length, 6);
+	});
+
+	it("select leaves every macOS and Windows target out of the build matrix of a Linux-only pull request (senpi#6834)", () => {
+		const { outputs, stderr } = run(["select", "--cache-root", scratch()], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(keys), RUSTC: rustc, FULL: "false" });
+		const linux = targets.filter((target) => target.linux).map((target) => target.artifact);
+		assert.ok(linux.length > 0 && linux.length < targets.length);
+		assert.deepEqual(JSON.parse(outputs.matrix).include.map((row) => row.artifact), linux);
+		assert.ok(JSON.parse(outputs.matrix).include.every((row) => /^ubuntu-/.test(row.runner)));
+		assert.deepEqual(JSON.parse(outputs.missing), linux);
+		assert.equal(outputs.missing_count, String(linux.length));
+		assert.match(stderr, /native-prebuild-darwin-arm64: SKIP \(macOS\/Windows run only for a full run\)/);
 	});
 
 	it("select rebuilds a target whose restored entry was matched by prefix rather than by the exact key", () => {
@@ -98,7 +109,7 @@ describe("native prebuild reuse steps", () => {
 		const target = targets[3];
 		builtArtifact(join(cacheRoot, target.artifact), target);
 		const matched = { ...keys, [target.artifact]: `${keys[target.artifact]}-longer` };
-		const { outputs, stderr } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(matched), RUSTC: rustc });
+		const { outputs, stderr } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(matched), RUSTC: rustc, FULL: "true" });
 		assert.deepEqual(JSON.parse(outputs.reused), []);
 		assert.equal(outputs.missing_count, "6");
 		assert.match(stderr, /native-prebuild-darwin-arm64: BUILD \(restored entry .*-longer is not the exact key\)/);
@@ -207,7 +218,8 @@ describe("default-branch cache scope writers", () => {
 
 	it("finds the workflows that run in the default-branch scope on outside input", () => {
 		const outside = files.filter((file) => outsideTriggers.test(readFileSync(join(workflowsDir, file), "utf8"))).sort();
-		assert.deepEqual(outside, ["issue-analysis.yml", "issue-triage-labels.yml", "publish-model-catalog.yml", "remove-inprogress-on-close.yml", "review-claims.yml"], "a new outside-input workflow needs a review against the native prebuild cache before it joins this list");
+		// platform-red.yml (senpi#6834) checks out only its reporter script from the default branch and writes no cache.
+		assert.deepEqual(outside, ["issue-analysis.yml", "issue-triage-labels.yml", "platform-red.yml", "publish-model-catalog.yml", "remove-inprogress-on-close.yml", "review-claims.yml"], "a new outside-input workflow needs a review against the native prebuild cache before it joins this list");
 	});
 
 	it("never checks out a pull request head, and gates workflow_run to this repository's own pushes to main", () => {

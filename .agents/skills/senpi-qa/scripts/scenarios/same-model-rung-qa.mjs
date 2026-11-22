@@ -54,9 +54,6 @@ try {
 	);
 
 	const env = hermeticEnv(box.env);
-	for (const key of Object.keys(env)) {
-		if (key.endsWith("_PACKAGE_DIR")) delete env[key];
-	}
 	const result = await runCli(
 		[
 			"--provider",

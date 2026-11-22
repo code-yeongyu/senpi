@@ -43,6 +43,7 @@ const CORE_CODES: ReadonlySet<string> = new Set([
 	"move_fenced",
 	"move_bundle_invalid",
 	"move_repository_mismatch",
+	"workspace_missing",
 	"move_target_occupied",
 	"move_mismatch",
 	"move_already_moved",

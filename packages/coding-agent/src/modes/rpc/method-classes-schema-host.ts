@@ -126,8 +126,12 @@ export const HOST_RECORD_SCHEMAS = {
 		clearQueue: OptBool,
 		children: Opt(literals("refuse", "detach")),
 		force: OptBool,
+		deliveries: Opt(Type.Literal("refuse")),
+		graceful: OptBool,
+		waitMs: Opt(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
 	}),
 	detach_connection: command("detach_connection", {}),
+	find_session: command("find_session", { durableSessionId: Id }),
 	get_subscription_limits: command("get_subscription_limits", { observe: OptBool }),
 	list_sessions: command("list_sessions", { include_workers: OptBool, observe: OptBool }),
 	subscribe_sessions: command("subscribe_sessions", {

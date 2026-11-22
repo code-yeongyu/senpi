@@ -76,8 +76,8 @@ describe("monitor create records the child's runtime identity", () => {
 			);
 			expect(runtime.startedAtMs).toBeGreaterThanOrEqual(before - 1_000);
 			expect(runtime.startedAtMs).toBeLessThanOrEqual(Date.now());
-			// The boot instant is now - uptime (whole seconds), so two reads can differ by a second.
-			expect(sameBoot(runtime.bootAtMs, processBootAtMs())).toBe(true);
+			// Both reads come from the kernel's boot record where it is readable, so they agree to the second.
+			expect(sameBoot(runtime.bootAtMs, await processBootAtMs())).toBe(true);
 			expect(runtime.argv.at(-1)).toBe("while true; do sleep 1; done");
 			expect(entry?.deadlineMs).toBeUndefined();
 		},

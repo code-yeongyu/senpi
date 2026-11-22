@@ -108,7 +108,7 @@ export async function openRegistrySession(
 			);
 	}
 
-	const handle = host.nextHandle();
+	const handle = options?.routedHandle ?? host.nextHandle();
 	let opening: OpeningEntry;
 	try {
 		opening = buildOpeningEntry({

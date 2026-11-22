@@ -6,7 +6,7 @@
  */
 import type { ChildProcess } from "node:child_process";
 import { readProcessStartTime } from "../../utils/process-identity.ts";
-import type { HostStopSender } from "./host-crash-record.ts";
+import { type HostStopSender, recordHostCrash } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import { DEFAULT_HANDOFF_GRACE_MS, HANDOFF_GRACE_MS_ENV, parseIdleExitMs } from "./host-lifecycle-policy.ts";
 import { watchDrainRequest, writeDrainRequest, writeDrainWatch } from "./host-stop-intent.ts";
@@ -21,21 +21,25 @@ export class SupervisorDrain {
 	private readonly shuttingDown: () => boolean;
 	private readonly beginStopping: () => void;
 	private readonly relay: { readonly file: string; readonly sender: HostStopSender } | undefined;
+	private readonly overdue: ((drainingForMs: number) => void) | undefined;
 
 	/**
 	 * `relay` is the child's drain-request file (host-stop-intent.ts): the one way to reach a child
-	 * on every platform. Without it the request is the POSIX signal alone.
+	 * on every platform. Without it the request is the POSIX signal alone. `overdue` hears every grace
+	 * period the child is still draining (senpi#7098).
 	 */
 	constructor(
 		child: ChildProcess,
 		shuttingDown: () => boolean,
 		beginStopping: () => void = () => {},
 		relay?: { readonly file: string; readonly sender: HostStopSender },
+		overdue?: (drainingForMs: number) => void,
 	) {
 		this.child = child;
 		this.shuttingDown = shuttingDown;
 		this.beginStopping = beginStopping;
 		this.relay = relay;
+		this.overdue = overdue;
 	}
 
 	get active(): boolean {
@@ -53,11 +57,7 @@ export class SupervisorDrain {
 		this.beginStopping();
 		supervisorLog("draining into the next generation");
 		const graceMs = parseIdleExitMs(process.env[HANDOFF_GRACE_MS_ENV]) ?? DEFAULT_HANDOFF_GRACE_MS;
-		this.graceTimer = setTimeout(() => {
-			supervisorLog(JSON.stringify({ event: "handoff_grace_expired", graceMs }));
-			this.requestChildDrain();
-		}, graceMs);
-		this.graceTimer.unref();
+		this.armGrace(graceMs, graceMs);
 		// The listening handle is deliberately NOT closed: libuv unlinks a pipe's bound NAME when it
 		// closes, and after a handoff that name is the successor's entry. Nothing can reach this
 		// listener by path any more (the rename moved the name), and the accept guard turns away
@@ -68,6 +68,19 @@ export class SupervisorDrain {
 
 	stop(): void {
 		if (this.graceTimer) clearTimeout(this.graceTimer);
+	}
+
+	/** Every expiry while the child still runs is reported and re-asks for a drain; nothing is ever cut short. */
+	private armGrace(graceMs: number, drainingForMs: number): void {
+		this.graceTimer = setTimeout(() => {
+			const { child } = this;
+			if (this.shuttingDown() || child.exitCode !== null || child.signalCode !== null) return;
+			supervisorLog(JSON.stringify({ event: "handoff_grace_expired", graceMs, drainingForMs }));
+			this.overdue?.(drainingForMs);
+			this.requestChildDrain();
+			this.armGrace(graceMs, drainingForMs + graceMs);
+		}, graceMs);
+		this.graceTimer.unref();
 	}
 
 	/**
@@ -102,6 +115,16 @@ export class SupervisorDrain {
 			supervisorLog(`could not ask the host to drain: ${errorMessage(cause)}`);
 		}
 	}
+}
+
+/** The alarm a drain past its grace leaves beside the generation's crash records, which host alarms read. */
+export function recordDrainOverdue(daemonDir: string, generation: string, drainingForMs: number): void {
+	recordHostCrash(daemonDir, {
+		at: new Date().toISOString(),
+		kind: "rpc-host-drain-overdue",
+		generation,
+		drainingForMs,
+	});
 }
 
 /**
