@@ -130,12 +130,16 @@ export function createLooplessRuntimeFactory(
 			toolDispatcher: dispatcher,
 		});
 		const toolSelection = looplessToolSelection(parsed, services.settingsManager);
-		const registry = buildToolRegistry({
-			baseToolDefinitions: runtime.baseToolDefinitions,
-			runner: runtime.extensionRunner,
-			dispatcher,
-			...toolSelection.filters,
-		});
+		const buildRegistry = () =>
+			buildToolRegistry({
+				baseToolDefinitions: runtime.baseToolDefinitions,
+				runner: runtime.extensionRunner,
+				dispatcher,
+				...toolSelection.filters,
+			});
+		// Rebuilt whenever an extension registers a tool after the build (an MCP server's tools attach at a context's
+		// first tool call), as a session's registry is (senpi#5747).
+		let registry = buildRegistry();
 		toolNames = () => [...registry.toolRegistry.keys()];
 		const getLoadedHookSources = services.resourceLoader.getLoadedHookSources?.bind(services.resourceLoader);
 		const { wake } = profile;
@@ -147,6 +151,9 @@ export function createLooplessRuntimeFactory(
 		);
 		const brainCalls = createBrainCalls();
 		runtime.extensionRunner.bindSessionlessFacts({
+			refreshTools: () => {
+				registry = buildRegistry();
+			},
 			isModelIssuedToolCall: brainCalls.isModelIssuedToolCall,
 			promptSurfaceOf: brainCalls.promptSurfaceOf,
 			getAllTools: () =>
@@ -220,7 +227,9 @@ export function createLooplessRuntimeFactory(
 				: undefined;
 		return {
 			cwd: services.cwd,
-			definitions: registry.definitions,
+			get definitions() {
+				return registry.definitions;
+			},
 			diagnostics,
 			fileGuards,
 			execute: (name, toolCallId, params, signal, nested, facts) =>
@@ -228,7 +237,9 @@ export function createLooplessRuntimeFactory(
 			runLoopHooks: withToolCatalog(
 				extensionLoopHooks(runtime.extensionRunner, local.twoSidedHome ?? "loop", services.cwd, loopHookCall),
 				{
-					registry,
+					get registry() {
+						return registry;
+					},
 					initialActiveToolNames: toolSelection.initialActiveToolNames,
 					allowedToolNames: toolSelection.filters.allowedToolNames,
 					resources: services.resourceLoader,
