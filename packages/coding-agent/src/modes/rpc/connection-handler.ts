@@ -445,6 +445,8 @@ export function createRpcConnectionHandler(
 	// already learns the new identity from its command response.
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
+	/** The bound session's identity, recorded when it was bound: what a replacement announces as the outgoing one. */
+	let boundIdentity: { readonly sessionId: string; readonly sessionFile: string | undefined } | undefined;
 	const rpcOwners = new ExtensionOwnerLifetime(
 		options.sessionId === undefined,
 		options.rpcOwner,
@@ -1043,8 +1045,12 @@ export function createRpcConnectionHandler(
 		unsubscribeSecurityNotices?.();
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
-		const replacedSession = session !== runtimeHost.session ? session : undefined;
+		// The outgoing identity is the one recorded at its bind, not read now: an in-memory fork reuses the outgoing
+		// session's manager and starts the new session in it before this rebind, so the outgoing AgentSession
+		// already reads the replacement's id and file here.
+		const replaced = session !== runtimeHost.session ? boundIdentity : undefined;
 		session = runtimeHost.session;
+		boundIdentity = { sessionId: session.sessionId, sessionFile: session.sessionFile };
 		const hostedSecurity = options.bindSecurityPresentation?.(session, {
 			...createExtensionUIContext(),
 			select: selectGrantDialog,
@@ -1089,7 +1095,7 @@ export function createRpcConnectionHandler(
 						}),
 					});
 		session.setRelocationHost?.(relocation);
-		if (replacedSession) {
+		if (replaced) {
 			lastAbortSource = undefined;
 			if (routingSessionId !== undefined || !replacementIssuedHere) {
 				// A replacement can be driven by ANY attached client, so every connection must be
@@ -1098,8 +1104,8 @@ export function createRpcConnectionHandler(
 				// the window the refresh takes.
 				outputEvent({
 					type: "session_replaced",
-					replacedSessionId: replacedSession.sessionId,
-					replacedSessionFile: replacedSession.sessionFile,
+					replacedSessionId: replaced.sessionId,
+					replacedSessionFile: replaced.sessionFile,
 					durableSessionId: session.sessionId,
 					sessionFile: session.sessionFile,
 					cwd: session.sessionManager.getCwd(),
