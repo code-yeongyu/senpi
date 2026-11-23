@@ -3,6 +3,7 @@ import net from "node:net";
 import { mock } from "node:test";
 import { type HostActivity, IdleExitDecider, runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 import { HOST_IDLE_EXIT_MS_ENV } from "../../src/modes/rpc/host-lifecycle-policy.ts";
+import { createServerArgs } from "../helpers/net-server-args.ts";
 import { signalEndpointReady } from "../helpers/rpc-endpoint-ready.ts";
 
 // Drive the real supervisor's clock and timer independently of socket I/O. The
@@ -38,24 +39,17 @@ mock.method(IdleExitDecider.prototype, "update", function (this: IdleExitDecider
 });
 const createServer = net.createServer;
 const onServer = signalEndpointReady(socket, () => process.send?.({ type: "ready" }));
-// Both call forms: the supervisor's public proxy passes options (`allowHalfOpen`) before its accept callback.
-mock.method(
-	net,
-	"createServer",
-	(first: net.ServerOpts | ((socket: net.Socket) => void), second?: (socket: net.Socket) => void) => {
-		const accept = typeof first === "function" ? first : second;
-		if (accept === undefined) throw new Error("createServer needs an accept callback");
-		const options = typeof first === "function" ? {} : first;
-		const server = createServer(options, (socket) => {
-			accept(socket);
-			// Register after the supervisor, so detached means its occupancy changed.
-			socket.once("close", () => process.send?.({ type: "detached" }));
-			process.send?.({ type: "attached" });
-		});
-		onServer(server);
-		return server;
-	},
-);
+mock.method(net, "createServer", (...args: Parameters<typeof createServerArgs>) => {
+	const { options, accept } = createServerArgs(...args);
+	const server = createServer(options, (socket) => {
+		accept(socket);
+		// Register after the supervisor, so detached means its occupancy changed.
+		socket.once("close", () => process.send?.({ type: "detached" }));
+		process.send?.({ type: "attached" });
+	});
+	onServer(server);
+	return server;
+});
 syncBuiltinESMExports();
 process.on("message", (message: unknown) => {
 	if (typeof message !== "object" || message === null || !("now" in message) || typeof message.now !== "number") {

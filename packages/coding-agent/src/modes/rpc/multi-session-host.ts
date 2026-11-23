@@ -629,6 +629,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		connections.set(id, { id, sink, socket, detach, close });
 		socket.once("close", detach);
 		socket.once("error", () => detach());
+		// After the reader's last line: from the FIN on, the peer's extension effects are refused (#4728 owner fence).
+		socket.once("end", () => writer.connectionContext.transportOf(id)?.endEffects());
 		endAfterPeerFin(
 			socket,
 			replies,
