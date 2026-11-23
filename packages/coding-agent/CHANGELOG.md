@@ -12,6 +12,27 @@
 
 ### Removed
 
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+- On a model without image input, an image returned by a tool is described by the `look_at` vision model and the description takes the image's place in the tool result ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+
+### Changed
+
+### Fixed
+
+- On macOS, tool calls that name a path under `/home` (an automount that may never answer) no longer leave filesystem threads stuck. Enough of them used to stall every file operation in the engine while the session kept running. Such paths are now resolved in a short-lived child process with a deadline, so a working automounter still mounts them and the path policy sees where their symlinks lead; a path whose automount never answers is refused instead ([#7158](https://github.com/code-yeongyu/senpi/pull/7158))
+- An RPC host's idle shutdown no longer recreates a removed agent/endpoint directory when writing its terminal crash record ([#7220](https://github.com/code-yeongyu/senpi/pull/7220)).
+- The placeholder for an image a model cannot see names `look_at` and says it takes the file path, whenever `look_at` is available ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+- Claude, GLM and Kimi prompt presets tell the model to edit source files with the file-editing tool the session offers (`edit`/`write` or `apply_patch`), as direct calls rather than from `eval` cell code, and keep routing a call fed by an earlier result to a direct tool call ([#7275](https://github.com/code-yeongyu/senpi/pull/7275))
+- Reopening a session right after an RPC host handover no longer fails with `read ECONNRESET` when the previous generation exits during the successor's connection to it; the open falls back to the local reopen ([#7365](https://github.com/code-yeongyu/senpi/pull/7365))
+- A custom `models.json` provider using `anthropic-messages` with an `sk-ant-oat...` token as `apiKey` (for example a self-hosted Anthropic-compatible proxy) works again: the key is sent as a plain `x-api-key` instead of failing before any request ([#7392](https://github.com/code-yeongyu/senpi/pull/7392))
+
+### Removed
+
 ## [2026.11.22-2] - 2026-11-22
 
 ### Breaking Changes
