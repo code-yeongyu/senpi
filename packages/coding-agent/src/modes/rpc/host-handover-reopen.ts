@@ -197,6 +197,10 @@ async function reopenOne(
 		process.stderr.write(`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`);
 		return;
 	}
+	// An explicit close_session clears the park (before it finalizes) without telling this watch: a park gone since the
+	// pass read the record was closed, never reopened from that stale read (senpi#4791).
+	const current = await readHandoverParkedSessions(daemonDir);
+	if (!current.some((park) => park.sessionPath === entry.sessionPath)) return;
 	try {
 		await open(entry);
 		// The host started draining while this reopen was in flight: the session landed in a registry
