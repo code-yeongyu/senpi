@@ -2179,6 +2179,13 @@ export class AgentSession {
 		this._installAgentNextTurnRefresh();
 		this._installAgentRequestProjection();
 		this._installAgentBoundaryHooks();
+		// A tool result is recorded once its queued message_end persistence ran and wrote an entry (senpi#5867).
+		this.agent.messageRecorded = async (message) => {
+			const persisted = this._messageEndPersistence.get(message);
+			if (persisted === undefined) throw new Error("transcript_write_pending: the message was never queued");
+			await persisted;
+			if (!this._entryIdsByMessage.has(message)) throw new Error("transcript_write_failed");
+		};
 
 		try {
 			this._buildRuntime({

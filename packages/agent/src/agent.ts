@@ -362,6 +362,8 @@ export class Agent {
 	private readonly commitStep?: AgentLoopConfig["commitStep"];
 	public getExecutionScope?: () => NonNullable<AgentLoopConfig["executionScope"]>;
 	public onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
+	/** See `AgentLoopConfig.messageRecorded`; a session sets it to its durable transcript write. */
+	public messageRecorded?: AgentLoopConfig["messageRecorded"];
 	/** Migration guidance returned when a removed tool name is called. */
 	public removedToolHints: Record<string, string>;
 	/** Optional call-time resolver for tools absent from the request context. */
@@ -828,6 +830,7 @@ export class Agent {
 			executionScope: this.getExecutionScope?.() ?? this.executionScope,
 			...(this.commitStep ? { commitStep: this.commitStep } : {}),
 			onExecutionPipeline: this.onExecutionPipeline,
+			messageRecorded: this.messageRecorded,
 			removedToolHints: this.removedToolHints,
 			resolveUnknownToolCall: this.resolveUnknownToolCall,
 			beforeToolCall: this.beforeToolCall,

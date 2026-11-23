@@ -1225,6 +1225,7 @@ async function executeToolCalls(
 			emit,
 			recordWitness: config.onExecutionPipeline,
 			local: { context: currentContext, assistantMessage },
+			...(config.messageRecorded === undefined ? {} : { recorded: config.messageRecorded }),
 		},
 	);
 

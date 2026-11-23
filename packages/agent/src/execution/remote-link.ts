@@ -60,6 +60,8 @@ export function createHandLink(
 	const stamp = epoch === undefined ? {} : { epoch };
 	/** Messages handed to the transport: a hand's `hello` re-sends only these, never one still waiting on its floor. */
 	const sent = new Set<string>();
+	/** Outcomes the receiver took (`ack` called): a replay of one of them is acknowledged again, never kept. */
+	const taken = new Set<string>();
 	// Nested requests (S31) are admitted only while their parent CALL is live on its lane. A pending file operation
 	// (S40) hosts only the planes in `filePlanes` (a two-sided extension's forwarded tool events, S29); every other
 	// plane under it is refused as if it had no live parent. An abort names no plane and reaches what was admitted.
@@ -131,9 +133,15 @@ export function createHandLink(
 		if (message.kind === "floor_ack" || message.kind === "floor_refused") return gate?.answer(frame.lane, message);
 		if (message.kind === "settled" || message.kind === "terminal") {
 			const { executionId } = message;
-			// An outcome nobody waits for (an aborted or unknown call) is never taken, so it is acknowledged at once.
-			if (!pending.has(executionId)) return ack(executionId);
+			if (!pending.has(executionId)) {
+				// A replay of an outcome this link already took (its ack was lost, say to a hand restart) is acknowledged
+				// again. Any other outcome nobody here waits for was never taken, and no waiter is not consumption: the hand
+				// keeps it for a later dispatch of the same call or a later session to recover.
+				if (taken.has(executionId)) ack(executionId);
+				return;
+			}
 			const accepted = (): void => {
+				taken.add(executionId);
 				if (!closed) ack(executionId);
 			};
 			settle(

@@ -36,8 +36,8 @@ export interface HandRig {
 		calls: readonly AgentToolCall[],
 		mode?: ToolExecutionMode,
 		turn?: string,
-		/** The loop's event sink; default: accepts every event at once. */
-		emit?: ToolHostOptions["emit"],
+		/** The loop's side of the batch: its event sink (default: accepts every event) and its durable record hook. */
+		loop?: Partial<Pick<ToolHostOptions, "emit" | "recorded">>,
 	): Promise<ToolHostResult>;
 	/** Replaces the session's brain with a fresh instance on the same link: no pending call or id is shared with the old one. */
 	replaceSession(): void;
@@ -210,10 +210,10 @@ export async function openHandRig(
 		bodies,
 		faults,
 		killed: killed.promise,
-		execute: (scope, calls, mode = "parallel", turn, emit = () => {}) =>
+		execute: (scope, calls, mode = "parallel", turn, loop = {}) =>
 			host.execute(
 				{ scope: { id: scope, root: `/work/${scope}` }, calls, mode, ...(turn === undefined ? {} : { turn }) },
-				{ emit },
+				{ emit: () => {}, ...loop },
 			),
 		replaceSession() {
 			// The transport endpoint outlives the brain process (S05); a new host takes over its frames, and nothing the

@@ -41,6 +41,8 @@ export interface ToolHostOptions {
 	 * (the prepared pipeline): the context and the assistant message that issued the calls. A remote host never reads it.
 	 */
 	readonly local?: { readonly context: AgentContext; readonly assistantMessage: AssistantMessage };
+	/** The loop's `messageRecorded`: resolves once a result message the host emitted is durably recorded. */
+	readonly recorded?: (message: ToolResultMessage) => Promise<void>;
 }
 
 /** The loop had a tool batch to run on its default pipeline but no `batchStoreFactory`; it refuses instead of guessing a store. */

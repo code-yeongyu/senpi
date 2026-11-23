@@ -184,9 +184,16 @@ export function createRemoteToolHost(
 				};
 				await emit({ type: "message_start", message });
 				await emit({ type: "message_end", message });
-				// The loop took the result message (a session records it on `message_end`): only now may the hand drop its
-				// outcome (senpi#5867). One lost before this stays with the hand for the next session to recover.
-				replies[index]?.accepted();
+				// The hand may drop its outcome only once the session durably recorded the result message (senpi#5867); one
+				// that was not recorded stays with the hand for a later dispatch or session to recover. Without a durable
+				// record (no session), the emitted message is all the loop keeps.
+				const accepted = replies[index]?.accepted;
+				if (hostOptions.recorded === undefined) accepted?.();
+				else
+					void hostOptions.recorded(message).then(
+						() => accepted?.(),
+						() => undefined,
+					);
 				messages.push(message);
 			}
 			return {

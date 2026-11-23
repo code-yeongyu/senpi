@@ -7,8 +7,9 @@ import { createLoopHookHost, loopHookCallKey } from "../../src/execution/loop-ho
 import { serveLoopHooks } from "../../src/execution/loop-hook-host-hand.ts";
 import type { CommitMatch } from "../../src/execution/testing/epoch-harness.ts";
 import { openEpochRig } from "../../src/execution/testing/epoch-harness.ts";
+import { encodeRemoteMessage } from "../../src/execution/remote-protocol.ts";
+import { createRemoteToolHost } from "../../src/execution/remote-tool-host.ts";
 import { call, openHandRig } from "../../src/execution/testing/hand-harness.ts";
-import type { ToolHostOptions } from "../../src/execution/tool-host.ts";
 import type { FrameHandler, Transport } from "../../src/transport/transport.ts";
 import { handAdapters } from "./hand-adapters.ts";
 
@@ -62,29 +63,66 @@ describe("durable execution ids, review of #6032 (senpi#5867)", () => {
 		expect(rig.bodies).toEqual(["scope:dup", "scope:dup"]);
 	});
 
-	it("the hand's result is acknowledged only after the loop accepted the result message", async () => {
+	it("the hand's result is acknowledged only after the session durably recorded the result message", async () => {
 		const rig = await openHandRig(handAdapters("linux"), { placement: "cross-machine" });
-		let accept: () => void = () => {};
-		const accepted = new Promise<void>((resolve) => {
-			accept = resolve;
+		let record: () => void = () => {};
+		const recording = new Promise<void>((resolve) => {
+			record = resolve;
 		});
-		let delivered = false;
-		const emit: ToolHostOptions["emit"] = (event) => {
-			if (event.type !== "message_end") return;
-			delivered = true;
-			return accepted;
+		let asked = false;
+		const recorded = () => {
+			asked = true;
+			return recording;
 		};
-		const done = rig.execute("scope", [call("call_1")], "parallel", "turn-1", emit);
-		await rig.runUntil(() => delivered, "the loop received the result message");
+		await rig.settle(
+			rig.execute("scope", [call("call_1")], "parallel", "turn-1", { recorded }),
+			"the batch finished",
+		);
+		expect(asked).toBe(true);
 		await rig.advance(500);
 		expect((await rig.rows()).map((row) => row.progress.state)).toEqual(["settled"]);
 
-		accept();
-		await rig.settle(done, "the batch finished");
+		record();
 		await rig.waitFor(
 			async () => (await rig.rows()).every((row) => row.progress.state === "acked"),
 			"the hand recorded the acknowledgement",
 		);
+	});
+
+	it("a result the session failed to record is never acknowledged: the hand keeps it", async () => {
+		const rig = await openHandRig(handAdapters("linux"), { placement: "cross-machine" });
+		const recorded = () => Promise.reject(new Error("transcript_write_failed"));
+
+		await rig.settle(
+			rig.execute("scope", [call("call_1")], "parallel", "turn-1", { recorded }),
+			"the batch finished",
+		);
+		await rig.advance(500);
+
+		expect((await rig.rows()).map((row) => row.progress.state)).toEqual(["settled"]);
+	});
+
+	it("an outcome no waiter took is not acknowledged, so a later dispatch of the call still gets it", async () => {
+		const sent: string[] = [];
+		let deliver: FrameHandler = () => {};
+		const transport: Transport = {
+			send: async (_lane, payload) => void sent.push(new TextDecoder().decode(payload)),
+			onFrame: (handler) => {
+				deliver = handler;
+			},
+			inFlight: () => 0,
+			close: () => {},
+		};
+		createRemoteToolHost({ transport, placement: "cross-machine" });
+		const settled = {
+			kind: "settled",
+			executionId: "restored-1",
+			result: { content: [{ type: "text", text: "ran" }], details: {}, isError: false },
+		} as const;
+
+		await deliver({ lane: "scope", payload: encodeRemoteMessage(settled) });
+
+		expect(sent.filter((frame) => frame.includes('"ack"'))).toEqual([]);
 	});
 });
 
