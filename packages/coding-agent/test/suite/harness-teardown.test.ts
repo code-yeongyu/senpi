@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { cleanupTempDirs, settleBeforeRemoval, trackTempDir } from "../../../../scripts/vitest-temp.ts";
+import { createFallbackLogger } from "../../src/core/retry-fallback/log.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 // senpi#3570: a harness's temp directory is removed only after its session's tool child has exited. Removing it
@@ -30,6 +31,23 @@ describe("harness teardown (senpi#3570)", () => {
 
 		child.release();
 		await teardown;
+		expect(existsSync(harness.tempDir)).toBe(false);
+	});
+
+	it("waits for a fallback logger another session started under the directory before removing it", async () => {
+		const harness = await createHarness();
+		// The shape of retry-fallback-circuit-lifecycle and 3333-startup-pick-startable-model: a second session's agent dir
+		// inside the harness directory, whose fallback log is still doing its first-start work.
+		let loggerSettled = false;
+		void createFallbackLogger(join(harness.tempDir, "other-agent"))
+			.settled()
+			.then(() => {
+				loggerSettled = true;
+			});
+		harness.cleanup();
+		await cleanupTempDirs();
+		// The removal is awaited behind every fallback logger's settle, so it cannot finish first.
+		expect(loggerSettled).toBe(true);
 		expect(existsSync(harness.tempDir)).toBe(false);
 	});
 

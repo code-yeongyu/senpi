@@ -348,12 +348,18 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		events.push(event);
 	});
 
-	// The directory goes only after this session's tool child has exited and its fallback log stopped writing
-	// (senpi#3570): dispose() starts that close, and a removal before it ends raced the child's writes (ENOTEMPTY).
+	// The directory goes only after this session's tool child has exited and every fallback logger has settled
+	// (senpi#3570): dispose() starts the child's close, and tests also start sessions of their own under this
+	// directory (an agentDir like "<tempDir>/sdk-agent"), whose fallback log's first-start work still wrote
+	// "<agent>/logs/.fallback-log-v2" while the directory was removed (ENOTEMPTY).
 	settleBeforeRemoval(
 		tempDir,
-		() => session.whenToolChildClosed(),
-		() => `session ${session.sessionId}'s tool child (${JSON.stringify(session.toolChildRow())})`,
+		async () => {
+			await session.whenToolChildClosed();
+			await settledFallbackLoggers();
+		},
+		() =>
+			`session ${session.sessionId}'s tool child (${JSON.stringify(session.toolChildRow())}) or a fallback logger still settling`,
 	);
 	const cleanup = () => {
 		if (!cleanups.delete(cleanup)) return;

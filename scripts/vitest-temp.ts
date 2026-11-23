@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 
 const directories = new Set<string>();
@@ -33,7 +33,17 @@ async function settleThenRemove(directory: string, settler: Settler): Promise<st
 	clearTimeout(timer);
 	if (outcome === "expired")
 		return `${directory}: ${settler.writer()} did not finish within ${settler.deadlineMs} ms; left in place`;
-	await rm(directory, { recursive: true, force: true });
+	try {
+		await rm(directory, { recursive: true, force: true });
+	} catch (error) {
+		// A writer this registration does not cover still adds entries: name them instead of a bare rmdir error.
+		if (!(error instanceof Error && "code" in error && error.code === "ENOTEMPTY")) throw error;
+		let left: string[] = [];
+		try {
+			left = readdirSync(directory, { recursive: true }).map(String);
+		} catch {}
+		return `${directory}: still written after ${settler.writer()} finished; left: ${left.join(", ") || "(nothing by the time it was listed)"}`;
+	}
 	return undefined;
 }
 // File-scoped fixtures may be created at module evaluation, before any test is active.
