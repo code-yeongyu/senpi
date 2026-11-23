@@ -4879,9 +4879,9 @@
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/mcp/prompts.ts#registeredCommandNames": {
+		"packages/coding-agent/src/core/extensions/builtin/mcp/prompts.ts#registeredByRegistrar": {
 			"class": "per-copy-safe",
-			"reason": "registry populated and read through this copy's module API; a split only hides one copy's entries from the other, holds no A1-A3 asset"
+			"reason": "side table keyed by the extension API object this copy's factory receives; a key from another copy is never presented to it, holds no A1-A3 asset"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/mcp/reconnect.ts#reconnectStates": {
 			"class": "per-copy-safe",

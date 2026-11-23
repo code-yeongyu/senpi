@@ -10,6 +10,8 @@
 // command. A handler reads its prompt from the live catalog when it runs, so it
 // uses the server's current arguments. A prompt the server stopped offering keeps
 // its command name, since commands cannot be unregistered, and invoking it says so.
+// Dedup is per registrar (one extension instance's `pi`): two runners sharing a
+// service, or a replacement runner after reload, each get their own commands.
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionUIContext } from "../../types.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
@@ -31,32 +33,25 @@ export interface McpPromptServer {
 
 type CommandRegistrar = Pick<ExtensionAPI, "registerCommand">;
 
-const registeredCommandNames = new Set<string>();
+/** Command name -> description, per registrar. A new extension instance is a new key. */
+const registeredByRegistrar = new WeakMap<CommandRegistrar, Map<string, string>>();
 
-/** Test seam: forget which commands were registered (module-level last-wins). */
-export function resetMcpPromptCommandsForTests(): void {
-	registeredCommandNames.clear();
+/** The prompt commands this registrar holds, live (read by the TUI autocomplete wrapper). */
+export function registeredMcpPromptCommands(pi: CommandRegistrar): ReadonlyMap<string, string> {
+	return registeredByRegistrar.get(pi) ?? new Map();
 }
 
 type LiveCatalog = () => readonly McpPromptServer[];
-type McpPromptRegistry = Pick<
-	McpService,
-	| "getMcpPromptServers"
-	| "onMcpRegistrationChanged"
-	| "isMcpPromptCommandRegistered"
-	| "markMcpPromptCommandRegistered"
->;
+type McpPromptRegistry = Pick<McpService, "getMcpPromptServers" | "onMcpRegistrationChanged">;
 
 /** Registers this session's prompt commands now and after every later catalog generation. */
 export function createMcpPromptCommandSync(
 	service: McpPromptRegistry,
 	pi: CommandRegistrar,
-	sessionOwned: boolean,
 ): { register(): void; dispose(): void } {
 	const current: LiveCatalog = () => service.getMcpPromptServers(pi);
 	const register = (): void => {
-		if (sessionOwned) registerMcpPromptCommands(service, pi, current(), current);
-		else registerMcpPromptCommands(pi, current(), current);
+		registerMcpPromptCommands(pi, current(), current);
 	};
 	const dispose = service.onMcpRegistrationChanged(register);
 	return { register, dispose };
@@ -66,34 +61,22 @@ export function registerMcpPromptCommands(
 	pi: CommandRegistrar,
 	servers: readonly McpPromptServer[],
 	current?: LiveCatalog,
-): string[];
-export function registerMcpPromptCommands(
-	service: McpPromptRegistry,
-	pi: CommandRegistrar,
-	servers: readonly McpPromptServer[],
-	current?: LiveCatalog,
-): string[];
-export function registerMcpPromptCommands(
-	serviceOrPi: McpPromptRegistry | CommandRegistrar,
-	piOrServers: CommandRegistrar | readonly McpPromptServer[],
-	serversOrCurrent?: readonly McpPromptServer[] | LiveCatalog,
-	currentArg?: LiveCatalog,
 ): string[] {
-	const moduleScoped = Array.isArray(piOrServers);
-	const service = moduleScoped ? undefined : (serviceOrPi as McpPromptRegistry);
-	const pi = (moduleScoped ? serviceOrPi : piOrServers) as CommandRegistrar;
-	const servers = (moduleScoped ? piOrServers : serversOrCurrent) as readonly McpPromptServer[];
-	const current = (moduleScoped ? serversOrCurrent : currentArg) as LiveCatalog | undefined;
+	let registered = registeredByRegistrar.get(pi);
+	if (registered === undefined) {
+		registered = new Map();
+		registeredByRegistrar.set(pi, registered);
+	}
 	const added: string[] = [];
 	for (const server of servers) {
 		for (const prompt of server.prompts) {
 			const commandName = `mcp:${server.server}:${prompt.name}`;
-			if (service?.isMcpPromptCommandRegistered(commandName) ?? registeredCommandNames.has(commandName)) continue;
-			if (service) service.markMcpPromptCommandRegistered(commandName);
-			else registeredCommandNames.add(commandName);
+			if (registered.has(commandName)) continue;
+			const description = prompt.description ?? `MCP prompt ${prompt.name} from ${server.server}`;
+			registered.set(commandName, description);
 			added.push(commandName);
 			pi.registerCommand(commandName, {
-				description: prompt.description ?? `MCP prompt ${prompt.name} from ${server.server}`,
+				description,
 				handler: async (_args, ctx) => {
 					const live = livePrompt(server, prompt, current);
 					if (live === undefined) {

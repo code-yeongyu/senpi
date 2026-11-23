@@ -3,12 +3,14 @@
 // injects the prompts/get messages into the input editor; a missing required
 // argument aborts with a notice instead of calling the server.
 
+import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mcpPromptAutocomplete } from "../../src/core/extensions/builtin/mcp/prompt-autocomplete.ts";
 import {
 	createMcpPromptCommandSync,
 	type McpPromptServer,
+	registeredMcpPromptCommands,
 	registerMcpPromptCommands,
-	resetMcpPromptCommandsForTests,
 } from "../../src/core/extensions/builtin/mcp/prompts.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { attach, awaitMcpPromptRegistration, capturingPi, mcpRoot as makeMcpRoot } from "./fixtures/register-call.ts";
@@ -18,7 +20,6 @@ const cleanupTasks: Array<() => Promise<void>> = [];
 
 beforeEach(() => {
 	resetMcpServiceForTests();
-	resetMcpPromptCommandsForTests();
 });
 
 afterEach(async () => {
@@ -79,9 +80,8 @@ function promptServer(server: string, prompts: McpPromptServer["prompts"], calls
 	} as never;
 }
 
-/** The service surface prompt commands use: the live catalog, its change signal and the registered-name set. */
+/** The service surface prompt commands use: the live catalog and its change signal. */
 function fakePromptRegistry(servers: () => readonly McpPromptServer[]) {
-	const names = new Set<string>();
 	const listeners = new Set<() => void>();
 	return {
 		service: {
@@ -90,8 +90,6 @@ function fakePromptRegistry(servers: () => readonly McpPromptServer[]) {
 				listeners.add(listener);
 				return () => listeners.delete(listener);
 			},
-			isMcpPromptCommandRegistered: (name: string) => names.has(name),
-			markMcpPromptCommandRegistered: (name: string) => names.add(name),
 		} as never,
 		catalogChanged: () => {
 			for (const listener of [...listeners]) listener();
@@ -107,7 +105,7 @@ describe("mcp prompt commands follow the live catalog", () => {
 		const registry = fakePromptRegistry(() => catalog);
 		const recorder = commandRecorder();
 
-		const sync = createMcpPromptCommandSync(registry.service, recorder as never, true);
+		const sync = createMcpPromptCommandSync(registry.service, recorder as never);
 		sync.register();
 		expect([...recorder.commands.keys()]).toEqual([]);
 
@@ -127,7 +125,7 @@ describe("mcp prompt commands follow the live catalog", () => {
 		];
 		const registry = fakePromptRegistry(() => catalog);
 		const recorder = commandRecorder();
-		const sync = createMcpPromptCommandSync(registry.service, recorder as never, true);
+		const sync = createMcpPromptCommandSync(registry.service, recorder as never);
 		sync.register();
 
 		catalog = [promptServer("fx", [{ name: "brief", arguments: [{ name: "topic", required: true }] }], after)];
@@ -145,7 +143,7 @@ describe("mcp prompt commands follow the live catalog", () => {
 		let catalog: readonly McpPromptServer[] = [promptServer("fx", [{ name: "gone", arguments: [] }], calls)];
 		const registry = fakePromptRegistry(() => catalog);
 		const recorder = commandRecorder();
-		createMcpPromptCommandSync(registry.service, recorder as never, true).register();
+		createMcpPromptCommandSync(registry.service, recorder as never).register();
 
 		catalog = [];
 		registry.catalogChanged();
@@ -154,6 +152,82 @@ describe("mcp prompt commands follow the live catalog", () => {
 
 		expect(calls).toEqual([]);
 		expect(run.notices).toEqual(["MCP prompt gone is no longer offered by fx."]);
+	});
+});
+
+// senpi#7249 review: dedup belongs to the registrar, not the process or the shared service.
+describe("mcp prompt commands per registrar", () => {
+	it("gives each of two runners on one shared service the same prompt, including a late one", () => {
+		let catalog: readonly McpPromptServer[] = [promptServer("fx", [{ name: "early", arguments: [] }], [])];
+		const registry = fakePromptRegistry(() => catalog);
+		const first = commandRecorder();
+		const second = commandRecorder();
+		createMcpPromptCommandSync(registry.service, first as never).register();
+		createMcpPromptCommandSync(registry.service, second as never).register();
+
+		catalog = [
+			promptServer(
+				"fx",
+				[
+					{ name: "early", arguments: [] },
+					{ name: "late", arguments: [] },
+				],
+				[],
+			),
+		];
+		registry.catalogChanged();
+
+		expect([...first.commands.keys()]).toEqual(["mcp:fx:early", "mcp:fx:late"]);
+		expect([...second.commands.keys()]).toEqual(["mcp:fx:early", "mcp:fx:late"]);
+	});
+
+	it("registers the prompts again into a replacement runner after reload", () => {
+		const catalog: readonly McpPromptServer[] = [promptServer("fx", [{ name: "kept", arguments: [] }], [])];
+		const registry = fakePromptRegistry(() => catalog);
+		const original = commandRecorder();
+		const originalSync = createMcpPromptCommandSync(registry.service, original as never);
+		originalSync.register();
+		originalSync.dispose();
+
+		const replacement = commandRecorder();
+		createMcpPromptCommandSync(registry.service, replacement as never).register();
+
+		expect([...original.commands.keys()]).toEqual(["mcp:fx:kept"]);
+		expect([...replacement.commands.keys()]).toEqual(["mcp:fx:kept"]);
+		expect(registry.listeners()).toBe(1);
+	});
+});
+
+// senpi#7249 review: the TUI autocomplete snapshot misses prompts registered after it was built.
+describe("mcp prompt commands in TUI slash completion", () => {
+	it("suggests a prompt registered after the autocomplete snapshot and completes it", async () => {
+		let catalog: readonly McpPromptServer[] = [];
+		const registry = fakePromptRegistry(() => catalog);
+		const recorder = commandRecorder();
+		createMcpPromptCommandSync(registry.service, recorder as never).register();
+		const snapshot = new CombinedAutocompleteProvider([{ name: "help", description: "Help" }], process.cwd());
+		const provider = mcpPromptAutocomplete(() => registeredMcpPromptCommands(recorder as never))(snapshot);
+
+		catalog = [promptServer("fx", [{ name: "late", description: "Late prompt", arguments: [] }], [])];
+		registry.catalogChanged();
+		const lines = ["/mcp:fx"];
+		const suggestions = await provider.getSuggestions(lines, 0, 7, { signal: new AbortController().signal });
+
+		expect(suggestions?.items.map((item) => item.value)).toEqual(["mcp:fx:late"]);
+		const late = suggestions?.items[0];
+		expect(late && provider.applyCompletion(lines, 0, 7, late, suggestions.prefix).lines).toEqual(["/mcp:fx:late "]);
+	});
+
+	it("adds nothing the snapshot already lists, so a stacked wrapper does not duplicate", async () => {
+		const recorder = commandRecorder();
+		registerMcpPromptCommands(recorder as never, [promptServer("fx", [{ name: "known", arguments: [] }], [])]);
+		const snapshot = new CombinedAutocompleteProvider([{ name: "mcp:fx:known", description: "x" }], process.cwd());
+		const wrap = mcpPromptAutocomplete(() => registeredMcpPromptCommands(recorder as never));
+		const provider = wrap(wrap(snapshot));
+
+		const suggestions = await provider.getSuggestions(["/mcp:"], 0, 5, { signal: new AbortController().signal });
+
+		expect(suggestions?.items.map((item) => item.value)).toEqual(["mcp:fx:known"]);
 	});
 });
 
