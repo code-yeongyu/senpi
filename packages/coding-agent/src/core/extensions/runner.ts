@@ -2701,15 +2701,33 @@ export class ExtensionRunner {
 			}
 		}
 
-		// The chain let the call run: observers learn the arguments it runs with before it runs (senpi#7232).
-		await this.emit({
-			type: "tool_call_ready",
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			...(event.parentToolCallId === undefined ? {} : { parentToolCallId: event.parentToolCallId }),
-			input: { ...event.input },
+		// Serving one forwarded handler (`only`) is part of a chain that ends where the call runs, which emits it once.
+		if (options.only !== undefined) return result;
+		return (await this.emitToolCallReady(event, options.signal)) ?? result;
+	}
+
+	/**
+	 * `tool_call_ready` for a call its whole `tool_call` chain let run, or that no `tool_call` handler was asked about
+	 * (senpi#7232): a deep copy of the arguments the call runs with, awaited before it runs. The turn's or the call's
+	 * abort ends the wait and blocks the call, as it does for a `tool_call` handler.
+	 */
+	async emitToolCallReady(event: ToolCallEvent, signal?: AbortSignal): Promise<ToolCallEventResult | undefined> {
+		if (!this.hasHandlers("tool_call_ready")) return undefined;
+		const waited = await waitForToolHook({
+			run: () =>
+				this.emit({
+					type: "tool_call_ready",
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
+					...(event.parentToolCallId === undefined ? {} : { parentToolCallId: event.parentToolCallId }),
+					input: structuredClone(event.input),
+				}),
+			signal: combinedToolCallSignal(signal, this.createContext().signal),
+			timeoutMs: 0,
 		});
-		return result;
+		if (waited.kind === "aborted") return { block: true, reason: "Operation aborted" };
+		if (waited.kind === "failed") throw waited.error;
+		return undefined;
 	}
 
 	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {

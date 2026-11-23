@@ -1,8 +1,9 @@
 import type { ExtensionToolContext } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EvalDetachedCellManager, type EvalDetachedCellNotification } from "../src/tool/detached-cell-manager.ts";
+import { DetachedNotificationQueue } from "../src/tool/detached-notification-queue.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
-import { FakeKernel, SingleKernelManager } from "./eval/fakes.ts";
+import { FakeKernel, fakeExtensionContext, result, SingleKernelManager } from "./eval/fakes.ts";
 import { gate } from "./eval/written-files-barriers.ts";
 import { writtenFilesHarness } from "./eval/written-files-fakes.ts";
 
@@ -80,5 +81,32 @@ describe("detached notifications while another cell's write hook runs (senpi#723
 			delivered: ["quiet", "writer"],
 			writerLines: expect.arrayContaining(["- src/a.ts"]),
 		});
+	});
+
+	// Independent review L3: a notification whose settlement rejected was dropped, and every later flush rejected.
+	it("still delivers a notification whose settlement rejected, and later flushes resolve", async () => {
+		const manager = new EvalDetachedCellManager();
+		const tool = createEvalTool({
+			enabledLanguages: { js: true, py: false, rb: false, jl: false },
+			kernelManager: new SingleKernelManager(new FakeKernel([result("ended", "1")])),
+			cellTimeoutSeconds: 1,
+			executeTool: vi.fn(),
+			cellManager: manager,
+		});
+		await tool.execute("ended", { language: "js", code: "1", summary: "ended" }, undefined, undefined, {
+			...fakeExtensionContext(),
+		});
+		const snapshot = manager.peek("ended");
+		const delivered: string[] = [];
+		const queue = new DetachedNotificationQueue({
+			notify: (cells) => delivered.push(...cells.map((cell) => cell.cellId)),
+		});
+
+		queue.enqueue({ snapshot: () => snapshot, ready: Promise.reject(new Error("settlement failed")) });
+		await queue.flush();
+		queue.enqueue({ snapshot: () => snapshot });
+		await queue.flush();
+
+		expect(delivered).toEqual(["ended", "ended"]);
 	});
 });

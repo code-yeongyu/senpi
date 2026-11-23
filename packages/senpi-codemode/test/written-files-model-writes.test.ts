@@ -65,13 +65,15 @@ describe("a model write's hold on its file", () => {
 		});
 	});
 
-	it("holds nothing for a call that names no file in the workspace or is not a write or edit", () => {
+	it("holds nothing for a call that names no file in the workspace or is not a write or edit", async () => {
 		const { writtenFiles } = writtenFilesHarness();
 
-		expect([
-			writtenFiles.startToolCall("write", { path: "../outside.ts" }),
-			writtenFiles.startToolCall("write", { content: "export {};\n" }),
-			writtenFiles.startToolCall("read", { path: "src/a.ts" }),
-		]).toEqual([undefined, undefined, undefined]);
+		expect(
+			await Promise.all([
+				writtenFiles.startToolCall("write", { path: "../outside.ts" }),
+				writtenFiles.startToolCall("write", { content: "export {};\n" }),
+				writtenFiles.startToolCall("read", { path: "src/a.ts" }),
+			]),
+		).toEqual([undefined, undefined, undefined]);
 	});
 });

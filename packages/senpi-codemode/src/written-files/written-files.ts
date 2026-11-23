@@ -82,6 +82,7 @@ export class WrittenFiles {
 			cwd: options.cwd,
 			scan: (previous) => scanner.scan(previous),
 			stat: (path) => fs.stat(path),
+			realpath: (path) => options.fs.realpath(path),
 		});
 	}
 
@@ -133,9 +134,9 @@ export class WrittenFiles {
 	 * A `write` or `edit` call starts, before it writes its file: no cell reports or hooks that file until the call
 	 * ends, so the call's own hooks are the only ones it gets. Undefined when the call names no file in the workspace.
 	 */
-	startToolCall(toolName: string, params: unknown): ToolCallHold | undefined {
+	async startToolCall(toolName: string, params: unknown): Promise<ToolCallHold | undefined> {
 		const path = calledPath(toolName, params, this.#cwd);
-		return path === undefined ? undefined : this.#tracker.holdForCall(path);
+		return path === undefined ? undefined : await this.#tracker.holdForCall(path);
 	}
 }
 

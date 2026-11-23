@@ -31,7 +31,6 @@ describe("senpi-codemode extension factory", () => {
 		expect(registeredTools).toEqual(["eval"]);
 		expect(events).toEqual([
 			"resources_discover",
-			"tool_execution_start",
 			"tool_call_ready",
 			"tool_execution_end",
 			"turn_start",

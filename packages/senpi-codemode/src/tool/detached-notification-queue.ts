@@ -5,7 +5,8 @@ export interface PendingDetachedNotification {
 	readonly snapshot: () => EvalDetachedCellSnapshot | Promise<EvalDetachedCellSnapshot>;
 	/**
 	 * Resolves once the cell's own result is final (its write hooks returned). The notification joins a batch only then,
-	 * so one cell's slow hook never holds back another cell's notification. Never rejects.
+	 * so one cell's slow hook never holds back another cell's notification. If it rejects, the notification is still
+	 * delivered, with the result the cell has.
 	 */
 	readonly ready?: Promise<void>;
 }
@@ -27,10 +28,11 @@ export class DetachedNotificationQueue {
 			this.#schedule();
 			return;
 		}
-		const waiting = ready.then(() => {
+		const deliver = () => {
 			this.#waiting.delete(waiting);
 			this.enqueue({ snapshot });
-		});
+		};
+		const waiting = ready.then(deliver, deliver);
 		this.#waiting.add(waiting);
 	}
 

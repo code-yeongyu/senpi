@@ -2255,9 +2255,11 @@ export type ToolCallEvent =
 	| CustomToolCallEvent;
 
 /**
- * Fired once every `tool_call` handler let a call run, before the tool executes: `input` is a shallow copy of the arguments
- * the tool runs with, after the handlers' changes (a handler may have redirected a path). Observe only: what a
- * handler returns or changes here does not reach the call. Not fired for a blocked call.
+ * Fired once for each call about to run, before the tool executes: after its whole `tool_call` chain let it run, or at
+ * once when no `tool_call` handler is registered. `input` is a deep copy of the arguments the tool runs with, after the
+ * handlers' changes (a handler may have redirected a path). Observe only: what a handler returns or changes here does
+ * not reach the call. Not fired for a blocked call. The call waits for these handlers; the turn's abort ends that wait
+ * and the call does not run.
  */
 export interface ToolCallReadyEvent {
 	type: "tool_call_ready";

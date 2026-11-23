@@ -150,6 +150,7 @@ describe("a claim ending without its hooks puts back only the baseline it advanc
 				return { kind: "files", files, head: undefined, tracked: new Set() };
 			},
 			stat: async (path) => dirty.get(relative(CWD, path).split(sep).join("/")),
+			realpath: async (path) => path,
 		});
 		// A claims what it lists; B and C list without hooks, so they claim nothing and record no hooked state.
 		const listed = async (window: ReturnType<WrittenFilesTracker["open"]>, hooks: boolean) => {

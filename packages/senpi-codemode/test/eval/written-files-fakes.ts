@@ -35,7 +35,10 @@ export class FakeWorkspace {
 	/** Absolute paths whose identity lookup fails without telling whether anything is there (EACCES, EIO, ELOOP). */
 	readonly identityFailures = new Set<string>();
 	/** Keyed by the file's absolute real path. */
-	readonly #files = new Map<string, { readonly bytes: Uint8Array; readonly signature: FileSignature }>();
+	readonly #files = new Map<
+		string,
+		{ readonly bytes: Uint8Array; readonly signature: FileSignature; readonly spelling: string }
+	>();
 	/** A symlinked directory's absolute path and the absolute directory it points to. */
 	readonly #links = new Map<string, string>();
 	/** A symlinked file's absolute path and the absolute file it points to. */
@@ -58,7 +61,10 @@ export class FakeWorkspace {
 		const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
 		this.#clock += 1;
 		const signature = { size: bytes.length, mtimeMs: this.#clock, ctimeMs: this.#clock, dev: 1, ino: this.#clock };
-		this.#files.set(this.#key(this.#resolve(absolutePath)), { bytes, signature });
+		const resolved = this.#resolve(absolutePath);
+		const key = this.#key(resolved);
+		// A file keeps the spelling it was created with, as a case-insensitive filesystem does.
+		this.#files.set(key, { bytes, signature, spelling: this.#files.get(key)?.spelling ?? resolved });
 	}
 
 	remove(path: string): void {
@@ -70,7 +76,7 @@ export class FakeWorkspace {
 		const file = this.#files.get(this.#key(this.absolute(path)));
 		if (file === undefined) return;
 		this.#files.delete(this.#key(this.absolute(path)));
-		this.#files.set(this.#key(target), file);
+		this.#files.set(this.#key(target), { ...file, spelling: target });
 	}
 
 	/**
@@ -120,7 +126,7 @@ export class FakeWorkspace {
 		realpath: async (path) => {
 			const named = this.#followParents(path);
 			const target = this.#fileLinks.get(this.#key(named));
-			return target === undefined ? this.#resolve(path) : this.#resolve(target);
+			return this.#onDisk(target === undefined ? this.#resolve(path) : this.#resolve(target));
 		},
 		lstat: async (path) => this.#files.get(this.#key(this.#followParents(path)))?.signature,
 		identity: async (path) => {
@@ -149,6 +155,17 @@ export class FakeWorkspace {
 			return fault === "oversized" ? new Uint8Array(limit) : bytes;
 		},
 	};
+
+	/** A resolved path as the filesystem spells it: a case-insensitive one keeps the spelling an entry was created with. */
+	#onDisk(path: string): string {
+		if (!this.caseInsensitive) return path;
+		const key = this.#key(path);
+		for (const [stored, file] of this.#files) {
+			if (stored === key) return file.spelling;
+			if (stored.startsWith(key + sep)) return file.spelling.slice(0, path.length);
+		}
+		return path;
+	}
 
 	/** How the filesystem tells entries apart: by the path as spelled, or with case folded. */
 	#key(path: string): string {

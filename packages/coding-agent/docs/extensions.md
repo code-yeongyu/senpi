@@ -1240,7 +1240,7 @@ pi.on("tool_call", (event) => {
 
 #### tool_call_ready
 
-Fired once every `tool_call` handler let a call run, before the tool executes. `event.input` is a shallow copy of the arguments the tool runs with, after the `tool_call` handlers' changes, so an observer sees a path a handler redirected. Observe only: what a handler returns or changes is ignored. Not fired for a blocked call.
+Fired once for each call about to run, before the tool executes: after its whole `tool_call` chain let it run, or at once when no `tool_call` handler is registered. `event.input` is a deep copy of the arguments the tool runs with, after the `tool_call` handlers' changes, so an observer sees a path a handler redirected. Observe only: what a handler returns or changes is ignored. Not fired for a blocked call. The call waits for these handlers; Stop (the turn's abort) ends that wait and the call does not run. On a split session it fires where the call runs, not where a forwarded `tool_call` handler is served. The event type is exported as `ToolCallReadyEvent`.
 
 ```typescript
 pi.on("tool_call_ready", (event) => {

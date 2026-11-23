@@ -49,13 +49,7 @@ const SESSION_LIFECYCLE_EVENTS = ["session_start", "session_shutdown"] as const;
 
 type SessionLifecycleEvent = (typeof SESSION_LIFECYCLE_EVENTS)[number];
 
-type CodemodeEvent =
-	| SessionLifecycleEvent
-	| "model_select"
-	| "turn_start"
-	| "tool_execution_start"
-	| "tool_call_ready"
-	| "tool_execution_end";
+type CodemodeEvent = SessionLifecycleEvent | "model_select" | "turn_start" | "tool_call_ready" | "tool_execution_end";
 
 export interface CodemodeExtensionAPI {
 	registerTool(tool: ReturnType<typeof createEvalTool>): void;

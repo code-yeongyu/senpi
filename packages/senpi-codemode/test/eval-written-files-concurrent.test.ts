@@ -83,6 +83,7 @@ describe("files a detached eval cell writes (senpi#7232)", () => {
 			args: { path: "src/by-model.ts", content: "export {};\n" },
 		};
 		await sessionEvents.get("tool_execution_start")?.({ type: "tool_execution_start", ...call });
+		await sessionEvents.get("tool_call_ready")?.({ type: "tool_call_ready", ...call, input: call.args });
 		await sessionEvents.get("tool_execution_end")?.({ type: "tool_execution_end", ...call, isError: false });
 		harness.workspace.write("src/late.ts", "const late: number = 'x';\n");
 		kernel.completeDeferredRun(result("detached-writer", "undefined"));
@@ -109,6 +110,7 @@ describe("files a detached eval cell writes (senpi#7232)", () => {
 		const call = { toolCallId: "call-1", toolName: "edit", args: { path: "src/by-model.ts" } };
 
 		await sessionEvents.get("tool_execution_start")?.({ type: "tool_execution_start", ...call });
+		await sessionEvents.get("tool_call_ready")?.({ type: "tool_call_ready", ...call, input: call.args });
 		workspace.write("src/by-model.ts", "export {};\n");
 		workspace.write("src/late.ts", "const late: number = 'x';\n");
 		kernel.completeDeferredRun(result("detached-writer", "undefined"));

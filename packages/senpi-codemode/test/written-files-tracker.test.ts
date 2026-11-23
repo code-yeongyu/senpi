@@ -25,6 +25,7 @@ function workspace() {
 			return { kind: "files", files, head: undefined, tracked: new Set() };
 		},
 		stat: async (path) => dirty.get(relative(CWD, path).split(sep).join("/")),
+		realpath: async (path) => path,
 	});
 	return {
 		tracker,
@@ -142,7 +143,7 @@ describe("written-files tracker", () => {
 		await cell.ready;
 		write("src/f.ts");
 		afterSnapshot.push(async () => {
-			const hold = tracker.holdForCall(join(CWD, "src", "f.ts"));
+			const hold = await tracker.holdForCall(join(CWD, "src", "f.ts"));
 			write("src/f.ts");
 			await hold?.end(false);
 		});

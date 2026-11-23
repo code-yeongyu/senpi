@@ -252,6 +252,7 @@ export type {
 	ToolAnnotations,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolCallReadyEvent,
 	ToolDefinition,
 	ToolExecutionEndEvent,
 	ToolExecutionMode,

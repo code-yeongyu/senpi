@@ -1,5 +1,5 @@
-import { join, relative, sep } from "node:path";
-import { type FileSignature, sameSignature } from "./scan-boundaries.ts";
+import { basename, dirname, join, relative, sep } from "node:path";
+import { type FileSignature, type FsAccess, sameSignature } from "./scan-boundaries.ts";
 import { type Claim, FileOwnership, type Owner } from "./ownership.ts";
 import {
 	type ChangedFile,
@@ -18,6 +18,8 @@ export interface WrittenFilesTrackerOptions {
 	readonly cwd: string;
 	readonly scan: (previous?: ScannedFiles) => Promise<WorkspaceScan>;
 	readonly stat: ScanFs["stat"];
+	/** The real location of a path, as a scan names it: on-disk case, links resolved. */
+	readonly realpath: FsAccess["realpath"];
 }
 
 /**
@@ -81,6 +83,7 @@ export class WrittenFilesTracker {
 	readonly #cwd: string;
 	readonly #scan: WrittenFilesTrackerOptions["scan"];
 	readonly #stat: ScanFs["stat"];
+	readonly #realpath: FsAccess["realpath"];
 	readonly #hooked = new Map<string, FileSignature>();
 	readonly #ownership = new FileOwnership();
 	#queue: Promise<void> = Promise.resolve();
@@ -94,6 +97,7 @@ export class WrittenFilesTracker {
 		this.#cwd = options.cwd;
 		this.#scan = options.scan;
 		this.#stat = options.stat;
+		this.#realpath = options.realpath;
 	}
 
 	open(): WrittenFilesWindow {
@@ -177,22 +181,43 @@ export class WrittenFilesTracker {
 	 * A model `write` or `edit` call is about to write this file and run its hooks: no settlement reports or hooks the
 	 * file until `end`. A path outside the workspace is not held.
 	 */
-	holdForCall(absolutePath: string): ToolCallHold | undefined {
+	async holdForCall(absolutePath: string): Promise<ToolCallHold | undefined> {
 		const path = this.#workspacePath(absolutePath);
 		if (path === undefined) return undefined;
-		const letGo = this.#ownership.holdForCall(path);
+		const letGo = [this.#ownership.holdForCall(path)];
+		const named = [absolutePath];
+		// A scan names the file as it lies on disk, which the call's spelling need not be (another case on a
+		// case-insensitive filesystem, a symlinked alias): the hold covers the file's real location too, before it is written.
+		const real = await this.#realWorkspacePath(absolutePath);
+		if (real !== undefined && real !== path) {
+			letGo.push(this.#ownership.holdForCall(real));
+			named.push(join(this.#cwd, real));
+		}
 		let held = true;
 		return {
 			end: async (hooked) => {
 				if (!held) return;
 				held = false;
 				try {
-					if (hooked) await this.noteHooked(absolutePath);
+					if (hooked) await Promise.all(named.map((file) => this.noteHooked(file)));
 				} finally {
-					letGo();
+					for (const release of letGo) release();
 				}
 			},
 		};
+	}
+
+	/** The workspace path of the file's real location, or of its directory's for a file not written yet. */
+	async #realWorkspacePath(absolutePath: string): Promise<string | undefined> {
+		const [root, file, directory] = await Promise.all([
+			this.#realpath(this.#cwd),
+			this.#realpath(absolutePath),
+			this.#realpath(dirname(absolutePath)),
+		]);
+		const located = file ?? (directory === undefined ? undefined : join(directory, basename(absolutePath)));
+		if (root === undefined || located === undefined) return undefined;
+		const inside = relative(root, located);
+		return inside === "" || escapesWorkspace(inside) ? undefined : inside.split(sep).join("/");
 	}
 
 	/** Ends a claim; one that ends without its hooks started or its failure reported puts the file's baseline back. */

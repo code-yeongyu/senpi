@@ -52,8 +52,10 @@ export function modelSession(harness: WrittenFilesHarness) {
 	);
 	const send = async (type: string, event: object = {}) => await handlers.get(type)?.({ type, ...event });
 	return {
-		start: (toolCallId: string, toolName: string, path: string) =>
-			send("tool_execution_start", { toolCallId, toolName, args: { path } }),
+		start: async (toolCallId: string, toolName: string, path: string) => {
+			await send("tool_execution_start", { toolCallId, toolName, args: { path } });
+			await send("tool_call_ready", { toolCallId, toolName, input: { path } });
+		},
 		end: (toolCallId: string, isError = false) => send("tool_execution_end", { toolCallId, isError }),
 		turnStart: () => send("turn_start"),
 	};
