@@ -3,7 +3,7 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
  * Local test harness for the new coding-agent test suite.
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
@@ -17,7 +17,7 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
-import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
+import { makeTempDir, onTempCleanup, settleBeforeRemoval } from "../../../../scripts/vitest-temp.ts";
 import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { settledFallbackLoggers } from "../../src/core/retry-fallback/log.ts";
@@ -348,11 +348,17 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		events.push(event);
 	});
 
+	// The directory goes only after this session's tool child has exited and its fallback log stopped writing
+	// (senpi#3570): dispose() starts that close, and a removal before it ends raced the child's writes (ENOTEMPTY).
+	settleBeforeRemoval(
+		tempDir,
+		() => session.whenToolChildClosed(),
+		() => `session ${session.sessionId}'s tool child (${JSON.stringify(session.toolChildRow())})`,
+	);
 	const cleanup = () => {
 		if (!cleanups.delete(cleanup)) return;
 		session.dispose();
 		if (!sibling) fauxProvider.unregister();
-		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
 	};
 	cleanups.add(cleanup);
 	return {
