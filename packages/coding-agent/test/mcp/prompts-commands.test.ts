@@ -3,7 +3,7 @@
 // injects the prompts/get messages into the input editor; a missing required
 // argument aborts with a notice instead of calling the server.
 
-import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
+import { type AutocompleteProvider, CombinedAutocompleteProvider, Editor, TuiMainScreen } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mcpPromptAutocomplete } from "../../src/core/extensions/builtin/mcp/prompt-autocomplete.ts";
 import {
@@ -14,6 +14,8 @@ import {
 } from "../../src/core/extensions/builtin/mcp/prompts.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { attach, awaitMcpPromptRegistration, capturingPi, mcpRoot as makeMcpRoot } from "./fixtures/register-call.ts";
+import { defaultEditorTheme } from "../../../tui/test/test-themes.ts";
+import { VirtualTerminal } from "../../../tui/test/virtual-terminal.ts";
 import { cleanupRoots, setConfig, stdioServer, type TestRoot } from "./fixtures/service-lifecycle.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -37,12 +39,22 @@ interface FakeCommand {
 	handler: (args: string, ctx: never) => Promise<void>;
 }
 
+/** Records every registerCommand call, so a repeated registration is visible rather than overwritten. */
 function commandRecorder(): {
 	commands: Map<string, FakeCommand>;
+	calls: string[];
 	registerCommand: (name: string, options: FakeCommand) => void;
 } {
 	const commands = new Map<string, FakeCommand>();
-	return { commands, registerCommand: (name, options) => commands.set(name, options) };
+	const calls: string[] = [];
+	return {
+		commands,
+		calls,
+		registerCommand: (name, options) => {
+			calls.push(name);
+			commands.set(name, options);
+		},
+	};
 }
 
 function fakeCommandCtx(answers: Array<string | undefined>) {
@@ -176,9 +188,10 @@ describe("mcp prompt commands per registrar", () => {
 			),
 		];
 		registry.catalogChanged();
+		registry.catalogChanged();
 
-		expect([...first.commands.keys()]).toEqual(["mcp:fx:early", "mcp:fx:late"]);
-		expect([...second.commands.keys()]).toEqual(["mcp:fx:early", "mcp:fx:late"]);
+		expect(first.calls).toEqual(["mcp:fx:early", "mcp:fx:late"]);
+		expect(second.calls).toEqual(["mcp:fx:early", "mcp:fx:late"]);
 	});
 
 	it("registers the prompts again into a replacement runner after reload", () => {
@@ -191,9 +204,10 @@ describe("mcp prompt commands per registrar", () => {
 
 		const replacement = commandRecorder();
 		createMcpPromptCommandSync(registry.service, replacement as never).register();
+		registry.catalogChanged();
 
-		expect([...original.commands.keys()]).toEqual(["mcp:fx:kept"]);
-		expect([...replacement.commands.keys()]).toEqual(["mcp:fx:kept"]);
+		expect(original.calls).toEqual(["mcp:fx:kept"]);
+		expect(replacement.calls).toEqual(["mcp:fx:kept"]);
 		expect(registry.listeners()).toBe(1);
 	});
 });
@@ -216,6 +230,66 @@ describe("mcp prompt commands in TUI slash completion", () => {
 		expect(suggestions?.items.map((item) => item.value)).toEqual(["mcp:fx:late"]);
 		const late = suggestions?.items[0];
 		expect(late && provider.applyCompletion(lines, 0, 7, late, suggestions.prefix).lines).toEqual(["/mcp:fx:late "]);
+	});
+
+	it("puts a late exact match first and keeps the snapshot order otherwise", async () => {
+		const recorder = commandRecorder();
+		const snapshot = new CombinedAutocompleteProvider(
+			[
+				{ name: "mcp:fx:late-extra", description: "longer" },
+				{ name: "mcp:fx:alpha", description: "a" },
+			],
+			process.cwd(),
+		);
+		const wrap = mcpPromptAutocomplete(() => registeredMcpPromptCommands(recorder as never));
+		const provider = wrap(wrap(snapshot));
+		const signal = new AbortController().signal;
+		const before = await snapshot.getSuggestions(["/mcp:fx"], 0, 7, { signal });
+		registerMcpPromptCommands(recorder as never, [promptServer("fx", [{ name: "late", arguments: [] }], [])]);
+
+		const exact = await provider.getSuggestions(["/mcp:fx:late"], 0, 12, { signal });
+		const partial = await provider.getSuggestions(["/mcp:fx"], 0, 7, { signal });
+
+		expect(exact?.items.map((item) => item.value)).toEqual(["mcp:fx:late", "mcp:fx:late-extra"]);
+		expect(partial?.items.map((item) => item.value)).toEqual([
+			...(before?.items.map((item) => item.value) ?? []),
+			"mcp:fx:late",
+		]);
+	});
+
+	it("submits the late exact prompt, not a longer snapshot command, when Enter accepts the first row", async () => {
+		const recorder = commandRecorder();
+		const snapshot = new CombinedAutocompleteProvider(
+			[{ name: "mcp:fx:late-extra", description: "longer" }],
+			process.cwd(),
+		);
+		registerMcpPromptCommands(recorder as never, [promptServer("fx", [{ name: "late", arguments: [] }], [])]);
+		const wrapped = mcpPromptAutocomplete(() => registeredMcpPromptCommands(recorder as never))(snapshot);
+		let settle: (() => void) | undefined;
+		const observed: AutocompleteProvider = {
+			...wrapped,
+			async getSuggestions(...args) {
+				const result = await wrapped.getSuggestions(...args);
+				if (result?.items[0]?.value === "mcp:fx:late") settle?.();
+				return result;
+			},
+		};
+		const editor = new Editor(new TuiMainScreen(new VirtualTerminal(80, 24)), defaultEditorTheme);
+		editor.setAutocompleteProvider(observed);
+		const submitted: string[] = [];
+		editor.onSubmit = (text) => submitted.push(text);
+		const shown = new Promise<void>((resolve, reject) => {
+			settle = resolve;
+			setTimeout(() => reject(new Error("editor never listed the exact prompt first")), 2000);
+		});
+
+		editor.handleInput("/mcp:fx:late");
+		await shown;
+		await Promise.resolve();
+		expect(editor.isShowingAutocomplete()).toBe(true);
+		editor.handleInput("\r");
+
+		expect(submitted.map((text) => text.trim())).toEqual(["/mcp:fx:late"]);
 	});
 
 	it("adds nothing the snapshot already lists, so a stacked wrapper does not duplicate", async () => {
