@@ -11,26 +11,33 @@ export interface PendingDetachedNotification {
 	readonly ready?: Promise<void>;
 }
 
+interface QueuedNotification {
+	readonly snapshot: PendingDetachedNotification["snapshot"];
+	readonly release?: () => void;
+}
+
 export class DetachedNotificationQueue {
 	readonly #notifier: EvalDetachedCellNotifier | undefined;
-	#pending: PendingDetachedNotification[] = [];
+	readonly #holdWhileSettling: (() => () => void) | undefined;
+	#pending: QueuedNotification[] = [];
 	readonly #waiting = new Set<Promise<void>>();
 	#flush: Promise<void> | undefined;
 
-	constructor(notifier: EvalDetachedCellNotifier | undefined) {
+	constructor(notifier: EvalDetachedCellNotifier | undefined, holdWhileSettling?: () => () => void) {
 		this.#notifier = notifier;
+		this.#holdWhileSettling = holdWhileSettling;
 	}
 
 	enqueue(notification: PendingDetachedNotification): void {
 		const { ready, snapshot } = notification;
 		if (ready === undefined) {
-			this.#pending.push({ snapshot });
-			this.#schedule();
+			this.#push({ snapshot });
 			return;
 		}
+		const release = this.#holdWhileSettling?.();
 		const deliver = () => {
 			this.#waiting.delete(waiting);
-			this.enqueue({ snapshot });
+			this.#push(release === undefined ? { snapshot } : { snapshot, release });
 		};
 		const waiting = ready.then(deliver, deliver);
 		this.#waiting.add(waiting);
@@ -43,14 +50,23 @@ export class DetachedNotificationQueue {
 		if (flush !== undefined) await flush;
 	}
 
+	#push(notification: QueuedNotification): void {
+		this.#pending.push(notification);
+		this.#schedule();
+	}
+
 	#schedule(): void {
 		if (this.#flush !== undefined) return;
 		const flush = Promise.resolve().then(async () => {
 			const pending = this.#pending.splice(0);
-			const notifications = await Promise.all(
-				pending.map(async (item) => buildDetachedCellNotification(await item.snapshot())),
-			);
-			this.#notifier?.notify(notifications);
+			try {
+				const notifications = await Promise.all(
+					pending.map(async (item) => buildDetachedCellNotification(await item.snapshot())),
+				);
+				this.#notifier?.notify(notifications);
+			} finally {
+				for (const item of pending) item.release?.();
+			}
 		});
 		this.#flush = flush;
 		void flush.then(

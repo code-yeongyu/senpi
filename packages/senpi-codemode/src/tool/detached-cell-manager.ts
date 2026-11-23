@@ -102,7 +102,7 @@ export class EvalDetachedCellManager {
 	constructor(options: EvalDetachedCellManagerOptions = {}) {
 		this.#onStatusChange = options.onStatusChange;
 		this.#onWakeSourceState = options.onWakeSourceState;
-		this.#notificationQueue = new DetachedNotificationQueue(options.notifier);
+		this.#notificationQueue = new DetachedNotificationQueue(options.notifier, options.holdWhileSettling);
 		this.#now = options.now ?? Date.now;
 		this.#hardLimitSeconds = options.hardLimitSeconds ?? DEFAULT_HARD_LIMIT_SECONDS;
 		this.#runBudgetSeconds = options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS;
