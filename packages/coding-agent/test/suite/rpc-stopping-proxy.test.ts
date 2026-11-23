@@ -240,3 +240,55 @@ describe.skipIf(process.platform === "win32")("supervisor admission framing", ()
 		expect(replies[0].success).toBe(true);
 	});
 });
+
+// senpi#7388: a public client whose connection to the host fails its handshake used to be reset before any reply.
+it("refuses with host_unavailable and logs the cause when the connection to the host fails its handshake", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "hop-fail-"));
+	const internalPath = join(dir, "i.sock");
+	const publicPath = join(dir, "p.sock");
+	const internal = createServer((peer) => peer.destroy());
+	await listen(internal, internalPath);
+	const admission = new HostAdmission({
+		protocolVersion: 1,
+		serverVersion: "fixture",
+		capabilities: [],
+		instanceId: "hop",
+	});
+	const clients = new ClientOccupancy(() => {});
+	const server = createPublicProxy({
+		internalSocket: internalPath,
+		internalKey: Buffer.alloc(32, 7),
+		clients,
+		admission,
+		onDetach: () => {},
+	});
+	await listen(server, publicPath);
+	const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	const client = createConnection(publicPath);
+	cleanups.push(async () => {
+		client.destroy();
+		clients.destroyAll();
+		await Promise.all([
+			new Promise<void>((resolve) => server.close(() => resolve())),
+			new Promise<void>((resolve) => internal.close(() => resolve())),
+		]);
+		await rm(dir, { recursive: true, force: true });
+	});
+	// A reset before any reply settles as `{ closed: true }`, so the old behavior fails on the assertion, not a timeout.
+	const reply = new Promise<Record<string, unknown>>((resolve) => {
+		attachJsonlLineReader(client, (line) => resolve(JSON.parse(line)));
+		client.once("close", () => resolve({ closed: true }));
+		client.once("error", () => resolve({ closed: true }));
+	});
+	await once(client, "connect");
+	client.write(`${JSON.stringify({ id: "open-1", type: "open_session", cwd: dir })}\n`);
+
+	expect(await reply).toMatchObject({
+		id: "open-1",
+		command: "open_session",
+		success: false,
+		errorCode: "host_unavailable",
+		errorData: { reason: "internal_connection_failed" },
+	});
+	expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain("connection to the host failed");
+});

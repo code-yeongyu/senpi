@@ -82,8 +82,14 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 				proxyWithAdmission(client, hop, options.admission, auth, publicSecret !== undefined);
 				// An authenticated endpoint resumes the client itself once its key record is published.
 				if (!auth) client.resume();
-			} catch {
-				detach();
+			} catch (cause) {
+				// The client never reached the host: say why, on stderr and to the client, instead of a bare reset (senpi#7388).
+				internal?.destroy();
+				const detail = cause instanceof Error ? cause.message : String(cause);
+				process.stderr.write(`senpi rpc host supervisor: connection to the host failed: ${detail}\n`);
+				if (client.destroyed || !client.writable) return detach();
+				proxyWithAdmission(client, undefined, options.admission, auth, false, detail);
+				if (!auth) client.resume();
 			}
 		};
 		if (publicSecret) authenticateSocket(client, publicSecret, () => void accept());
