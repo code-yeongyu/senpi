@@ -64,12 +64,13 @@ it("a worker session that replaced its labelled session is recorded for a restar
 	// A request after the replacement reaches the worker behind it, so its snapshot names the new session.
 	await send("first", { type: "get_state", sessionId: handle });
 	const entry = host.registry.peek(handle);
-	expect(entry?.worker?.snapshot?.state.sessionId).not.toBe(openedId);
+	if (entry === undefined) throw new Error("the replaced session left the registry");
+	expect(entry.worker?.snapshot?.state.sessionId).not.toBe(openedId);
 
 	const parkedDir = join(scratch, "parked");
 	await mkdir(parkedDir);
 	const router = { handoverParkedDir: parkedDir, defaults: {}, registry: host.registry } as unknown as RouterContext;
-	await recordRetainedSession(router, entry!, String(entry?.worker?.snapshot?.sessionPath), false);
+	await recordRetainedSession(router, entry, String(entry.worker?.snapshot?.sessionPath), false);
 
 	const entries = await readdir(parkedDir, { recursive: true, withFileTypes: true });
 	const written = await Promise.all(
