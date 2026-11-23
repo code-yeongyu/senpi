@@ -35,6 +35,12 @@ export type WrittenFilesChange =
  */
 export type HookStart = "started" | "refused" | "ceded";
 
+/**
+ * How a cell let go of a file it owned without hooking it: `ceded` when a model `write` or `edit` call took the file,
+ * so the change is the call's and the cell neither reports nor counts it; `released` otherwise.
+ */
+export type ClaimRelease = "released" | "ceded";
+
 /** A cell's view of the written-files check, from before its code starts until its write hooks are done. */
 export interface WrittenFilesWindow {
 	/** Resolves once the cell's code may start: the state its writes are compared with is recorded. */
@@ -56,9 +62,9 @@ export interface WrittenFilesWindow {
 	 * This cell will not run the write hooks for a file it owns (cancelled, or `start` refused): it lets go of it now, and
 	 * the file's change stays for the next settlement to report.
 	 */
-	skipped(absolutePath: string): void;
+	skipped(absolutePath: string): ClaimRelease;
 	/** This cell reports that it could not read a file it owns back for the hooks: it lets go, and the change is reported. */
-	failed(absolutePath: string): void;
+	failed(absolutePath: string): ClaimRelease;
 	/** This cell's hooks are done: it lets go of every file it still owns. */
 	release(): void;
 	/** Ends the window and lets go of the files whose hooks have not started; safe to call more than once. */
@@ -78,8 +84,8 @@ export function offWindow(): WrittenFilesWindow {
 		settle: async () => ({ kind: "off" }),
 		start: () => "refused",
 		hooked: async () => {},
-		skipped: () => {},
-		failed: () => {},
+		skipped: () => "released",
+		failed: () => "released",
 		release: () => {},
 		close: () => {},
 	};

@@ -3,6 +3,7 @@ import { type FileSignature, sameSignature } from "./scan-boundaries.ts";
 import { type Claim, FileOwnership, type Owner } from "./ownership.ts";
 import {
 	type ChangedFile,
+	type ClaimRelease,
 	offWindow,
 	type ToolCallHold,
 	withoutCeded,
@@ -110,9 +111,13 @@ export class WrittenFilesTracker {
 			for (const [path, claim] of this.#ownership.claimsOf(owner))
 				if (!(keepStarted && claim.started)) this.#endClaim(path, claim, false);
 		};
-		const releaseFile = (absolutePath: string, reported: boolean) => {
+		// A file a model call took is the call's however this cell lets go of it: its baseline is kept, not advanced.
+		const releaseFile = (absolutePath: string, reported: boolean): ClaimRelease => {
 			const owned = claimOf(absolutePath);
-			if (owned !== undefined) this.#endClaim(owned.path, owned.claim, reported);
+			if (owned === undefined) return "released";
+			const ceded = owned.claim.contested;
+			this.#endClaim(owned.path, owned.claim, reported && !ceded);
+			return ceded ? "ceded" : "released";
 		};
 		return {
 			ready,

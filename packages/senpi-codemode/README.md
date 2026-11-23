@@ -675,7 +675,14 @@ its completion notification.
   A settlement that claims a file and then cannot run its
   hooks (the cell was cancelled or closed) leaves the change for the next cell.
 - **Limits**: the first 20 files are listed and hooked and the rest are counted;
-  hook output is capped at 2,000 code points per file and 12,000 per cell.
+  hook output is capped at 2,000 code points per file and 12,000 per cell. The
+  count can exceed the 20 listed files, and then it is not exactly what the
+  cell wrote: a file a model call takes from the cell leaves the list and the
+  count only when it was listed. A file past the limit is never claimed, so it
+  stays counted even when a model `write` or `edit` took it while the cell
+  settled; the cell never hooks it, and the call's own hooks are its only ones.
+  The part of the count beyond the list is therefore an upper bound, and no file
+  in it is reported again.
 
 Not covered: a cell that is cancelled, times out or is killed (it has no kernel
 result); deleted files, which are never reported; files inside submodules and nested repositories. Cells

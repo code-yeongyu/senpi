@@ -25,6 +25,11 @@ export class FakeWorkspace {
 	beforeOpen: ((path: string) => void) | undefined;
 	/** Awaited once a read has its bytes, before it returns them: a test holds a read open with it. */
 	afterRead: ((path: string, limit: number) => Promise<void>) | undefined;
+	/**
+	 * Absolute paths whose next read goes wrong once `afterRead` returns: `unreadable` as a read the operating system
+	 * refuses, `oversized` as a file that grew past every read limit after the scan saw it.
+	 */
+	readonly readFaults = new Map<string, "unreadable" | "oversized">();
 	/** Set before the first write: whether the filesystem folds case, as macOS and Windows ones do by default. */
 	caseInsensitive = false;
 	/** Absolute paths whose identity lookup fails without telling whether anything is there (EACCES, EIO, ELOOP). */
@@ -138,7 +143,10 @@ export class FakeWorkspace {
 			this.reads.push(opened);
 			const bytes = file.bytes.subarray(0, limit);
 			await this.afterRead?.(path, limit);
-			return bytes;
+			const fault = this.readFaults.get(path);
+			this.readFaults.delete(path);
+			if (fault === "unreadable") return undefined;
+			return fault === "oversized" ? new Uint8Array(limit) : bytes;
 		},
 	};
 

@@ -2,7 +2,13 @@ import type { ExtensionToolContext } from "@code-yeongyu/senpi";
 import { capCodePoints } from "../tool/call-capture.ts";
 import type { ScanFs } from "./workspace-fs.ts";
 import { isSourceText, SOURCE_FILE_MAX_BYTES, SOURCE_FILE_SNIFF_BYTES } from "./source-file.ts";
-import { type ChangedFile, type HookStart, withoutCeded, type WrittenFilesSelection } from "./window.ts";
+import {
+	type ChangedFile,
+	type ClaimRelease,
+	type HookStart,
+	withoutCeded,
+	type WrittenFilesSelection,
+} from "./window.ts";
 
 /** Files listed in a cell result and sent through the write hooks; the rest are counted. */
 export const WRITTEN_FILES_LIMIT = 20;
@@ -37,9 +43,9 @@ export interface WriteHookDeps {
 	 */
 	readonly start: (absolutePath: string) => HookStart;
 	/** The hooks for this listed file will not start: the cell lets go of it, and its change stays for a later cell. */
-	readonly skipped: (absolutePath: string) => void;
-	/** This listed file could not be read back: the cell reports that and lets go of it. */
-	readonly failed: (absolutePath: string) => void;
+	readonly skipped: (absolutePath: string) => ClaimRelease;
+	/** This listed file could not be read back: the cell lets go of it, and reports that unless a model call took it. */
+	readonly failed: (absolutePath: string) => ClaimRelease;
 	readonly signal: AbortSignal;
 }
 
@@ -75,18 +81,19 @@ export async function reportWrittenFiles(
 		// Without hooks the selection claimed nothing, so there is nothing to let go of.
 		if (report === undefined) break;
 		if (deps.signal.aborted) {
-			deps.skipped(file.absolutePath);
+			if (deps.skipped(file.absolutePath) === "ceded") ceded.push(file);
 			continue;
 		}
 		const bytes = await deps.fs.read(file.absolutePath, SOURCE_FILE_MAX_BYTES + 1);
 		// The cell may have been cancelled during the read: a hook it has not started must not start.
 		if (deps.signal.aborted) {
-			deps.skipped(file.absolutePath);
+			if (deps.skipped(file.absolutePath) === "ceded") ceded.push(file);
 			continue;
 		}
 		if (bytes === undefined || bytes.length > SOURCE_FILE_MAX_BYTES) {
-			fail(file.path, "the file could not be read back for the hooks");
-			deps.failed(file.absolutePath);
+			// A model call may have taken the file during the read back: then the failure is not this cell's to report.
+			if (deps.failed(file.absolutePath) === "ceded") ceded.push(file);
+			else fail(file.path, "the file could not be read back for the hooks");
 			continue;
 		}
 		// The one dispatch point: from here the file stays this cell's until its hooks return, even if the cell closes.
