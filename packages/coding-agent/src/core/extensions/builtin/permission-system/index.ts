@@ -415,8 +415,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				continue;
 			}
 
-			// Read at ask time: a labelled attach can record the refusal while this session is live.
-			const refusedByOpener = labelled || hasOpenerRefusal(ctx.sessionManager);
+			// Read at ask time: a labelled attach can record the refusal while this session is live. A runtime with no
+			// session (a hand running tools for a remote loop) has no record to read; its opener's label still applies.
+			const refusedByOpener = labelled || (ctx.sessionManager !== undefined && hasOpenerRefusal(ctx.sessionManager));
 			if (ctx.hasUI && !refusedByOpener) {
 				const reply = await showPermissionPrompt(ctx, request, signal);
 				activeService.reply(reply);
