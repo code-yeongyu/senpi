@@ -36,7 +36,12 @@ export interface DroppedInputOwner {
 }
 
 export function droppedInputRecordPath(sessionFile: string, moveId: MoveId): string {
-	return join(dirname(sessionFile), MOVE_STATE, "dropped", `${basename(sessionFile, ".jsonl")}.${parseMoveId(moveId)}.json`);
+	return join(
+		dirname(sessionFile),
+		MOVE_STATE,
+		"dropped",
+		`${basename(sessionFile, ".jsonl")}.${parseMoveId(moveId)}.json`,
+	);
 }
 
 /** Records the queued input the release is about to answer, before the answer can leave. */
@@ -50,7 +55,10 @@ export async function writeDroppedInputRecord(
 	const staging = `${target}.partial-${process.pid}`;
 	await mkdir(dirname(target), { recursive: true });
 	try {
-		await writeFile(staging, `${JSON.stringify({ format: FORMAT, moveId, ...owner, userMessages: texts }, null, 1)}\n`);
+		await writeFile(
+			staging,
+			`${JSON.stringify({ format: FORMAT, moveId, ...owner, userMessages: texts }, null, 1)}\n`,
+		);
 		await rename(staging, target);
 	} catch (error) {
 		await rm(staging, { force: true });
