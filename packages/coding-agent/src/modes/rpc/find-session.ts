@@ -26,7 +26,7 @@ const HEADER_READ_BYTES = 64 * 1024;
 const HEADER_FIRST_READ_BYTES = 4 * 1024;
 const READERS = 16;
 
-class FindSessionTooManyError extends Error {
+export class FindSessionTooManyError extends Error {
 	readonly code = "find_session_too_many";
 
 	constructor(limit: number) {
@@ -195,12 +195,24 @@ async function carrying(
 	return matches;
 }
 
-async function findSessionFile(options: FindSessionOptions): Promise<FindSessionAnswer> {
-	const files = await sessionFiles(options.agentDir);
-	const suffix = `_${options.durableSessionId}.jsonl`;
+/**
+ * The session files of this host whose header carries `durableSessionId`, and the folder each header names: the one
+ * durable-id lookup `find_session` and the CLI's session references share (senpi#6973). Files named for the id are read
+ * first, every other header only when none of them carries it. Throws `FindSessionTooManyError` past the file bound.
+ */
+export async function sessionFilesCarrying(
+	agentDir: string,
+	durableSessionId: string,
+): Promise<{ readonly file: string; readonly cwd: string }[]> {
+	const files = await sessionFiles(agentDir);
+	const suffix = `_${durableSessionId}.jsonl`;
 	const named = files.filter((file) => basename(file).endsWith(suffix));
-	let matches = await carrying(named, options.durableSessionId);
-	if (matches.length === 0) matches = await carrying(files, options.durableSessionId);
+	const matches = await carrying(named, durableSessionId);
+	return matches.length > 0 ? matches : await carrying(files, durableSessionId);
+}
+
+async function findSessionFile(options: FindSessionOptions): Promise<FindSessionAnswer> {
+	const matches = await sessionFilesCarrying(options.agentDir, options.durableSessionId);
 	const byPath = new Map<string, Candidate>();
 	for (const row of options.hosted) {
 		if (row.durableSessionId !== options.durableSessionId || row.sessionPath === undefined) continue;
