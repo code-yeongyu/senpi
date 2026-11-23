@@ -7,7 +7,7 @@ import { createLoopHookHost, loopHookCallKey } from "../../src/execution/loop-ho
 import { serveLoopHooks } from "../../src/execution/loop-hook-host-hand.ts";
 import type { CommitMatch } from "../../src/execution/testing/epoch-harness.ts";
 import { openEpochRig } from "../../src/execution/testing/epoch-harness.ts";
-import { encodeRemoteMessage } from "../../src/execution/remote-protocol.ts";
+import { encodeRemoteMessage, type RemoteHandMessage } from "../../src/execution/remote-protocol.ts";
 import { createRemoteToolHost } from "../../src/execution/remote-tool-host.ts";
 import { call, openHandRig } from "../../src/execution/testing/hand-harness.ts";
 import type { FrameHandler, Transport } from "../../src/transport/transport.ts";
@@ -98,8 +98,21 @@ describe("durable execution ids, review of #6032 (senpi#5867)", () => {
 			"the batch finished",
 		);
 		await rig.advance(500);
-
 		expect((await rig.rows()).map((row) => row.progress.state)).toEqual(["settled"]);
+
+		// A later session re-dispatching the same call of the same turn recovers the kept result; the tool is not run again.
+		rig.replaceSession();
+		const recovered = await rig.settle(
+			rig.execute("scope", [call("call_1")], "parallel", "turn-1"),
+			"the re-dispatch got the kept result",
+		);
+
+		expect(texts(recovered)).toEqual(["ran:call_1"]);
+		expect(rig.bodies).toEqual(["scope:call_1"]);
+		await rig.waitFor(
+			async () => (await rig.rows()).every((row) => row.progress.state === "acked"),
+			"the recovered result was acknowledged once taken",
+		);
 	});
 
 	it("an outcome no waiter took is not acknowledged, so a later dispatch of the call still gets it", async () => {
@@ -114,11 +127,11 @@ describe("durable execution ids, review of #6032 (senpi#5867)", () => {
 			close: () => {},
 		};
 		createRemoteToolHost({ transport, placement: "cross-machine" });
-		const settled = {
+		const settled: RemoteHandMessage = {
 			kind: "settled",
 			executionId: "restored-1",
 			result: { content: [{ type: "text", text: "ran" }], details: {}, isError: false },
-		} as const;
+		};
 
 		await deliver({ lane: "scope", payload: encodeRemoteMessage(settled) });
 

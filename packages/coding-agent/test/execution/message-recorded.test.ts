@@ -52,6 +52,78 @@ async function ranToolResult(failToolResultWrite: boolean) {
 	return { harness, result };
 }
 
+/** A persisted session whose first header write is held: appends get entry ids while their bytes stay buffered. */
+async function withHeldHeaderWrite(outcome: "lands" | "fails") {
+	const harness = await createHarness({
+		persistSession: true,
+		initialActiveToolNames: [],
+		extensionFactories: [
+			(pi) => {
+				pi.registerTool({
+					name: "record_probe",
+					label: "probe",
+					description: "fixture",
+					parameters: Type.Object({}),
+					execute: async () => ({ content: [{ type: "text", text: "done" }], details: {} }),
+				});
+			},
+		],
+	});
+	harnesses.push(harness);
+	await harness.session.bindExtensions({});
+	const gate = Promise.withResolvers<void>();
+	const manager = harness.sessionManager as unknown as { _writeHeaderAsync(file: string): Promise<void> };
+	const write = manager._writeHeaderAsync.bind(manager);
+	vi.spyOn(manager, "_writeHeaderAsync").mockImplementation(async (file) => {
+		await gate.promise;
+		if (outcome === "fails") throw new Error("header write failed");
+		return write(file);
+	});
+	const header = harness.sessionManager.persistHeaderNow();
+	header.catch(() => undefined);
+	harness.setResponses([
+		fauxAssistantMessage([fauxToolCall("record_probe", {})], { stopReason: "toolUse" }),
+		fauxAssistantMessage("done"),
+	]);
+	await harness.session.prompt("run").catch(() => undefined);
+	const message = harness.agent.state.messages.find((m): m is ToolResultMessage => m.role === "toolResult");
+	if (message === undefined) throw new Error("the tool never produced a result message");
+	return { harness, message, release: () => gate.resolve() };
+}
+
+it("stays pending while the first header write still holds the session file, then resolves once it lands", async () => {
+	const { harness, message, release } = await withHeldHeaderWrite("lands");
+	expect(harness.sessionManager.isTranscriptFlushed()).toBe(false);
+	let settled: "resolved" | "rejected" | undefined;
+	const recorded = harness.agent.messageRecorded?.(message).then(
+		() => {
+			settled = "resolved";
+		},
+		() => {
+			settled = "rejected";
+		},
+	);
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	expect(settled).toBeUndefined();
+
+	release();
+	await recorded;
+
+	expect(settled).toBe("resolved");
+	expect(harness.sessionManager.isTranscriptFlushed()).toBe(true);
+});
+
+it("rejects when the first header write the result was buffered behind fails", async () => {
+	const { harness, message, release } = await withHeldHeaderWrite("fails");
+	const recorded = harness.agent.messageRecorded?.(message);
+	recorded?.catch(() => undefined);
+
+	release();
+
+	await expect(recorded).rejects.toThrow();
+	expect(harness.sessionManager.isTranscriptFlushed()).toBe(false);
+});
+
 it("resolves for a tool result the session wrote to its transcript", async () => {
 	const { harness, result } = await ranToolResult(false);
 

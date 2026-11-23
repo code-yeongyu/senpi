@@ -1911,6 +1911,19 @@ export class SessionManager {
 	}
 
 	/**
+	 * Resolves once every entry appended so far is committed to this session's backend, and rejects when it is not.
+	 * An append returns its entry id while the first header write is still running (the entry is buffered behind it)
+	 * and before any conversation entry forced the first flush, so an id alone is not a commit (senpi#5867). A
+	 * session without a file has no backend to wait for: its entries are held only in memory, and this resolves.
+	 */
+	async transcriptCommitted(): Promise<void> {
+		if (!this.persist || !this.sessionFile) return;
+		// The header write appends everything buffered behind it before it counts as flushed; it rejects when it failed.
+		while (this.headerWrite !== undefined) await this.headerWrite;
+		if (!this.flushed) throw new Error("transcript_not_committed: the session file holds none of these entries yet");
+	}
+
+	/**
 	 * Removes the session file when this process created it with persistHeaderNow() and it holds only
 	 * setup entries (header, model, thinking level, configuration, labels), `custom` entries their
 	 * writer marked `startupBookkeeping` (the startup rules scan, repository identity) and engine lifecycle

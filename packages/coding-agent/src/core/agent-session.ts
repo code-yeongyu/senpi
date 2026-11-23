@@ -2185,6 +2185,9 @@ export class AgentSession {
 			if (persisted === undefined) throw new Error("transcript_write_pending: the message was never queued");
 			await persisted;
 			if (!this._entryIdsByMessage.has(message)) throw new Error("transcript_write_failed");
+			// An entry id is assigned while the first header write still holds the file (the entry is buffered behind it):
+			// the result is recorded only once that write committed it, and never when it failed.
+			await this.sessionManager.transcriptCommitted();
 		};
 
 		try {
