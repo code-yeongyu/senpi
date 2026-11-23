@@ -325,22 +325,28 @@ async function executeCell(
 			);
 			if (result.ok && state.pendingBridgeCalls.length > 0)
 				await execution.wait(Promise.all(state.pendingBridgeCalls));
-			const writtenFiles = await execution.wait(
-				settleWrittenFiles(written, state.signal, [execution, cell.deadlines]),
-			);
-			if (
+			const finished = await handler.finalize(
 				!result.ok &&
-				result.error.code === "js_cell_parse_error" &&
-				invocation.input.language === "js" &&
-				magic.kind === "ordinary"
-			) {
-				const message = jsCellParseMessage(invocation.input.code, result.error.message);
-				return withWrittenFiles(
-					await handler.finalize({ ...result, error: { ...result.error, message } }),
-					writtenFiles,
-				);
-			}
-			return withWrittenFiles(await handler.finalize(result), writtenFiles);
+					result.error.code === "js_cell_parse_error" &&
+					invocation.input.language === "js" &&
+					magic.kind === "ordinary"
+					? {
+							...result,
+							error: {
+								...result.error,
+								message: jsCellParseMessage(invocation.input.code, result.error.message),
+							},
+						}
+					: result,
+			);
+			// The cell's code ended, so its state is final now: the written files settle after it as host work. A stop, list or
+			// wake count never waits on the write hooks, and a stop cannot cancel hooks for code that already ended; the
+			// settled result (with its file list) still becomes the cell's result and notification (senpi#7232).
+			const settled = execution
+				.wait(settleWrittenFiles(written, state.signal, [execution, cell.deadlines]))
+				.then((writtenFiles) => withWrittenFiles(finished, writtenFiles));
+			cellManager.complete(cell, finished, settled);
+			return await settled;
 		};
 		return kernelTools ? await kernelToolsStorage.run(kernelTools, runBound) : await runBound();
 	} catch (error) {
