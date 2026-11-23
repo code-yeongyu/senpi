@@ -72,8 +72,7 @@ describe("GPT-6 Sol / 6.1 Sol / Luna prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("gpt-6-astra");
-		expect(preset?.prompt).toContain("## Intent Gate");
-		expect(preset?.prompt).toContain("## Initiative");
+		expect(preset?.prompt).toContain("Do that reading and the reasoning yourself");
 	});
 
 	it.each(["GPT-6 Sol", "GPT-6.1 Sol", "GPT-6 Luna"])(

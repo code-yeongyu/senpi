@@ -152,14 +152,18 @@ export function presetSharedSections(name: ResolvedPresetName | undefined): Shar
 /**
  * The handoff block a preset's prompt defines, so the todo tool's cue can name that block in the
  * prompt's own words instead of the default core's (senpi#6977): the GPT block presets render the
- * outcome-first block, the gpt-6.2 and deepseek-v4-1-flash cores render no handoff block on any
+ * outcome-first block, the GPT-6 and deepseek-v4-1-flash cores render no handoff block on any
  * surface (senpi#6979, senpi#7100), so a cue there would name a block those prompts do not define, and
  * every other preset (and the default dynamic prompt) renders the Ask / For you / Now / Next block.
  */
 export type HandoffCueKind = "default" | "gpt-block" | "none";
 
-const GPT_BLOCK_HANDOFF_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-5.5", "gpt-5.6", "gpt-6-astra"]);
-const NO_HANDOFF_BLOCK_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-6.2", "deepseek-v4-1-flash"]);
+const GPT_BLOCK_HANDOFF_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-5.5", "gpt-5.6"]);
+const NO_HANDOFF_BLOCK_PRESETS: ReadonlySet<ResolvedPresetName> = new Set([
+	"gpt-6-astra",
+	"gpt-6.2",
+	"deepseek-v4-1-flash",
+]);
 
 export function presetHandoffCueKind(name: ResolvedPresetName | undefined): HandoffCueKind {
 	if (name === undefined) return "default";
@@ -196,6 +200,7 @@ export function presetFirstTurnPlanDefault(name: ResolvedPresetName | undefined)
  * shared `Task_Management` block after them: one home per rule (senpi#7101, senpi#7100).
  */
 const TODO_RULE_OWNER_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"gpt-6-astra",
 	"gpt-6.2",
 	"deepseek-v4-1-flash",
 ]);

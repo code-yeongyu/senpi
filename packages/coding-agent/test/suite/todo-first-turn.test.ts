@@ -267,7 +267,7 @@ describe("first turn under the active prompt preset", () => {
 
 	it.each<[string, Api, string]>([
 		["gpt-6.2-astra", "openai-responses", "base"],
-		["gpt-6-astra", "openai-responses", `base\n${TASK_MANAGEMENT_SECTION}`],
+		["gpt-6-astra", "openai-responses", "base"],
 		["claude-opus-5", "anthropic-messages", `base\n${FULL_TASK_MANAGEMENT_SECTION}`],
 		["deepseek-flash", "openai-completions", "base"],
 		["deepseek-v4-flash-0731", "openai-completions", `base\n${TASK_MANAGEMENT_SECTION}`],

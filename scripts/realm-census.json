@@ -5343,38 +5343,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#APP_FINAL_MESSAGE_SHAPE": {
-			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#APP_STEERING": {
-			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#CODEX_WRITING_STYLE": {
-			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#GPT6_ASTRA_RULES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#HANDOFF_REPORT": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#INTENT_GATE_LEAD": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#MONITOR_CONDITIONS": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#SURFACE_DIRECTIVE": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#APP_AND_CHAT": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
