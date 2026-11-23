@@ -6,8 +6,6 @@
 
 ### Added
 
-- GLM 5.4 is now a supported model family on the coding plans: `glm-5.4` catalog entries for `zai` and `zai-coding-cn` (text+image input, 1M context, effort low/high/max), the `openai-completions` thinking-level-map matcher covers 5.4 (`glm-5.[23]` → `glm-5.[234]`), the zai `thinkingFormat` handler forces `{type:"enabled"}` for `glm-5.[34]` even when no reasoning effort is set, and `generate-models.ts` preserves the 5.4 entries on regeneration.
-
 ### Changed
 
 ### Fixed

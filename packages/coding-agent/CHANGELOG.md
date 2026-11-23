@@ -6,8 +6,6 @@
 
 ### Added
 
-- GLM 5.4 prompt preset: a new `glm-5.4` system-prompt preset sharing the GLM 5.x tuning surface with 5.2/5.3 (thin alias over `buildGlm5Prompt`, `workstationDialect: "claude"`). The `hasGlm54Signal`/`isGlm54Model` matcher is checked before the 5.3 matcher, `"glm-5.4"` joins `PromptPresetName`/`VALID_PRESETS`, and the settings.md value list is updated. A measured temperament study found 5.4 equivalent to 5.3, so models selecting GLM 5.4 now get the tuned system prompt instead of the untuned fallback ([code-yeongyu/oh-my-openagent#14826](https://github.com/code-yeongyu/oh-my-openagent/pull/14826)).
-
 ### Changed
 
 ### Fixed
