@@ -7034,6 +7034,12 @@ emit: a listener calls it before returning, and a call after that, or from an as
 is dropped. An extension that keeps a state snapshot uses it to send that state once instead of
 waiting for its next change.
 
+On a shared host, a client that joins an already open in-process session (the default runtime of a
+`--listen` host) with `attach_session` and receives extension events gets the same replay for itself, even when the session is idle: Senpi runs
+`senpi:extension-rpc-subscribed` again with a reply function that reaches that attachment only.
+Nothing else is replayed: events extensions emitted before the attach do not reach the new client.
+A session whose clients never declared `extension_events` sends nothing.
+
 The terminal builtin replays its current state this way, even when nothing is running: one
 `terminal_monitor_state` event, then two `wake_source_state` events. The first has `source:
 "terminal-monitors"`, `activeCount` and a `monitors` list (`id`, `description`, `startedAtMs`); the

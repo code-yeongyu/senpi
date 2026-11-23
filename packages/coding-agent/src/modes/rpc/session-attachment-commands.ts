@@ -1,5 +1,6 @@
 import { takeOver } from "./attach-takeover.ts";
 import { compactOpen } from "./compact-open-admission.ts";
+import { EXTENSION_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import { clearRetainedRecord } from "./session-router-residency.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
@@ -57,6 +58,18 @@ function attach(host: RouterContext, owner: string, sessionId: string): void {
 	host.writer.status.publish(sessionId, "attach", "client");
 }
 
+/**
+ * An attach joins a session whose extension-event subscription already exists, so the subscription's own state
+ * replay never reaches it: the attaching connection, when it takes extension events, gets that state for itself.
+ */
+function attachWithState(host: RouterContext, owner: string, sessionId: string): void {
+	attach(host, owner, sessionId);
+	if (!host.writer.getConnectionCapabilities(owner)?.includes(EXTENSION_EVENTS_CAPABILITY)) return;
+	host.bindings
+		.get(sessionId)
+		?.replayExtensionEvents?.((record) => host.writer.enqueueForAttachment(sessionId, owner, record));
+}
+
 export function attachSession(
 	host: RouterContext,
 	command: Extract<RpcAttachmentCommand, { type: "attach_session" }>,
@@ -70,11 +83,12 @@ export function attachSession(
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
-	if (command.takeover === true) return takeOver(host, command, owner, () => attach(host, owner, command.sessionId));
+	if (command.takeover === true)
+		return takeOver(host, command, owner, () => attachWithState(host, owner, command.sessionId));
 	if (command.admissionId !== undefined && host.admissions)
 		return compactOpen(host, command, async (accept, signal) => {
 			signal.throwIfAborted();
-			attach(host, owner, command.sessionId);
+			attachWithState(host, owner, command.sessionId);
 			try {
 				await accept({ sessionId: command.sessionId, durableSessionId: command.durableSessionId, attached: true });
 			} catch (cause) {
@@ -85,7 +99,7 @@ export function attachSession(
 			return undefined;
 		});
 	try {
-		attach(host, owner, command.sessionId);
+		attachWithState(host, owner, command.sessionId);
 		return {
 			id: command.id,
 			type: "response",

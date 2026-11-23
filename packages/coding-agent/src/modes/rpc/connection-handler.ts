@@ -296,6 +296,11 @@ export interface RpcConnectionHandler {
 	/** A shared host's connection left this session; what it was offering ends. */
 	connectionDetached(connectionId: string): void;
 	/**
+	 * Sends the extensions' current state to one receiver, as `extension_event` records, when this session delivers
+	 * extension events at all; a session nobody subscribed sends nothing.
+	 */
+	replayExtensionEvents(receiver: (record: RpcExtensionEvent) => void): void;
+	/**
 	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
 	 * caller exits right after (senpi#3711).
 	 */
@@ -2742,6 +2747,10 @@ export function createRpcConnectionHandler(
 					secretOwners.delete(id);
 				}
 			relocation?.connectionDetached(connectionId);
+		},
+		replayExtensionEvents(receiver) {
+			if (unsubscribeExtensionEvents === undefined) return;
+			session.extensionRunner.replayRpcState(({ name, data }) => receiver({ type: "extension_event", name, data }));
 		},
 		async dispose(disposeOptions) {
 			rpcOwners.dispose();
