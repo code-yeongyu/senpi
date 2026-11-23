@@ -5,6 +5,7 @@ import { holdDrainedTurns } from "./session-drain-hold.ts";
 import { forgetSessionOwnership } from "./session-router-attachments.ts";
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
+import { parkRecordCompletable } from "./host-handover-parked-complete.ts";
 import { recordRetainedSession } from "./session-router-residency.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
 
@@ -139,6 +140,10 @@ export async function evictIdleSession(
 	const owners = handoff
 		? [...host.sessionsByConnection].filter(([, owned]) => owned.has(sessionId)).map(([connection]) => connection)
 		: [];
+	// An idle park whose record could not be completed would reopen under this host's defaults (senpi#7380): the session
+	// stays resident instead, and the next sweep tries again.
+	if (reason === undefined && parkedPath !== undefined && retained !== undefined && !parkRecordCompletable(retained))
+		return;
 	// A failed claim means an explicit close raced us and owns the entry now; nothing is recorded,
 	// or a closed session would come back on the next host start (MEDIUM-1, senpi#3282 review).
 	const claim = tryClaimClose(host, sessionId, { drainAttachments: true });

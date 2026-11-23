@@ -8,6 +8,11 @@
  * without anyone re-opening it by hand.
  */
 import { clearHandoverParkedSession, recordHandoverParkedSession } from "./host-handover-parked.ts";
+import {
+	completeParkedEntry,
+	IncompleteParkRecordError,
+	missingLaunchChoices,
+} from "./host-handover-parked-complete.ts";
 import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
 import { currentResidentWriter } from "./host-handover-resident-writer.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
@@ -34,12 +39,9 @@ export async function recordRetainedSession(
 ): Promise<void> {
 	const dir = host.handoverParkedDir;
 	if (dir === undefined) return;
-	const previous = retained.recordedPath;
-	retained.recordedPath = sessionPath;
-	if (previous !== undefined && previous !== sessionPath) await clearHandoverParkedSession(dir, previous);
 	const durableSessionId = retained.runtime?.session.sessionId ?? retained.durableSessionId;
-	await recordHandoverParkedSession(dir, {
-		...parkedEntryFromProfile(
+	const choices = completeParkedEntry(
+		parkedEntryFromProfile(
 			{
 				sessionPath,
 				contextOverlay: retained.contextOverlay,
@@ -48,6 +50,15 @@ export async function recordRetainedSession(
 			retained.profile,
 			Object.keys(host.defaults.hostContext ?? {}),
 		),
+		retained,
+	);
+	const missing = missingLaunchChoices(choices, retained);
+	if (missing.length > 0) throw new IncompleteParkRecordError(sessionPath, missing);
+	const previous = retained.recordedPath;
+	retained.recordedPath = sessionPath;
+	if (previous !== undefined && previous !== sessionPath) await clearHandoverParkedSession(dir, previous);
+	await recordHandoverParkedSession(dir, {
+		...choices,
 		parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
 		...(resident ? { residentWriter: await currentResidentWriter() } : {}),
 		...(live ? { live: true as const } : {}),
