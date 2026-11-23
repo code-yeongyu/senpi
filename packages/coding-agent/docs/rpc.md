@@ -7038,7 +7038,8 @@ On a shared host, a client that joins an already open in-process session (the de
 `--listen` host) with `attach_session` and receives extension events gets the same replay for itself, even when the session is idle: Senpi runs
 `senpi:extension-rpc-subscribed` again with a reply function that reaches that attachment only.
 Nothing else is replayed: events extensions emitted before the attach do not reach the new client.
-A session whose clients never declared `extension_events` sends nothing.
+The attaching client's own `extension_events` declaration decides, whatever the session's opener declared.
+A replay that has not reached the client when it releases the attachment is dropped.
 
 The terminal builtin replays its current state this way, even when nothing is running: one
 `terminal_monitor_state` event, then two `wake_source_state` events. The first has `source:

@@ -59,15 +59,19 @@ function attach(host: RouterContext, owner: string, sessionId: string): void {
 }
 
 /**
- * An attach joins a session whose extension-event subscription already exists, so the subscription's own state
- * replay never reaches it: the attaching connection, when it takes extension events, gets that state for itself.
+ * An attach joins a running session, so no subscription replay reaches it: a connection that takes extension events
+ * gets the session's current extension state for itself. Called once its attach baseline is on its queue.
  */
-function attachWithState(host: RouterContext, owner: string, sessionId: string): void {
-	attach(host, owner, sessionId);
+function replayState(host: RouterContext, owner: string, sessionId: string): void {
 	if (!host.writer.getConnectionCapabilities(owner)?.includes(EXTENSION_EVENTS_CAPABILITY)) return;
 	host.bindings
 		.get(sessionId)
 		?.replayExtensionEvents?.((record) => host.writer.enqueueForAttachment(sessionId, owner, record));
+}
+
+function attachWithState(host: RouterContext, owner: string, sessionId: string): void {
+	attach(host, owner, sessionId);
+	replayState(host, owner, sessionId);
 }
 
 export function attachSession(
@@ -85,10 +89,11 @@ export function attachSession(
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
 	if (command.takeover === true)
 		return takeOver(host, command, owner, () => attachWithState(host, owner, command.sessionId));
-	if (command.admissionId !== undefined && host.admissions)
+	if (command.admissionId !== undefined && host.admissions) {
+		let admitted = false;
 		return compactOpen(host, command, async (accept, signal) => {
 			signal.throwIfAborted();
-			attachWithState(host, owner, command.sessionId);
+			attach(host, owner, command.sessionId);
 			try {
 				await accept({ sessionId: command.sessionId, durableSessionId: command.durableSessionId, attached: true });
 			} catch (cause) {
@@ -96,8 +101,15 @@ export function attachSession(
 				await releaseDisconnectAttachment(host, command.sessionId);
 				throw cause;
 			}
+			admitted = true;
 			return undefined;
+		}).then((response) => {
+			// The admission's baseline and answer are on the queue only once compactOpen returns.
+			if (admitted && host.sessionsByConnection.get(owner)?.has(command.sessionId))
+				replayState(host, owner, command.sessionId);
+			return response;
 		});
+	}
 	try {
 		attachWithState(host, owner, command.sessionId);
 		return {

@@ -9,10 +9,10 @@ import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { createRpcSessionBinding } from "../../src/modes/rpc/session-binding.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
-import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
+import { createHarness, type Harness } from "./harness.ts";
 
 /** The production router, binding, writer and registry; only model execution uses the faux provider. */
-export async function parkClaimHost(extensionFactories?: HarnessOptions["extensionFactories"]) {
+export async function parkClaimHost() {
 	const cwd = await mkdtemp(join(tmpdir(), "rpc-park-claim-"));
 	const harnesses: Harness[] = [];
 	const closed = new Map<string, PromiseWithResolvers<void>>();
@@ -33,7 +33,6 @@ export async function parkClaimHost(extensionFactories?: HarnessOptions["extensi
 				cwd: options.cwd,
 				sessionManager: options.sessionManager,
 				sessionStartEvent: options.sessionStartEvent,
-				...(extensionFactories ? { extensionFactories } : {}),
 				models: [
 					{ id: "first", reasoning: true },
 					{ id: "second", reasoning: true },
