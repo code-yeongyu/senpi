@@ -9,9 +9,9 @@ import type { SessionManager } from "./session-manager.ts";
  * (oh-my-openagent#14649). The engine records it in the session as a `permission-approvals-refused` entry naming the
  * session id; the permission system refuses every ask in a session that carries the label or the record.
  */
-export const REFUSE_APPROVALS_CONTEXT_KEY = "approvals";
-export const REFUSE_APPROVALS_CONTEXT_VALUE = "refuse";
-export const REFUSE_APPROVALS_ENTRY_TYPE = "permission-approvals-refused";
+const REFUSE_APPROVALS_CONTEXT_KEY = "approvals";
+const REFUSE_APPROVALS_CONTEXT_VALUE = "refuse";
+const REFUSE_APPROVALS_ENTRY_TYPE = "permission-approvals-refused";
 
 type RecordingSession = Pick<
 	SessionManager,
@@ -24,7 +24,7 @@ type RecordingSession = Pick<
 	| "reduceHistory"
 >;
 
-export class OpenerRefusalNotDurableError extends Error {
+class OpenerRefusalNotDurableError extends Error {
 	constructor(sessionFile: string | undefined) {
 		super(`The approvals refusal could not be written to the session file (${sessionFile ?? "no file"})`);
 		this.name = "OpenerRefusalNotDurableError";

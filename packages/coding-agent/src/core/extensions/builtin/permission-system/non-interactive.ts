@@ -4,7 +4,7 @@ export interface NoUIOptions {
 	readonly emitEvent: (event: string, data: unknown) => void;
 	/** The `auto` preset is active. */
 	readonly presetBound?: boolean;
-	/** The session's opener declared that nobody answers its prompts (`REFUSE_APPROVALS_CONTEXT_KEY` in `core/opener-approvals.ts`). */
+	/** The session's opener declared that nobody answers its prompts (`open_session.context.approvals`, `core/opener-approvals.ts`). */
 	readonly refusedByOpener?: boolean;
 }
 
