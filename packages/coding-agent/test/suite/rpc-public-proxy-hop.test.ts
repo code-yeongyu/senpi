@@ -5,9 +5,9 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HostAdmission } from "../../src/modes/rpc/host-admission.ts";
+import { PROXY_CLIENT_END_GRACE_MS } from "../../src/modes/rpc/host-admission-proxy.ts";
 import { ClientOccupancy } from "../../src/modes/rpc/host-client-occupancy.ts";
 import { createPublicProxy } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
-import { PEER_END_REPLY_GRACE_MS } from "../../src/modes/rpc/host-peer-end.ts";
 import { acceptInternalConnection } from "../../src/modes/rpc/internal-channel.ts";
 import { sandbox, teardown } from "./rpc-public-auth-harness.ts";
 
@@ -162,7 +162,7 @@ describe.skipIf(process.platform === "win32")("the supervisor's public proxy and
 		client.end();
 		await forwardedFin;
 		expect(client.readableEnded).toBe(false);
-		await vi.advanceTimersByTimeAsync(PEER_END_REPLY_GRACE_MS);
+		await vi.advanceTimersByTimeAsync(PROXY_CLIENT_END_GRACE_MS);
 		await ended;
 	});
 });

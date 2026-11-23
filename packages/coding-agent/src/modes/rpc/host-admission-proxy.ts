@@ -2,10 +2,16 @@ import type { Socket } from "node:net";
 import type { Duplex, Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { type HostAdmission, hostStoppingResponse } from "./host-admission.ts";
-import { PEER_END_REPLY_GRACE_MS } from "./host-peer-end.ts";
 import { MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 import { launchProofRecordRefusal, RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 import type { PublicRpcConnection } from "./rpc-public-auth.ts";
+
+/**
+ * How long the proxy keeps a client whose FIN it forwarded, waiting for the host side to end (omo#14725). Longer than
+ * the host's own bound on its last replies (`PEER_END_REPLY_GRACE_MS`, 30 s), so a working host always ends first;
+ * kept here, not imported, because the supervisor's module graph is budgeted (`supervisor-import-graph.test.ts`).
+ */
+export const PROXY_CLIENT_END_GRACE_MS = 35_000;
 
 /**
  * Requests are size-bounded; each direction awaits downstream socket backpressure.
@@ -110,7 +116,7 @@ export function proxyWithAdmission(
 			return;
 		}
 		if (!client.destroyed) {
-			const cut = setTimeout(fail, PEER_END_REPLY_GRACE_MS);
+			const cut = setTimeout(fail, PROXY_CLIENT_END_GRACE_MS);
 			client.once("close", () => clearTimeout(cut));
 		}
 		internal.end();

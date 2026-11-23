@@ -38,16 +38,24 @@ mock.method(IdleExitDecider.prototype, "update", function (this: IdleExitDecider
 });
 const createServer = net.createServer;
 const onServer = signalEndpointReady(socket, () => process.send?.({ type: "ready" }));
-mock.method(net, "createServer", (accept: (socket: net.Socket) => void) => {
-	const server = createServer((socket) => {
-		accept(socket);
-		// Register after the supervisor, so detached means its occupancy changed.
-		socket.once("close", () => process.send?.({ type: "detached" }));
-		process.send?.({ type: "attached" });
-	});
-	onServer(server);
-	return server;
-});
+// Both call forms: the supervisor's public proxy passes options (`allowHalfOpen`) before its accept callback.
+mock.method(
+	net,
+	"createServer",
+	(first: net.ServerOpts | ((socket: net.Socket) => void), second?: (socket: net.Socket) => void) => {
+		const accept = typeof first === "function" ? first : second;
+		if (accept === undefined) throw new Error("createServer needs an accept callback");
+		const options = typeof first === "function" ? {} : first;
+		const server = createServer(options, (socket) => {
+			accept(socket);
+			// Register after the supervisor, so detached means its occupancy changed.
+			socket.once("close", () => process.send?.({ type: "detached" }));
+			process.send?.({ type: "attached" });
+		});
+		onServer(server);
+		return server;
+	},
+);
 syncBuiltinESMExports();
 process.on("message", (message: unknown) => {
 	if (typeof message !== "object" || message === null || !("now" in message) || typeof message.now !== "number") {
