@@ -170,12 +170,14 @@ export class EngineTurnHold {
 		if (this.isHeld() && this.noticeCount > 0) this.showNotice();
 	}
 
-	addHold(kind: HoldKind, opts?: { key?: string; data?: unknown }): void {
+	/** `replace`: update a hold already held in place, with no pause announced (an inherited hold raised, senpi#3944). */
+	addHold(kind: HoldKind, opts?: { key?: string; data?: unknown; replace?: boolean }): void {
 		const key = opts?.key ?? kind;
-		if (this.records.has(key)) return;
+		const current = this.records.get(key);
+		if (current !== undefined && opts?.replace !== true) return;
 		const at = new Date().toISOString();
 		this.pauseSeq++;
-		this.records.set(key, { kind, key, since: at, data: opts?.data, sourceCounts: {} });
+		this.records.set(key, { kind, key, since: current?.since ?? at, data: opts?.data, sourceCounts: {} });
 		let persisted = false;
 		try {
 			this.append("session-hold", {
@@ -193,7 +195,7 @@ export class EngineTurnHold {
 			// A run fence alone does not pause the session, so it emits no `session_paused` (senpi#3811). Any other hold
 			// announces its seq, even while already paused: Resume quotes that seq, so an unannounced one could never
 			// be released (senpi#6900).
-			if (kind !== "run_fence" && this.isHeld()) {
+			if (kind !== "run_fence" && current === undefined && this.isHeld()) {
 				this.announcedSeq = this.pauseSeq;
 				this.pauseOpen = true;
 				this.emit({
@@ -250,13 +252,16 @@ export class EngineTurnHold {
 	 */
 	noteItems(items: readonly HeldItem[]): Array<{ itemId: string; noticeId: string; entryId: string }> {
 		const notices = this.notices.noteItems(this.pauseSeq, items, this.stopped);
-		for (const notice of notices)
+		// Each item's event counts up to its own item, as its stored notice does (senpi#3944), not the batch's total.
+		const before = this.noticeCount - notices.length;
+		notices.forEach((notice, index) =>
 			this.emit({
 				type: "session_notice",
 				noticeIds: [notice.noticeId],
-				noticeCount: this.noticeCount,
+				noticeCount: before + index + 1,
 				disposition: "notice_persisted",
-			});
+			}),
+		);
 		if (!this.attended) this.showNotice();
 		return notices;
 	}

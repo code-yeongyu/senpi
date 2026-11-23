@@ -85,10 +85,11 @@ export class RunHolds {
 		if (current !== undefined && current.parentSessionId !== owner.parentSessionId)
 			return { refused: "wrong_parent" };
 		const highWater = Math.max(current?.highWater ?? 0, owner.parentPauseSeq);
-		if (current !== undefined) this.ledger.release([INHERITED_KEY], "run_resume");
+		// A raised pause replaces the held record in place: the session never stops being held (senpi#3944).
 		this.ledger.addHold("inherited_hold", {
 			key: INHERITED_KEY,
 			data: { parentSessionId: owner.parentSessionId, runRef: owner.runRef, highWater } satisfies InheritedData,
+			replace: current !== undefined,
 		});
 		return { childSeq: this.ledger.currentPauseSeq };
 	}

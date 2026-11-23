@@ -120,7 +120,13 @@ them from the notification text. Every hold that pauses the session emits `sessi
 (a second Stop, a re-armed hold), so the last `pauseSeq` a client saw is always the one `resume_session`
 accepts as `expectedSeq`. The release that ends the pause emits
 `session_resumed { cause: "input" | "resume_session", pauseSeq, at }` once; a run fence alone pauses nothing and
-emits neither.
+emits neither. A parent's newer pause raises a child's inherited hold in place: its `pauseSeq` rises and the hold's
+`data` changes, but neither event is emitted, since the session never stopped being held (senpi#3944).
+A held itemized batch emits one `session_notice` per item, each carrying the `noticeCount` after its own item (the
+count its stored notice shows), so a consumer reading the count per event sees it rise through the batch.
+A held extension command leaves custody when a release starts and runs then: if that release is abandoned (its input
+never reached admission) or a newer Stop overtakes it, the command is not restored and does not run again on a later
+release. A held command runs at most once (senpi#3944).
 The ordinary extension UI `notify` event shows the paused count and Resume
 instruction too. Attachment lifecycle extension events remain distinct from
 these engine pause events: attachment never releases any ledger hold.
