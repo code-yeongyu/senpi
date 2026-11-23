@@ -53,6 +53,41 @@ describe("harness teardown (senpi#3570)", () => {
 		expect(existsSync(directory)).toBe(false);
 	});
 
+	it("waits for several harnesses at once and reports every writer that did not finish", async () => {
+		const [first, second] = [held(), held()];
+		const asked: number[] = [];
+		const directories = [first, second].map((writer, index) => {
+			const directory = mkdtempSync(join(tmpdir(), "pi-suite-teardown-"));
+			trackTempDir(directory);
+			settleBeforeRemoval(
+				directory,
+				() => {
+					asked.push(index + 1);
+					return writer.closed;
+				},
+				() => `tool child pid ${index + 1}`,
+				200,
+			);
+			return directory;
+		});
+		const teardown = cleanupTempDirs();
+		const rejected = expect(teardown).rejects.toThrow(
+			/tool child pid 1 did not finish[\s\S]*tool child pid 2 did not finish/,
+		);
+		// Both writers are asked before either deadline: waiting one after the other would ask the second only after
+		// the first had used up its whole deadline.
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(asked).toEqual([1, 2]);
+		await rejected;
+		for (const directory of directories) expect(existsSync(directory)).toBe(true);
+
+		first.release();
+		second.release();
+		for (const directory of directories) trackTempDir(directory);
+		await cleanupTempDirs();
+		for (const directory of directories) expect(existsSync(directory)).toBe(false);
+	});
+
 	describe("from a beforeAll, outside any test's own hooks", () => {
 		let early: Harness;
 		beforeAll(async () => {

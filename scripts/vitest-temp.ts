@@ -52,13 +52,13 @@ export async function removeSettledTempDir(directory: string): Promise<void> {
 
 export async function cleanupTempDirs(): Promise<void> {
 	for (const cleanup of [...cleanups].reverse()) cleanup();
-	const failures: string[] = [];
-	for (const [directory, settler] of [...settlers]) {
-		settlers.delete(directory);
-		directories.delete(directory);
-		const failure = await settleThenRemove(directory, settler);
-		if (failure !== undefined) failures.push(failure);
-	}
+	// Every registered writer is awaited at once, so a file with several harnesses waits one deadline, not one per
+	// harness (sequential waits could add up past vitest's hookTimeout); every writer that did not finish is reported.
+	const pending = [...settlers];
+	settlers.clear();
+	for (const [directory] of pending) directories.delete(directory);
+	const outcomes = await Promise.all(pending.map(([directory, settler]) => settleThenRemove(directory, settler)));
+	const failures = outcomes.filter((failure): failure is string => failure !== undefined);
 	for (const directory of directories) {
 		await rm(directory, { recursive: true, force: true, maxRetries: 3 });
 		directories.delete(directory);
