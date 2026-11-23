@@ -9,7 +9,7 @@ type Settler = { readonly settled: () => Promise<void>; readonly writer: () => s
 const settlers = new Map<string, Settler>();
 
 /** Under vitest's default 10 s hookTimeout, so an expired wait fails here with the writer named, not as a hook timeout. */
-export const SETTLE_DEADLINE_MS = 8_000;
+const SETTLE_DEADLINE_MS = 8_000;
 
 /**
  * Removes `directory` only after `settled` resolves. On the deadline the removal fails naming `writer()` and the
