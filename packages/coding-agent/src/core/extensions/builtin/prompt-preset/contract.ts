@@ -15,6 +15,7 @@ import {
 	isGemini4ArgonModel,
 	isGlm52Model,
 	isGlm53Model,
+	isGlm54Model,
 	isGpt6FamilyModel,
 	isGpt62Model,
 	isGrok45Model,
@@ -92,6 +93,9 @@ export function resolvePresetName(input: {
 	const claudeVersion = extractClaudeOpusVersion(model.id);
 	if (claudeVersion) {
 		return claudeVersion;
+	}
+	if (isGlm54Model(model)) {
+		return "glm-5.4";
 	}
 	if (isGlm53Model(model)) {
 		return "glm-5.3";
@@ -223,6 +227,7 @@ export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
 	{ providerID: "kimi-for-coding", modelID: "kimi-for-coding", preset: "kimi-k2-8" },
 	{ providerID: "kimi-for-coding", modelID: "kimi-for-coding-highspeed", preset: "kimi-k2-7" },
 	{ providerID: "moonshotai", modelID: "kimi-k2.6", preset: "kimi-k2-6" },
+	{ providerID: "zai-coding-plan", modelID: "glm-5.4", preset: "glm-5.4" },
 	{ providerID: "zai-coding-plan", modelID: "glm-5.3", preset: "glm-5.3" },
 	{ providerID: "zai-coding-plan", modelID: "glm-5.2", preset: "glm-5.2" },
 	{ providerID: "deepseek", modelID: "deepseek-v4-flash-0731", preset: "deepseek-v4-flash-0731" },
@@ -262,6 +267,7 @@ export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
 	"kimi-k2-8",
 	"kimi-k2-7",
 	"kimi-k2-6",
+	"glm-5.4",
 	"glm-5.3",
 	"glm-5.2",
 	"deepseek-v4-flash-0731",

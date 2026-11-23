@@ -1,3 +1,27 @@
+## 2026-11-23 - GLM 5.4 preset (drop-in for the 5.3 seat)
+
+### What changed
+
+- `glm-5-4.ts`: new preset for the GLM 5.4 family, a thin alias over `buildGlm5Prompt` exactly like `glm-5-3.ts`. A measured temperament study (code-yeongyu/oh-my-openagent#14826) found 5.4 behaves the same as 5.3 (identical checklist literalism, scope discipline and stop compliance; 5.4 merely reasons more), so 5.4 renders the same GLM 5.x tuning surface as 5.2/5.3.
+- `matchers.ts`: `hasGlm54Signal`/`isGlm54Model` matcher (regex `glm(?:[._-]|p)5(?:[._-]|p)4` with `[/@._-]` boundaries), disjoint from the 5.3/5.2 matchers.
+- `contract.ts`: `resolvePresetName` branch (checked before the 5.3 matcher), `PROMPT_PRESET_MODEL_CASES` row, `AUTO_RESOLVED_PRESET_NAMES` entry.
+- `presets.ts`: import + `renderPreset` case for `"glm-5.4"`.
+- `settings.ts`: `"glm-5.4"` joins `PromptPresetName` and `VALID_PRESETS`.
+- `docs/settings.md`, `AGENTS.md`, `builtin/AGENTS.md`: preset lists updated.
+- `test/suite/prompt-presets-glm-5-4.test.ts`: id resolution across bare/provider-prefixed/fireworks/highspeed/display-name shapes, non-routing of 5.3/5.2/4.x (and `glm-5.4` added to the 5.3 suite's non-routing list the other way round), settings force, and a catalog sweep asserting every built-in GLM 5.4 entry resolves. The native baseline fixture gains the six `glm-5.4` surface/option hashes, recaptured through the same harness (byte-identical to glm-5.3's rows — same shared builder).
+
+### Why
+
+- GLM 5.4 shipped on the z.ai Coding Plan (models.dev 2026-11-23) without a preset, so it fell back to the untuned dynamic prompt. The temperament measurement shows it is a drop-in for the 5.3 seat, so the preset is a direct copy of the GLM 5.x surface.
+
+### Why extension system couldn't handle this differently
+
+- Content-only addition inside this builtin; follows the thin-wrapper preset architecture (`tuningSection` only).
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: `glm-5-4.ts` is new; `matchers.ts`/`presets.ts`/`settings.ts`/`contract.ts` touch shared lists — trivial adjacent-line conflicts if upstream adds presets.
+
 ## 2026-11-22 - The eval routing rule names the session's own tool for source edits (#7275, senpi#7232)
 
 ### What changed

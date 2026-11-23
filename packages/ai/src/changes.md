@@ -1,3 +1,18 @@
+## 2026-11-23 - GLM 5.4 coding-plan catalog entries + wire effort
+
+### What changed and why
+
+- `api/openai-completions.ts`: `isGlm5x` regex `glm-5\.[23]` → `glm-5\.[234]`, so GLM 5.4 inherits the same host-specific thinkingLevelMap branches (zai → DEEPSEEK map, openrouter → `{xhigh}`, default → `{max}`), and the zai `thinkingFormat` handler's always-enabled guard now covers `glm-5.[34]` (+flash/highspeed shapes): 5.4 cannot disable thinking either (effort set low/high/max with no off; the temperament study measured always-on reasoning).
+- Provider data files (`packages/ai/src/providers/data/`): `glm-5.4` entries on `zai` and `zai-coding-cn`, regenerated provider-scoped from models.dev (2026-11-23): text+image input with image inputLimits, 1M context / 131072 output, effort thinkingLevelMap {low, high, max}, subscription cost zeros until the z.ai direct catalog publishes reference pricing.
+- `scripts/generate-models.ts`: the coding-plan `isGlm5x` allowlist regex `^(?:glm-5\.3)(?:-(?:flash|highspeed))?$` → `^(?:glm-5\.[34])(?:-(?:flash|highspeed))?$`, so regeneration preserves the 5.4 entries and their thinkingLevelMaps.
+- `.manifest.json`: regenerated (structureHash + per-file sha256) to match the changed data files.
+- `test/glm-5.3-thinking.test.ts`: glm-5.4 rows pin the effort map and always-enabled contracts through the stream.
+
+### Expected merge conflict zones
+
+- `api/openai-completions.ts`: the `isGlm5x` regex and zai handler guard sit in fork-modified sections; re-apply if upstream touches the same lines.
+- Provider data files: fork-only; upstream has no counterpart.
+
 ## 2026-11-17 - Root export of the OAuth refresh (custody CK18, senpi#5865)
 
 ### What changed

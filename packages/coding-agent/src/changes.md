@@ -1,3 +1,21 @@
+## GLM 5.4 full support: preset + catalog + wire (2026-11-23)
+
+### What changed
+
+- `core/extensions/builtin/prompt-preset/`: new `glm-5-4.ts` preset (thin alias over `buildGlm5Prompt`, identical surface to 5.2/5.3), `matchers.ts` matcher, `contract.ts` resolution + parity tables, `presets.ts` dispatch, `settings.ts` union entry.
+- `packages/ai`: `api/openai-completions.ts` extends `isGlm5x` to `glm-5.[234]` and the zai always-enabled-thinking guard to `glm-5.[34]`. `generate-models.ts` extends the coding-plan `isGlm5x` allowlist so regeneration preserves glm-5.4 effort metadata. Catalog entries for `glm-5.4` on `zai` and `zai-coding-cn` (models.dev 2026-11-23: text+image input, 1M context, effort low/high/max).
+- Tests: `test/suite/prompt-presets-glm-5-4.test.ts` (preset resolution + catalog sweep, plus `glm-5.4` added to the 5.3 suite's non-routing list), `packages/ai/test/glm-5.3-thinking.test.ts` gains glm-5.4 always-enabled, mapped-effort and catalog-effort rows, and `test/suite/prompt-presets-native-baseline.json` gains the six `glm-5.4` surface/option hashes (byte-identical to glm-5.3's, same shared builder).
+
+### Why
+
+- GLM 5.4 shipped on the z.ai Coding Plan without senpi support: no preset, no catalog entries, no wire-level reasoning effort handling. A measured temperament study (code-yeongyu/oh-my-openagent#14826) found 5.4 temperamentally equivalent to 5.3, so every seat 5.3 holds is mirrored exactly.
+
+### Expected merge conflict zones
+
+- `prompt-preset/matchers.ts`/`presets.ts`/`settings.ts`/`contract.ts`: shared lists — trivial adjacent-line conflicts if upstream adds presets.
+- `api/openai-completions.ts`: the `isGlm5x` regex and zai handler guard sit in fork-modified sections.
+- Provider data files: fork-only; upstream has no counterpart.
+
 ## 2026-11-20 - Use loaded flag declarations to identify positional messages (#7116)
 
 ### What changed

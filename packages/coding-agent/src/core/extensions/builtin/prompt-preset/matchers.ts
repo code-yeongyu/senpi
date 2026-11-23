@@ -212,6 +212,14 @@ export function isGlm53Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGlm53Signal(model.id) || (model.name !== undefined && hasGlm53Signal(model.name));
 }
 
+export function hasGlm54Signal(value: string): boolean {
+	return /(?:^|[/@._-])glm(?:[._-]|p)5(?:[._-]|p)4(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+export function isGlm54Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGlm54Signal(model.id) || (model.name !== undefined && hasGlm54Signal(model.name));
+}
+
 export function hasGrok45Signal(value: string): boolean {
 	// Match any Grok 4.5 id shape: grok-4.5, grok4.5, grok45, grok-4p5, provider:model,
 	// path/prefix ids, and trailing tags (:thinking, -latest). Keep 4.3 / 4.20 / 3 out.
