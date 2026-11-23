@@ -2662,7 +2662,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const supportsImage = m.modalities?.input?.includes("image");
 
 				const isGlm52 = modelId === "glm-5.2" || modelId === "glm-5.2-highspeed";
-				const isGlm5x = isGlm52 || /^(?:glm-5\.3)(?:-(?:flash|highspeed))?$/.test(modelId);
+				const isGlm5x = isGlm52 || /^(?:glm-5\.[34])(?:-(?:flash|highspeed))?$/.test(modelId);
 				const referenceCost = modelId === "glm-5.2-highspeed" ? undefined : data.zai?.models[modelId]?.cost ?? m.cost;
 
 				models.push({

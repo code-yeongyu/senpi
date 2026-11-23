@@ -188,7 +188,7 @@ function getThinkingLevelMap(
 	const isKimiK3 = id === "k3" || id.startsWith("k3-") || /(?:^|[/:-])kimi-k3(?:$|[/.:_-])/.test(id);
 	const isDeepSeek = id.includes("deepseek");
 	const isMiMo = /\bmimo\b/.test(id);
-	const isGlm5x = /(?:^|[/:-])glm-5\.[23](?:$|[/.:_-])/.test(id);
+	const isGlm5x = /(?:^|[/:-])glm-5\.[234](?:$|[/.:_-])/.test(id);
 
 	if (model.provider === "ollama") {
 		return OLLAMA_THINKING_LEVEL_MAP;
@@ -1276,13 +1276,13 @@ function buildParams(
 	const thinkingBudget = resolveClampedThinkingBudget(model, options, params);
 
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
-		const isGlm53 = /(?:^|[/:-])glm-5\.3(?:-(?:flash|highspeed))?(?:$|[/.:_])/.test(model.id.toLowerCase());
+		const isGlm53Or54 = /(?:^|[/:-])glm-5\.[34](?:-(?:flash|highspeed))?(?:$|[/.:_])/.test(model.id.toLowerCase());
 		const zaiParams = params as Omit<typeof params, "reasoning_effort"> & {
 			thinking?: { type: "enabled" | "disabled"; clear_thinking?: boolean };
 			reasoning_effort?: string;
 		};
 		zaiParams.thinking =
-			options?.reasoningEffort || isGlm53 ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
+			options?.reasoningEffort || isGlm53Or54 ? { type: "enabled", clear_thinking: false } : { type: "disabled" };
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			const effort = resolveReasoningEffort(thinkingLevelMap, options.reasoningEffort);
 			if (effort !== undefined) {

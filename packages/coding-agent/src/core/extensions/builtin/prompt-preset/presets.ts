@@ -22,6 +22,7 @@ import { buildDeepseekV4ProPrompt } from "./deepseek-v4-pro.ts";
 import { buildGemini4ArgonPrompt } from "./gemini-4-argon.ts";
 import { buildGlm52Prompt } from "./glm-5-2.ts";
 import { buildGlm53Prompt } from "./glm-5-3.ts";
+import { buildGlm54Prompt } from "./glm-5-4.ts";
 import { buildGpt52Prompt } from "./gpt-5.2.ts";
 import { buildGpt53CodexPrompt } from "./gpt-5.3-codex.ts";
 import { buildGpt54Prompt } from "./gpt-5.4.ts";
@@ -107,6 +108,8 @@ function renderPreset(
 			return { name, prompt: buildGpt52Prompt(options) };
 		case "gpt-5":
 			return { name, prompt: buildGpt5Prompt(options) };
+		case "glm-5.4":
+			return { name, prompt: buildGlm54Prompt(options) };
 		case "glm-5.3":
 			return { name, prompt: buildGlm53Prompt(options) };
 		case "glm-5.2":

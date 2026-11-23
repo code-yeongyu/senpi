@@ -19,6 +19,7 @@ export type PromptPresetName =
 	| "deepseek-v4-pro"
 	| "glm-5.2"
 	| "glm-5.3"
+	| "glm-5.4"
 	| "gemini-4-argon"
 	| "grok-4.5"
 	| "grok-4.6"
@@ -62,6 +63,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"deepseek-v4-pro",
 	"glm-5.2",
 	"glm-5.3",
+	"glm-5.4",
 	"gemini-4-argon",
 	"grok-4.5",
 	"grok-4.6",

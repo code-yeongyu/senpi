@@ -58,7 +58,7 @@ describe("GLM 5.3 prompt preset", () => {
 		expect(preset?.prompt).not.toContain("apply_patch");
 	});
 
-	it.each(["glm-5.2", "glm-4.6", "zai-org/glm-4.5", "some-glm-compatible-router"])(
+	it.each(["glm-5.4", "glm-5.2", "glm-4.6", "zai-org/glm-4.5", "some-glm-compatible-router"])(
 		"does not route %s to the glm-5.3 preset",
 		(modelId) => {
 			// given

@@ -1,0 +1,112 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
+import { describe, expect, it } from "vitest";
+import { GLM5_TUNING } from "../../src/core/extensions/builtin/prompt-preset/glm-5.ts";
+import {
+	type PromptPresetSettings,
+	resolvePreset,
+	resolvePresetName,
+} from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
+
+function createModel(id: string, provider: string, api: Api = "openai-responses"): Model<Api> {
+	return {
+		id,
+		name: id,
+		api,
+		provider,
+		baseUrl: "https://example.com/v1",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128_000,
+		maxTokens: 16_384,
+	};
+}
+
+function hasGlm54CatalogSignal(model: Model<Api>): boolean {
+	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
+	return /(?:^|[/@._-])glm(?:[._-]|p)5(?:[._-]|p)4(?:$|[/@._:-])/.test(searchable);
+}
+
+function getGlm54CatalogModels(): Model<Api>[] {
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasGlm54CatalogSignal));
+}
+
+describe("GLM 5.4 prompt preset", () => {
+	it.each([
+		"glm-5.4",
+		"zai-org/GLM-5.4",
+		"z-ai/glm-5.4",
+		"zai/glm-5.4",
+		"@cf/zai-org/glm-5.4",
+		"workers-ai/@cf/zai-org/glm-5.4",
+		"accounts/fireworks/models/glm-5p4",
+		"glm-5.4-highspeed",
+		"zai-org/glm_5_4:thinking",
+		"GLM 5.4",
+	])("resolves %s to the glm-5.4 preset", (modelId) => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel(modelId, "openrouter", "openai-responses");
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("glm-5.4");
+		expect(preset?.prompt).toContain(GLM5_TUNING);
+		expect(preset?.prompt).not.toContain("apply_patch");
+	});
+
+	it.each(["glm-5.3", "glm-5.2", "glm-4.6", "zai-org/glm-4.5", "some-glm-compatible-router"])(
+		"does not route %s to the glm-5.4 preset",
+		(modelId) => {
+			// given
+			const settings: PromptPresetSettings = { promptPreset: "auto" };
+			const model = createModel(modelId, "openrouter", "openai-responses");
+
+			// when
+			const name = resolvePresetName(model, settings);
+
+			// then
+			expect(name === undefined || name !== "glm-5.4").toBe(true);
+		},
+	);
+
+	it("routes user questions through ask_user_question when it is available", () => {
+		expect(GLM5_TUNING).toContain("ask_user_question");
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const preset = resolvePreset(createModel("glm-5.4", "openrouter", "openai-responses"), settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+	});
+
+	it("allows settings.json to force glm-5.4 regardless of model id", () => {
+		// given
+		const settings = { promptPreset: "glm-5.4" } as PromptPresetSettings;
+		const model = createModel("some-random-model", "custom", "openai-responses");
+
+		// when
+		const preset = resolvePreset(model, settings);
+
+		// then
+		expect(preset?.name).toBe("glm-5.4");
+		expect(preset?.prompt).toContain(GLM5_TUNING);
+	});
+
+	it("returns glm-5.4 preset for every GLM 5.4 built-in catalog model", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const catalogModels = getGlm54CatalogModels();
+		const catalogModelIds = catalogModels.map((model) => `${model.provider}/${model.id}`);
+
+		// when
+		const misses = catalogModels
+			.filter((model) => resolvePresetName(model, settings) !== "glm-5.4")
+			.map((model) => `${model.provider}/${model.id}`);
+
+		// then
+		expect(catalogModelIds).toEqual(expect.arrayContaining(["zai/glm-5.4", "zai-coding-cn/glm-5.4"]));
+		expect(misses).toEqual([]);
+	});
+});

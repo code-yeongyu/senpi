@@ -59,6 +59,10 @@ function glm53OnZai(id = "glm-5.3"): Model<"openai-completions"> {
 	};
 }
 
+function glm54OnZai(): Model<"openai-completions"> {
+	return { ...glm53OnZai("glm-5.4"), name: "GLM-5.4" };
+}
+
 async function captureParams(
 	model: Model<"openai-completions">,
 	reasoning?: string,
@@ -133,4 +137,23 @@ describe("GLM 5.3 openai-completions reasoning effort", () => {
 			expect(params.reasoning_effort).toBeUndefined();
 		},
 	);
+
+	it("keeps thinking enabled for glm-5.4 even when no reasoning effort is set", async () => {
+		const params = await captureParams(glm54OnZai());
+		expect(params.thinking?.type).toBe("enabled");
+	});
+
+	it("maps glm-5.4 low effort through the zai thinking-level map (not raw)", async () => {
+		const params = await captureParams(glm54OnZai(), "low");
+		expect(params.reasoning_effort).toBe("high");
+	});
+
+	it("maps catalog glm-5.4 effort through its shipped thinking-level map", async () => {
+		const model = getModel("zai", "glm-5.4");
+		expect(model).toBeDefined();
+		const low = model ? await captureParams(model, "low") : undefined;
+		const high = model ? await captureParams(model, "high") : undefined;
+		expect(low?.reasoning_effort).toBe("low");
+		expect(high?.reasoning_effort).toBe("high");
+	});
 });
