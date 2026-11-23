@@ -64,7 +64,7 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 		const answers = peer.inbox.filter((record) => record.type === "response" && record.id === "held-open");
 		expect(answers).toHaveLength(1);
 		expect(answers[0]).toMatchObject({ success: false, admissionId: "a1" });
-	}, 120_000);
+	});
 
 	it("#given a handler that answers under the request's id and then throws #then that answer is the only one, #and a later request reusing the id, whose handler writes nothing, is answered", async () => {
 		await using host = await statusHost();
@@ -85,7 +85,7 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 			ANSWER,
 			expect.objectContaining({ success: false, errorCode: "internal_error" }),
 		]);
-	}, 120_000);
+	});
 
 	it("#given a handler whose own answer the writer refused, as too large for the shared output #when it throws for that #then the request is still answered, by the host", async () => {
 		await using host = await statusHost();
@@ -102,7 +102,7 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 
 		expect(under(values(), "r1").map((value) => value.success)).toEqual([true, false]);
 		expect(under(values(), "r1")[1]).toMatchObject({ errorCode: "internal_error" });
-	}, 120_000);
+	});
 
 	it("#given a handler that throws having written nothing #then the request is answered once with internal_error and the failure, #and the host says so on stderr", async () => {
 		await using host = await statusHost();
@@ -120,7 +120,7 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 			}),
 		]);
 		expect(stderr()).toContain(`senpi rpc stdio request failed: ${FAILURE}\n`);
-	}, 120_000);
+	});
 
 	it("#given a handler that throws a session registry refusal #then the request is answered with that refusal's code and data", async () => {
 		await using host = await statusHost();
@@ -137,7 +137,7 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 				errorData: { holder: "another connection" },
 			}),
 		]);
-	}, 120_000);
+	});
 
 	it("#given a command sent without an id, which is owed no answer #when its handler throws #then nothing is written for it, and the host still says so on stderr", async () => {
 		await using host = await statusHost();
@@ -148,7 +148,7 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 
 		expect(values()).toEqual([]);
 		expect(stderr()).toContain(`senpi rpc connection peer failed: ${FAILURE}\n`);
-	}, 120_000);
+	});
 
 	it("#given a handler that answers a close itself and then throws #then its connection receives that one answer, the close's own", async () => {
 		await using host = await statusHost();
@@ -168,7 +168,7 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 		expect(peer.inbox.filter((record) => record.type === "response" && record.id === "c1")).toEqual([
 			expect.objectContaining({ command: "close_session", success: true, sessionId: "s-closed" }),
 		]);
-	}, 120_000);
+	});
 
 	it("#given a close reply taken for another connection under the same id while a command is handled #when that command's handler throws #then the command is still answered: a reply for one connection does not answer for another", async () => {
 		await using host = await statusHost();
@@ -190,7 +190,7 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 		expect(peer.inbox.filter((record) => record.type === "response" && record.id === "r1")).toEqual([
 			expect.objectContaining({ command: "list_sessions", success: false, errorCode: "internal_error" }),
 		]);
-	}, 120_000);
+	});
 });
 
 describe("which requests in flight were answered", () => {
