@@ -2,6 +2,7 @@ import type { Socket } from "node:net";
 import type { Duplex, Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { type HostAdmission, hostStoppingResponse } from "./host-admission.ts";
+import { PEER_END_REPLY_GRACE_MS } from "./host-peer-end.ts";
 import { MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 import { launchProofRecordRefusal, RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 import type { PublicRpcConnection } from "./rpc-public-auth.ts";
@@ -101,7 +102,18 @@ export function proxyWithAdmission(
 				await write(internal, `${line}\n`);
 			}
 		}
-		internal?.end();
+		// The client's FIN (the server is half-open): with no hop every reply is out once the loop ends; with one, the
+		// responses loop ends the client after the host side ends, and a host side that never does is cut (omo#14725).
+		if (!internal) {
+			await refusals;
+			client.end(() => client.destroy());
+			return;
+		}
+		if (!client.destroyed) {
+			const cut = setTimeout(fail, PEER_END_REPLY_GRACE_MS);
+			client.once("close", () => clearTimeout(cut));
+		}
+		internal.end();
 	}
 
 	async function responses(source: Duplex): Promise<void> {
@@ -185,7 +197,9 @@ async function* lines(socket: Readable, limit: number): AsyncGenerator<string | 
 	const decoder = new StringDecoder("utf8");
 	let buffer = "";
 	let discarding = false;
-	for await (const chunk of socket) {
+	// A plain `for await` destroys the stream when the input ends, which cut the client at its own FIN before its
+	// replies; the stream's owner closes it instead (omo#14725).
+	for await (const chunk of socket.iterator({ destroyOnReturn: false })) {
 		const text = typeof chunk === "string" ? chunk : decoder.write(chunk);
 		let offset = 0;
 		while (offset < text.length) {

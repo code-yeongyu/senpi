@@ -1,6 +1,4 @@
-import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { readdirSync, readlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { describe, expect, it } from "vitest";
@@ -14,40 +12,17 @@ import {
 	supervisorLaunch,
 } from "../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
+import { hostChildOf, settledAt, unixSockets } from "../helpers/rpc-host-socket-count.ts";
 
 /**
  * oh-my-openagent#14725 at the real boundary: a supervisor and its host child, 50 public peers of each shape that
  * leave while the host's loop is stalled (SIGSTOP), then every socket either process accepted for them is released.
- * Linux releases them on main too; the leak was measured on macOS under Bun, which `SENPI_TEST_HOST_RUNTIME=bun`
- * selects for both processes. The deterministic proof of the fix is `rpc-accepted-socket-release.test.ts`.
+ * Both listeners are half-open, so a release here is the host's own doing on every runtime; `SENPI_TEST_HOST_RUNTIME=bun`
+ * runs both processes on Bun, the runtime of the hosts that leaked. What a FIN owes the peer first is
+ * `rpc-host-peer-fin.test.ts`.
  */
 const PEERS = 50;
-const RELEASE_DEADLINE_MS = 10_000;
 const bun = process.env.SENPI_TEST_HOST_RUNTIME === "bun";
-
-function unixSockets(pid: number): number {
-	if (process.platform === "linux")
-		return readdirSync(`/proc/${pid}/fd`).filter((fd) => {
-			try {
-				return readlinkSync(`/proc/${pid}/fd/${fd}`).startsWith("socket:");
-			} catch {
-				return false;
-			}
-		}).length;
-	const listing = execFileSync("lsof", ["-n", "-P", "-a", "-U", "-p", String(pid)], { encoding: "utf8" });
-	return Math.max(0, listing.trim().split("\n").length - 1);
-}
-
-/** A count read across a process boundary has no event to await; it is re-read until it settles or the deadline. */
-async function settlesAt(pid: number, baseline: number): Promise<number> {
-	const deadline = performance.now() + RELEASE_DEADLINE_MS;
-	let count = unixSockets(pid);
-	while (count > baseline && performance.now() < deadline) {
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		count = unixSockets(pid);
-	}
-	return count;
-}
 
 const request = '{"id":"1","type":"get_protocol_info","observe":true}\n';
 const shapes: ReadonlyArray<readonly [string, boolean, (socket: Socket) => void]> = [
@@ -85,10 +60,16 @@ describe.skipIf(process.platform === "win32")("host socket churn while the host 
 					readinessTimeoutMs: 60_000,
 				},
 			});
-			host.release();
 			const supervisor = host.pid;
-			const child = Number(execFileSync("pgrep", ["-P", String(supervisor)], { encoding: "utf8" }).split("\n")[0]);
-			const baseline = { supervisor: unixSockets(supervisor), child: unixSockets(child) };
+			const child = hostChildOf(supervisor);
+			// The ensure's readiness connection is still open: one accepted socket and one hop in the supervisor, one
+			// accepted socket in the child. The baseline is taken once it has closed in both.
+			const holding = { supervisor: unixSockets(supervisor), child: unixSockets(child) };
+			host.release();
+			const baseline = {
+				supervisor: await settledAt(supervisor, holding.supervisor - 2),
+				child: await settledAt(child, holding.child - 1),
+			};
 			process.kill(child, "SIGSTOP");
 			try {
 				for (const [, halfOpen, leave] of shapes)
@@ -103,8 +84,8 @@ describe.skipIf(process.platform === "win32")("host socket churn while the host 
 				process.kill(child, "SIGCONT");
 			}
 			expect({
-				supervisor: await settlesAt(supervisor, baseline.supervisor),
-				child: await settlesAt(child, baseline.child),
+				supervisor: await settledAt(supervisor, baseline.supervisor),
+				child: await settledAt(child, baseline.child),
 			}).toEqual(baseline);
 		} finally {
 			for (const socket of peers) socket.destroy();

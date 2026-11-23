@@ -49,7 +49,9 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
 	// Each public client the host's own listener refuses is reset; say so once per outage, not once per client (omo#14725).
 	let refused = 0;
-	return createServer((client) => {
+	// Half-open: the proxy ends a client after the host side ended, so a reply still in flight at the client's FIN is
+	// delivered (proxyWithAdmission bounds that wait).
+	return createServer({ allowHalfOpen: true }, (client) => {
 		const auth = options.publicEndpoint ? new PublicRpcConnection(client, options.publicEndpoint) : undefined;
 		const accept = async (): Promise<void> => {
 			// Teardown is terminal even for an accept that raced socket shielding/server.close.
@@ -74,10 +76,11 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 			client.once("close", detach);
 			client.once("error", detach);
 			try {
+				// Both hop kinds settle on the connection's real outcome, so a refusal of either reaches the catch below.
 				const hop =
 					internal && options.internalKey
 						? await connectInternalConnection(internal, options.internalKey)
-						: internal;
+						: internal && (await connected(internal));
 				if (refused > 0) supervisorLog(`host child accepts connections again after refusing ${refused}`);
 				refused = 0;
 				if (client.destroyed) {
@@ -98,6 +101,16 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 		};
 		if (publicSecret) authenticateSocket(client, publicSecret, () => void accept());
 		else void accept();
+	});
+}
+
+function connected(socket: Socket): Promise<Socket> {
+	return new Promise((resolve, reject) => {
+		socket.once("error", reject);
+		socket.once("connect", () => {
+			socket.off("error", reject);
+			resolve(socket);
+		});
 	});
 }
 
