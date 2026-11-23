@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
+import { sessionFilesCarrying } from "./find-session.ts";
 import type { RpcClient } from "./rpc-client.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 
@@ -53,7 +53,8 @@ async function resolveDurableId(
 	agentDir: string,
 ): Promise<ResolvedSessionRef | undefined> {
 	const liveRows = rows.filter((row) => row.durableSessionId === id);
-	const transcripts = (await transcriptsUnder(agentDir)).filter((session) => session.id === id);
+	// find_session's own lookup (senpi#6973): the same folders, the sessions root included, and the same file bound.
+	const transcripts = (await sessionFilesCarrying(agentDir, id)).map(({ file, cwd }) => ({ path: file, cwd, id }));
 	const files = new Set([
 		...liveRows.map((row) => (row.sessionPath === undefined ? row.sessionId : canonicalSessionPath(row.sessionPath))),
 		...transcripts.map((session) => canonicalSessionPath(session.path)),
@@ -81,14 +82,6 @@ async function parkedByPath(ref: string): Promise<ResolvedSessionRef> {
 	if (!existsSync(path)) return { kind: "unknown" };
 	const info = (await SessionManager.listAll(dirname(path))).find((session) => samePath(session.path, path));
 	return info ? parked(info) : { kind: "unknown" };
-}
-
-/** The host keeps every transcript under `<agentDir>/sessions/<cwd-dir>/`. */
-async function transcriptsUnder(agentDir: string): Promise<readonly Transcript[]> {
-	const root = join(agentDir, "sessions");
-	if (!existsSync(root)) return [];
-	const dirs = (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory());
-	return (await Promise.all(dirs.map((entry) => SessionManager.listAll(join(root, entry.name))))).flat();
 }
 
 function parked(info: Transcript): ResolvedSessionRef {

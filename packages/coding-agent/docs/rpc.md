@@ -6371,7 +6371,7 @@ Every other command that takes a durable id works on a session the host still ha
 {"unknown":true}
 ```
 
-`open` says an engine of this host holds that session now, so a client knows whether its next step is an `open_session` or an attach. `ambiguous` is the answer when two session files carry one durable id (a caller-minted id reused while the first was parked); it names neither, and the client picks by another means. `unknown` is the answer when no session file of this host carries it.
+`open` says an engine of this host holds that session now, so a client knows whether its next step is an `open_session` or an attach. `ambiguous` is the answer when two session files carry one durable id (a caller-minted id reused while the first was parked); it names neither, and the client picks by another means. `unknown` is the answer when no session file in the folders below carries it: a session `move_session` landed in a caller-chosen `sessionDir` outside `<agentDir>/sessions/` is not searched, so its id can answer `unknown` although its file is on this host (senpi#6973). `senpi host session <ref>` resolves a durable id with this same lookup, so the CLI and `find_session` find the same files.
 
 The command is a read: it opens, claims, unloads, seals and rewrites nothing, and touches no move record. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/` and files directly in `<agentDir>/sessions/`), never a path from the request, which carries the durable id alone. Of each session file only the first line, its header, is read.
 
