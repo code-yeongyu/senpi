@@ -7,6 +7,7 @@
  * from its session file, so `list_sessions` (and the relay that mirrors it) lists the session again
  * without anyone re-opening it by hand.
  */
+import { refusesApprovals, replacementLaunchProfile } from "../../core/opener-approvals.ts";
 import { clearHandoverParkedSession, recordHandoverParkedSession } from "./host-handover-parked.ts";
 import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
 import { currentResidentWriter } from "./host-handover-resident-writer.ts";
@@ -45,13 +46,24 @@ export async function recordRetainedSession(
 				contextOverlay: retained.contextOverlay,
 				...(durableSessionId !== undefined ? { durableSessionId } : {}),
 			},
-			retained.profile,
+			recoveryProfile(retained),
 			Object.keys(host.defaults.hostContext ?? {}),
 		),
 		parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
 		...(resident ? { residentWriter: await currentResidentWriter() } : {}),
 		...(live ? { live: true as const } : {}),
 	});
+}
+
+/**
+ * The profile a restart reopens the session from. The opener's approvals label belongs to the session it opened: once
+ * the live runtime has replaced it (`new_session`, `switch_session`, `fork`, `clone`) the runtime's profile drops the
+ * label, and so does the record, or a restart would label the replacement and make it refuse.
+ */
+function recoveryProfile(retained: RpcSessionEntry): RpcSessionEntry["profile"] {
+	const live = retained.runtime?.launchProfile;
+	if (retained.runtime === undefined || refusesApprovals(live?.sessionContext)) return retained.profile;
+	return replacementLaunchProfile(retained.profile) ?? retained.profile;
 }
 
 /** The session path a live entry writes now; a replacement moves it before the registry's metadata catches up. */

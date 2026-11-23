@@ -134,10 +134,15 @@ Handover parks with `completed`, `cancelled`, `error`, `failed`, `lost`, or
 opened it and nobody attaches to it): a tool call the permission preset would ask about is refused at once with a
 reason the model reads, never raised as a dialog. The engine records it (a `permission-approvals-refused` entry
 naming the session id) whenever such an open finds no record for that id yet, written and synced to the session file
-before the session starts; when that write or sync fails the open fails. Every later open of the file refuses too,
+before the session starts; when that write or sync fails the open fails (a record already there is synced again
+first). A labelled open that attaches to a session this host already runs records it the same way before it answers,
+and the running session refuses from its next ask; a session running in a worker refuses such an attach with
+`session_path_in_use` (`reason: "approvals_label_unsupported"`). A labelled `claim_session` answers only once the
+record is in the claimed session's file. Every later open of the file refuses too,
 with or without the label, including a session first labelled after it already had messages. The label belongs to
 the session that open created or reopened: a session the connection later replaces it with (`new_session`,
-`switch_session`, `fork`, `clone`) does not inherit it, and a fork or clone copies the entry under a new session id,
+`switch_session`, `fork`, `clone`) does not inherit it, nor does the record a host keeps to reopen a retained
+session after a restart, and a fork or clone copies the entry under a new session id,
 where it does not apply, so the copy asks. Any other value, or no value, on a session that never carried it keeps
 the prompt.
 Other context keys remain opaque.

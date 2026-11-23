@@ -64,7 +64,7 @@ export function hasOpenerRefusal(session: Pick<SessionManager, "getSessionId" | 
 }
 
 /**
- * Records the refusal for a labelled open before the session starts. A persisted session must have it in its file and
+ * Records the refusal for a labelled open (or attach) before the session starts or the attach is answered. A persisted session must have it in its file and
  * synced (the header is forced so the entry reaches the file itself, not the buffer that waits for the first message);
  * anything less rejects, and the open fails instead of starting a session that could later ask. A session opened
  * without persistence keeps the record in memory, like the rest of that session.
@@ -73,16 +73,17 @@ export async function recordOpenerRefusal(
 	session: RecordingSession,
 	durability: JournalDurability = fsJournalDurability(),
 ): Promise<void> {
-	if (hasOpenerRefusal(session)) return;
+	const recorded = hasOpenerRefusal(session);
 	const record = { sessionId: session.getSessionId() };
 	if (!session.isPersisted()) {
-		session.appendCustomEntry(REFUSE_APPROVALS_ENTRY_TYPE, record);
+		if (!recorded) session.appendCustomEntry(REFUSE_APPROVALS_ENTRY_TYPE, record);
 		return;
 	}
 	await session.persistHeaderNow();
 	const file = session.getSessionFile();
 	if (file === undefined || !session.isTranscriptFlushed()) throw new OpenerRefusalNotDurableError(file);
-	session.appendCustomEntry(REFUSE_APPROVALS_ENTRY_TYPE, record);
+	if (!recorded) session.appendCustomEntry(REFUSE_APPROVALS_ENTRY_TYPE, record);
+	// Synced even when the record was already there: a readable record is not proof that an earlier sync succeeded.
 	await durability.syncFile(file);
 	await durability.syncDirectory(dirname(file));
 }

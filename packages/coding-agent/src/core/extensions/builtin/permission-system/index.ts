@@ -147,7 +147,6 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let cellSession: object | undefined;
 
 	const labelled = refusesApprovals(pi.sessionContext);
-	let refusedByOpener = labelled;
 	const nextRequestID = createRequestIDFactory();
 	// Rules this session already persisted at answer time; shutdown skips re-appending them.
 	const persistedAtAnswer = new Set<string>();
@@ -169,7 +168,6 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
 
 	pi.on("session_start", async (_event, ctx) => {
-		refusedByOpener = labelled || hasOpenerRefusal(ctx.sessionManager);
 		attachedContexts.add(contextKey(ctx));
 		attach(ctx);
 		applyToolDenials();
@@ -413,6 +411,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				continue;
 			}
 
+			// Read at ask time: a labelled attach can record the refusal while this session is live.
+			const refusedByOpener = labelled || hasOpenerRefusal(ctx.sessionManager);
 			if (ctx.hasUI && !refusedByOpener) {
 				const reply = await showPermissionPrompt(ctx, request, signal);
 				activeService.reply(reply);
