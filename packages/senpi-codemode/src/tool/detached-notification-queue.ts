@@ -3,11 +3,17 @@ import { buildDetachedCellNotification } from "./detached-cell-notification.ts";
 
 export interface PendingDetachedNotification {
 	readonly snapshot: () => EvalDetachedCellSnapshot | Promise<EvalDetachedCellSnapshot>;
+	/**
+	 * Resolves once the cell's own result is final (its write hooks returned). The notification joins a batch only then,
+	 * so one cell's slow hook never holds back another cell's notification. Never rejects.
+	 */
+	readonly ready?: Promise<void>;
 }
 
 export class DetachedNotificationQueue {
 	readonly #notifier: EvalDetachedCellNotifier | undefined;
 	#pending: PendingDetachedNotification[] = [];
+	readonly #waiting = new Set<Promise<void>>();
 	#flush: Promise<void> | undefined;
 
 	constructor(notifier: EvalDetachedCellNotifier | undefined) {
@@ -15,11 +21,22 @@ export class DetachedNotificationQueue {
 	}
 
 	enqueue(notification: PendingDetachedNotification): void {
-		this.#pending.push(notification);
-		this.#schedule();
+		const { ready, snapshot } = notification;
+		if (ready === undefined) {
+			this.#pending.push({ snapshot });
+			this.#schedule();
+			return;
+		}
+		const waiting = ready.then(() => {
+			this.#waiting.delete(waiting);
+			this.enqueue({ snapshot });
+		});
+		this.#waiting.add(waiting);
 	}
 
+	/** Resolves once every notification enqueued so far was delivered, including those still waiting to be ready. */
 	async flush(): Promise<void> {
+		while (this.#waiting.size > 0) await Promise.all(this.#waiting);
 		const flush = this.#flush;
 		if (flush !== undefined) await flush;
 	}

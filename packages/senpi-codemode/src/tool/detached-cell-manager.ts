@@ -308,9 +308,9 @@ export class EvalDetachedCellManager {
 				this.#notificationQueue.enqueue({
 					snapshot: async () => {
 						await cell.interruptOutcome?.promise;
-						await cell.finalResult;
 						return this.#snapshot(cell);
 					},
+					...(cell.finalResult === undefined ? {} : { ready: cell.finalResult }),
 				});
 			}
 		}

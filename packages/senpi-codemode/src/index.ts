@@ -54,6 +54,7 @@ type CodemodeEvent =
 	| "model_select"
 	| "turn_start"
 	| "tool_execution_start"
+	| "tool_call_ready"
 	| "tool_execution_end";
 
 export interface CodemodeExtensionAPI {

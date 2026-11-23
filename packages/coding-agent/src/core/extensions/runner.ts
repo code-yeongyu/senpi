@@ -2701,6 +2701,14 @@ export class ExtensionRunner {
 			}
 		}
 
+		// The chain let the call run: observers learn the arguments it runs with before it runs (senpi#7232).
+		await this.emit({
+			type: "tool_call_ready",
+			toolCallId: event.toolCallId,
+			toolName: event.toolName,
+			...(event.parentToolCallId === undefined ? {} : { parentToolCallId: event.parentToolCallId }),
+			input: { ...event.input },
+		});
 		return result;
 	}
 

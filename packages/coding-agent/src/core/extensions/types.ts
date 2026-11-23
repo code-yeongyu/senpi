@@ -2254,6 +2254,20 @@ export type ToolCallEvent =
 	| LsToolCallEvent
 	| CustomToolCallEvent;
 
+/**
+ * Fired once every `tool_call` handler let a call run, before the tool executes: `input` is a shallow copy of the arguments
+ * the tool runs with, after the handlers' changes (a handler may have redirected a path). Observe only: what a
+ * handler returns or changes here does not reach the call. Not fired for a blocked call.
+ */
+export interface ToolCallReadyEvent {
+	type: "tool_call_ready";
+	toolCallId: string;
+	toolName: string;
+	/** Set when another tool (for example a codemode script) issued this call. */
+	parentToolCallId?: string;
+	input: Record<string, unknown>;
+}
+
 interface ToolResultEventBase {
 	type: "tool_result";
 	/** The call's id; `<parent id>/<n>` for nested calls, see `ToolCallEvent`. */
@@ -2430,6 +2444,7 @@ export type ExtensionEvent =
 	| InputEvent
 	| InputDispositionEvent
 	| ToolCallEvent
+	| ToolCallReadyEvent
 	| ToolResultEvent;
 
 // ============================================================================
@@ -2951,6 +2966,11 @@ export interface ExtensionAPI {
 	on(
 		event: "tool_call",
 		handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_call_ready",
+		handler: ExtensionHandler<ToolCallReadyEvent>,
 		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(

@@ -10,7 +10,7 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-const DIAGNOSTIC = "src/late.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.";
+const DIAGNOSTIC = "(1,7): error TS2322: Type 'string' is not assignable to type 'number'.";
 
 function diagnosingHarness(): WrittenFilesHarness {
 	return writtenFilesHarness(async (report) => ({
@@ -61,7 +61,7 @@ describe("files a detached eval cell writes (senpi#7232)", () => {
 		expect(settled.result.details.writtenFiles).toEqual({ files: ["src/late.ts"], total: 1, hooked: 1 });
 		expect(notices).toHaveLength(1);
 		expect(notices[0]?.content).toContain(DIAGNOSTIC);
-		expect(notices[0]?.content).toContain("src/late.ts");
+		expect(notices[0]?.content.split("\n")).toContain("- src/late.ts");
 	});
 
 	it("leaves out a file the model wrote with the write tool while the cell was running", async () => {

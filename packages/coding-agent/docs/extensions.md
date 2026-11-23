@@ -350,6 +350,7 @@ user sends prompt ────────────────────�
   │   │   LLM responds, may call tools:            │       │
   │   │     ├─► tool_execution_start               │       │
   │   │     ├─► tool_call (can block)              │       │
+  │   │     ├─► tool_call_ready (final arguments)  │       │
   │   │     ├─► tool_execution_update              │       │
   │   │     ├─► tool_result (can modify)           │       │
   │   │     └─► tool_execution_end                 │       │
@@ -1234,6 +1235,16 @@ pi.on("tool_call", (event) => {
   if (isToolCallEventType<"my_tool", MyToolInput>("my_tool", event)) {
     event.input.action;  // typed
   }
+});
+```
+
+#### tool_call_ready
+
+Fired once every `tool_call` handler let a call run, before the tool executes. `event.input` is a shallow copy of the arguments the tool runs with, after the `tool_call` handlers' changes, so an observer sees a path a handler redirected. Observe only: what a handler returns or changes is ignored. Not fired for a blocked call.
+
+```typescript
+pi.on("tool_call_ready", (event) => {
+  if (event.toolName === "write") reserve(event.toolCallId, event.input.path);
 });
 ```
 
