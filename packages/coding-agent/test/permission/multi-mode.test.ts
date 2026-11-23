@@ -190,7 +190,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 			expect(result).toEqual({
 				requestID: "print-test-1",
 				reply: "reject",
-				message: `Permission required for bash (rm -rf /), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
+				refusal: `Permission required for bash (rm -rf /), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
 			});
 			expect(emittedEvents).toHaveLength(1);
 			expect(emittedEvents[0]).toEqual({
@@ -300,7 +300,7 @@ describe("Permission System - Multi-Mode Tests", () => {
 
 				// then
 				expect(result?.reply).toBe("reject");
-				expect(result?.message).toContain("--permission bash=allow");
+				expect(result?.refusal).toContain("--permission bash=allow");
 			});
 
 			it("allows when rules permit", async () => {

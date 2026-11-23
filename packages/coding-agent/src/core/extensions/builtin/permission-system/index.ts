@@ -55,8 +55,10 @@ function getReason(error: unknown): string {
 }
 
 /**
- * A DeniedError's refusal: the model-facing sentence that tells it not to retry, then the exact
- * settings rule and its layer so the user can change it.
+ * A DeniedError's refusal as the model receives it: the error's own message (which tells it not to reach the
+ * result another way), followed by the deciding settings rule and its layer when one can be found. With no
+ * settings manager or no matching rule, the message is returned alone; an unblock hint is added only when no
+ * other layer still denies the call.
  */
 function denyReason(
 	error: DeniedError,

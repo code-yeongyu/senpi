@@ -18,7 +18,8 @@ export function handleNoUI(request: Request, { emitEvent, presetBound = false }:
 	return {
 		requestID: request.id,
 		reply: "reject",
-		message: presetBound
+		// A system refusal, not the user's feedback: no user was asked (senpi#4401).
+		refusal: presetBound
 			? `Permission required for ${request.permission} (${patternsStr}), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} Under the auto preset, allow rules do not widen what it approves; the user can run it interactively or choose another preset.`
 			: `Permission required for ${request.permission} (${patternsStr}), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission ${request.permission}=allow.`,
 	};

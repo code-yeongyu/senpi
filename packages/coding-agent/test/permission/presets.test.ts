@@ -101,7 +101,7 @@ describe("permission presets", () => {
 		expect(result).toEqual({
 			requestID: "request-1",
 			reply: "reject",
-			message: `Permission required for bash (git status), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
+			refusal: `Permission required for bash (git status), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
 		});
 		expect(events.map((event) => event.event)).toEqual(["permission_asked"]);
 	});
