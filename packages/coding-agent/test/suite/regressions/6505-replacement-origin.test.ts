@@ -4,6 +4,7 @@ import type { AgentSession } from "../../../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
 import { createRpcConnectionHandler } from "../../../src/modes/rpc/connection-handler.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import { parkClaimHost } from "../rpc-park-claim-support.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 
 const harnesses: Harness[] = [];
@@ -107,4 +108,22 @@ it("an in-memory fork, which reuses the outgoing session's manager, still announ
 	expect(events[0]).toMatchObject({ replacedSessionId: outgoing.id, durableSessionId: second.session.sessionId });
 	expect(events[0].replacedSessionFile).toBe(outgoing.file);
 	await handler.dispose();
+});
+
+it("a parked session claimed, which acquires its file without a rebind, announces that file when it is replaced", async () => {
+	await using host = await parkClaimHost();
+	await host.request({ type: "park_session", cwd: host.cwd });
+	const parked = host.harnesses[0].session;
+	expect(parked.sessionFile).toBeUndefined();
+	const claimed = await host.request({ type: "claim_session", cwd: host.cwd });
+	expect(claimed).toMatchObject({ success: true, data: { sessionId: "rpc-1" } });
+	const outgoing = { id: parked.sessionId, file: parked.sessionFile };
+	expect(outgoing.file).toBeDefined();
+
+	expect(await host.request({ type: "new_session", sessionId: "rpc-1" })).toMatchObject({ success: true });
+
+	const replaced = host.records.filter((record) => record.type === "session_replaced" && record.sessionId === "rpc-1");
+	expect(replaced.length).toBeGreaterThan(0);
+	for (const event of replaced)
+		expect(event).toMatchObject({ replacedSessionId: outgoing.id, replacedSessionFile: outgoing.file });
 });

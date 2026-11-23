@@ -279,6 +279,11 @@ export interface RpcConnectionHandler {
 	readonly ready: Promise<void>;
 	/** Complete a prebuilt binding with the capabilities its opener supplied. */
 	setClientCapabilities(capabilities: readonly string[]): void;
+	/**
+	 * The bound session became durable without a rebind (a parked session's claim gives it its file): record its
+	 * identity now, as the outgoing one a later replacement announces.
+	 */
+	sessionPersisted(): void;
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
 	/**
@@ -2734,6 +2739,9 @@ export function createRpcConnectionHandler(
 		setClientCapabilities(capabilities) {
 			replaceClientCapabilities([...capabilities]);
 			refreshGrantPresentation();
+		},
+		sessionPersisted() {
+			boundIdentity = { sessionId: session.sessionId, sessionFile: session.sessionFile };
 		},
 		isShutdownRequested() {
 			return shutdownRequested;

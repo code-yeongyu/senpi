@@ -27,6 +27,8 @@ import { structuredLaneEnabled } from "./structured-session-records.ts";
 export interface RpcSessionBinding {
 	handle(command: object): Promise<void>;
 	setClientCapabilities?(capabilities: readonly string[]): void;
+	/** The session acquired its durable file without a rebind; see `RpcConnectionHandler.sessionPersisted`. */
+	sessionPersisted?(): void;
 	cancelPendingExtensionUiRequests?(): void;
 	/** A connection of the shared host left this session (`close_session`, a dropped or detached connection). */
 	connectionDetached?(connectionId: string): void;
@@ -199,6 +201,7 @@ export async function createRpcSessionBinding(
 	return {
 		setClientCapabilities: (capabilities) =>
 			runWithProviderScope(entry.scope, () => handler.setClientCapabilities(capabilities)),
+		sessionPersisted: () => handler.sessionPersisted(),
 		handle: (command) => {
 			if (writer.handleMcpForm(command)) return Promise.resolve();
 			const invoke = () => runWithProviderScope(entry.scope, () => handler.handleInputLine(JSON.stringify(command)));
