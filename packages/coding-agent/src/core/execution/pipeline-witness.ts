@@ -1,7 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Agent, ExecutionScope } from "@earendil-works/pi-agent-core";
 import type { SessionManager } from "../session-manager.ts";
 import { type ExecutionPipelineConfig, resolveExecutionPipeline } from "./pipeline-config.ts";
+
+/** A session's execution scope id: stable for the durable session, and not the session id. */
+function executionScopeId(sessionId: string): string {
+	return createHash("sha256").update(`senpi-execution-scope\0${sessionId}`).digest("hex").slice(0, 32);
+}
 
 /**
  * Bind the execution scope. The loop has one pipeline, the prepared one, so nothing is installed for it; naming
@@ -20,7 +25,9 @@ export function bindPipelineWitness(
 		const current = manager.getSessionId();
 		if (owner !== current || scope === undefined) {
 			owner = current;
-			scope = { id: randomUUID(), root: root() };
+			// Durable, not per process: a re-opened or moved session re-dispatching a call of a turn must name the scope the
+			// hand recorded it under (senpi#5867). Derived, not the session id itself: the hand never learns the session (R16).
+			scope = { id: executionScopeId(current), root: root() };
 		}
 		return scope;
 	};

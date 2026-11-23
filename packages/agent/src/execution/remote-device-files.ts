@@ -30,12 +30,15 @@ function refusalError(reason: string): DeviceFileError {
 function valueOf(reply: HandReply): JsonValue {
 	switch (reply.kind) {
 		case "settled": {
+			// A file operation's outcome is taken here, by its caller: nothing else holds it.
+			reply.ack();
 			const outcome = fileOutcomeOf(reply.result.details);
 			if (outcome === undefined) throw new DeviceFileError("protocol", "the hand sent no file outcome");
 			if (!outcome.ok) throw new DeviceFileError(outcome.code, outcome.message);
 			return outcome.value;
 		}
 		case "terminal": {
+			reply.ack();
 			const { reason, uncertain } = reply.terminal;
 			throw new DeviceFileError("interrupted", `the operation ended without an outcome (${reason})`, {
 				reason,

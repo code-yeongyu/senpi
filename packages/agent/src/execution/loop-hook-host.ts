@@ -77,6 +77,8 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 	const { transport, lane } = options;
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
 	const pending = new Map<string, Pending>();
+	/** The answer each pending call's first caller awaits: a duplicate call under the same durable key joins it. */
+	const answers = new Map<string, Promise<JsonValue>>();
 	let closed = false;
 
 	const send = (call: LoopHookCall): void => {
@@ -89,6 +91,7 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 		const waiter = pending.get(callId);
 		if (waiter === undefined) return;
 		pending.delete(callId);
+		answers.delete(callId);
 		finish(waiter);
 	};
 
@@ -121,10 +124,14 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 		run(event, payload, signal, callKey) {
 			if (closed) return Promise.reject(new LoopHookClosedError("The loop-hook link is closed"));
 			if (signal?.aborted) return Promise.reject(new Error("Operation aborted"));
+			// The same hook call issued again while it waits keeps the first caller's waiter and shares its answer.
+			const joined = callKey === undefined ? undefined : answers.get(callKey);
+			if (joined !== undefined) return joined;
 			const call: LoopHookCall = { kind: "hook.call", callId: callKey ?? mintId(), event, payload };
 			const result = new Promise<JsonValue>((resolve, reject) => {
 				pending.set(call.callId, { call, resolve, reject });
 			});
+			answers.set(call.callId, result);
 			const onAbort = (): void => settle(call.callId, (waiter) => waiter.reject(new Error("Operation aborted")));
 			signal?.addEventListener("abort", onAbort, { once: true });
 			void result.then(

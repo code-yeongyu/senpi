@@ -13,7 +13,7 @@ import type { ExecutionEntry } from "../ledger-types.ts";
 import { createRemoteExecutor, type HandScope } from "../remote-executor.ts";
 import { createHandLedger } from "../remote-hand-ledger.ts";
 import { createRemoteToolHost, type HandPlacement } from "../remote-tool-host.ts";
-import type { ToolHostResult } from "../tool-host.ts";
+import type { ToolHostOptions, ToolHostResult } from "../tool-host.ts";
 
 /** What the KILL-HAND, MULTI-HAND and FAULT-HAND cases need from a host: a durable store and a transport. */
 export type HandCaseAdapters = StoreCaseAdapters & TransportCaseAdapters;
@@ -36,6 +36,8 @@ export interface HandRig {
 		calls: readonly AgentToolCall[],
 		mode?: ToolExecutionMode,
 		turn?: string,
+		/** The loop's event sink; default: accepts every event at once. */
+		emit?: ToolHostOptions["emit"],
 	): Promise<ToolHostResult>;
 	/** Replaces the session's brain with a fresh instance on the same link: no pending call or id is shared with the old one. */
 	replaceSession(): void;
@@ -208,10 +210,10 @@ export async function openHandRig(
 		bodies,
 		faults,
 		killed: killed.promise,
-		execute: (scope, calls, mode = "parallel", turn) =>
+		execute: (scope, calls, mode = "parallel", turn, emit = () => {}) =>
 			host.execute(
 				{ scope: { id: scope, root: `/work/${scope}` }, calls, mode, ...(turn === undefined ? {} : { turn }) },
-				{ emit: () => {} },
+				{ emit },
 			),
 		replaceSession() {
 			// The transport endpoint outlives the brain process (S05); a new host takes over its frames, and nothing the

@@ -14,8 +14,13 @@ import {
 
 /** How a dispatched call or file operation ended, as the session saw it. */
 export type HandReply =
-	| { readonly kind: "settled"; readonly result: RemoteToolResult }
-	| { readonly kind: "terminal"; readonly terminal: RemoteTerminal }
+	/**
+	 * `ack`: tells the hand the session accepted this outcome, so it may drop its record (senpi#5867). The receiver calls
+	 * it once the outcome is durably taken, never on receipt: an outcome a session lost before taking it stays with the
+	 * hand for the next session to recover.
+	 */
+	| { readonly kind: "settled"; readonly result: RemoteToolResult; readonly ack: () => void }
+	| { readonly kind: "terminal"; readonly terminal: RemoteTerminal; readonly ack: () => void }
 	| { readonly kind: "refused"; readonly reason: string }
 	| { readonly kind: "aborted"; readonly sent: boolean }
 	| { readonly kind: "unreachable"; readonly reason: string }
@@ -124,12 +129,19 @@ export function createHandLink(
 			return;
 		}
 		if (message.kind === "floor_ack" || message.kind === "floor_refused") return gate?.answer(frame.lane, message);
-		if (message.kind === "settled") {
-			settle(message.executionId, { kind: "settled", result: message.result });
-			ack(message.executionId);
-		} else if (message.kind === "terminal") {
-			settle(message.executionId, { kind: "terminal", terminal: message });
-			ack(message.executionId);
+		if (message.kind === "settled" || message.kind === "terminal") {
+			const { executionId } = message;
+			// An outcome nobody waits for (an aborted or unknown call) is never taken, so it is acknowledged at once.
+			if (!pending.has(executionId)) return ack(executionId);
+			const accepted = (): void => {
+				if (!closed) ack(executionId);
+			};
+			settle(
+				executionId,
+				message.kind === "settled"
+					? { kind: "settled", result: message.result, ack: accepted }
+					: { kind: "terminal", terminal: message, ack: accepted },
+			);
 		} else if (message.kind === "refused") settle(message.executionId, { kind: "refused", reason: message.reason });
 	});
 

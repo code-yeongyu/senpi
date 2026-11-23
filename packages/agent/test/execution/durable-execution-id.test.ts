@@ -62,16 +62,17 @@ describe("durable remote execution ids (senpi#5867)", () => {
 		expect(JSON.stringify(late.messages)).toContain("refused");
 	});
 
-	it("ids differ across sessions, turns and calls, and are stable for the same three", () => {
+	it("ids differ across sessions, turns, block indexes and calls, and are stable for the same four", () => {
 		const ids = [
-			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-1", "call_1"),
-			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-1", "call_1"),
-			remoteExecutionId({ id: "session-b", root: "/w" }, "turn-1", "call_1"),
-			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-2", "call_1"),
-			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-1", "call_2"),
+			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-1", 0, "call_1"),
+			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-1", 0, "call_1"),
+			remoteExecutionId({ id: "session-b", root: "/w" }, "turn-1", 0, "call_1"),
+			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-2", 0, "call_1"),
+			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-1", 1, "call_1"),
+			remoteExecutionId({ id: "session-a", root: "/w" }, "turn-1", 0, "call_2"),
 		];
 
 		expect(ids[0]).toBe(ids[1]);
-		expect(new Set(ids).size).toBe(4);
+		expect(new Set(ids).size).toBe(5);
 	});
 });
