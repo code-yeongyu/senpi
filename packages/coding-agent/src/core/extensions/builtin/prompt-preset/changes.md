@@ -1,3 +1,29 @@
+## 2026-11-22 - The eval routing rule names the session's own tool for source edits (#7275, senpi#7232)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: the edits item of `eval-routing-decision` names the session's file-editing tools, not cell code, in every wording (claude short, claude full, kimi). The clause is marked `[[...]]` in the rule data and rendered by `renderExecutionToolingDirective`, which fills `{editTools}` from `resolveFileMutationRouting` (the set the File operations block already routes edits to: `apply_patch` when present, else the selected `edit`/`write`) and drops the clause when no editing tool is selected. Edits, side effects, deploys and approvals still run one at a time. A call fed by an unseen result is routed once, to a direct tool call: `eval-stay-direct` keeps "the result decides the next call" (its wording on main), and the routing rule no longer lists that call in its one-at-a-time sequence. `eval-stay-direct` opens with the same `[[...]]` span ("only for `edit` and `write` or when ..."), so the offered editing tools are direct calls in its closed list; both spans come from one `resolveFileMutationRouting` result. To pay for it, the routing rule drops "together" (claude full, kimi), the "via"/"with" before the tool names, and in claude short "before next", "deploys" (a side effect, still listed) and the colon after "when". The header carries dated notes.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/file-operations.ts`: `formatToolList` is exported so both blocks spell the tool list the same way.
+- Size (characters, both rules, with `edit` and `write` offered), main / this change: claude short 378 / 378, claude full 565 / 562, kimi 492 / 488. With only `apply_patch` both rules together are 10 characters shorter; with no editing tool both spans drop (62 to 63 shorter).
+- `test/suite/prompt-presets-execution-tooling.test.ts`: tool-profile cases ({eval, edit, write}, {eval, apply_patch}, {eval, write}, {eval}, no eval) assert that the backticked editing-tool names in each of `eval-routing-decision` and `eval-stay-direct` are exactly the offered ones and that no tool name outside the offered set appears. The per-preset cases compare against the directive rendered for the same tools.
+- `test/suite/prompt-presets-native-baseline.json`: the 54 eval-selected rows (`:terminal:1`, `:app:1`, `:chat:1`) of the 18 presets that render the section are recaptured (that fixture offers `apply_patch`, which the clause now names): claude-fable-5, claude-fable-5-1, claude-fable-5-2, claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-haiku-5-5, claude-opus-4-{8,7,6,5}, glm-5.2, glm-5.3, kimi-k3, kimi-k3-1, kimi-k2-{8,7,6}. `sourceCommit` is unchanged.
+- `test/suite/prompt-presets-shared-sections.test.ts`: the 30 `PRESET_ROWS` eval-selected hashes (claude-fable-5, -5-1, -5-2, claude-opus-5-5, claude-opus-5, claude-opus-4-{8,7,6,5}, glm-5.3) and the 12 `REQUEST_ROWS` eval variants (`eval-true`, `app-eval-true`, `search-eval-true` of claude-opus-5.5, claude-fable-5.1, claude-opus-4-7, glm-5.3) are recaptured. No row without eval changes, and no GPT, DeepSeek, Grok, Gemini or default row changes.
+
+### Why
+
+- senpi#7232, diagnosis category B (misframing): in a multi-harness build comparison, agents wrote their source files from eval cells (34 file writes in one run, every file in another). "Edits ... one at a time" gave a cadence and no destination, so one write per cell satisfied it.
+- Review findings, category A (wrong information): the first wording named `edit` and `write` whatever the session offered, so a session with only `apply_patch`, or with no editing tool, was told to use a tool it did not have.
+- Review findings, category A (wrong information): `eval-stay-direct`'s closed "only when" list omitted edits, so two predetermined edits that must both be made had no direct route even though the routing rule sends edits to the editing tools; a literal reader could not follow both rules.
+- Review findings, category B (misframing): dropping "the result decides the next call" from `eval-stay-direct` left result-fed calls with a cadence ("one at a time") and no destination, which still allowed one eval cell per call. The direct route is stated once, in the rule that names direct calls.
+
+### Why an extension could not handle it
+
+- The shared execution-tooling rules are this builtin's own data.
+
+### Expected merge conflict zones
+
+- LOW: the `eval-routing-decision` and `eval-stay-direct` entries of `EXECUTION_TOOLING_RULES` and the renderer below them, `formatToolList` in `file-operations.ts`, and the hash rows above in the two test files.
+
 ## 2026-11-20 - Five sentence fixes in the Claude Opus 5.5 and Fable 5.2 cores (#7114, senpi#7113)
 
 ### What changed

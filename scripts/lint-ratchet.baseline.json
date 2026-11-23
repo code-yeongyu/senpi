@@ -383,9 +383,6 @@
   "packages/ai/test/anthropic-auth-token.test.ts": {
     "senpi-testing/no-module-mock": 1
   },
-  "packages/ai/test/anthropic-claude-oauth-token-refused.test.ts": {
-    "senpi-testing/no-module-mock": 1
-  },
   "packages/ai/test/anthropic-eager-tool-input-e2e.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },

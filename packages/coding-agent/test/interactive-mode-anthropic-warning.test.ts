@@ -15,7 +15,7 @@ function createModelRuntime(credential: { type: "oauth" } | undefined, apiKey?: 
 }
 
 describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
-	test("does not read the API key: an sk-ant-oat key is refused by the provider, not warned about (senpi#5131)", async () => {
+	test("does not read the API key: an sk-ant-oat key is not warned about (senpi#5131)", async () => {
 		const modelRuntime = createModelRuntime(undefined, ["sk-ant-oat01", "test"].join("-"));
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
