@@ -91,6 +91,7 @@ describe("release_session when its entry cannot be written (real host)", () => {
 				detail: WRITE_FAILURE,
 				interrupted: true,
 				dropped: { deliveries: [], user_messages: ["USER FOLLOW TEXT"] },
+				taken_from: session.sessionId,
 			},
 		});
 		// The text was handed back: no message entry stores it, and its durable admission record (which keeps
@@ -156,6 +157,7 @@ describe("release_session when its entry cannot be written (real host)", () => {
 			errorData: {
 				interrupted: true,
 				dropped: { deliveries: [], user_messages: ["USER FOLLOW TEXT"] },
+				taken_from: session.sessionId,
 			},
 		});
 	});

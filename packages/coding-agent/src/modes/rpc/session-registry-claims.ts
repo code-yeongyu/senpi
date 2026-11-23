@@ -89,41 +89,52 @@ export function syncRuntimeMetadata(
 	reservations: Set<string>,
 	pathReservations: SessionPathReservations | undefined,
 ): void {
-	for (const entry of entries) {
-		if (entry.speculative) continue;
-		const manager = entry.runtime?.session.sessionManager;
-		if (!manager) continue;
-		const currentPath = manager.getSessionFile();
-		const currentKey = currentPath ? canonicalSessionPath(currentPath) : undefined;
-		// Preserve the originally canonicalized key while the runtime still points at
-		// the same path. SessionManager may expose a symlink-resolved spelling after
-		// opening a file that did not exist yet; treating that as replacement would
-		// break ordinary attach-on-open aliases.
-		//
-		// A moved path is not the only reason to reconcile: a session opened WITHOUT
-		// `sessionPath` lands its created file straight into `sessionPath` and never
-		// takes a reservation, so comparing paths alone leaves that file unclaimed
-		// forever and a later open of it builds a SECOND runtime over the same
-		// transcript. Reconcile whenever the canonical key we hold is not the key the
-		// runtime is actually writing.
-		if (currentPath !== entry.sessionPath || currentKey !== entry.reservationKey) {
-			if (entry.reservationKey) {
-				reservations.delete(entry.reservationKey);
-				pathReservations?.release(entry.reservationKey);
-			}
-			if (currentKey) {
-				reservations.add(currentKey);
-				// A replacement moved this session to another file; the claim follows it, carrying the
-				// attachment state it is now held at. A file a live foreign generation holds is left
-				// alone by claim() itself.
-				void pathReservations?.claim(currentKey, entry.attachments > 0);
-			}
-			entry.reservationKey = currentKey;
-			entry.sessionPath = currentPath;
+	for (const entry of entries) followRunningSession(entry, reservations, pathReservations);
+}
+
+/**
+ * Brings one entry's stored path, path claim, durable id and cwd in line with the session its runtime runs. Called
+ * for every entry by the sync, and for one entry in the same synchronous step as each replacement of its session
+ * (senpi#6484), so a reader never finds the record naming a session the handle no longer runs.
+ */
+export function followRunningSession(
+	entry: RpcSessionEntry,
+	reservations: Set<string>,
+	pathReservations: SessionPathReservations | undefined,
+): void {
+	if (entry.speculative) return;
+	const manager = entry.runtime?.session.sessionManager;
+	if (!manager) return;
+	const currentPath = manager.getSessionFile();
+	const currentKey = currentPath ? canonicalSessionPath(currentPath) : undefined;
+	// Preserve the originally canonicalized key while the runtime still points at
+	// the same path. SessionManager may expose a symlink-resolved spelling after
+	// opening a file that did not exist yet; treating that as replacement would
+	// break ordinary attach-on-open aliases.
+	//
+	// A moved path is not the only reason to reconcile: a session opened WITHOUT
+	// `sessionPath` lands its created file straight into `sessionPath` and never
+	// takes a reservation, so comparing paths alone leaves that file unclaimed
+	// forever and a later open of it builds a SECOND runtime over the same
+	// transcript. Reconcile whenever the canonical key we hold is not the key the
+	// runtime is actually writing.
+	if (currentPath !== entry.sessionPath || currentKey !== entry.reservationKey) {
+		if (entry.reservationKey) {
+			reservations.delete(entry.reservationKey);
+			pathReservations?.release(entry.reservationKey);
 		}
-		entry.durableSessionId = manager.getSessionId();
-		entry.cwd = manager.getCwd();
+		if (currentKey) {
+			reservations.add(currentKey);
+			// A replacement moved this session to another file; the claim follows it, carrying the
+			// attachment state it is now held at. A file a live foreign generation holds is left
+			// alone by claim() itself.
+			void pathReservations?.claim(currentKey, entry.attachments > 0);
+		}
+		entry.reservationKey = currentKey;
+		entry.sessionPath = currentPath;
 	}
+	entry.durableSessionId = manager.getSessionId();
+	entry.cwd = manager.getCwd();
 }
 
 /**

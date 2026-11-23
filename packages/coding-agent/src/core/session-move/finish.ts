@@ -5,7 +5,14 @@ import { readKeptBundle } from "./bundle.ts";
 import { outgoingStateDir } from "./extension-state.ts";
 import type { MoveAnswer } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
-import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_RECLAIMED, sessionOwnership } from "./ownership.ts";
+import {
+	headerSessionId,
+	heldByMove,
+	type MoveId,
+	SESSION_MOVED,
+	SESSION_RECLAIMED,
+	sessionOwnership,
+} from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { withSessionMoveLock } from "./session-lock.ts";
 
@@ -50,11 +57,16 @@ export class MoveAlreadyMovedError extends Error {
  * bundle goes. While the bundle exists the re-queue runs again on the next call, so a crash between any two steps
  * loses nothing and doubles nothing. A revoked answer for a file already marked moved is refused.
  */
-export function finishMove(options: FinishMoveOptions): Promise<void> {
+/** `heldThisMove`: the session file holds an entry for this move of its own session (only a held file is cleaned up). */
+export interface FinishOutcome {
+	readonly heldThisMove: boolean;
+}
+
+export function finishMove(options: FinishMoveOptions): Promise<FinishOutcome> {
 	return withSessionMoveLock(options.sessionFile, () => settleMove(options), options.guard);
 }
 
-async function settleMove(options: FinishMoveOptions): Promise<void> {
+async function settleMove(options: FinishMoveOptions): Promise<FinishOutcome> {
 	const { sessionFile, bundleDir, moveId, answer } = options;
 	if (await pathExists(bundleDir)) {
 		const bundled = (await readKeptBundle(bundleDir)).moveId;
@@ -63,20 +75,23 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 	const entries = await loadEntriesFromFileAsync(sessionFile);
 	const ownership = sessionOwnership(entries);
 	if (ownership.writable) {
+		// The bundle and the staged state are keyed by host, folder and move id, not by file: a file this move never held
+		// (never sealed for it, or another file of the folder was) changes nothing (senpi#6484).
+		if (!heldByMove(entries, moveId)) return { heldThisMove: false };
 		if (reclaimed(entries, moveId)) await requeueDroppedInput(sessionFile, bundleDir);
 		await discardMoveFiles(sessionFile, bundleDir, moveId);
-		return;
+		return { heldThisMove: true };
 	}
 	if (ownership.moveId !== moveId) throw new MoveMismatchError(moveId, ownership.moveId, "the session file");
 	if (ownership.state === "moved") {
 		if ("revoked" in answer) throw new MoveAlreadyMovedError(moveId);
 		await discardMoveFiles(sessionFile, bundleDir, moveId);
-		return;
+		return { heldThisMove: true };
 	}
 	const sessionId = headerSessionId(entries) ?? "";
 	switch (answer.state) {
 		case "receiving":
-			return;
+			return { heldThisMove: true };
 		case "accepted":
 			if ("revoked" in answer) {
 				await takeBack(sessionFile, bundleDir, { move_id: moveId, session_id: sessionId, reason: "revoked" });
@@ -106,6 +121,7 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 	}
 	moveStep("finish:requeued");
 	await discardMoveFiles(sessionFile, bundleDir, moveId);
+	return { heldThisMove: true };
 }
 
 /** `session_reclaimed` makes the file writable again, then the queued input comes back under ids stable per move. */

@@ -31,7 +31,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,method_classes,mode,path_identity_resolver,protocolVersion,serverVersion}",
 	open_session: "ok{permissionPreset,permissionPresetSource,permissionPresetStatus,sessionId,state}",
 	close_session: '{"sessionId":"$SID"} => ok{}',
-	release_session: '{"sessionId":"$SID","reason":"takeover"} => ok{attachments,dropped,released,session_path}',
+	release_session:
+		'{"sessionId":"$SID","reason":"takeover"} => ok{attachments,dropped,released,session_id,session_path}',
 	unload_session: '{"sessionId":"$SID"} => ok{outcome,sessionPath}',
 	detach_connection: "ok{deferred}",
 	get_subscription_limits: "ok{accounts}",

@@ -94,7 +94,10 @@ export type RpcHostCommandResponse =
 			 */
 			data: {
 				released: true;
+				/** The file of the session that was sealed. */
 				session_path: string;
+				/** The durable id of the session that was sealed (the id its `session_released` entry records). */
+				session_id: string;
 				attachments: number;
 				dropped: { deliveries: readonly string[]; user_messages: readonly string[] };
 			};
