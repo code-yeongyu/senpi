@@ -2239,8 +2239,9 @@ which prints the bare socket path).
   `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
   1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
-  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive, unit }`, newest
-  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, `unit`
+  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, host_footprint_mb, sessions, current, alive, unit }`, newest
+  ordinal last: `rss_mb` is the RSS of that generation's process tree; `host_rss_mb` and `host_footprint_mb` are the RSS
+  and kernel memory footprint of its supervisor and host processes. An unavailable measurement is `null`. `unit` names
   the cgroup and unit its supervisor runs in (`{ cgroup, name, own }`, `null` off Linux or for an ended generation), and `sessions` counts the session files it
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
