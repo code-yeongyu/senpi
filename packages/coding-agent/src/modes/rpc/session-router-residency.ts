@@ -58,12 +58,17 @@ export async function recordRetainedSession(
 /**
  * The profile a restart reopens the session from. The opener's approvals label belongs to the session it opened: once
  * the live runtime has replaced it (`new_session`, `switch_session`, `fork`, `clone`) the runtime's profile drops the
- * label, and so does the record, or a restart would label the replacement and make it refuse.
+ * label, and so does the record, or a restart would label the replacement and make it refuse. A worker entry is
+ * read from its snapshot, whose session id differs from the one the entry opened once the worker replaced it.
  */
 function recoveryProfile(retained: RpcSessionEntry): RpcSessionEntry["profile"] {
-	const live = retained.runtime?.launchProfile;
-	if (retained.runtime === undefined || refusesApprovals(live?.sessionContext)) return retained.profile;
-	return replacementLaunchProfile(retained.profile) ?? retained.profile;
+	const replaced =
+		retained.runtime !== undefined
+			? !refusesApprovals(retained.runtime.launchProfile?.sessionContext)
+			: // A worker's host-side entry keeps the id it opened; its snapshot names the session it runs now.
+				retained.worker?.snapshot !== undefined &&
+				retained.worker.snapshot.state.sessionId !== retained.durableSessionId;
+	return replaced ? (replacementLaunchProfile(retained.profile) ?? retained.profile) : retained.profile;
 }
 
 /** The session path a live entry writes now; a replacement moves it before the registry's metadata catches up. */

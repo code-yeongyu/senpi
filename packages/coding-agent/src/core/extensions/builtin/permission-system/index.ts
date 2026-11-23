@@ -383,8 +383,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				callPreset === "auto"
 					? await decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd)
 					: undefined;
+			const registered = Promise.withResolvers<"pending">();
 			const askResultPromise = activeService
 				.ask(request, {
+					onPending: () => registered.resolve("pending"),
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
 					approveBlanketAsk: auto?.approveBlanketAsk ?? false,
 					presetBound: callPreset === "auto",
@@ -395,7 +397,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					() => ({ ok: true as const }),
 					(error: unknown) => ({ ok: false as const, error }),
 				);
-			const isPending = activeService.list().some((pendingRequest) => pendingRequest.id === request.id);
+			// The decision can resolve path identities first, so the request may register after this point: wait for
+			// whichever comes first, a decision without an ask or the pending request, before choosing how to answer.
+			const isPending = (await Promise.race([askResultPromise, registered.promise])) === "pending";
 
 			if (!isPending) {
 				const askResult = await askResultPromise;

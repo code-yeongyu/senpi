@@ -50,7 +50,7 @@ function refusalsIn(file: string | undefined): { headerId: string | undefined; r
 	};
 }
 
-async function host(turns: ReturnType<typeof fauxAssistantMessage>[]) {
+async function host(turns: ReturnType<typeof fauxAssistantMessage>[], extraArgs: readonly string[] = []) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-omo-14649-"));
 	const cwd = join(scratch, "project");
 	const agentDir = join(scratch, "agent");
@@ -71,6 +71,7 @@ async function host(turns: ReturnType<typeof fauxAssistantMessage>[]) {
 		model.id,
 		"--api-key",
 		"faux-key",
+		...extraArgs,
 	]);
 	const registry = new RpcSessionRegistry({
 		agentDir,
@@ -131,15 +132,19 @@ async function readOnlyWriteTurn(
 	context: Record<string, string>,
 	until: "agent_idle" | "permission_prompt",
 	before?: "reopen" | "record-removed" | "late-label" | "live-attach" | "file-fork" | "rpc-fork" | "rpc-clone",
+	extraArgs: readonly string[] = [],
 ) {
 	const marker = "marker.txt";
-	const h = await host([
-		...(before ? [fauxAssistantMessage("first turn")] : []),
-		fauxAssistantMessage(fauxToolCall("write", { path: marker, content: "probe" }, { id: "call-write" }), {
-			stopReason: "toolUse",
-		}),
-		fauxAssistantMessage("PROBE-DENIED"),
-	]);
+	const h = await host(
+		[
+			...(before ? [fauxAssistantMessage("first turn")] : []),
+			fauxAssistantMessage(fauxToolCall("write", { path: marker, content: "probe" }, { id: "call-write" }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("PROBE-DENIED"),
+		],
+		extraArgs,
+	);
 	let sessionId: string | undefined;
 	let fileAtOpen: string | undefined;
 	let fork: { parent: string | undefined; file: string | undefined } | undefined;
@@ -225,6 +230,15 @@ describe("a session whose opener declared nobody answers its prompts refuses ins
 		expect(JSON.stringify(ended?.result)).toContain("nobody answers this session's prompts");
 		// On disk, bound to the file's own id, before any prompt.
 		expect(atOpen.recordedFor).toEqual([atOpen.headerId]);
+	});
+
+	it("a labelled write is refused while a path-specific rule makes the decision resolve path identities first", async () => {
+		const { outcome, ended, wrote } = await readOnlyWriteTurn(LABEL, "agent_idle", undefined, [
+			"--permission",
+			"edit:/nonexistent-14649/**=allow",
+		]);
+
+		expect({ outcome, isError: ended?.isError, wrote }).toEqual({ outcome: "idle", isError: true, wrote: false });
 	});
 
 	it("a labelled session reopened by its file without the label still refuses (a wake after its process died)", async () => {
