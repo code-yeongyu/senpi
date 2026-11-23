@@ -15,6 +15,7 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { replacementLaunchProfile } from "./opener-approvals.ts";
 import {
 	applyClientPermissionMode,
 	clientNamedPreset,
@@ -565,7 +566,7 @@ export class AgentSessionRuntime {
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
 					projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
-					launchProfile: this._launchProfile,
+					launchProfile: replacementLaunchProfile(this._launchProfile),
 				}),
 				hold,
 			);
@@ -605,7 +606,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		if (options?.setup) {
@@ -660,7 +661,7 @@ export class AgentSessionRuntime {
 						agentDir: this.services.agentDir,
 						sessionManager,
 						sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-						launchProfile: this._launchProfile,
+						launchProfile: replacementLaunchProfile(this._launchProfile),
 					}),
 				);
 				await this.finishSessionReplacement(options?.withSession);
@@ -682,7 +683,7 @@ export class AgentSessionRuntime {
 					agentDir: this.services.agentDir,
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-					launchProfile: this._launchProfile,
+					launchProfile: replacementLaunchProfile(this._launchProfile),
 				}),
 			);
 			await this.finishSessionReplacement(options?.withSession);
@@ -704,7 +705,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		await this.finishSessionReplacement(options?.withSession);
@@ -758,7 +759,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		await this.finishSessionReplacement();

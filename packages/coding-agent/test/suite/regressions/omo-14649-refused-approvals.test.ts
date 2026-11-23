@@ -8,14 +8,15 @@
  * loads as in a host-opened session; only the model is faked. The client never answers a dialog, as no client does in
  * such a session; without the label the turn waits on the prompt and the bounded wait for `agent_idle` fails.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
-import { SessionManager } from "../../../src/core/session-manager.ts";
+import { recordOpenerRefusal } from "../../../src/core/opener-approvals.ts";
+import { getDefaultSessionDir, SessionManager } from "../../../src/core/session-manager.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
@@ -23,36 +24,41 @@ import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 
 type WireRecord = Record<string, unknown> & { id?: string; type?: string; sessionId?: string };
+type FileEntry = { type?: string; id?: string; customType?: string; data?: { sessionId?: string } };
 
+const REFUSAL = "permission-approvals-refused";
+const LABEL = { approvals: "refuse" };
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const dispose of disposers.splice(0).reverse()) await dispose();
 });
 
-/**
- * `from`: the session is first opened with the label, closed, then opened again with `context`: by its own file
- * (`reopen`, a wake after its process died) or by a fork of it (`fork`, a new session id carrying the copied entries).
- */
-async function readOnlyWriteTurn(
-	context: Record<string, string>,
-	until: "agent_idle" | "permission_prompt",
-	from?: "reopen" | "fork",
-) {
+function entries(file: string | undefined): FileEntry[] {
+	if (file === undefined || !existsSync(file)) return [];
+	return readFileSync(file, "utf8")
+		.split("\n")
+		.filter((line) => line.length > 0)
+		.map((line) => JSON.parse(line) as FileEntry);
+}
+
+/** The refusal records a file holds, and the id its own header names. */
+function refusalsIn(file: string | undefined): { headerId: string | undefined; recordedFor: string[] } {
+	const all = entries(file);
+	return {
+		headerId: all.find((entry) => entry.type === "session")?.id,
+		recordedFor: all.filter((entry) => entry.customType === REFUSAL).map((entry) => String(entry.data?.sessionId)),
+	};
+}
+
+async function host(turns: ReturnType<typeof fauxAssistantMessage>[]) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-omo-14649-"));
 	const cwd = join(scratch, "project");
 	const agentDir = join(scratch, "agent");
 	await mkdir(cwd);
 	await mkdir(agentDir);
-	const marker = join(cwd, "marker.txt");
 	const faux = fauxProvider({ api: "fauxperm14649", provider: "fauxperm14649" });
 	const model = faux.getModel();
-	faux.setResponses([
-		...(from ? [fauxAssistantMessage("first turn")] : []),
-		fauxAssistantMessage(fauxToolCall("write", { path: marker, content: "probe" }, { id: "call-write" }), {
-			stopReason: "toolUse",
-		}),
-		fauxAssistantMessage("PROBE-DENIED"),
-	]);
+	faux.setResponses(turns);
 	const parsed = parseArgs([
 		"--mode",
 		"rpc",
@@ -97,66 +103,99 @@ async function readOnlyWriteTurn(
 		await writer.flush();
 		return (direct as WireRecord | undefined) ?? records.find((record) => record.id === id);
 	};
+	const open = async (fields: Record<string, unknown>) => {
+		const reply = await send({ type: "open_session", cwd, permissionPreset: "read-only", ...fields });
+		const data = reply?.data as { sessionId?: string; state?: { sessionFile?: string } } | undefined;
+		return { reply, sessionId: data?.sessionId, sessionFile: data?.state?.sessionFile };
+	};
+	/** One prompt, settled: the turn ends at `agent_idle`. */
+	const turn = async (sessionId: string) => {
+		const idle = Promise.withResolvers<void>();
+		const listener = (record: WireRecord) => {
+			if (record.type === "agent_idle" && record.sessionId === sessionId) idle.resolve();
+		};
+		listeners.add(listener);
+		await send({ type: "prompt", sessionId, message: "hello" });
+		await idle.promise;
+		listeners.delete(listener);
+	};
+	return { cwd, records, listeners, registry, send, open, turn };
+}
 
-	let reopenFrom: string | undefined;
-	if (from) {
-		const first = await send({
-			type: "open_session",
-			cwd,
-			permissionPreset: "read-only",
-			context: { approvals: "refuse" },
-		});
-		const data = first?.data as { sessionId?: string; state?: { sessionFile?: string } } | undefined;
-		if (!data?.sessionId || !data.state?.sessionFile) throw new Error(`first open failed: ${JSON.stringify(first)}`);
-		const firstIdle = Promise.withResolvers<void>();
-		listeners.add((record) => {
-			if (record.type === "agent_idle" && record.sessionId === data.sessionId) firstIdle.resolve();
-		});
-		await send({ type: "prompt", sessionId: data.sessionId, message: "hello" });
-		await firstIdle.promise;
-		await send({ type: "close_session", sessionId: data.sessionId });
-		reopenFrom = data.state.sessionFile;
-		if (from === "fork") {
-			const original = SessionManager.open(reopenFrom);
-			const leafId = original.getLeafId();
-			if (!leafId) throw new Error("first session has no entries to fork");
-			reopenFrom = original.createBranchedSession(leafId);
-		}
-	}
-	const opened = await send({
-		type: "open_session",
-		cwd,
-		permissionPreset: "read-only",
-		...(reopenFrom === undefined ? {} : { sessionPath: reopenFrom }),
-		...(Object.keys(context).length === 0 ? {} : { context }),
-	});
-	const openedData = opened?.data as { sessionId?: string; state?: { sessionFile?: string } } | undefined;
-	const sessionId = openedData?.sessionId;
-	if (!sessionId) throw new Error(`open_session failed: ${JSON.stringify(opened)}`);
-	// Read before the first prompt: the refusal must already be in the file, bound to the id its header names.
-	const fileAtOpen = openedData?.state?.sessionFile;
-	const linesAtOpen =
-		fileAtOpen !== undefined && existsSync(fileAtOpen)
-			? readFileSync(fileAtOpen, "utf8")
+/**
+ * The session the final `write` call runs in. `before` is its history: `reopen` (opened with the label, closed, reopened
+ * by its file), `record-removed` (the same, with the record deleted from the file in between), `late-label` (opened without it, a turn, then opened once with it), `file-fork` (a labelled session forked
+ * on disk), `rpc-fork` / `rpc-clone` (a labelled session replaced in place by the RPC command).
+ */
+async function readOnlyWriteTurn(
+	context: Record<string, string>,
+	until: "agent_idle" | "permission_prompt",
+	before?: "reopen" | "record-removed" | "late-label" | "file-fork" | "rpc-fork" | "rpc-clone",
+) {
+	const marker = "marker.txt";
+	const h = await host([
+		...(before ? [fauxAssistantMessage("first turn")] : []),
+		fauxAssistantMessage(fauxToolCall("write", { path: marker, content: "probe" }, { id: "call-write" }), {
+			stopReason: "toolUse",
+		}),
+		fauxAssistantMessage("PROBE-DENIED"),
+	]);
+	let sessionId: string | undefined;
+	let fileAtOpen: string | undefined;
+	let fork: { parent: string | undefined; file: string | undefined } | undefined;
+	if (before === "rpc-fork" || before === "rpc-clone") {
+		const first = await h.open({ context: LABEL });
+		if (!first.sessionId || !first.sessionFile) throw new Error(`first open failed: ${JSON.stringify(first.reply)}`);
+		await h.turn(first.sessionId);
+		const user = entries(first.sessionFile).find((entry) => entry.type === "message");
+		const replaced = await h.send(
+			before === "rpc-fork"
+				? { type: "fork", sessionId: first.sessionId, entryId: user?.id }
+				: { type: "clone", sessionId: first.sessionId },
+		);
+		if (replaced?.success !== true) throw new Error(`${before} failed: ${JSON.stringify(replaced)}`);
+		sessionId = first.sessionId;
+	} else {
+		let reopenFrom: string | undefined;
+		if (before) {
+			const first = await h.open(before === "late-label" ? {} : { context: LABEL });
+			if (!first.sessionId || !first.sessionFile)
+				throw new Error(`first open failed: ${JSON.stringify(first.reply)}`);
+			await h.turn(first.sessionId);
+			await h.send({ type: "close_session", sessionId: first.sessionId });
+			reopenFrom = first.sessionFile;
+			if (before === "record-removed") {
+				const kept = readFileSync(reopenFrom, "utf8")
 					.split("\n")
-					.filter((line) => line.length > 0)
-					.map(
-						(line) =>
-							JSON.parse(line) as {
-								type?: string;
-								id?: string;
-								customType?: string;
-								data?: { sessionId?: string };
-							},
-					)
-			: [];
-	const headerId = linesAtOpen.find((entry) => entry.type === "session")?.id;
-	const recordedAtOpen = linesAtOpen.some(
-		(entry) => entry.customType === "permission-approvals-refused" && entry.data?.sessionId === headerId,
-	);
+					.filter((line) => !line.includes(REFUSAL));
+				writeFileSync(reopenFrom, kept.join("\n"));
+			}
+			if (before === "late-label") {
+				const labelled = await h.open({ sessionPath: reopenFrom, context: LABEL });
+				if (!labelled.sessionId) throw new Error(`labelled reopen failed: ${JSON.stringify(labelled.reply)}`);
+				await h.send({ type: "close_session", sessionId: labelled.sessionId });
+			}
+			if (before === "file-fork") {
+				const original = SessionManager.open(reopenFrom);
+				const leafId = original.getLeafId();
+				if (!leafId) throw new Error("first session has no entries to fork");
+				reopenFrom = original.createBranchedSession(leafId);
+				fork = { parent: refusalsIn(first.sessionFile).headerId, file: reopenFrom };
+			}
+		}
+		const opened = await h.open({
+			...(reopenFrom === undefined ? {} : { sessionPath: reopenFrom }),
+			...(Object.keys(context).length === 0 ? {} : { context }),
+		});
+		if (!opened.sessionId) throw new Error(`open_session failed: ${JSON.stringify(opened.reply)}`);
+		sessionId = opened.sessionId;
+		fileAtOpen = opened.sessionFile;
+	}
+	// Read before the final prompt: what the file holds when the open answered.
+	const atOpen = refusalsIn(fileAtOpen);
 	const prompted = Promise.withResolvers<"prompted">();
 	const idle = Promise.withResolvers<"idle">();
-	listeners.add((record) => {
+	h.listeners.add((record) => {
 		if (record.sessionId !== sessionId) return;
 		if (record.type === "agent_idle") idle.resolve("idle");
 		if (
@@ -167,25 +206,22 @@ async function readOnlyWriteTurn(
 			prompted.resolve("prompted");
 	});
 	const deadline = new Promise<"deadline">((resolve) => setTimeout(() => resolve("deadline"), 15_000).unref());
-	const reply = await send({ type: "prompt", sessionId, message: "create the marker file" });
+	const reply = await h.send({ type: "prompt", sessionId, message: "create the marker file" });
 	if (reply?.success === false) throw new Error(`prompt failed: ${String(reply.error)}`);
 	const outcome = await Promise.race([until === "agent_idle" ? idle.promise : prompted.promise, deadline]);
-	if (outcome === "idle") await registry.peek(sessionId)?.runtime?.session.waitForSettledSessionWork();
-	const ended = records.find((record) => record.sessionId === sessionId && record.type === "tool_execution_end");
-	return { outcome, ended, wrote: existsSync(marker), recordedAtOpen };
+	if (outcome === "idle") await h.registry.peek(sessionId)?.runtime?.session.waitForSettledSessionWork();
+	const ended = h.records.find((record) => record.sessionId === sessionId && record.type === "tool_execution_end");
+	return { outcome, ended, wrote: existsSync(join(h.cwd, marker)), atOpen, fork };
 }
 
 describe("a session whose opener declared nobody answers its prompts refuses instead of asking (omo#14649)", () => {
 	it("read-only write with context approvals=refuse: refused with a readable reason, and the turn ends", async () => {
-		const { outcome, ended, wrote, recordedAtOpen } = await readOnlyWriteTurn({ approvals: "refuse" }, "agent_idle");
+		const { outcome, ended, wrote, atOpen } = await readOnlyWriteTurn(LABEL, "agent_idle");
 
-		expect({ outcome, isError: ended?.isError, wrote, recordedAtOpen }).toEqual({
-			outcome: "idle",
-			isError: true,
-			wrote: false,
-			recordedAtOpen: true,
-		});
+		expect({ outcome, isError: ended?.isError, wrote }).toEqual({ outcome: "idle", isError: true, wrote: false });
 		expect(JSON.stringify(ended?.result)).toContain("nobody answers this session's prompts");
+		// On disk, bound to the file's own id, before any prompt.
+		expect(atOpen.recordedFor).toEqual([atOpen.headerId]);
 	});
 
 	it("a labelled session reopened by its file without the label still refuses (a wake after its process died)", async () => {
@@ -195,15 +231,73 @@ describe("a session whose opener declared nobody answers its prompts refuses ins
 		expect(JSON.stringify(ended?.result)).toContain("nobody answers this session's prompts");
 	});
 
-	it("a fork of a labelled session opened without the label asks (the record is bound to the session id)", async () => {
-		const { outcome, wrote } = await readOnlyWriteTurn({}, "permission_prompt", "fork");
+	it("a labelled session whose record was deleted from its file asks on the next unlabelled open, never allows", async () => {
+		const { outcome, wrote } = await readOnlyWriteTurn({}, "permission_prompt", "record-removed");
 
 		expect({ outcome, wrote }).toEqual({ outcome: "prompted", wrote: false });
 	});
+
+	it("a session first labelled after it has messages keeps refusing when reopened without the label", async () => {
+		const { outcome, ended, wrote } = await readOnlyWriteTurn({}, "agent_idle", "late-label");
+
+		expect({ outcome, isError: ended?.isError, wrote }).toEqual({ outcome: "idle", isError: true, wrote: false });
+	});
+
+	it("a fork of a labelled session opened without the label asks (the record is bound to the session id)", async () => {
+		const { outcome, wrote, fork } = await readOnlyWriteTurn({}, "permission_prompt", "file-fork");
+
+		// The fork did copy the parent's record, under the parent's id, and has an id of its own.
+		const copied = refusalsIn(fork?.file);
+		expect(copied.recordedFor).toEqual([fork?.parent]);
+		expect(copied.headerId).not.toBe(fork?.parent);
+		expect({ outcome, wrote }).toEqual({ outcome: "prompted", wrote: false });
+	});
+
+	it.each(["rpc-fork", "rpc-clone"] as const)(
+		"an RPC %s of a labelled session asks: the opener's label stays with the session it opened",
+		async (before) => {
+			const { outcome, wrote } = await readOnlyWriteTurn({}, "permission_prompt", before);
+
+			expect({ outcome, wrote }).toEqual({ outcome: "prompted", wrote: false });
+		},
+	);
 
 	it("the same call without the label still asks (the label is what changes it)", async () => {
 		const { outcome, wrote } = await readOnlyWriteTurn({}, "permission_prompt");
 
 		expect({ outcome, wrote }).toEqual({ outcome: "prompted", wrote: false });
+	});
+});
+
+describe("a labelled open fails when its refusal cannot be made durable (omo#14649)", () => {
+	// A read-only directory does not stop root, so the write failure cannot be produced there.
+	it.skipIf(process.getuid?.() === 0)(
+		"an unwritable session folder fails the labelled open, not the unlabelled one",
+		async () => {
+			const h = await host([]);
+			const sessionDir = getDefaultSessionDir(h.cwd);
+			mkdirSync(join(sessionDir, "session-holders"), { recursive: true });
+			chmodSync(sessionDir, 0o500);
+			disposers.push(async () => chmodSync(sessionDir, 0o700));
+
+			const unlabelled = await h.open({});
+			const labelled = await h.open({ context: LABEL });
+
+			expect(unlabelled.reply?.success).toBe(true);
+			expect(labelled.reply?.success).toBe(false);
+		},
+	);
+
+	it("a sync that fails rejects the record instead of reporting it written", async () => {
+		const scratch = await mkdtemp(join(tmpdir(), "senpi-omo-14649-sync-"));
+		disposers.push(() => rm(scratch, { recursive: true, force: true }));
+		const session = SessionManager.create(scratch, join(scratch, "sessions"));
+
+		await expect(
+			recordOpenerRefusal(session, {
+				syncFile: () => Promise.reject(new Error("EIO: sync failed")),
+				syncDirectory: () => Promise.resolve(),
+			}),
+		).rejects.toThrow("EIO: sync failed");
 	});
 });
