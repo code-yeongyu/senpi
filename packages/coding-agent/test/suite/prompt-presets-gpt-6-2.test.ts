@@ -158,11 +158,9 @@ describe("GPT-6.2 core", () => {
 	});
 
 	it.each(["terminal", "app", "chat"] as const)("shares the read-first core with GPT-6 Astra on %s", (surface) => {
-		const astra = render("gpt-6-astra", SESSION_TOOLS, surface);
-		expect(astra).toBe(render("gpt-6.2", SESSION_TOOLS, surface));
-		expect(astra).toContain("Do that reading and the reasoning yourself");
-		expect(astra).toContain("or a workflow they started asks for one");
-		expect(render("gpt-6-astra", [], surface)).not.toContain("Start a subagent");
+		for (const tools of [SESSION_TOOLS, []]) {
+			expect(render("gpt-6-astra", tools, surface)).toBe(render("gpt-6.2", tools, surface));
+		}
 	});
 
 	// The emphasis budget of this core: no bold, no capitalized emphasis, and "Never" only for the

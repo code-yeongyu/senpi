@@ -146,12 +146,12 @@ describe("todo results carry the handoff cue at handoff moments", () => {
 });
 
 describe("the cue names the handoff block the active preset defines (senpi#6977)", () => {
-	it("names the Outcome / You need block under a GPT preset that renders it", async () => {
+	it.each(["gpt-5.6", "gpt-6-sol"])("names the Outcome / You need block under %s", async (id) => {
 		// given: a session on a model whose prompt renders the GPT family handoff block
 		vi.stubEnv("SENPI_PROMPT_SURFACE", "terminal");
 
 		// when
-		const texts = await runFourTodoCalls("gpt-6-astra");
+		const texts = await runFourTodoCalls(id);
 
 		// then: each handoff-moment result cues that block's labels, and no cue names the default Ask / For you block
 		expect(texts).toHaveLength(4);
@@ -166,7 +166,7 @@ describe("the cue names the handoff block the active preset defines (senpi#6977)
 		expect(texts[1]).not.toContain("Handoff due");
 	});
 
-	it.each(["gpt-6.2-astra", "deepseek-flash"])(
+	it.each(["gpt-6-astra", "gpt-6.2-astra", "deepseek-flash"])(
 		"emits no cue under %s, whose prompt defines no handoff block",
 		async (id) => {
 			// given: a session on a preset whose core defines no handoff block on any surface (senpi#6979, senpi#7100)
@@ -187,24 +187,25 @@ describe("the cue names the handoff block the active preset defines (senpi#6977)
 		// neither to none), so a preset that starts or stops rendering a block fails here until the table
 		// is set deliberately
 		for (const { providerID, modelID, preset } of PROMPT_PRESET_MODEL_CASES) {
-			const prompt = resolvePreset(createModel(modelID, providerID), AUTO)?.prompt ?? "";
+			const model = createModel(modelID, providerID);
+			const prompt = resolvePreset(model, AUTO)?.prompt ?? "";
 			const expected = prompt.includes("[Outcome so far] toward")
 				? "gpt-block"
 				: prompt.includes("Ask: [the user's original request]")
 					? "default"
 					: "none";
-			expect(presetHandoffCueKind(preset), preset).toBe(expected);
+			expect(presetHandoffCueKind(preset, model), modelID).toBe(expected);
 		}
 		expect(presetHandoffCueKind(undefined)).toBe("default");
 	});
 
 	it("names the GPT handoff labels the prompts that render the block carry", () => {
-		// given: the three presets that render the GPT block, and the cue's own label list
+		// given: the GPT cores that render the block, and the cue's own label list
 		// then: every label the cue names appears in each rendered prompt, so renaming a label
 		// in the cue without the prompt (or vice versa) fails here
 		const labels = GPT_HANDOFF_LABELS.split(" / ");
 		expect(labels).toEqual(["Outcome so far", "You need", "Now", "Next"]);
-		for (const id of ["gpt-5.5", "gpt-5.6", "gpt-6-astra"]) {
+		for (const id of ["gpt-5.5", "gpt-5.6", "gpt-6-sol"]) {
 			const prompt = resolvePreset(createModel(id), AUTO)?.prompt ?? "";
 			for (const label of labels) expect(prompt, `${id}: ${label}`).toContain(label);
 		}

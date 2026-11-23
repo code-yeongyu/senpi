@@ -11,7 +11,7 @@ export function normalizeModelId(modelId: string): string {
 
 // The GPT-6 family (Astra, 6.1 Sol, Sol, Luna) shares one prompting guide
 // (developers.openai.com/api/docs/guides/latest-model, 2026-09-23; GPT-6.1 Sol added
-// 2026-09-29), so every tier renders the gpt-6-astra preset; the preset keeps that name
+// 2026-09-29), so every tier resolves to the gpt-6-astra preset name. The preset keeps that name
 // because settings.json already pins it. Id shapes verified against the OpenAI model
 // pages, codex's models.json, models.dev, OpenRouter, Vercel and Bedrock's catalog:
 // gpt-6-sol, gpt-6.1-sol, gpt-6.1-sol-fast, gpt-6-luna-fast, dated snapshots,
@@ -22,6 +22,12 @@ export function normalizeModelId(modelId: string): string {
 // decision, and the dotless form is accepted only with a single digit right after the 6.
 export function hasGpt6FamilySignal(value: string): boolean {
 	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)?[._-](?:astra|sol|luna)(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+/** GPT-6.0 Astra, including its catalog aliases, but not Sol, Luna or later point releases. */
+export function isGpt6BaseAstraModel(model: ModelWithPromptPresetMetadata): boolean {
+	const value = hasGpt6FamilySignal(model.id) ? model.id : (model.name ?? model.id);
+	return /(?:^|[/@:._-])gpt[._-]?6[._-]astra(?:$|[/@:._-])/.test(normalizeModelId(value));
 }
 
 // GPT-6.2 Astra and Sol (2026-11-17) have their own guide and codex template, so they resolve to the

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { getBuiltinModels, getBuiltinProviders } from "../../../ai/src/providers/all.ts";
 import { APP_NAME } from "../../src/config.ts";
+import { usesReadFirstAstraCore } from "../../src/core/extensions/builtin/prompt-preset/contract.ts";
 import {
 	AUTO_RESOLVED_PRESET_NAMES,
 	type BuildDynamicSystemPromptOptions,
@@ -46,12 +47,12 @@ describe("public prompt generation (#3104)", () => {
 			for (const model of catalog) {
 				const settings = { ...input, surface };
 				const generated = resolvePreset(model, { promptPreset: "auto" }, settings);
-				expectNativeBytes(
-					generated?.name ?? "auto",
-					generated?.prompt ?? buildDynamicSystemPrompt(settings),
-					surface,
-					index,
-				);
+				// The GPT-6 Astra model adopts the existing 6.2 bytes; the preset name and
+				// the immutable baseline for Sol, Luna and forced presets stay unchanged.
+				const baselineKey = usesReadFirstAstraCore(generated?.name, model)
+					? "gpt-6.2"
+					: (generated?.name ?? "auto");
+				expectNativeBytes(baselineKey, generated?.prompt ?? buildDynamicSystemPrompt(settings), surface, index);
 			}
 		}
 	});

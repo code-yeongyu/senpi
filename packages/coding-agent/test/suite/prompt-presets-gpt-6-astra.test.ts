@@ -35,12 +35,14 @@ describe("GPT-6 Astra prompt preset", () => {
 	])("resolves $provider/$id to the gpt-6-astra preset", ({ id, provider, api }) => {
 		const preset = resolvePreset(createModel(id, provider, api), AUTO);
 		expect(preset?.name).toBe("gpt-6-astra");
-		expect(preset?.prompt).toContain("## Intent Gate");
+		expect(preset?.prompt).toBe(resolvePreset(createModel("gpt-6.2-astra"), AUTO)?.prompt);
 	});
 
 	it("resolves a display name carrying the model family when the id does not", () => {
 		const model = { ...createModel("astra-default", "custom"), name: "GPT-6 Astra" };
-		expect(resolvePresetName(model, AUTO)).toBe("gpt-6-astra");
+		const preset = resolvePreset(model, AUTO);
+		expect(preset?.name).toBe("gpt-6-astra");
+		expect(preset?.prompt).toBe(resolvePreset(createModel("gpt-6.2-astra"), AUTO)?.prompt);
 	});
 
 	it.each([
