@@ -71,14 +71,17 @@ export function isAnthropicApiBaseUrl(baseUrl: string): boolean {
 const FORCED_TOOL_CHOICE_REJECTING_MODEL_ID = /^claude-(?:(?:fable|mythos)(?:-|$)|(?:opus|sonnet)-5[.-]5(?:[.-]|$))/i;
 
 /**
- * Default for `supportsToolReferences`: first-party Anthropic models except
+ * Default for `supportsToolReferences`: Anthropic models served from
+ * api.anthropic.com (provider id alone is not enough; a configured gateway can
+ * keep the `anthropic` id) except
  * Haiku (rejects client-side tool_reference blocks) and models that predate
  * tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1). Haiku 5.5 is listed in
  * Anthropic's tool-search table, as Haiku 4.5 is, but stays off until a live
  * probe confirms it (senpi#2914).
  */
 function defaultSupportsToolReferences(model: Model<"anthropic-messages">): boolean {
-	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
+	if (model.provider !== "anthropic" || !isAnthropicApiBaseUrl(model.baseUrl) || model.id.includes("haiku"))
+		return false;
 	if (model.id === "claude-mythos-preview") return true;
 	const version = model.id.match(/^claude-(?:opus|sonnet|fable|mythos)-(\d+)(?:-(\d+))?(?:-|$)/);
 	if (!version) return false;
