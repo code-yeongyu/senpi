@@ -10,6 +10,7 @@ import type { HostAdmission } from "./host-admission.ts";
 import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
 import { listen as bindOwnedSocket } from "./host-socket-bind.ts";
+import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { PublicRpcConnection } from "./rpc-public-auth.ts";
@@ -46,6 +47,8 @@ export interface PublicProxyOptions {
 
 export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
+	// Every client is refused while the host is unreachable; the supervisor says so once per outage, not once per client.
+	let refused = 0;
 	return createServer((client) => {
 		const auth = options.publicEndpoint ? new PublicRpcConnection(client, options.publicEndpoint) : undefined;
 		const accept = async (): Promise<void> => {
@@ -71,10 +74,13 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 			client.once("close", detach);
 			client.once("error", detach);
 			try {
+				// Both hop kinds settle on the connection's real outcome, so a failure of either reaches the catch below.
 				const hop =
 					internal && options.internalKey
 						? await connectInternalConnection(internal, options.internalKey)
-						: internal;
+						: internal && (await connected(internal));
+				if (refused > 0) supervisorLog(`connections to the host succeed again after ${refused} failed`);
+				refused = 0;
 				if (client.destroyed) {
 					hop?.destroy();
 					return;
@@ -85,8 +91,12 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 			} catch (cause) {
 				// The client never reached the host: say why, on stderr and to the client, instead of a bare reset (senpi#7388).
 				internal?.destroy();
-				const detail = cause instanceof Error ? cause.message : String(cause);
-				process.stderr.write(`senpi rpc host supervisor: connection to the host failed: ${detail}\n`);
+				const detail = errorMessage(cause);
+				if (refused++ === 0) {
+					supervisorLog(
+						`connection to the host failed: ${detail}; refusing clients with host_unavailable until it succeeds again`,
+					);
+				}
 				if (client.destroyed || !client.writable) return detach();
 				proxyWithAdmission(client, undefined, options.admission, auth, false, detail);
 				if (!auth) client.resume();
@@ -94,6 +104,16 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 		};
 		if (publicSecret) authenticateSocket(client, publicSecret, () => void accept());
 		else void accept();
+	});
+}
+
+function connected(socket: Socket): Promise<Socket> {
+	return new Promise((resolve, reject) => {
+		socket.once("error", reject);
+		socket.once("connect", () => {
+			socket.off("error", reject);
+			resolve(socket);
+		});
 	});
 }
 
