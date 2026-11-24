@@ -1,5 +1,42 @@
 # config-reload Extension Changes
 
+## 2026-11-10 - Rearm extension discovery without reloading for runtime directories (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts` treats newly created global and project extensions containers like the existing project discovery container: rearm their watches, then classify the discovered files. Runtime state alone does not request a reload.
+- `packages/coding-agent/test/suite/config-reload-extension.test.ts` covers runtime state creating the extensions directory as well as writing beneath an existing one, and proves a subsequent real extension entry still reloads.
+
+### Why
+
+- A speculative in-memory park's goal migration creates `extensions/goal/no-session`. Reporting the enclosing directory as configuration made roughly 200 existing sessions reload together in the delegated-connection sweep, filling the opener's output queue until the socket stalled and closed.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts` owns the builtin watcher's distinction between discovery containers and reload-worthy files.
+
+### Expected merge conflict zones
+
+- LOW: the presence-container exclusion in `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts`.
+
+## 2026-10-30 - The watch worker keeps one batch per subscription in flight (senpi#4999)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/watch-event-source.ts`: the shared `fs.watch` worker no longer posts one `event` message per native event. Per subscription it sends one `events` batch and holds the next until the main thread replies `ack`. Events arriving meanwhile are deduplicated by `(eventType, filename)`, and more than 256 distinct pending names collapse into one `{ eventType: "rename", filename: null }`. The main thread hands each batched event to the listener, then acks, but never to a worker that was retired or replaced.
+
+### Why
+
+- senpi#4999: with 20 sessions, a lock file rewritten in two watched directories produced about 40 worker messages per write. The main thread took 0.8M of 2.8M posted messages in 3.5 minutes. The other 2.0M waited in native memory, so host RSS grew with the work done (32 GB in SOAK-P0) while the JS heap stayed flat, and it shrank only when the host went idle.
+
+### Why an extension could not handle it
+
+- The worker is this builtin extension's own event source; nothing outside it can see or pace its queue.
+
+### Expected merge conflict zones
+
+- LOW: the worker source string and the `worker.on("message")` handler in `watch-event-source.ts`.
+
 ## 2026-10-19 - Quit does not wait on watch-worker teardown (senpi#3711)
 
 ### What changed

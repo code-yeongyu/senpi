@@ -1,4 +1,5 @@
 import { ENV_AGENT_DIR, getAgentDir } from "../../config.ts";
+import { adoptedEngineTrustHandOff } from "../../engine-trust/index.ts";
 import { RPC_CLIENT_CAPABILITIES_ENV } from "./custom-capability.ts";
 import { daemonEnvironment } from "./host-daemon-env.ts";
 import { HOST_DAEMON_DIR_ENV, type HostDaemonPaths } from "./host-daemon-paths.ts";
@@ -14,6 +15,7 @@ export function initialHostEnvironment(options: {
 	readonly generation: number;
 }): NodeJS.ProcessEnv {
 	return daemonEnvironment(process.env, options.env, {
+		...adoptedEngineTrustHandOff(),
 		[ENV_AGENT_DIR]: options.agentDir ?? getAgentDir(),
 		[RPC_CLIENT_CAPABILITIES_ENV]: PINNED_HOST_CLIENT_CAPABILITIES.join(","),
 		// Always SET, never inherited: two generations claiming one instance id make the handoff
@@ -33,6 +35,7 @@ export function successorHostEnvironment(options: {
 	readonly generation: number;
 }): NodeJS.ProcessEnv {
 	return daemonEnvironment(process.env, options.env, {
+		...adoptedEngineTrustHandOff(),
 		[RPC_CLIENT_CAPABILITIES_ENV]: PINNED_HOST_CLIENT_CAPABILITIES.join(","),
 		...(options.agentDir ? { [ENV_AGENT_DIR]: options.agentDir } : {}),
 		[HOST_INSTANCE_ID_ENV]: options.instanceId,

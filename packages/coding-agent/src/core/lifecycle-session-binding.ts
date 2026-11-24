@@ -10,11 +10,12 @@ import type { AgentEndEvent } from "./extensions/types.ts";
 import { deliveryIdOf } from "./external-admission.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
 import { readLifecycleGoal } from "./lifecycle-goal.ts";
-import { lifecycleHistory } from "./lifecycle-history.ts";
+import { lastRunEnd, lifecycleHistory } from "./lifecycle-history.ts";
 import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
 import { goalGuardAfter, type RunStopFacts } from "./lifecycle-stop.ts";
+import { wakeSourceItems } from "./lifecycle-wait-items.ts";
 import { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import type { TurnDeadlineKind } from "./turn-deadline.ts";
@@ -23,6 +24,7 @@ import { isRecord } from "./work-custody-record.ts";
 interface LifecycleBindingHost {
 	append(type: string, data: unknown): string;
 	emit(event: SessionLifecycleEvent): void;
+	holdInterruptedRun(): void;
 	factsFailed(error: unknown): void;
 }
 
@@ -53,7 +55,9 @@ export class LifecycleSessionBinding {
 		this.session = session;
 		this.host = host;
 		this.sessionId = session.sessionId;
+		const runEnd = session.sessionManager.reduceHistory(lastRunEnd);
 		this.controller = new SessionLifecycleController({
+			...(runEnd.ended && runEnd.runId !== undefined ? { endedRunId: runEnd.runId } : {}),
 			sessionId: session.sessionId,
 			spawnedBy: session.sessionManager.getHeader()?.spawnedBy,
 			entries: session.sessionManager
@@ -252,9 +256,12 @@ export class LifecycleSessionBinding {
 		// dispose() may land while the facts are read; a disposed binding restores nothing.
 		if (this.disposed) return;
 		const entries = this.session.sessionManager.reduceHistory(lifecycleHistory);
-		const active = this.controller.obligations.active;
-		for (const record of active) {
+		// A run this process started (a restored monitor's wake that ran while the extensions bound, senpi#7033) is live:
+		// only work of a run from before the restart can have been interrupted by it.
+		const liveRun = this.controller.runStartedHere;
+		for (const record of this.controller.obligations.active) {
 			if (!record.ticketId) continue;
+			if (liveRun !== undefined && record.runId === liveRun) continue;
 			const ticketId = record.ticketId;
 			const entryId = this.session.sessionManager.reduceHistory(lifecycleDeliveryEntries).get(ticketId);
 			const transcript = entryId ? this.session.sessionManager.getEntry(entryId) : undefined;
@@ -278,6 +285,9 @@ export class LifecycleSessionBinding {
 			this.recordInterruptedTools(transcript?.id ?? record.transcriptEntryId);
 		}
 		this.restored = true;
+		// Recovery may discover interruption after bindExtensions' initial hold check. Install the hold before
+		// publishing restored state or replaying custody; a saved Resume directive is not new human input.
+		this.host.holdInterruptedRun();
 		this.controller.obligations.retireRestoredSources();
 		this.controller.restoreComplete();
 		for (const record of this.controller.obligations.active) {
@@ -354,6 +364,7 @@ export class LifecycleSessionBinding {
 			data.source,
 			data.kind === "children" ? "children" : "background",
 			data.activeCount,
+			wakeSourceItems(data),
 		);
 	}
 

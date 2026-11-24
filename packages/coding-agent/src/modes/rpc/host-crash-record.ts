@@ -13,8 +13,13 @@
  * (`supervisor`, `external`) or an engine-initiated stop (`engine_stop`) - and the WATCHDOG record
  * (`kind: "rpc-host-watchdog"`) is the host child's own line when its supervisor vanished. At most
  * one terminal record is kept per generation; a clean exit the host chose itself writes nothing.
+ *
+ * The writer NEVER creates the daemon dir (senpi#5090): storage removal is final, so a record whose
+ * endpoint dir is already gone - the owner cleaned the sandbox, `host gc` reaped the endpoint - is
+ * dropped instead of recreating the deleted tree. The launch (`host-daemon-paths.ts`) creates the
+ * dir before any live writer exists, so only a post-cleanup write ever sees it absent.
  */
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 
@@ -55,8 +60,13 @@ export interface HostCrashRecord {
 	 * recording a supervisor it had to SIGKILL never saw the child start.
 	 */
 	readonly uptimeMs?: number;
-	/** `rpc-host` (terminal) or `rpc-host-watchdog`; absent on records written before the field existed. */
-	readonly kind?: "rpc-host" | "rpc-host-watchdog";
+	/**
+	 * `rpc-host` (terminal), `rpc-host-watchdog`, or `rpc-host-drain-overdue` (a drain still running past its grace,
+	 * senpi#7098); absent on records written before the field existed.
+	 */
+	readonly kind?: "rpc-host" | "rpc-host-watchdog" | "rpc-host-drain-overdue";
+	/** How long an overdue drain had been running when it was recorded. */
+	readonly drainingForMs?: number;
 	/** The generation (`instanceId`) the record is about. */
 	readonly generation?: string;
 	/**
@@ -80,7 +90,7 @@ export interface HostCrashRecord {
 
 /** A record that counts as a death: a terminal record no engine process asked for. */
 export function isHostCrash(record: HostCrashRecord): boolean {
-	return record.kind !== "rpc-host-watchdog" && record.detection !== "engine_stop";
+	return (record.kind === undefined || record.kind === "rpc-host") && record.detection !== "engine_stop";
 }
 
 /**
@@ -91,7 +101,7 @@ export function isHostCrash(record: HostCrashRecord): boolean {
  */
 export function recordHostCrash(daemonDir: string, record: HostCrashRecord): void {
 	try {
-		mkdirSync(daemonDir, { recursive: true, mode: 0o700 });
+		if (!existsSync(daemonDir)) return; // senpi#5090: a deleted endpoint keeps no records
 		appendFileSync(hostCrashRecordFile(daemonDir), `${JSON.stringify(record)}\n`, { mode: CRASH_RECORD_FILE_MODE });
 		pruneHostCrashRecords(daemonDir);
 	} catch {
@@ -120,7 +130,10 @@ export async function recordTerminalHostRecord(daemonDir: string, record: HostCr
 
 async function acquireRecordLock(daemonDir: string): Promise<(() => Promise<void>) | undefined> {
 	try {
-		mkdirSync(daemonDir, { recursive: true, mode: 0o700 });
+		// senpi#5090: locking must not create the dir either - and an absent dir would otherwise
+		// burn the lock's whole retry budget (a SQLite open cannot succeed there) before
+		// recordHostCrash dropped the record anyway.
+		if (!existsSync(daemonDir)) return undefined;
 		return await acquireOwnershipSafeLock(join(daemonDir, "crashes.lock"), {
 			retries: { retries: Math.ceil(TERMINAL_RECORD_LOCK_WAIT_MS / 50), minTimeout: 20, maxTimeout: 50 },
 		});

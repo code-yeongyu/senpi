@@ -24,6 +24,8 @@ export interface CandidateFilters {
 	isModelSkipped?(base: string): boolean;
 	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are skipped. */
 	isProviderSpent?(provider: string): boolean;
+	/** Provider-wide conservative skip after a request refusal; credentials are unavailable at this scan (senpi#2491). */
+	isProviderRefused?(provider: string): boolean;
 	skip(candidate: string, skipReason: string): void;
 }
 
@@ -75,6 +77,10 @@ function scanCandidates(
 		}
 		if (avoidProvider(selector.provider)) {
 			filters.skip(raw, "account-limit");
+			continue;
+		}
+		if (filters.isProviderRefused?.(selector.provider)) {
+			filters.skip(raw, "request-refused");
 			continue;
 		}
 		const base = baseSelector(selector);

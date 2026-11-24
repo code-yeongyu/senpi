@@ -12,11 +12,18 @@
  * generation, and the next load compiles a new one. An importer that cannot report the files it
  * compiled (the Node jiti path) is never cached, because its graph cannot be checked for staleness.
  *
+ * The check runs on every cached lookup - once per extension per session open - so it must not
+ * re-read the graph (senpi#6256: hashing a large extension graph cost ~10 ms per extension per open).
+ * A file whose content was proven to match is remembered with its stat identity; a later lookup
+ * re-hashes it only when that identity moved. ctime cannot be set from userland and moves on every
+ * write, and a file modified too recently to trust its timestamps is never remembered (git's "racy
+ * clean" rule), so an edit within one timestamp tick is still caught by the hash.
+ *
  * @module core/extensions/extension-module-cache
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 export type ExtensionModuleImporter = {
 	import(path: string, options: { default: true }): Promise<unknown>;
@@ -38,6 +45,12 @@ let generation: Generation | undefined;
 let pendingImporter: Promise<ExtensionModuleImporter> | undefined;
 let generationsCreated = 0;
 
+/** A timestamp younger than this may still be followed by a same-tick write that leaves it unchanged. */
+const RACY_TIMESTAMP_MS = 2_000;
+
+/** file -> `<fingerprint>\0<stat identity>` it was last proven to hold. */
+const verifiedSources = new Map<string, string>();
+
 function fingerprintOf(file: string): string | undefined {
 	try {
 		return createHash("sha256").update(readFileSync(file, "utf8")).digest("hex");
@@ -46,10 +59,36 @@ function fingerprintOf(file: string): string | undefined {
 	}
 }
 
+/** Stat identity, or undefined when the file is gone or too recently modified to be remembered. */
+function stableIdentityOf(file: string): { readonly key: string; readonly stable: boolean } | undefined {
+	try {
+		const stats = statSync(file, { bigint: true });
+		const newest = Number((stats.mtimeNs > stats.ctimeNs ? stats.mtimeNs : stats.ctimeNs) / 1_000_000n);
+		return {
+			key: `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`,
+			stable: Date.now() - newest > RACY_TIMESTAMP_MS,
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+function sourceUnchanged(file: string, fingerprint: string): boolean {
+	const identity = stableIdentityOf(file);
+	if (identity === undefined) return false;
+	const proven = `${fingerprint}\0${identity.key}`;
+	if (verifiedSources.get(file) === proven) return true;
+	if (fingerprintOf(file) !== fingerprint) return false;
+	// The identity was read BEFORE the hash: a write landing in between moves it, so the next lookup re-hashes.
+	if (identity.stable) verifiedSources.set(file, proven);
+	else verifiedSources.delete(file);
+	return true;
+}
+
 /** Stale means a file this generation already compiled changed or disappeared. */
 function sourcesUnchanged(live: Generation): boolean {
 	for (const [file, fingerprint] of live.importer.compiledSources?.() ?? []) {
-		if (fingerprintOf(file) !== fingerprint) return false;
+		if (!sourceUnchanged(file, fingerprint)) return false;
 	}
 	return true;
 }
@@ -114,6 +153,7 @@ export function rememberExtensionFactory(
 
 export function clearExtensionCache(): void {
 	dropGeneration();
+	verifiedSources.clear();
 }
 
 /** Test seam: how many module generations this process has compiled. */

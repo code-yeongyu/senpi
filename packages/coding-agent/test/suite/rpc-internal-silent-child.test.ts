@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { INTERNAL_OBSERVER_HANDSHAKE_MS, SupervisorActivity } from "../../src/modes/rpc/host-lifecycle-activity.ts";
 import { INTERNAL_READINESS_PROBE_MS, waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { processAlive } from "../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const key = Buffer.alloc(32, 7);
 const roots: string[] = [];
@@ -101,8 +102,6 @@ describe.skipIf(process.platform === "win32")("silent internal host", () => {
 		const supervisor = spawn(
 			process.execPath,
 			[
-				"--import",
-				"tsx",
 				join(import.meta.dirname, "../../src/modes/rpc/host-lifecycle.ts"),
 				"--socket",
 				join(root, "public.sock"),
@@ -113,7 +112,7 @@ describe.skipIf(process.platform === "win32")("silent internal host", () => {
 			],
 			{
 				env: {
-					...process.env,
+					...hostSpawnEnv(),
 					SENPI_TEST_SILENT_CHILD_PIDFILE: pidFile,
 					SENPI_CODING_AGENT_DIR: join(root, "agent"),
 				},

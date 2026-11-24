@@ -3,7 +3,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
 import { retireWorker } from "./interrupt-bounds.ts";
+import { inheritedEnvironmentDelta } from "../session-env.ts";
 import { resolveKernelToolNameSource } from "./kernel-contract.ts";
+import type { KernelPermissionHost } from "./permission-host.ts";
 import { type JavaScriptKernelOptions, localBridgeConnection } from "./local-module-loader.ts";
 import { resolveJsProcessEntryUrl, spawnProcessWorker } from "./process-worker.ts";
 import { spawnNodeWorker, WorkerStartupCancelledError, waitForReady } from "./worker-host.ts";
@@ -35,6 +37,7 @@ export class ProcessKernelStartupTimeoutError extends Error {
 export interface WorkerStartupHooks {
 	readonly options: JavaScriptKernelOptions;
 	readonly kernelGeneration: number;
+	readonly permissions?: KernelPermissionHost;
 	/** Wires the worker into the kernel; throws `WorkerStartupCancelledError` once the generation is stale. */
 	publish(worker: WorkerLike): void;
 	isCurrent(worker: WorkerLike): boolean;
@@ -43,7 +46,7 @@ export interface WorkerStartupHooks {
 }
 
 export async function startWorkerWithInlineFallback(hooks: WorkerStartupHooks, signal: AbortSignal): Promise<void> {
-	let worker = spawnWorker(hooks.options);
+	let worker = spawnWorker(hooks.options, hooks.permissions);
 	hooks.publish(worker);
 	try {
 		await initializeWorker(worker, hooks, signal);
@@ -65,27 +68,29 @@ export async function startWorkerWithInlineFallback(hooks: WorkerStartupHooks, s
 		await worker.terminate();
 	}
 	if (!hooks.canFallBackInline()) throw new WorkerStartupCancelledError();
-	worker = createInlineWorker(hooks.options.cwd, hooks.options.parallelPoolWidth);
+	worker = createInlineWorker(hooks.options.cwd, hooks.options.parallelPoolWidth, hooks.permissions);
 	hooks.publish(worker);
 	await initializeWorker(worker, hooks, signal);
 }
 
-function spawnWorker(options: JavaScriptKernelOptions): WorkerLike {
+function spawnWorker(options: JavaScriptKernelOptions, permissions?: KernelPermissionHost): WorkerLike {
 	if (options.isolation === "process") {
 		const url = resolveJsProcessEntryUrl();
 		return spawnProcessWorker(url, {
 			cwd: options.cwd,
 			parallelPoolWidth: options.parallelPoolWidth,
+			...(options.attestSpawn === undefined ? {} : { attestSpawn: options.attestSpawn }),
+			...(options.inheritedEnv === undefined ? {} : { inheritedEnv: options.inheritedEnv }),
 			...(options.processCommandPath === undefined ? {} : { searchPath: options.processCommandPath }),
 			...(options.processExecPath === undefined ? {} : { execPath: options.processExecPath }),
 		});
 	}
 	try {
 		const url = options.workerEntryUrl ?? resolveJsWorkerEntryUrl();
-		return spawnNodeWorker(url, options.cwd, options.parallelPoolWidth);
+		return spawnNodeWorker(url, options.cwd, options.parallelPoolWidth, "worker", permissions);
 	} catch (error) {
 		if (!(error instanceof Error)) throw error;
-		return createInlineWorker(options.cwd, options.parallelPoolWidth);
+		return createInlineWorker(options.cwd, options.parallelPoolWidth, permissions);
 	}
 }
 
@@ -103,8 +108,17 @@ async function initializeWorker(worker: WorkerLike, hooks: WorkerStartupHooks, s
 		hostToolNames: resolveKernelToolNameSource(options.hostToolNames),
 		foreignLanguageNames: resolveKernelToolNameSource(options.foreignLanguageNames),
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
+		// A worker thread's process.env starts as a copy of the host's, so it is told what to drop and set. That includes
+		// the inline fallback, which is a worker thread too. A process kernel already starts from the scrubbed env
+		// (senpi#5635, senpi#5653).
+		...(worker.mode !== "process" && options.inheritedEnv !== undefined
+			? inheritedEnvironmentDelta(process.env, options.inheritedEnv())
+			: {}),
 		...(options.memory === undefined ? {} : { memory: options.memory }),
 		...(options.kernelToolsEnabled === false ? { kernelToolsDisabled: true } : {}),
+		...(options.killGuard === undefined
+			? {}
+			: { killGuard: { moduleUrl: String(options.killGuard.moduleUrl), agentPid: options.killGuard.agentPid } }),
 	});
 	await ready;
 }

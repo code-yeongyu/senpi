@@ -11,7 +11,15 @@ import { open } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { normalizePath } from "../utils/paths.ts";
 import { EventLoopSlicer } from "./event-loop-slicer.ts";
+import {
+	BaseContentHash,
+	captureAndCloseFileIdentity,
+	captureFileIdentity,
+	loadedContentFingerprints,
+	loadedFileIdentities,
+} from "./session-file-identity.ts";
 import type { FileEntry } from "./session-manager.ts";
+import { backupTornBytes, type SessionRecovery, type SessionRecoveryCause } from "./session-write-recovery.ts";
 
 export const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 
@@ -48,6 +56,14 @@ export class SessionLineSplitter {
 	}
 }
 
+/** A parsed line becomes an entry; a capturing load also feeds its line to the content fingerprint (RULING-72). */
+function countEntry(entries: FileEntry[], line: string, content: BaseContentHash | undefined): void {
+	const entry = parseSessionEntryLine(line);
+	if (!entry) return;
+	entries.push(entry);
+	content?.line(line);
+}
+
 function acceptSessionEntries(entries: FileEntry[]): FileEntry[] {
 	if (entries.length === 0) return entries;
 	const header = entries[0];
@@ -56,8 +72,8 @@ function acceptSessionEntries(entries: FileEntry[]): FileEntry[] {
 }
 
 /** Exported for testing */
-export function loadEntriesFromFile(filePath: string): FileEntry[] {
-	return acceptSessionEntries(readRawEntriesFromFile(filePath));
+export function loadEntriesFromFile(filePath: string, captureIdentity = false): FileEntry[] {
+	return acceptSessionEntries(readRawEntriesFromFile(filePath, captureIdentity));
 }
 
 /** What `forkFrom` found in its source: the entries, whether the file had a header, and why it cannot be forked. */
@@ -92,28 +108,27 @@ export function readForkSource(filePath: string): ForkSource {
 	return { kind: "not-a-session" };
 }
 
-function readRawEntriesFromFile(filePath: string): FileEntry[] {
+function readRawEntriesFromFile(filePath: string, captureIdentity = false): FileEntry[] {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
 	const entries: FileEntry[] = [];
 	const splitter = new SessionLineSplitter();
+	const content = captureIdentity ? new BaseContentHash() : undefined;
 	const fd = openSync(resolvedFilePath, "r");
 	try {
 		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
 		while (true) {
 			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
 			if (bytesRead === 0) break;
-			for (const line of splitter.push(buffer.subarray(0, bytesRead))) {
-				const entry = parseSessionEntryLine(line);
-				if (entry) entries.push(entry);
-			}
+			for (const line of splitter.push(buffer.subarray(0, bytesRead))) countEntry(entries, line, content);
 		}
-		const finalEntry = parseSessionEntryLine(splitter.finish());
-		if (finalEntry) entries.push(finalEntry);
+		countEntry(entries, splitter.finish(), content);
 	} finally {
-		closeSync(fd);
+		if (captureIdentity) loadedFileIdentities.set(entries, captureAndCloseFileIdentity(fd, resolvedFilePath));
+		else closeSync(fd);
 	}
+	if (content) loadedContentFingerprints.set(entries, content.digest());
 	return entries;
 }
 
@@ -124,12 +139,14 @@ function readRawEntriesFromFile(filePath: string): FileEntry[] {
 export async function loadEntriesFromFileAsync(
 	filePath: string,
 	slicer: EventLoopSlicer = new EventLoopSlicer(),
+	captureIdentity = false,
 ): Promise<FileEntry[]> {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
 	const entries: FileEntry[] = [];
 	const splitter = new SessionLineSplitter();
+	const content = captureIdentity ? new BaseContentHash() : undefined;
 	const handle = await open(resolvedFilePath, "r");
 	try {
 		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
@@ -137,38 +154,64 @@ export async function loadEntriesFromFileAsync(
 			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
 			if (bytesRead === 0) break;
 			for (const line of splitter.push(buffer.subarray(0, bytesRead))) {
-				const entry = parseSessionEntryLine(line);
-				if (entry) entries.push(entry);
+				countEntry(entries, line, content);
 				if (slicer.due) await slicer.yield();
 			}
 		}
-		const finalEntry = parseSessionEntryLine(splitter.finish());
-		if (finalEntry) entries.push(finalEntry);
+		countEntry(entries, splitter.finish(), content);
+		if (content) loadedContentFingerprints.set(entries, content.digest());
 	} finally {
+		if (captureIdentity) {
+			const identity = captureFileIdentity(handle.fd, resolvedFilePath);
+			loadedFileIdentities.set(entries, identity);
+			await identity;
+		}
 		await handle.close();
 	}
 	return acceptSessionEntries(entries);
 }
 
+/** A torn final line was set aside, or could not be (the copy was refused) and must be set aside before the next append. */
+export type FinalLineRepair =
+	| { readonly kind: "set_aside"; readonly recovery: SessionRecovery }
+	| { readonly kind: "deferred" };
+
 /**
  * Make this process's appends start on a new line. A final line with no newline is either a whole entry written
  * without one (it parses: it is terminated and kept) or a line a crash tore part-way (it does not parse: it was
- * never committed, so the file is cut back to its last complete line, senpi#3549). Terminating a torn line instead
- * would turn it into a complete, corrupt line that no reader can tell from real corruption. Only the final
- * segment is read, never the whole transcript; anything but a regular file is left to the loader, as before.
+ * never committed, so it is copied to `<file>.torn-<time>` and the file is cut back to its last complete line,
+ * senpi#3549, senpi#4295). Terminating a torn line instead would turn it into a complete, corrupt line that no reader
+ * can tell from real corruption. Only the final segment is read, never the whole transcript; anything but a regular
+ * file is left to the loader, as before.
  */
-export function terminateFinalSessionLine(filePath: string): void {
-	if (!existsSync(filePath) || !statSync(filePath).isFile()) return;
+export function terminateFinalSessionLine(
+	filePath: string,
+	cause: SessionRecoveryCause = "unknown",
+): FinalLineRepair | undefined {
+	if (!existsSync(filePath) || !statSync(filePath).isFile()) return undefined;
 	const fd = openSync(filePath, "r+");
 	try {
 		const size = fstatSync(fd).size;
 		const segmentStart = finalSegmentStart(fd, size);
-		if (segmentStart === size) return;
+		if (segmentStart === size) return undefined;
 		const segment = Buffer.alloc(size - segmentStart);
 		readSync(fd, segment, 0, segment.length, segmentStart);
+		if (parseSessionEntryLine(segment.toString("utf8")) !== null) {
+			writeSync(fd, "\n", size);
+			return undefined;
+		}
+		let recovery: SessionRecovery;
+		try {
+			recovery = backupTornBytes(filePath, segment, cause);
+		} catch (error) {
+			// Deferred, not dropped: a full disk can refuse the copy, so the file is left as it is and the writer
+			// sets the tail aside before its first append, which fails with this error if the disk is still full.
+			if (error instanceof Error) return { kind: "deferred" };
+			throw error;
+		}
 		// Not synced on purpose: a lost truncate only brings back an uncommitted tail, and the next append syncs.
-		if (parseSessionEntryLine(segment.toString("utf8")) === null) ftruncateSync(fd, segmentStart);
-		else writeSync(fd, "\n", size);
+		ftruncateSync(fd, segmentStart);
+		return { kind: "set_aside", recovery };
 	} finally {
 		closeSync(fd);
 	}

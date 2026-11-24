@@ -8,6 +8,7 @@ import { afterEach } from "vitest";
 
 import { hermeticProviderEnv } from "./rpc-hermetic.ts";
 import { JsonlPeer, type RecordValue } from "./rpc-jsonl-peer.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 
@@ -29,7 +30,9 @@ export function scratch(label: string): {
 	const agentDir = join(root, "agent");
 	const sessionDir = join(root, "sessions");
 	const cwd = join(root, "work");
-	mkdirSync(agentDir, { recursive: true });
+	// 0700 under any umask: the host refuses to publish its key into an agent dir writable by group or others
+	// (unsafe_key_record) and exits before readiness, so a 0002 umask failed every real-host test here.
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
 	mkdirSync(sessionDir, { recursive: true });
 	mkdirSync(cwd, { recursive: true });
 	return {
@@ -44,11 +47,12 @@ export function spawnRpc(
 	args: string[],
 	qa: ReturnType<typeof scratch>,
 	capabilities = "extension_events,custom_unsupported",
+	env: Readonly<Record<string, string>> = {},
 ): ChildProcessWithoutNullStreams {
 	const child = spawn(process.execPath, [join(import.meta.dirname, "..", "..", "src", "cli.ts"), ...args], {
 		cwd: qa.cwd,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			PI_OFFLINE: "1",
 			PI_TELEMETRY: "0",
@@ -56,23 +60,21 @@ export function spawnRpc(
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
 			SENPI_RPC_CLIENT_CAPABILITIES: capabilities,
+			...env,
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
 	children.push(child);
 	return child;
 }
-export async function waitForStderr(
-	child: ChildProcessWithoutNullStreams,
-	text: string,
-	timeoutMs = 15_000,
-): Promise<void> {
+/**
+ * Resolves when the child's stderr contains `text`; rejects when the child exits first.
+ * No wall-clock deadline of its own: host startup on a loaded machine can take longer than any
+ * fixed readiness window (senpi#5340), and vitest's testTimeout is the outer bound.
+ */
+export async function waitForStderr(child: ChildProcessWithoutNullStreams, text: string): Promise<void> {
 	let stderr = "";
 	await new Promise<void>((resolve, reject) => {
-		const timer = setTimeout(() => {
-			cleanup();
-			reject(new Error(`Timed out waiting for stderr ${JSON.stringify(text)}: ${stderr}`));
-		}, timeoutMs);
 		const onData = (chunk: Buffer) => {
 			stderr += chunk.toString("utf8");
 			if (stderr.includes(text)) {
@@ -85,7 +87,6 @@ export async function waitForStderr(
 			reject(new Error(`RPC host exited before readiness: ${stderr}`));
 		};
 		const cleanup = () => {
-			clearTimeout(timer);
 			child.stderr.off("data", onData);
 			child.off("exit", onExit);
 		};

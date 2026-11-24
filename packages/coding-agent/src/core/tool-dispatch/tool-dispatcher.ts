@@ -14,6 +14,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { HostCallHandler } from "../../modes/rpc/tool-child/host-calls-server.ts";
+import { kernelToolInvokerStorage } from "../extensions/kernel-tools-context.ts";
 import type { ExtensionToolContext, ToolChildJob, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
 import { childBashOperations } from "./child-bash-operations.ts";
@@ -104,6 +105,8 @@ export interface ToolDispatcherOptions {
 
 export interface ToolDispatcher {
 	readonly kind: ToolRuntimeKind;
+	/** Tool bodies dispatched through `run` that have not settled yet, wherever they run. */
+	readonly executing: number;
 	run<TDetails = unknown>(
 		call: ToolDispatchCall<TDetails>,
 	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>>;
@@ -135,7 +138,22 @@ export function resolveToolPlacement(
 abstract class BaseToolDispatcher implements ToolDispatcher {
 	abstract readonly kind: ToolRuntimeKind;
 
-	abstract run<TDetails>(
+	#executing = 0;
+
+	get executing(): number {
+		return this.#executing;
+	}
+
+	async run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
+		this.#executing++;
+		try {
+			return await this.dispatch(call);
+		} finally {
+			this.#executing--;
+		}
+	}
+
+	protected abstract dispatch<TDetails>(
 		call: ToolDispatchCall<TDetails>,
 	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>>;
 
@@ -175,7 +193,13 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 
 	protected runOnServer<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
 		this.emitDispatched({ toolCallId: call.toolCallId, placement: "server", pid: process.pid, generation: 0 });
-		return call.definition.execute(call.toolCallId, call.params, call.signal, call.onUpdate, call.ctx);
+		const execute = () => call.definition.execute(call.toolCallId, call.params, call.signal, call.onUpdate, call.ctx);
+		// Context-free wrappers and child/observer contexts have no host identity.
+		// Do not read an absent capability or inherit another dispatch's invoker.
+		const manager = call.ctx && "sessionManager" in call.ctx ? call.ctx.sessionManager : undefined;
+		return manager
+			? kernelToolInvokerStorage.run({ sessionId: manager.getSessionId() }, execute)
+			: kernelToolInvokerStorage.exit(execute);
 	}
 
 	protected emitDispatched(info: ToolDispatchedInfo): void {
@@ -209,7 +233,7 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 		await Promise.all([...this.#live].map((run) => run.close()));
 	}
 
-	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
+	protected dispatch<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
 		return this.runOnServer(call);
 	}
 
@@ -249,7 +273,9 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 		this.#kindRunner = kindRunner;
 	}
 
-	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
+	protected dispatch<TDetails>(
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
 		if (this.placementFor(call.definition) === "server") {
 			return this.runOnServer(call);
 		}

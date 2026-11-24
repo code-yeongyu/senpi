@@ -2,10 +2,15 @@ import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/tran
 import { type JSONRPCMessage, JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import { deriveModernHeaders, MODERN_PROTOCOL_VERSION, type ModernClientInfo, modernizeRequest } from "./wire.ts";
 import { AuthError } from "../errors.ts";
+import type { McpLogger } from "../log.ts";
 import { sanitizeModernMessage } from "./diagnostics.ts";
 import { McpMrtrError } from "./errors.ts";
 import { getModernDispatchGuard, modernDispatchGuard } from "./request.ts";
-import { clearMcpParameterHeaders, ModernParameterHeaders } from "./parameter-headers.ts";
+import {
+	clearMcpParameterHeaders,
+	ModernParameterHeaders,
+	ParameterHeaderValidationError,
+} from "./parameter-headers.ts";
 
 export type ModernHttpTransportOptions = {
 	readonly url: string | URL;
@@ -14,6 +19,7 @@ export type ModernHttpTransportOptions = {
 	readonly clientCapabilities: Readonly<Record<string, unknown>>;
 	readonly protocolVersion?: string;
 	readonly headers?: RequestInit["headers"];
+	readonly logger?: Pick<McpLogger, "warn">;
 };
 
 export class ModernTransportError extends Error {
@@ -135,6 +141,7 @@ export class ModernHttpTransport implements Transport {
 				);
 			}
 		} catch (error) {
+			if (error instanceof ParameterHeaderValidationError) throw error;
 			const failure =
 				error instanceof McpMrtrError || error instanceof AuthError
 					? error
@@ -157,7 +164,11 @@ export class ModernHttpTransport implements Transport {
 					...incoming,
 					result: {
 						...result,
-						tools: this.#parameterHeaders.filterTools(result.tools, this.#toolLists.get(incoming.id) === true),
+						tools: this.#parameterHeaders.filterTools(
+							result.tools,
+							this.#toolLists.get(incoming.id) === true,
+							(message) => this.#options.logger?.warn(message),
+						),
 					},
 				};
 			}

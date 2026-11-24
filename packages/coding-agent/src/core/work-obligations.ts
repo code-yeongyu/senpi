@@ -1,4 +1,5 @@
 import type { DeliveryTicketId, ObligationKind, ObligationToken, WorkObligations } from "./session-lifecycle-types.ts";
+import { normalizeWaitItems, waitItemSignature } from "./lifecycle-wait-items.ts";
 import type { SessionEntry } from "./session-manager.ts";
 import { type CustodyPayload, custodyIsOpen, readWorkCustody, type WorkCustodyRecord } from "./work-custody-record.ts";
 
@@ -45,6 +46,8 @@ export class SessionWorkObligations implements WorkObligations {
 	private readonly records = new Map<string, WorkCustodyRecord>();
 	private readonly unpersisted = new Map<string, WorkCustodyRecord>();
 	private readonly delivering = new Set<DeliveryTicketId>();
+	/** Engine delivery custody a send opened in this process and has not queued yet (senpi#6810). */
+	private readonly sending = new Set<string>();
 	private readonly publishedSources = new Set<string>();
 	private readonly store: CustodyStore;
 	constructor(store: CustodyStore) {
@@ -78,12 +81,31 @@ export class SessionWorkObligations implements WorkObligations {
 			state: "open",
 			...(detail === undefined ? {} : { detail }),
 		};
+		if (key.startsWith(ENGINE_DELIVERY_KEY_PREFIX)) this.sending.add(record.id);
 		this.install(record);
 		this.store.changed();
 		return this.token(record.id);
 	}
 
-	syncSource(source: string, kind: ObligationKind, activeCount: number): void {
+	/**
+	 * An engine delivery's own custody while its send is in flight (senpi#6810): the session is starting or joining a
+	 * turn for that delivery, so this custody is never background work the session waits on.
+	 */
+	isDeliveryInFlight(record: WorkCustodyRecord): boolean {
+		if (!record.key.startsWith(ENGINE_DELIVERY_KEY_PREFIX)) return false;
+		return this.sending.has(record.id) || (record.ticketId !== undefined && this.delivering.has(record.ticketId));
+	}
+
+	/**
+	 * An engine delivery's own custody that the given run consumed: that run's own work until `settleRun`, so never a
+	 * background wait, even after its delivery ended (senpi#6814 review).
+	 */
+	isConsumedBy(record: WorkCustodyRecord, runId: string | undefined): boolean {
+		if (runId === undefined || !record.key.startsWith(ENGINE_DELIVERY_KEY_PREFIX)) return false;
+		return record.state === "consumed" && record.runId === runId;
+	}
+
+	syncSource(source: string, kind: ObligationKind, activeCount: number, items?: unknown): void {
 		const key = `${WAKE_SOURCE_KEY_PREFIX}${source}`;
 		this.publishedSources.add(key);
 		const current = this.active.find((record) => record.key === key);
@@ -91,7 +113,13 @@ export class SessionWorkObligations implements WorkObligations {
 			if (current) this.close(current.id, "passive");
 			return;
 		}
-		if (current?.activeCount === activeCount && current.kind === kind) return;
+		const detail = normalizeWaitItems(items);
+		if (
+			current?.activeCount === activeCount &&
+			current.kind === kind &&
+			waitItemSignature(current) === waitItemSignature(detail)
+		)
+			return;
 		this.install({
 			...current,
 			id: current?.id ?? crypto.randomUUID(),
@@ -99,6 +127,8 @@ export class SessionWorkObligations implements WorkObligations {
 			source,
 			kind,
 			activeCount,
+			items: detail.items,
+			omittedItems: detail.omittedItems,
 			state: current?.state ?? "open",
 		});
 		this.store.changed();
@@ -138,6 +168,7 @@ export class SessionWorkObligations implements WorkObligations {
 			delivery: undefined,
 		});
 		this.delivering.add(ticketId);
+		this.sending.delete(record.id);
 		this.store.changed();
 		return true;
 	}
@@ -148,8 +179,14 @@ export class SessionWorkObligations implements WorkObligations {
 		return record?.state === "queued" ? record.payload?.itemIds : undefined;
 	}
 
+	/**
+	 * A delivery whose custody is still open and unconsumed (kept for a later turn) is background work again: recompute.
+	 * A delivery its turn consumed stays that run's own work until `settleRun`, so ending it publishes nothing (senpi#6814).
+	 */
 	endDelivery(ticketId: DeliveryTicketId): void {
-		this.delivering.delete(ticketId);
+		if (!this.delivering.delete(ticketId)) return;
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
+		if (record && custodyIsOpen(record) && record.state !== "consumed") this.store.changed();
 	}
 
 	passive(ticketId: DeliveryTicketId): void {
@@ -195,6 +232,22 @@ export class SessionWorkObligations implements WorkObligations {
 		this.store.changed();
 	}
 
+	/**
+	 * At restoration, a consumed delivery of any run other than the restored current one belongs to a run that ended:
+	 * its message is already in the conversation, so it settles as `idle()` would have (senpi#4848). The current run's
+	 * consumed custody stays for crash recovery and `startRun`, unless the transcript holds that run's end
+	 * (`currentRunEnded`, senpi#7016). With no recorded run nothing proves the consuming run ended, so crash recovery
+	 * keeps all of it.
+	 */
+	settleEndedRuns(currentRunId: string | undefined, currentRunEnded: boolean): void {
+		if (currentRunId === undefined) return;
+		const ended = this.active.filter(
+			(record) => record.state === "consumed" && (record.runId !== currentRunId || currentRunEnded),
+		);
+		for (const record of ended) this.install({ ...record, state: "settled" });
+		if (ended.length > 0) this.store.changed();
+	}
+
 	private install(record: WorkCustodyRecord): void {
 		try {
 			this.store.append(record);
@@ -228,6 +281,7 @@ export class SessionWorkObligations implements WorkObligations {
 
 	private close(id: string, state: "settled" | "held" | "cancelled" | "passive", noticeId?: string): void {
 		const record = this.owned(id);
+		this.sending.delete(id);
 		this.install({ ...record, state, ...(noticeId === undefined ? {} : { noticeId }) });
 		this.store.changed();
 	}

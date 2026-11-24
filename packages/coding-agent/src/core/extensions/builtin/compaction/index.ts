@@ -1,6 +1,7 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
+import { formatCompactionFailure } from "../../../compaction-failure-text.ts";
 import { AccountUsageLimitError } from "../../../retry-fallback/usage-limit.ts";
 import type {
 	BeforeAgentStartEvent,
@@ -52,12 +53,7 @@ import {
 	isOpenAiRemoteCompactionModel,
 	openAiRemoteCompactionOrigin,
 } from "./openai-remote-model.ts";
-import {
-	resolveBeforeAgentStartMessage,
-	resolveCompactionGeometry,
-	resolveIdleWarmAction,
-	shouldDeferGraceBand,
-} from "./orchestration.ts";
+import { resolveCompactionGeometry, resolveIdleWarmAction, shouldDeferGraceBand } from "./orchestration.ts";
 import * as cap from "./per-turn-cap.ts";
 import * as policy from "./policy.ts";
 import {
@@ -72,21 +68,17 @@ import {
 	createEmergencyPruneLatch,
 	createSpeculativeCompactionSnapshot,
 	getPromptVariant,
+	isRetryableSummaryAttempt,
 	runExtensionCompaction,
 	type SpeculativeCompactionResult,
 	type SpeculativeCompactionSnapshot,
 	SummaryGenerationError,
 } from "./speculative.ts";
 import { type SpeculativeJob, trackSpeculativeJob } from "./speculative-job.ts";
+import { assessWarmCandidateFit, type WarmCandidateFit } from "./warm-candidate.ts";
 import { type CompactionExtensionState, createInitialState, resetTurnCounter } from "./state.ts";
 import { resolveInheritedTaskIntent } from "./task-intent.ts";
 import * as todoBridge from "./todo-bridge.ts";
-import {
-	computeTokenBudgetReminder,
-	createInitialReminderState,
-	getPersistedReminderEpoch,
-	type TokenBudgetReminderState,
-} from "./token-budget-reminder.ts";
 import { isTransientSummarizationFailure } from "./transient-failure.ts";
 
 export { getPromptContextWindow } from "./extension-wiring.ts";
@@ -110,6 +102,7 @@ const EMERGENCY_COMPACTION_INSTRUCTIONS =
 	"EMERGENCY: hard context limit reached. Produce an aggressive recovery summary that preserves current goal, constraints, files touched, tool outcomes, and exact next steps. Prefer concise factual state over transcript detail.";
 const PROACTIVE_COMPACTION_INSTRUCTIONS = "Proactively compact before the next agent turn.";
 const MAX_PENDING_METADATA = 8;
+const MAX_WARM_REGENERATIONS = 1;
 
 interface PendingCompactionMetadata {
 	checkpoint: checkpointState.AgentCheckpoint;
@@ -128,8 +121,9 @@ export default function compactionExtension(
 	const restorationState = state.restoration ?? restoration.createRestorationTrackerState();
 	state = { ...state, restoration: restorationState };
 	let speculativeGeneration = 0;
-	let reminderState: TokenBudgetReminderState = createInitialReminderState();
 	let speculativeJob: SpeculativeJob | undefined;
+	let reusedLoggedGeneration: number | undefined;
+	let warmRegenerations = 0;
 	const pendingMetadata = new Map<string, PendingCompactionMetadata>();
 	let logger: CompactionLogger | undefined;
 	const getLogger = (ctx: ExtensionContext): CompactionLogger =>
@@ -261,38 +255,54 @@ export default function compactionExtension(
 		if (!job) return;
 		// Never throws out of the continuation: a retired context, a refused apply,
 		// or a provider failure all resolve into a silent stand-down.
-		void job.promise
-			.then(async (compaction) => {
-				if (!compaction) return;
-				if (speculativeJob !== job) return;
-				if (!sessionIdleSinceAgentEnd) return;
-				if (isContextRetired(ctx)) return;
-				if (!ctx.isIdle()) return;
-				if (lanePolicy.disablesSenpiCompaction(ctx)) return;
-				if (breaker.isTripped(state, Date.now())) return;
-				if (cap.shouldRejectByCap(state).cancel) return;
-				const usage = ctx.getContextUsage();
-				const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-				if (
-					!usage ||
-					!policy.shouldTriggerCompaction(
-						usage,
-						contextWindow,
-						ctx.getCompactionSettings(),
-						state.lastYield ?? undefined,
-					)
-				) {
-					return;
-				}
-				const result = await applyGeneratedCompaction(ctx, job.snapshot, () => speculativeGeneration, compaction);
-				if (!result.applied) return;
-				// The job is consumed: clearing it here is also what stands the idle
-				// retry watcher down for this generation.
-				if (speculativeJob === job) speculativeJob = undefined;
-				cancelIdleWarmupRetry();
-				getLogger(ctx).debug("idle_applied", { generation: job.generation, origin: "speculative" });
-			})
-			.catch(() => {});
+		void job.promise.then((compaction) => tryIdleApply(ctx, job, compaction)).catch(() => {});
+	}
+
+	/**
+	 * A warm summary that finished before `agent_end` (kept across turns, senpi#5481) resolves while
+	 * the run is still active, so its idle apply runs once the session settles instead.
+	 */
+	pi.on("agent_settled", (_event, ctx) => {
+		const job = speculativeJob;
+		if (!job?.completed || !job.result || !sessionIdleSinceAgentEnd) return;
+		void tryIdleApply(ctx, job, job.result).catch(() => {});
+	});
+
+	async function tryIdleApply(
+		ctx: ExtensionContext,
+		job: SpeculativeJob,
+		compaction: CompactionResult | undefined,
+	): Promise<void> {
+		const skip = (reason: string) =>
+			getLogger(ctx).debug("idle_apply_skipped", { generation: job.generation, reason });
+		if (!compaction) return skip("no-summary");
+		if (speculativeJob !== job) return skip("superseded");
+		if (!sessionIdleSinceAgentEnd) return skip("turn-started");
+		if (isContextRetired(ctx)) return;
+		if (!ctx.isIdle()) return skip("not-idle");
+		if (lanePolicy.disablesSenpiCompaction(ctx)) return skip("lane");
+		if (breaker.isTripped(state, Date.now())) return skip("breaker");
+		if (cap.shouldRejectByCap(state).cancel) return skip("cap");
+		const usage = ctx.getContextUsage();
+		const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
+		if (
+			!usage ||
+			!policy.shouldTriggerCompaction(
+				usage,
+				contextWindow,
+				ctx.getCompactionSettings(),
+				state.lastYield ?? undefined,
+			)
+		) {
+			return skip("below-threshold");
+		}
+		const result = await applyGeneratedCompaction(ctx, job.snapshot, () => speculativeGeneration, compaction);
+		if (!result.applied) return skip(`refused-${result.reason}`);
+		// The job is consumed: clearing it here is also what stands the idle
+		// retry watcher down for this generation.
+		if (speculativeJob === job) speculativeJob = undefined;
+		cancelIdleWarmupRetry();
+		getLogger(ctx).debug("idle_applied", { generation: job.generation, origin: "speculative" });
 	}
 
 	function isSameModelIdentity(
@@ -356,6 +366,67 @@ export default function compactionExtension(
 		});
 		if (!snapshot) return;
 		getLogger(ctx).debug("speculative_started", { generation, origin: "speculative" });
+		launchSpeculativeJob(ctx, snapshot);
+	}
+
+	/** The fit of a finished warm summary on the current branch, or undefined when it can no longer be applied at all. */
+	function assessFinishedCandidate(ctx: ExtensionContext, job: SpeculativeJob): WarmCandidateFit | undefined {
+		if (!job.result || !ctx.model || !isSameModelIdentity(job.snapshot.model, ctx.model)) return undefined;
+		const branchEntries = ctx.sessionManager.getBranch();
+		const anchor = createWarmAnchorSnapshot(job.result.firstKeptEntryId, job.snapshot.branchEntries ?? []);
+		if (!anchor || !isWarmSummaryAnchorValid(anchor, branchEntries)) return undefined;
+		return assessWarmCandidateFit({
+			branchEntries,
+			compaction: job.result,
+			model: ctx.model,
+			contextWindow: ctx.getContextUsage()?.contextWindow ?? ctx.model.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+			settings: ctx.getCompactionSettings(),
+			lastYield: state.lastYield ?? undefined,
+		});
+	}
+
+	/** False only when the summarized prefix of the job's snapshot was rewritten on the current branch. */
+	function hasValidWarmAnchor(ctx: ExtensionContext, job: SpeculativeJob): boolean {
+		const anchor = createWarmAnchorSnapshot(
+			job.snapshot.preparation.firstKeptEntryId,
+			job.snapshot.branchEntries ?? [],
+		);
+		return !anchor || isWarmSummaryAnchorValid(anchor, ctx.sessionManager.getBranch());
+	}
+
+	/** A job whose summarized prefix was rewritten can only come back stale: abort it and start over. */
+	function replaceRewrittenWarmJob(ctx: ExtensionContext): boolean {
+		const job = speculativeJob;
+		if (!job || hasValidWarmAnchor(ctx, job)) return false;
+		getLogger(ctx).debug("speculative_regenerated", { generation: job.generation, reason: "anchor-invalid" });
+		invalidateSpeculativeCompaction(ctx);
+		warmRegenerations = 0;
+		return true;
+	}
+
+	/**
+	 * Regenerate a finished warm summary that no longer fits (senpi#5481): at most once per
+	 * lineage, and only when the fresh cut point moved past the summary's own anchor, so a
+	 * session that keeps outgrowing the budget pays for one more summary, not one per turn.
+	 */
+	function regenerateWarmCandidate(ctx: ExtensionContext, base: SpeculativeJob, customInstructions: string): void {
+		if (warmRegenerations >= MAX_WARM_REGENERATIONS) {
+			getLogger(ctx).debug("speculative_reused", { generation: base.generation, reason: "regeneration-cap" });
+			return;
+		}
+		const fresh = createSpeculativeCompactionSnapshot(ctx, { generation: speculativeGeneration + 1 });
+		if (!fresh || fresh.preparation.firstKeptEntryId === base.result?.firstKeptEntryId) {
+			getLogger(ctx).debug("speculative_reused", { generation: base.generation, reason: "cut-unchanged" });
+			return;
+		}
+		warmRegenerations++;
+		getLogger(ctx).debug("speculative_regenerated", { generation: base.generation, reason: "tail-over-budget" });
+		invalidateSpeculativeCompaction(ctx);
+		startSpeculativeCompaction(ctx, customInstructions);
+	}
+
+	function launchSpeculativeJob(ctx: ExtensionContext, snapshot: SpeculativeCompactionSnapshot): void {
+		const generation = snapshot.generation;
 		const controller = new AbortController();
 		const settled = generateCompaction(ctx, snapshot, controller.signal).then(
 			(result) => ({ result, error: undefined }),
@@ -555,6 +626,7 @@ export default function compactionExtension(
 				}
 			}
 
+			replaceRewrittenWarmJob(ctx);
 			const pendingJob = speculativeJob;
 			if (pendingJob) {
 				const unlinkAbort = linkAbortSignal(feedbackSignal, pendingJob.controller);
@@ -592,7 +664,9 @@ export default function compactionExtension(
 							reason: "extension",
 							signal: feedbackSignal,
 							aborted: feedbackSignal?.aborted,
-							errorMessage: `Compaction failed: ${stripTurnRetrySuppressionPrefix(inheritedFailure.message)}`,
+							errorMessage: formatCompactionFailure("compaction", inheritedFailure.message, {
+								model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+							}),
 						});
 						state = breaker.recordFailure(state, Date.now(), { route: "extension" });
 						return { applied: false, reason: "failed" };
@@ -683,7 +757,9 @@ export default function compactionExtension(
 				reason: "extension",
 				signal: feedbackSignal,
 				aborted: feedbackSignal?.aborted,
-				errorMessage: `Compaction failed: ${stripTurnRetrySuppressionPrefix(message)}`,
+				errorMessage: formatCompactionFailure("compaction", message, {
+					model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+				}),
 			});
 			const transient = isTransientSummarizationFailure(error, message);
 			if (transient) {
@@ -808,6 +884,7 @@ export default function compactionExtension(
 				origin: "core-route" as const,
 				customInstructions: event.customInstructions,
 				systemPrompt: ctx.getSystemPrompt(),
+				systemPromptStablePrefix: ctx.getSystemPromptStablePrefix?.(),
 				tools: getSummarizationTools(),
 			};
 			let compaction: CompactionResult | undefined;
@@ -819,9 +896,15 @@ export default function compactionExtension(
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
+				// A terminal provider failure (dead model, dead credential) has no cheaper
+				// recovery on any compaction kind: without this, a soft-threshold pre_prompt
+				// compaction cancelled instead, the session rejected it, and the pending
+				// prompt failed with RequiredCompactionError while shouldCompact still said
+				// compact (the "Compaction rejected: compaction generator failed" wedge).
 				if (
 					(requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) ||
-						failureKind === "unsafe-retained-content") &&
+						failureKind === "unsafe-retained-content" ||
+						failureKind === "summarization-provider-failure") &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {
@@ -837,7 +920,13 @@ export default function compactionExtension(
 				if (error instanceof SummaryGenerationError) {
 					return { cancel: true, reason: stripTurnRetrySuppressionPrefix(error.message) };
 				}
-				return { cancel: true, reason: `compaction generator failed: ${stripTurnRetrySuppressionPrefix(message)}` };
+				return {
+					cancel: true,
+					// The bounded retries are spent, but the same request can succeed on the next
+					// send: the cause tells the session not to latch admission on it (senpi#6760).
+					...(isRetryableSummaryAttempt(error) ? { rejectionCause: "transient-failure" as const } : {}),
+					reason: `compaction generator failed: ${stripTurnRetrySuppressionPrefix(message)}`,
+				};
 			}
 			if (!compaction) {
 				pendingMetadata.delete(event.requestId);
@@ -871,6 +960,7 @@ export default function compactionExtension(
 	pi.on("session_compact", async (event: SessionCompactEvent, ctx) => {
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
+		warmRegenerations = 0;
 		if (compactEvent.accepted) {
 			contextReduction.reset();
 			persistAcceptedMetadata(compactEvent.requestId);
@@ -881,7 +971,6 @@ export default function compactionExtension(
 			const keptEntries = firstKeptIndex === -1 ? [] : branchEntries.slice(firstKeptIndex);
 			state = cap.incrementAccepted(state);
 			state = breaker.recordSuccess(state);
-			reminderState = createInitialReminderState();
 			const details = compactEvent.compactionEntry.details as
 				| { structuralYield?: { savedTokens: number; savingsRatio: number } }
 				| undefined;
@@ -940,7 +1029,7 @@ export default function compactionExtension(
 		event,
 		ctx,
 	) => {
-		// A preview composes a prompt no turn follows: no compaction, reminder, or restoration.
+		// A preview composes a prompt no turn follows: no compaction or restoration.
 		if (event.preview === true) return undefined;
 		sessionIdleSinceAgentEnd = false;
 		cancelIdleWarmupRetry();
@@ -959,6 +1048,7 @@ export default function compactionExtension(
 		// the circuit breaker never blocks that valve for senpi-owned lanes.
 		const laneOwnsCompaction = lanePolicy.disablesSenpiCompaction(ctx);
 		const breakerCoolingDown = breaker.isTripped(state, Date.now()) || laneOwnsCompaction;
+		if (!laneOwnsCompaction) replaceRewrittenWarmJob(ctx);
 		const { reserveTokens, thresholdTokens, leadTokens } = resolveCompactionGeometry({
 			contextWindow,
 			settings,
@@ -1021,24 +1111,8 @@ export default function compactionExtension(
 			startSpeculativeCompaction(ctx, PROACTIVE_COMPACTION_INSTRUCTIONS);
 		}
 
-		const persistedReminder = getPersistedReminderEpoch(ctx.sessionManager.getBranch());
-		const reminder = computeTokenBudgetReminder({
-			contextTokens: usageWithPendingPrompt?.tokens ?? 0,
-			contextWindow,
-			thresholdTokens,
-			leadTokens,
-			compactionEpoch: speculativeGeneration,
-			state: persistedReminder.delivered ? { lastFiredEpoch: speculativeGeneration } : reminderState,
-		});
-		reminderState = reminder.nextState;
-		const deliveredMessage = resolveBeforeAgentStartMessage({
-			message,
-			reminder: reminder.message,
-			reminderEnabled: settings.reminderEnabled,
-			reminderEpoch: persistedReminder.epoch,
-		});
-		if (!deliveredMessage) return undefined;
-		return { message: deliveredMessage };
+		if (!message) return undefined;
+		return { message };
 	};
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
@@ -1060,7 +1134,7 @@ export default function compactionExtension(
 	pi.on("before_provider_request", async (event, ctx) => {
 		const model = event.model ?? ctx.model;
 		if (!isOpenAiRemoteCompactionModel(model)) return undefined;
-		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model, { sessionId: ctx.sessionManager.getSessionId() });
 		if (!auth.ok) return undefined;
 		const effectiveModel =
 			auth.upstreamModelId || auth.baseUrl
@@ -1118,7 +1192,14 @@ export default function compactionExtension(
 			getLogger(ctx).debug("idle_trigger", { contextWindow, tokens: usage?.tokens ?? 0 });
 			idleWarmupAttempt = 0;
 			sessionIdleSinceAgentEnd = true;
-			startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
+			replaceRewrittenWarmJob(ctx);
+			const finished = speculativeJob?.completed && speculativeJob.result ? speculativeJob : undefined;
+			const fit = finished ? assessFinishedCandidate(ctx, finished) : undefined;
+			if (finished && fit && !fit.fits) {
+				regenerateWarmCandidate(ctx, finished, idle.IDLE_COMPACTION_INSTRUCTIONS);
+			} else {
+				startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
+			}
 			armIdleWarmupRetry(ctx);
 			armIdleApply(ctx);
 		} else {
@@ -1129,6 +1210,8 @@ export default function compactionExtension(
 			// if remote compaction later falls back, blocking local generation remains
 			// unchanged.
 			if (isOpenAiRemoteCompactionModel(ctx.model)) return;
+			const job = speculativeJob;
+			const fit = job?.completed ? assessFinishedCandidate(ctx, job) : undefined;
 			const warmAction = resolveIdleWarmAction(
 				{
 					willRetry: event.willRetry ?? false,
@@ -1140,16 +1223,47 @@ export default function compactionExtension(
 					lastYield: state.lastYield ?? undefined,
 					mode: ctx.mode,
 				},
-				speculativeJob,
+				job && {
+					armedAtTokens: job.armedAtTokens,
+					completed: job.completed,
+					completedAt: job.completedAt,
+					hasResult: job.result !== undefined,
+					anchorValid: hasValidWarmAnchor(ctx, job),
+				},
+				fit,
+				Date.now(),
 			);
-			if (warmAction === "replace") invalidateSpeculativeCompaction(ctx);
-			if (warmAction !== "none") {
-				idleWarmupAttempt = 0;
-				sessionIdleSinceAgentEnd = true;
-				startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
-				armIdleWarmupRetry(ctx);
-				armIdleApply(ctx);
+			if (warmAction === "none") return;
+			if (warmAction === "reuse") {
+				if (job && fit && reusedLoggedGeneration !== job.generation) {
+					reusedLoggedGeneration = job.generation;
+					getLogger(ctx).debug("speculative_reused", {
+						generation: job.generation,
+						tokens: fit.projectedTokens,
+						threshold: fit.budgetTokens,
+					});
+				}
+				return;
 			}
+			idleWarmupAttempt = 0;
+			sessionIdleSinceAgentEnd = true;
+			if (warmAction === "regenerate" && job) {
+				regenerateWarmCandidate(ctx, job, idle.IDLE_COMPACTION_INSTRUCTIONS);
+			} else {
+				if (warmAction === "replace") {
+					if (job && !hasValidWarmAnchor(ctx, job)) {
+						getLogger(ctx).debug("speculative_regenerated", {
+							generation: job.generation,
+							reason: "anchor-invalid",
+						});
+					}
+					invalidateSpeculativeCompaction(ctx);
+					warmRegenerations = 0;
+				}
+				startSpeculativeCompaction(ctx, idle.IDLE_COMPACTION_INSTRUCTIONS);
+			}
+			armIdleWarmupRetry(ctx);
+			armIdleApply(ctx);
 		}
 	});
 

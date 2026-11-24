@@ -49,7 +49,8 @@ import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
-import { prepareSessionOpening } from "./cli/session-opening.ts";
+import { heldSessionAttachPlan } from "./cli/held-session-attach.ts";
+import { admitStartupSession, prepareSessionOpening, SESSION_HELD_EXIT_CODE } from "./cli/session-opening.ts";
 import {
 	createStartupLoadingIndicator,
 	pauseIndicatorDuringPrompts,
@@ -111,17 +112,24 @@ import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnosti
 import { SettingsManager } from "./core/settings-manager.ts";
 import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
+import { startOpenTimer } from "./core/open-timing.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
-import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
+import {
+	getSavedProjectTrustState,
+	hasTrustRequiringProjectResources,
+	ProjectTrustStore,
+} from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
+import { takePresenterAccountAuthority } from "./presenter-authority-slot.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
-import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
+import type { PreparableRuntimeFactory } from "./modes/rpc/host-warm.ts";
+import { completeCompactFactory } from "./modes/rpc/compact-runtime-factory.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { readPipedStdin } from "./utils/piped-stdin.ts";
@@ -479,9 +487,70 @@ function validateSessionIdFlags(parsed: Args): void {
 	}
 }
 
-function openSessionOrExit(path: string, sessionDir?: string): SessionManager {
+/**
+ * Admission of an existing session file before startup loads, migrates, rebinds or runs it: a session another live
+ * process runs must not get a second writer (senpi#5756). Forking only reads its source and is not admitted.
+ */
+/** The command line a terminal start applies to a host-held session it attaches to (senpi#6911). */
+interface HeldSessionAttach {
+	readonly parsed: Args;
+	readonly settingsManager: SettingsManager;
+}
+
+async function admitOrExit(sessionFile: string, appMode: AppMode, attach?: HeldSessionAttach): Promise<void> {
+	const admission = await admitStartupSession(sessionFile, {
+		// Both ends must be a terminal: the attached view draws on stdout, and `> log` keeps the plain refusal.
+		canAsk: appMode === "interactive" && process.stdin.isTTY === true && process.stdout.isTTY === true,
+		canAttach: attach !== undefined,
+		confirm: promptConfirm,
+		err: (line) => console.error(line),
+	});
+	if (typeof admission === "object" && attach !== undefined) {
+		// #6059: the session runs on this machine's multi-session host; this terminal follows it there.
+		const plan = await heldSessionAttachPlan(attach.parsed, {
+			autoResizeImages: attach.settingsManager.getImageAutoResize(),
+		});
+		if ("refusal" in plan) {
+			console.error(chalk.red(`Not opened: ${plan.refusal}`));
+			process.exit(1);
+		}
+		const { runAttachedTui } = await import("./modes/interactive/run-attached-tui.ts");
+		try {
+			await runAttachedTui({
+				address: admission.attach.socket,
+				session: admission.attach.sessionId,
+				tuiMode: attach.parsed.tuiMode,
+				theme: attach.parsed.useTheme,
+				startup: plan.startup,
+			});
+		} catch (error) {
+			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+			process.exit(1);
+		}
+		process.exit(0);
+	}
+	if (admission !== "open") process.exit(admission === "cancelled" ? 0 : SESSION_HELD_EXIT_CODE);
+}
+
+/**
+ * Opens a session file the user named or picked. Without an explicit session dir, a session that lives in another
+ * app's registered store keeps this folder's own session dir for listing and new sessions (omo-desktop-app#8097).
+ */
+async function openWithHomeSessionDir(path: string, sessionDir: string | undefined): Promise<SessionManager> {
+	const sessionManager = SessionManager.open(path, sessionDir);
+	if (sessionDir === undefined) await sessionManager.adoptHomeSessionDir();
+	return sessionManager;
+}
+
+async function openSessionOrExit(
+	path: string,
+	appMode: AppMode,
+	sessionDir: string | undefined,
+	attach: HeldSessionAttach,
+): Promise<SessionManager> {
+	await admitOrExit(path, appMode, attach);
 	try {
-		return SessionManager.open(path, sessionDir);
+		return await openWithHomeSessionDir(path, sessionDir);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(chalk.red(`Error: ${message}`));
@@ -499,11 +568,17 @@ function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string,
 	}
 }
 
-async function rebindSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string): Promise<SessionManager> {
+async function rebindSessionOrExit(
+	sourcePath: string,
+	cwd: string,
+	appMode: AppMode,
+	sessionDir?: string,
+): Promise<SessionManager> {
+	await admitOrExit(sourcePath, appMode);
 	try {
 		const reboundPath = await rebindSessionFile(sourcePath, cwd, sessionDir);
 		console.log(chalk.dim(`Session moved to ${cwd}`));
-		return SessionManager.open(reboundPath, sessionDir);
+		return await openWithHomeSessionDir(reboundPath, sessionDir);
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(chalk.red(`Error: ${message}`));
@@ -526,6 +601,7 @@ export async function createSessionManager(
 	settingsManager: SettingsManager,
 	appMode: AppMode,
 ): Promise<SessionManager> {
+	const attach: HeldSessionAttach = { parsed, settingsManager };
 	if (parsed.spawnedBy && (parsed.session || parsed.resume || parsed.continue || parsed.fork || parsed.rebind)) {
 		console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming or forking a session."));
 	}
@@ -564,7 +640,7 @@ export async function createSessionManager(
 		}
 		const sessionCwd = resolved.type === "global" ? resolved.cwd : await sessionCwdOrUndefined(resolved.path);
 		if (resolved.type === "local" || sessionCwd === undefined || resolvePath(sessionCwd) === resolvePath(cwd)) {
-			return openSessionOrExit(resolved.path, sessionDir);
+			return openSessionOrExit(resolved.path, appMode, sessionDir, attach);
 		}
 		if ((await classifySessionRepository(resolved.path, sessionCwd, cwd)) === "different") {
 			console.error(
@@ -574,7 +650,7 @@ export async function createSessionManager(
 			);
 			process.exit(1);
 		}
-		return rebindSessionOrExit(resolved.path, cwd, sessionDir);
+		return rebindSessionOrExit(resolved.path, cwd, appMode, sessionDir);
 	}
 
 	if (parsed.session) {
@@ -583,12 +659,12 @@ export async function createSessionManager(
 		switch (resolved.type) {
 			case "path":
 			case "local":
-				return openSessionOrExit(resolved.path, sessionDir);
+				return openSessionOrExit(resolved.path, appMode, sessionDir, attach);
 
 			case "global": {
 				// Recorded under a folder the OmO desktop moved here: this folder's own session (senpi#2990).
 				if (resolved.cwd !== "" && resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
-					return openSessionOrExit(resolved.path, sessionDir);
+					return openSessionOrExit(resolved.path, appMode, sessionDir, attach);
 				// The confirmation blocks on readline, which only an interactive session can
 				// answer. Print, JSON, and RPC runs reach here with a TTY attached
 				// too (`-p` from a terminal), where the question hangs the process or resolves
@@ -603,7 +679,7 @@ export async function createSessionManager(
 					out: (line) => console.log(line),
 					err: (line) => console.error(line),
 				});
-				if (action === "rebind") return rebindSessionOrExit(resolved.path, cwd, sessionDir);
+				if (action === "rebind") return rebindSessionOrExit(resolved.path, cwd, appMode, sessionDir);
 				if (action === "fork") return forkSessionOrExit(resolved.path, cwd, sessionDir);
 				if (action === "abort") console.log(chalk.dim("Aborted."));
 				return process.exit(action === "abort" ? 0 : 1);
@@ -628,6 +704,8 @@ export async function createSessionManager(
 				console.log(chalk.dim("No session selected"));
 				process.exit(0);
 			}
+			// The resume target may be rebound (moved and rewritten) below, so the picked file is admitted first.
+			await admitOrExit(selectedPath, appMode, attach);
 			const target = await resolveResumeTarget({
 				sessionPath: selectedPath,
 				cwd,
@@ -646,7 +724,7 @@ export async function createSessionManager(
 				return process.exit(1);
 			});
 			if (target.rebound) console.log(chalk.dim(`Session moved to ${cwd}`));
-			return SessionManager.open(target.path, sessionDir);
+			return openWithHomeSessionDir(target.path, sessionDir);
 		} finally {
 			stopThemeWatcher();
 		}
@@ -656,7 +734,13 @@ export async function createSessionManager(
 		// A shared session dir matches sessions the OmO desktop moved here in continueRecent. In the default per-folder
 		// layout they sit in the old folder's dir: continue the newest of those and the folder's own, in place (senpi#2990).
 		const movedHere = sessionDir === undefined ? await movedHereSessionToContinue(cwd) : undefined;
-		if (movedHere !== undefined) return SessionManager.open(movedHere, sessionDir);
+		if (movedHere !== undefined) {
+			await admitOrExit(movedHere, appMode, attach);
+			return openWithHomeSessionDir(movedHere, sessionDir);
+		}
+		// Loading the recent session can migrate and rewrite it, so its file is admitted before it is loaded.
+		const recentPath = SessionManager.recentSessionFile(cwd, sessionDir);
+		if (recentPath !== null && existsSync(recentPath)) await admitOrExit(recentPath, appMode, attach);
 		const recent = SessionManager.continueRecent(cwd, sessionDir);
 		const recentFile = recent.getSessionFile();
 		if (recentFile !== undefined && existsSync(recentFile)) return recent;
@@ -668,7 +752,7 @@ export async function createSessionManager(
 			out: (line) => console.log(line),
 			err: (line) => console.error(line),
 		});
-		return movedChoice === undefined ? recent : rebindSessionOrExit(movedChoice, cwd, sessionDir);
+		return movedChoice === undefined ? recent : rebindSessionOrExit(movedChoice, cwd, appMode, sessionDir);
 	}
 
 	if (parsed.sessionId) {
@@ -676,7 +760,8 @@ export async function createSessionManager(
 		if (existingSession) {
 			if (parsed.spawnedBy)
 				console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming an existing session."));
-			return SessionManager.open(existingSession.path, sessionDir);
+			await admitOrExit(existingSession.path, appMode, attach);
+			return openWithHomeSessionDir(existingSession.path, sessionDir);
 		}
 		console.error(
 			chalk.yellow(
@@ -876,7 +961,12 @@ export function createCliRuntimeFactory(
 			label: `Loading ${APP_NAME}`,
 		});
 	const trustStore = new ProjectTrustStore(agentDir);
-	const projectTrustByCwd = new Map<string, boolean>();
+	// An answer this process gave a folder without saving it, with the trust store revision it was given under. It
+	// lives until the store is next written, by anyone, for any folder (#6823 review M1).
+	const projectTrustByCwd = new Map<
+		string,
+		{ readonly savedState: null | "no_inherit"; readonly revision: string; readonly trusted: boolean }
+	>();
 	const trustPromptMode: AppMode =
 		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : appMode;
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
@@ -895,16 +985,33 @@ export function createCliRuntimeFactory(
 	}: Omit<Parameters<CreateAgentSessionRuntimeFactory>[0], "sessionManager" | "sessionStartEvent"> & {
 		isInitialRuntime: boolean;
 	}) => {
+		const timer = startOpenTimer("runtime-services");
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
-		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
+		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
+		const savedState = await getSavedProjectTrustState(trustStore, cwd);
+		const savedProjectTrust = savedState === "no_inherit" ? null : savedState;
+		// The memo stands in for an unsaved answer only while it still answers what is saved. Given with nothing saved,
+		// it holds while nothing is saved for the folder (#6823 review L2); given under a `no_inherit` entry, only
+		// while the trust store is unchanged since, so no save in between, even one that restores the entry, can
+		// bring it back (#6823 review H1, M1), while with no save in between it holds for this process's later
+		// sessions of the folder (#6823 review L1). A saved decision always wins.
+		const trustRevision = await trustStore.revision();
+		const remembered = projectTrustByCwd.get(cwd);
+		const cachedProjectTrust =
+			remembered !== undefined &&
+			remembered.savedState === savedState &&
+			(savedState === null || remembered.revision === trustRevision)
+				? remembered.trusted
+				: undefined;
+		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
 		const fullAccessTrust =
 			presetTrustsProject(
 				sessionExtensionFlagValues(parsed.unknownFlags, launchProfile).get("permission-preset"),
 				(startupSettingsManager.getGlobalSettings() as { readonly permissionPreset?: unknown }).permissionPreset,
-			) && trustStore.get(cwd) !== false;
+			) && savedProjectTrust !== false;
 		const shouldResolveProjectTrust =
 			parsed.projectTrustOverride === undefined &&
 			cachedProjectTrust === undefined &&
@@ -914,7 +1021,7 @@ export function createCliRuntimeFactory(
 			? false
 			: (cachedProjectTrust ??
 				parsed.projectTrustOverride ??
-				(fullAccessTrust || !hasTrustRequiringResources || trustStore.get(cwd) === true));
+				(fullAccessTrust || !hasTrustRequiringResources || savedProjectTrust === true));
 		// Trusted only because of Full access (resources need trust and nothing else granted it): leaving
 		// Full access withdraws it (#3420 review T5).
 		const trustFromFullAccess =
@@ -922,8 +1029,12 @@ export function createCliRuntimeFactory(
 			hasTrustRequiringResources &&
 			cachedProjectTrust === undefined &&
 			parsed.projectTrustOverride === undefined &&
-			trustStore.get(cwd) !== true;
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
+			savedProjectTrust !== true;
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, {
+			projectTrusted,
+			trustFromFullAccess,
+			projectTrustLocked: parsed.projectTrustOverride !== undefined,
+		});
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
 		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({
@@ -956,7 +1067,8 @@ export function createCliRuntimeFactory(
 									),
 								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
 							});
-							projectTrustByCwd.set(cwd, trusted);
+							if (savedState === null || savedState === "no_inherit")
+								projectTrustByCwd.set(cwd, { savedState, revision: trustRevision, trusted });
 							return trusted;
 						},
 					}
@@ -981,6 +1093,7 @@ export function createCliRuntimeFactory(
 				extensionFactories,
 			},
 		});
+		timer.mark("services");
 		return { services, projectTrustDiagnostics };
 	};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
@@ -1071,6 +1184,7 @@ export function createCliRuntimeFactory(
 			startupLoadingIndicator.setPhase("opening session");
 		}
 		markSwitch("sessionOptions");
+		const timer = startOpenTimer("runtime-session");
 		const created = await createAgentSessionFromServices({
 			services,
 			sessionManager,
@@ -1094,9 +1208,11 @@ export function createCliRuntimeFactory(
 			),
 			promptSurface: launchProfile?.promptSurface,
 			browserEngine: launchProfile?.browserEngine,
+			sessionEnv: launchProfile?.sessionEnv,
 			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
+		timer.mark("create_session");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
 			// senpi#2395: re-apply the level the CLI asked for, so a clamp keeps its requested level and reason.
@@ -1111,14 +1227,14 @@ export function createCliRuntimeFactory(
 		};
 	};
 	// A host open creates its session with no start event, so a warm prepares exactly that open.
-	return Object.assign(createRuntime, {
-		prepare: async (options: PrepareRuntimeOptions): Promise<void> => {
-			await createServices({ ...options, isInitialRuntime: true });
-		},
+	return completeCompactFactory(createRuntime, async (options) => {
+		await createServices({ ...options, isInitialRuntime: true });
 	});
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	// First statement: seals the slot before any extension or resource path can load code (D11, senpi#4249).
+	const presenterAccountAuthority = takePresenterAccountAuthority();
 	resetTimings();
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.
@@ -1212,6 +1328,25 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.version) {
 		await printThenExit(() => console.log(DISPLAY_VERSION), 0);
+	}
+
+	if (parsed.attach && parsed.session && !parsed.help) {
+		const { runAttachedTui } = await import("./modes/interactive/run-attached-tui.ts");
+		try {
+			await runAttachedTui({
+				address: parsed.attach,
+				session: parsed.session,
+				tuiMode: parsed.tuiMode,
+				theme: parsed.useTheme,
+			});
+		} catch (error) {
+			// A refusal or connection failure is the user's next step, not a crash: one line, no stack.
+			await printThenExit(
+				() => console.error(`Error: ${error instanceof Error ? error.message : String(error)}`),
+				1,
+			);
+		}
+		return;
 	}
 
 	if (parsed.export) {
@@ -1337,6 +1472,16 @@ export async function main(args: string[], options?: MainOptions) {
 	// Installs nothing unless SENPI_MEMORY_REPORT=1; then SIGUSR2 writes a memory report for every live session.
 	installMemoryReportSignal();
 
+	if (parsed.hand) {
+		const { runHand } = await import("./modes/hand/hand-entry.ts");
+		initTheme(startupSettingsManager.getTheme(), false);
+		printTimings();
+		await runHand({
+			configuration: { parsed, cwd, agentDir, appMode, toolRuntime },
+			...(options?.extensionFactories ? { extensionFactories: options.extensionFactories } : {}),
+		});
+	}
+
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
@@ -1347,6 +1492,7 @@ export async function main(args: string[], options?: MainOptions) {
 		// is passed, so withholding it is what selects the uncapped in-process registry.
 		const sessionRuntime = resolveSessionRuntime(parsed);
 		const { runMultiSessionHost } = await import("./modes/rpc/multi-session-host.ts");
+		const { headlessHostOptions } = await import("./modes/headless/headless-host.ts");
 		// In-process sessions share the host's model runtime: one agent dir, one
 		// catalog. Worker sessions build their own inside the isolate - an object
 		// cannot cross that boundary - so the shared one is offered only here.
@@ -1372,9 +1518,10 @@ export async function main(args: string[], options?: MainOptions) {
 			startSubscriptionUsagePolling({ agentDir, report: (message) => void process.stderr.write(`${message}\n`) });
 		}
 		printTimings();
-		await runMultiSessionHost({
+		const hostOptions = {
 			presenterBootstrapFd,
 			mcpPresenterEnforcement,
+			...(presenterAccountAuthority === undefined ? {} : { presenterAccountAuthority }),
 			agentDir,
 			createRuntime: createCliRuntimeFactory(runtimeConfiguration, {
 				...(hostModelRuntime === undefined ? {} : { modelRuntime: hostModelRuntime }),
@@ -1386,7 +1533,8 @@ export async function main(args: string[], options?: MainOptions) {
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
 			toolRuntime,
-		});
+		};
+		await runMultiSessionHost(parsed.headless ? headlessHostOptions(hostOptions) : hostOptions);
 	}
 
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
@@ -1482,6 +1630,18 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const loadedExtensions = resourceLoader.getExtensions().extensions;
 	const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
+	// Before extensions load, a bare option can consume the next positional as a string value.
+	const booleanExtensionFlags = new Set<string>();
+	for (const name of parsed.unknownFlags.keys()) {
+		// applyExtensionFlagValues uses the first declaration when extensions share a name.
+		if (extensionFlags.find((flag) => flag.name === name)?.type === "boolean") {
+			booleanExtensionFlags.add(name);
+			parsed.unknownFlags.set(name, true);
+		}
+	}
+	if (booleanExtensionFlags.size > 0) {
+		parsed.messages = parseArgs(args, { booleanExtensionFlags }).messages;
+	}
 	if (parsed.help) {
 		await printThenExit(() => printHelp(extensionFlags), 0);
 	}

@@ -52,6 +52,7 @@ export function queuedForm<T>(binding: object, signal: AbortSignal, run: () => P
 				current.jobs.splice(index, 1);
 				signal.removeEventListener("abort", job.abort);
 				reject(new McpMrtrError("MCP_MRTR_PROCESSING_UNAVAILABLE"));
+				pump();
 			}
 		};
 		current.jobs.push(job);

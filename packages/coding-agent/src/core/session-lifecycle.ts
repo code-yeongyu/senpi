@@ -1,7 +1,9 @@
+import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { effectiveWakes, type TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import type { Goal } from "./extensions/builtin/goal/types.ts";
 import { LifecycleChildren } from "./lifecycle-children.ts";
 import { LifecycleLedger, type LifecyclePersistence } from "./lifecycle-ledger.ts";
+import { projectWaitItems } from "./lifecycle-wait-items.ts";
 import { type DeadlineStopCapture, type RunStopFacts, sameStop, stopDetail } from "./lifecycle-stop.ts";
 import type { SessionActivitySnapshot } from "./session-activity.ts";
 import { lifecycleState, lifecycleTerminal } from "./session-lifecycle-reducer.ts";
@@ -38,6 +40,8 @@ export class SessionLifecycleController {
 	private readonly options: SessionLifecycleOptions;
 	private idleBoundaryPassed = false;
 	private pendingHuman = false;
+	/** A host restart continues the engine-started run it cut short (senpi#7020); cleared when that run starts. */
+	private restartContinues = false;
 	private admittingHuman = false;
 	private runAdmitted = false;
 	private goal: Goal | null = null;
@@ -47,6 +51,8 @@ export class SessionLifecycleController {
 	private deferred = false;
 	private stopFacts: RunStopFacts | undefined;
 	private deadlineStop: DeadlineStopCapture | undefined;
+	private readonly outstandingTools = new Map<string, { toolName: string; toolCallId: string; since: string }>();
+	private modelSince: string | undefined;
 	/** A run that ended before this process keeps exactly the stop its record carries; none is derived for it. */
 	private readonly restoredRunId: string | undefined;
 
@@ -91,6 +97,11 @@ export class SessionLifecycleController {
 			if (report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId)
 				this.ownTask = report;
 		}
+		// Before crash recovery reads consumed custody as an interrupted run (senpi#4848).
+		this.obligations.settleEndedRuns(
+			this.ledger.runId,
+			this.ledger.runId !== undefined && this.ledger.runId === options.endedRunId,
+		);
 	}
 
 	get snapshot(): SessionLifecycle {
@@ -103,11 +114,31 @@ export class SessionLifecycleController {
 	}
 
 	get requiresHumanContinuation(): boolean {
-		return this.ledger.interrupted && !this.pendingHuman;
+		return this.ledger.interrupted && !this.pendingHuman && !this.restartContinues;
 	}
 
 	get nextRunOrigin(): "human" | "automatic" {
 		return this.pendingHuman ? "human" : "automatic";
+	}
+
+	/**
+	 * The current run when this process started it, not the run the session file left current. `startRun` settles what the
+	 * previous run consumed, so this run's consumed custody is the only custody a run of this process holds.
+	 */
+	get runStartedHere(): string | undefined {
+		const runId = this.ledger.runId;
+		return runId === this.restoredRunId ? undefined : runId;
+	}
+
+	/** The host's clean stop cut the running run short: record it interrupted, as a kill leaves it (senpi#7020). */
+	cutByHostShutdown(): void {
+		this.ledger.interrupted = true;
+		this.ledger.checkpoint();
+	}
+
+	/** The interrupted run was the engine's and a host restart cut it: its continuation needs no person (senpi#7020). */
+	continueAfterRestart(): void {
+		this.restartContinues = true;
 	}
 
 	restoreComplete(): void {
@@ -138,22 +169,29 @@ export class SessionLifecycleController {
 	}
 
 	startRun(origin?: "human" | "automatic"): void {
+		this.outstandingTools.clear();
+		this.modelSince = undefined;
 		this.admittingHuman = false;
 		this.runAdmitted = false;
 		this.idleBoundaryPassed = false;
 		this.liveness = undefined;
 		this.stopFacts = undefined;
 		this.deadlineStop = undefined;
-		const interruptedRun = this.ledger.interrupted ? this.ledger.runId : undefined;
+		// Settle whatever the previous run consumed, however it ended: idle() settles only a run that reaches it, and a
+		// run cut short by crash recovery or by a provider error that auto-retry replaces never does.
+		const previousRun = this.ledger.runId;
 		this.ledger.interrupted = false;
 		this.ledger.startRun(origin ?? (this.pendingHuman ? "human" : "automatic"));
 		this.pendingHuman = false;
-		if (interruptedRun) this.obligations.settleRun(interruptedRun);
+		this.restartContinues = false;
+		if (previousRun) this.obligations.settleRun(previousRun);
 		this.recompute();
 		this.ledger.publishUnwritten();
 	}
 
 	idle(): void {
+		this.outstandingTools.clear();
+		this.modelSince = undefined;
 		this.runAdmitted = false;
 		const seq = this.ledger.snapshot.seq;
 		this.ledger.runActive = false;
@@ -162,6 +200,40 @@ export class SessionLifecycleController {
 		if (runId) this.obligations.settleRun(runId);
 		this.recompute();
 		if (seq > 0 && this.ledger.snapshot.seq === seq) this.ledger.checkpoint();
+	}
+
+	/** Synchronous core boundaries only; token/progress events never cause activity writes. */
+	observeActivity(event: AgentEvent & { readonly parentToolCallId?: string }): void {
+		if (!this.ledger.runActive) return;
+		switch (event.type) {
+			case "tool_execution_start":
+				if (event.parentToolCallId !== undefined) return;
+				this.outstandingTools.set(event.toolCallId, {
+					toolName: event.toolName,
+					toolCallId: event.toolCallId,
+					since: new Date(Date.now()).toISOString(),
+				});
+				break;
+			case "tool_execution_end":
+				if (event.parentToolCallId !== undefined) return;
+				this.outstandingTools.delete(event.toolCallId);
+				break;
+			case "message_start":
+				if (event.message.role !== "assistant" || !event.streaming) return;
+				this.modelSince = new Date(Date.now()).toISOString();
+				break;
+			case "message_end":
+				if (event.message.role !== "assistant") return;
+				this.modelSince = undefined;
+				break;
+			case "agent_end":
+				this.outstandingTools.clear();
+				this.modelSince = undefined;
+				break;
+			default:
+				return;
+		}
+		this.recompute();
 	}
 
 	/** The turn deadline fired: captured before its durable write, for the run it stopped only. */
@@ -236,14 +308,44 @@ export class SessionLifecycleController {
 	private evaluate(): void {
 		const runtime = this.options.readRuntime();
 		const active = this.obligations.active;
-		const childRecords = this.children.reports.filter(
-			(report) => report.childSessionId !== this.options.sessionId && report.terminal === undefined,
-		).length;
+		const childRecords = this.children.reports
+			.filter((report) => report.childSessionId !== this.options.sessionId && report.terminal === undefined)
+			.sort((a, b) => (a.taskId < b.taskId ? -1 : a.taskId > b.taskId ? 1 : 0));
+		const childReports = childRecords
+			.slice(0, 32)
+			.map(({ taskId, childSessionId, runEpoch, state, label, since }) => ({
+				taskId,
+				childSessionId,
+				runEpoch,
+				state,
+				...(label === undefined ? {} : { label }),
+				...(since === undefined ? {} : { since }),
+			}));
+		const childSources = active
+			.filter((record) => record.kind === "children")
+			.map((record) => ({
+				source: record.source ?? record.key,
+				activeCount: record.activeCount ?? 1,
+				...projectWaitItems(record),
+			}));
+		// A delivery's own custody while its send is in flight is the session starting a turn, not a wait (senpi#6810);
+		// once the live run consumed it, it is that run's own work until settleRun (senpi#6814 review).
+		const deliveryInFlight = active.some((record) => this.obligations.isDeliveryInFlight(record));
+		const liveRun = this.ledger.runActive ? this.ledger.runId : undefined;
 		const background: LifecycleWaits["background"][number][] = active
-			.filter((record) => record.kind === "background")
-			.map((record) => ({ source: record.source ?? record.key, activeCount: record.activeCount ?? 1 }));
+			.filter(
+				(record) =>
+					record.kind === "background" &&
+					!this.obligations.isDeliveryInFlight(record) &&
+					!this.obligations.isConsumedBy(record, liveRun),
+			)
+			.map((record) => ({
+				source: record.source ?? record.key,
+				activeCount: record.activeCount ?? 1,
+				...projectWaitItems(record),
+			}));
 		const children = Math.max(
-			childRecords,
+			childRecords.length,
 			active
 				.filter((record) => record.kind === "children")
 				.reduce((sum, record) => sum + (record.activeCount ?? 1), 0),
@@ -297,7 +399,11 @@ export class SessionLifecycleController {
 			if (this.ledger.interrupted)
 				synthetic.push({ key: `interrupted:${this.ledger.snapshot.epoch}`, kind: "interrupted_run" });
 			const noWake =
-				children === 0 && background.length === 0 && !continuationQueued && runtime.pendingMessages === 0;
+				children === 0 &&
+				background.length === 0 &&
+				!deliveryInFlight &&
+				!continuationQueued &&
+				runtime.pendingMessages === 0;
 			if (
 				input &&
 				noWake &&
@@ -334,6 +440,7 @@ export class SessionLifecycleController {
 			runtime.activity.isBashRunning ||
 			runtime.activity.hasSessionWork ||
 			runtime.pendingMessages > 0 ||
+			deliveryInFlight ||
 			continuationQueued;
 		const failure: SessionLifecycle["failure"] =
 			input &&
@@ -353,7 +460,14 @@ export class SessionLifecycleController {
 							runEpoch: this.ownTask.runEpoch,
 						}
 					: undefined;
-		const waits: LifecycleWaits = { children, background, human };
+		const waits: LifecycleWaits = {
+			children,
+			background,
+			human,
+			...(childSources.length ? { childSources } : {}),
+			...(childReports.length ? { childReports } : {}),
+			...(childRecords.length > 32 ? { childReportsOmitted: childRecords.length - 32 } : {}),
+		};
 		const lastStop = this.lastStop(
 			input,
 			synthetic.some((wait) => wait.kind === "stalled"),
@@ -374,7 +488,16 @@ export class SessionLifecycleController {
 			(!this.idleBoundaryPassed || active.length > 0)
 		)
 			return;
-		this.ledger.update({ state, waits, holds: runtime.holds, failure, lastStop });
+		const oldest = this.outstandingTools.values().next().value;
+		const activity: SessionLifecycle["activity"] =
+			state !== "running"
+				? undefined
+				: oldest
+					? { kind: "tool", ...oldest, outstanding: this.outstandingTools.size }
+					: this.modelSince
+						? { kind: "model", since: this.modelSince }
+						: undefined;
+		this.ledger.update({ state, waits, holds: runtime.holds, failure, lastStop, activity });
 	}
 
 	/**

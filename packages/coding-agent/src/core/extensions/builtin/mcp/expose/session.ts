@@ -13,7 +13,7 @@ import type { McpOutputArtifacts } from "../guard/output-guard.ts";
 import type { McpInvocationResolver } from "../invocation.ts";
 import { createMcpLogger, type McpLogger } from "../log.ts";
 import type { McpPromptServer } from "../prompts.ts";
-import type { McpRequestOrigin } from "../request-origin.ts";
+import type { McpRequestOriginFor } from "../request-origin.ts";
 import { createMcpResourceTools, type McpResourceServer } from "../resources.ts";
 import { computeMcpExposurePolicy } from "./policy.ts";
 import type { McpCatalogRegistrationOptions } from "./register.ts";
@@ -25,7 +25,7 @@ export type McpSessionRegistration = McpTierBRegistration & {
 };
 
 export interface McpDirectRegistrationEntry {
-	readonly requestOrigin?: () => McpRequestOrigin | undefined;
+	readonly requestOrigin?: McpRequestOriginFor;
 	readonly bindPresentation?: (ui: ExtensionUIContext) => void;
 	readonly name: string;
 	readonly connection: ServerConnection;

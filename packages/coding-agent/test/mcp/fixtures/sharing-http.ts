@@ -28,6 +28,7 @@ export async function sharingHttpFixture(port = 0) {
 	let listBarrier: Promise<void> | undefined;
 	let listEntered: (() => void) | undefined;
 	let releaseList: (() => void) | undefined;
+	let listFailure: Error | undefined;
 	const sockets = new Set<Socket>();
 	const eventSockets = new Set<Socket>();
 	const http = createServer(async (req, res) => {
@@ -58,6 +59,7 @@ export async function sharingHttpFixture(port = 0) {
 				server.setRequestHandler(ListToolsRequestSchema, async () => {
 					listEntered?.();
 					await listBarrier;
+					if (listFailure !== undefined) throw listFailure;
 					return { tools: [{ name: toolName, inputSchema: toolSchema }] };
 				});
 				server.setRequestHandler(PingRequestSchema, async () => {
@@ -186,6 +188,7 @@ export async function sharingHttpFixture(port = 0) {
 			await Promise.all(closed);
 		},
 		holdLists() {
+			listFailure = undefined;
 			listBarrier = new Promise<void>((resolve) => {
 				releaseList = resolve;
 			});
@@ -193,7 +196,8 @@ export async function sharingHttpFixture(port = 0) {
 				listEntered = resolve;
 			});
 		},
-		releaseLists() {
+		releaseLists(error?: Error) {
+			listFailure = error;
 			releaseList?.();
 			listBarrier = undefined;
 		},

@@ -1,0 +1,13 @@
+diff --git a/packages/ai/src/api/openai-completions.ts b/packages/ai/src/api/openai-completions.ts
+index 7539dce93f..9956409e36 100644
+--- a/packages/ai/src/api/openai-completions.ts
++++ b/packages/ai/src/api/openai-completions.ts
+@@ -1192,7 +1192,7 @@ function buildParams(
+ 	const thinkingLevelMap = getThinkingLevelMap(model, compat);
+ 
+ 	const params: OpenAICompletionsRequestParams = {
+-		model: model.id,
++		model: model.id === "mock-model" ? "mock-model-b" : model.id,
+ 		messages,
+ 		stream: true,
+ 		prompt_cache_key:

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { auditSessionPath, findingKey, type SessionPathFinding } from "./session-path-audit.ts";
+import { auditSessionPath, findingKey, RECOVERY_PATH_FILES, type SessionPathFinding } from "./session-path-audit.ts";
 
 /**
  * One session must never freeze the shared host. The audit walks the transitive call
@@ -106,6 +106,20 @@ function unledgered(
 		)
 		.map(describeFinding);
 }
+
+describe("no synchronous byte path from the recovery owner and the fanout (senpi#4272 S08a, RULING-50 (3))", () => {
+	it("reaches no synchronous call at all, while the pinned root's byte reader it must not reach is one the audit sees", () => {
+		// Given the call graph rooted only at the checkpoint owner and the fanout that produces its admissions
+		const reached = auditSessionPath({ packageRoot, roots: [...RECOVERY_PATH_FILES] }).map(describeFinding);
+		// And the pinned transcript's byte reader, rooted on its own
+		const reader = auditSessionPath({ packageRoot, roots: ["src/modes/rpc/accepted-transcript.ts"] })
+			.filter((finding) => finding.symbol === "readPersistedBase")
+			.map((finding) => finding.callee);
+		// Then the reader is synchronous (so reaching it would fail here), and the recovery path reaches nothing synchronous
+		expect(reader).toEqual(expect.arrayContaining(["openSync", "readSync"]));
+		expect(reached).toEqual([]);
+	}, 180_000);
+});
 
 describe("no blocking work on the RPC session path", () => {
 	let findings: readonly SessionPathFinding[];

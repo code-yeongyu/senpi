@@ -1,3 +1,415 @@
+## 2026-11-12 - The MCP config loader checks a candidate without loading it (senpi#6485)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: `assertLoadableMcpConfig(raw, path)` runs the trusted-file steps (schema, interpolation, endpoint checks) the loader runs, through the same `resolveTrustedConfig` the loader now uses, without recording reference origins.
+
+### Why
+
+- `set_project_mcp_servers` must refuse a candidate the engine would reject before it writes it.
+
+### Why an extension could not handle it
+
+- The check has to be the loader's own; a copy would drift from what the engine actually loads.
+
+### Expected merge conflict zones
+
+- LOW: `readTrustedConfig` in `config.ts`.
+
+## 2026-11-10 - Keep offered MCP operations across proven OAuth refresh (senpi#2861)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`: additive normalized scope and authorization proof fields, with the resolved store root.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-grant.ts`: token mapping, active grant binding, durable credential commitments, proof validation and epoch selection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: fresh acquisition context, selected resource capture and conservative SDK saves.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`: extend an epoch only after a locked, successful refresh proves unchanged authorization.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`: mark real code and client-credentials acquisitions as fresh grants.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/catalog-identity.ts`: validate persisted provenance before excluding rotating token bytes; refuse token-only legacy OAuth cache adoption.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`: reconcile authentication before health renewal and recheck ownership between awaits.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/invocation.ts`: classify retired readiness rejection without masking live errors or cancellation.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: collect every catalog page and metadata field through one captured client.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`: capture one client for the tool collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: abandon retired authentication and catalog work, including rejected shared catalog collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: refuse publication and error reporting by retired notification passes.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-grant.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/auth/catalog-identity.ts`: successful same-grant refresh rotated token bytes and therefore retired an already offered operation. Persisted scope and binding commitments distinguish that rotation from account replacement.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/invocation.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: retired asynchronous work must have no dispatch, catalog publication or error-reporting authority.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-grant.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/auth/catalog-identity.ts`: the MCP builtin owns the locked OAuth write and credential identity used by private and shared connections.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/invocation.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: the builtin owns the captured invocation, client generations and catalog publication fences.
+
+### Expected merge conflict zones
+
+- LOW: additive record fields in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts` and the fork-native helper `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-grant.ts`.
+- MEDIUM: token mapping and saves in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`; refresh commit in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`; exchange boundaries in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`; OAuth cache identity in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/catalog-identity.ts`.
+- LOW: readiness ordering in `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts` and rejection classification in `packages/coding-agent/src/core/extensions/builtin/mcp/invocation.ts`.
+- LOW: client captures in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`; retirement fences in `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`.
+
+## 2026-11-10 - An authorizing OAuth flow reuses only a registration that names its redirect URI (senpi#6327)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/registered-redirect.ts` (new): `registrationForFlow()` hands an authorizing flow only a stored dynamic registration that names the flow's redirect URI, matched against the `redirectUrisSent` the client registered with (falling back to the server's echoed `redirect_uris` for older records; a registration with neither is kept). `withRegistration()` stores a new registration: an authorizing flow that would replace the signed-in client stages it in `pendingClientInfo` instead, and `withPromotedRegistration()` swaps it in, dropping the old client's refresh token, only in the write that stores the flow's exchanged tokens. `grantForFlow()` withholds the signed-in client's refresh token from a flow that uses a staged client.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`: `McpClientRegistration` (`OAuthClientInformationFull` plus `redirectUrisSent`) and `McpStoredAuth.pendingClientInfo`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: `McpOAuthProviderOptions.requireRegisteredRedirect`; `clientInformation()`, `saveClientInformation()`, `tokens()` and `saveTokens()` go through the `registered-redirect.ts` helpers. `discoveryNamesItsServer()` moved unchanged to `oauth-issuer.ts`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-issuer.ts`: now exports `discoveryNamesItsServer()` (moved from `oauth-provider.ts`, no behavior change).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/context.ts`: `resolveServerAuth()` sets `requireRegisteredRedirect` exactly when the caller passes `redirectUrl` (`/mcp auth`, `auth-start`, `auth-complete`); background connects and refresh keep the signed-in registration.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts`: the `client_credentials` branch of `/mcp auth` builds its provider without a redirect URL, since that grant sends no authorize request.
+
+### Why
+
+- A dynamic registration is bound to its `redirect_uris`, and the provider handed the stored one to every flow. A background connect registers the placeholder `http://127.0.0.1:0/callback` and every `/mcp auth` binds a new loopback port, so the authorize request named a redirect URI the `client_id` never registered, and exact-matching authorization servers (django-oauth-toolkit, e.g. Readwise; Neon) answered `invalid_request: Mismatching Redirect URL` on every retry (code-yeongyu/oh-my-openagent#12963).
+- The SDK saves a new registration before it redirects to the authorize page, so replacing the signed-in client at that point would cost a working refresh token whenever a sign-in is abandoned; staging keeps it until the new grant exists. Matching the URI the client sent (not the server's echo) keeps a server that rewrites the echoed URI from hiding the registration it just made. `client_credentials` sends no authorize request, so gating its client by redirect URI only broke it.
+
+### Why an extension could not handle it
+
+- The dynamic registration and its reuse live in the MCP builtin's OAuth provider and token store, which the SDK reads directly during `auth()`; no extension hook sits between them.
+
+### Expected merge conflict zones
+
+- LOW: `clientInformation()`, `saveClientInformation()`, `tokens()` and `saveTokens()` in `auth/oauth-provider.ts`; the `McpOAuthProvider` construction in `resolveServerAuth()` in `auth/context.ts`; the `client_credentials` branch of `runAuth()` in `auth/commands-auth.ts`; the `McpStoredAuth` interface in `auth/token-store.ts`.
+
+## 2026-11-09 - Hide the console window for MCP diagnostic commands on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/diagnose.ts`: `execFileForDiagnostics` now passes `windowsHide: true`.
+
+### Why
+
+- An MCP server command can be any console-subsystem exe on Windows; diagnostics must never flash its console window.
+
+### Why an extension could not handle it
+
+- The spawn is the MCP client's own diagnostic helper, not a replaceable extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the diagnostic helper.
+
+## 2026-11-07 - Session-less MCP status reads get no peer data; server snapshots gain optional session scoping (senpi#3001)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `getWireStatusSnapshot()` and `refreshWireStatusSnapshot()` return `{ servers: [] }` to a caller that passes no session id while more than one session is live, instead of the most recently attached session's status; with a single live session the stored snapshot is that session's own, so the id-less read keeps working. `releaseSession()` rebinds `#latestWireStatus` to the remaining live session's own snapshot when it drops a released session id, so a release with no reason cannot leave a departed peer's status in the fallback. `getServerSnapshots(sessionId?)` returns only the servers the named session declares, and `[]` for an unknown id; the no-arg call still lists the merged config of all live sessions. The session-scoped form is API-only for now: no production caller passes a session id yet (the /mcp command, manager TUI and instructions still read the merged config).
+- `packages/coding-agent/test/suite/regressions/2514-mcp-session-binding.test.ts`: four regression tests for senpi#3001 — the per-owner catalog fence (item 1), no connection created when the service is disposed mid re-sync (item 2), the no-id peer-data fence plus session-scoped server snapshots (item 3), and the single-session fallback returning the remaining session's status after a release with no reason (review follow-up on #6169).
+
+### Why
+
+- senpi#3001: `#latestWireStatus` held whichever session captured last, so a caller passing no session id could receive a peer's status, and `getServerSnapshots()` listed the merged config of all live sessions. The per-session status already resolved through the calling session's binding; the id-less reads did not.
+
+### Why an extension could not handle it
+
+- The wire-status snapshot and the server snapshots are produced inside the builtin MCP service's session binding and credential resolution; no extension hook sits between the capture and the caller.
+
+### Expected merge conflict zones
+
+- LOW: the id-less fences in `getWireStatusSnapshot()` / `refreshWireStatusSnapshot()`, the `#latestWireStatus` rebind in `releaseSession()`, the optional `sessionId` parameter on `getServerSnapshots()`, and the four regression tests.
+
+## 2026-10-27 - The MCP sign-in callback page carries the host brand (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/callback.ts`: the loopback callback no longer answers with hard-coded `<title>senpi</title>` pages ("Return to senpi and retry"); its success and failure pages come from `oauthSuccessHtml` / `oauthErrorHtml` in `@earendil-works/pi-ai/utils/oauth-page`, so they show the host brand set with `setOAuthPageBrand` (name, and logo when the brand carries one) like the provider sign-in pages.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: the dynamic client registration's `client_name` (shown on the MCP authorization server's consent screen) is `oauthBrandName()` instead of a hard-coded `senpi`; existing registrations are reused as before.
+
+### Why
+
+- Branded hosts (OmO, the desktop) showed "senpi" after an MCP server sign-in (#4432 review).
+
+### Why an extension could not handle it
+
+- This is the builtin MCP extension's own callback listener; the fix is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the response lines in `LoopbackCallbackServer.#handle` (fork-native module).
+
+## 2026-11-01 - Resource utility tools keep their place ahead of the per-server MCP tools (senpi#5289)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `registerMcpTierBTools` sorts by name only the per-server tool definitions and per-server proxy gateways; the fixed utility tools (`mcp_list_resources`, `mcp_read_resource`) keep their reference order ahead of them.
+
+### Why
+
+- #5290 sorted every MCP-managed name, which also moved the utility tools behind the per-server tools; only the per-server names ever followed server connect order.
+
+### Why an extension could not handle it
+
+- The order is decided inside the builtin MCP extension's own registration.
+
+### Expected merge conflict zones
+
+- LOW: the `catalogNames` and gateway loop in `registerMcpTierBTools`.
+
+## 2026-11-01 - Direct-mode MCP tools keep one order whichever server connects first (senpi#5289)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `registerMcpTierBTools` passes its managed names (full definitions, proxy gateways, utility tools) to `orderActiveSet` together with the tool-search catalog names, so MCP tools sort by name in direct mode too. Base tools keep their reference order.
+
+### Why
+
+- In direct mode MCP tools are not in the tool-search catalog, so `orderActiveSet` kept them in reference order, which was the order their servers finished connecting. The tool list a model received, and its prompt-cache prefix, could change between runs, and the fused equivalence scenario E11 failed on a loaded host with two tool names swapped.
+
+### Why an extension could not handle it
+
+- The order is decided inside the builtin MCP extension's own registration.
+
+### Expected merge conflict zones
+
+- LOW: the `catalogNames` line in `registerMcpTierBTools`.
+
+## 2026-10-27 - MCP instructions are a volatile system-prompt addition (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the `before_agent_start` result sets `systemPromptCache: "volatile"`.
+
+### Why
+
+- MCP instructions follow the connected server set, so they belong behind the cross-session cache boundary.
+
+### Why an extension could not handle it
+
+- This is the MCP builtin's own handler.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` return in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+
+## 2026-10-29 - An unanchored discovery record never steers OAuth traffic (senpi#4924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: `discoveryState()` returns nothing for a stored record that does not show where its authorization server came from: it has neither that server's metadata, nor protected-resource metadata naming it, nor the MCP server's own origin (`discoveryNamesItsServer`). The SDK's `auth()` (transport 401, modern HTTP fetch, sign-in start and code exchange) and senpi's own `discover()` (sign-in preflight, client_credentials) then discover from the MCP server, and `saveDiscoveryState` applies the senpi#2940 binding before any request to an authorization server.
+- `packages/coding-agent/test/mcp/2940-oauth-issuer-binding.test.ts`: every case fails on any fetch or name resolution outside its fixture, and a table runs each OAuth entry point against a grant that belongs to another authorization server.
+
+### Why
+
+- Given only a stored URL, the SDK fetched that server's metadata and posted the saved refresh token (or an authorization code, or a client_credentials request) to it, before anything checked that the MCP server still names it. The 2940 test passed only because the `.invalid` lookup failed fast, and it timed out on a slow resolver.
+
+### Why an extension could not handle it
+
+- The record is handed to the SDK by the builtin MCP OAuth provider; no hook runs between `discoveryState()` and the SDK's first request.
+
+### Expected merge conflict zones
+
+- LOW: the top of `McpOAuthProvider.discoveryState()` in `oauth-provider.ts`.
+
+## 2026-10-29 - One startup inventory announcement per RPC MCP attach (senpi#4850, fixes #4828)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-window.ts`: new `McpStartupWindows`, a per-session window that holds inventory notifications from an RPC attach until every connect that attach backgrounded has settled, then releases them once.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSession` opens the window for RPC sessions and collects the attach's deferred connects (`#syncFromConfig` `startupConnects`); `#captureWireStatus` holds changed snapshots while the window is open and announces the release with `startupSettled`; `dispose` clears the windows.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts` and `control-inventory.ts`: forward `startupSettled: true` on `senpi.rpc.mcp_inventory.changed`.
+
+### Why
+
+- With parallel eager servers, every connection state change, tool registration and inventory read could announce an intermediate inventory, so the startup event count depended on connect timing and client polling (#4828).
+
+### Why an extension could not handle it
+
+- The capture points and the attach's connect set are private to the builtin MCP service.
+
+### Expected merge conflict zones
+
+- LOW: `attachSession`, the `onDeferred` callback in `#syncFromConfig`, and `#captureWireStatus` in `service.ts`.
+
+## 2026-10-28 - Registered-server ownership handoff to extensions that handle mcp_servers_change (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: on attach, extension-registered servers are merged into the config only when `ctx.extensionConnectsMcpServers?.()` is not `true`; `mcp.json` servers are merged as before.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: `McpSessionContext` gains the optional `extensionConnectsMcpServers` getter.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-types.ts`: upstream's rule is that the extension handling `mcp_servers_change` connects registered servers; if the built-in gateway also connected them, every registered server would get two connections.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-types.ts`: the built-in gateway decides what it connects; another extension cannot stop it from merging registered servers.
+
+### Expected merge conflict zones
+
+- LOW: the `mergeExtensionMcpServers` call in `attachSession` and the `McpSessionContext` type.
+
+## 2026-10-27 - Negotiate advertised legacy MCP versions (senpi#4402)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts`: use the SDK's supported legacy versions when discovery rejects the modern version, select the existing legacy handshake when appropriate, and name server versions when neither era is supported.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: retain the actionable version-negotiation diagnostic in stdio connection errors.
+
+### Why
+
+- Servers advertising implemented legacy versions in a `-32022` error failed to connect because the probe considered only modern versions. Modern selection and its single retry remain unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts` own transport negotiation before extension requests can run.
+
+### Expected merge conflict zones
+
+- LOW: version selection in `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts` and discovery errors in `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`.
+
+## 2026-10-25 - Follow negotiated modern MCP tasks (senpi#4195, #4238)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: negotiate `io.modelcontextprotocol/tasks` only with advertising modern servers and follow `tools/call` task handles before SDK output validation; reuse the originating MRTR presenter and authority checks for task input.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts`: own polling, terminal results, deduplicated task input, and `tasks/cancel` on abort or the separate 30-minute cap (`SENPI_MCP_TASK_TIMEOUT_MS`).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/errors.ts`: name the task and lifetime setting on cap expiry and retain numeric task failure codes.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: route task requests with `Mcp-Name = taskId`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: centralize abortable polling timers and close observers, and remove interrupted-promise listeners immediately on abort.
+- `packages/coding-agent/docs/mcp.md`: document the lifetime setting beside request timeout settings.
+- `packages/coding-agent/test/mcp/modern-tasks.test.ts`, `modern-tasks-http.test.ts`, and `fixtures/mrtr-lifecycle.ts`: cover task settlement, cancellation, polling, consent, disconnect cleanup, routing headers, and tool-row status through real modern SDK requests.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: the adapter rejected every task handle. The lead selected Option 2: task lifetime is separate from RPC timeouts, while ordinary calls retain `min(maxTotalTimeout, 9 * requestTimeout + 300000)`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts`: per-poll deadlines must not prematurely end a valid long-running task; the independent cap and abort path explicitly request task cancellation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: negotiation, request origins, MRTR presenters, and final SDK result validation are owned by the builtin client.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: modern dispatch and consent collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: routing-header method selection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: safe lifecycle helpers.
+
+## 2026-10-25 - MRTR review cleanup and startup diagnostics (#4226)
+
+### What changed
+
+- `modern/consent-queue.ts` pumps after removing an aborted queued job. This is structural cleanup: active jobs already pump on settlement and initially aborted jobs pump before returning.
+- `modern/request.ts` reads `DEFAULT_REQUEST_TIMEOUT_MSEC` through `sdk.lazy.ts` instead of duplicating the SDK default.
+- `transport-sdk.ts` releases complete and trailing buffered stderr before forwarding an unclassified child's close event, including project transports whose aggregate stderr stream does not end.
+
+### Why
+
+- Request budgets must follow SDK defaults, and a child that fails before negotiation must retain startup diagnostics. Classified modern diagnostics stay suppressed and enforced private forms retain redaction.
+
+### Why an extension could not handle it
+
+- These paths own consent scheduling, SDK request budgets, and transport diagnostics before extension delivery.
+
+### Expected merge conflict zones
+
+- `modern/consent-queue.ts`, `modern/request.ts`, `sdk.lazy.ts`, and `transport-sdk.ts`: abort cleanup, lazy SDK loading, and stdio close handling.
+
+## 2026-10-25 - Parameter-header validation diagnostics (senpi#4246)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/parameter-headers.ts`: return fixed rejection reasons, warn once per rejected tool, traverse unknown keyword objects and arrays while skipping instance-data keywords, and reject present values that do not match annotated primitive types.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/transport.ts`: send rejection warnings to the connection logger and preserve local validation errors without treating them as transport failures.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/dispatch.ts`: pass the existing connection logger into the modern HTTP transport.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: preserve the typed local validation error across the request adapter's diagnostic boundary.
+
+### Why
+
+- SEP-2243 requires properties-only annotation paths and recommends warnings naming rejected tools and their reasons. Silently omitting a present, mistyped argument's header sends a misleading request to the server.
+- Regression coverage now asserts a projected header before catalog refresh, so removing parameter projection cannot pass an absence-only assertion.
+
+### Why an extension could not handle it
+
+- The builtin owns catalog filtering, per-connection annotation paths, HTTP header projection, and transport error classification.
+
+### Expected merge conflict zones
+
+- Annotation traversal and value extraction in `modern/parameter-headers.ts`, catalog delivery and local errors in `modern/transport.ts`, transport construction in `modern/dispatch.ts`, and error classification in `modern/request.ts`.
+
+## 2026-10-24 - Validate OAuth discovery issuers before credential use (senpi#4194)
+
+### What changed
+
+- `auth/oauth-issuer.ts` validates metadata against the discovered authorization server, preserving exact PRM identifiers and the SDK's origin fallback for path-served resources without PRM.
+- `auth/oauth-provider.ts` validates both cached and new discovery, deletes credentials bound to another issuer before re-registration, stamps newly stored credentials with the validated issuer, and declares native registration for loopback redirects.
+- `auth/oauth.ts` checks the issuer of pasted error responses before exposing their contents and persists injected discovery through the same validation boundary.
+- `auth/oauth-refresh.ts` checks the client registration's issuer as well as the token's issuer before sending a refresh request.
+- Credential stamps use one canonical form that removes only an origin-only URL's final slash. Existing root-fallback sign-ins refresh without registering again, and grants without AS metadata are stamped from the validated discovery issuer.
+- Invalid cached metadata is rediscovered rather than requiring logout. A callback without trusted discovery is rejected before exchange, and redirect-less clients omit `application_type`.
+
+### Why
+
+- SDK discovery parsed metadata without comparing its issuer. Direct client-credentials grants and refresh could retain or use registrations belonging to a different issuer.
+
+### Why an extension could not handle it
+
+- Discovery persistence and credential use are owned by the builtin's SDK OAuth provider.
+
+### Expected merge conflict zones
+
+- LOW: discovery persistence in `auth/oauth-provider.ts`, pasted redirect parsing in `auth/oauth.ts`, and grant validation in `auth/oauth-refresh.ts`.
+
+## 2026-10-25 - Listen for modern MCP catalog and resource changes (#4234)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: own the long-lived listen request, capability-derived filters, acknowledgment subsets, subscription ID correlation, complete paginated resource URI sets, cancellation, and bounded reconnect backoff. Matching response IDs end streams even without subscription metadata. Accepted resource URIs gate delivery; an acknowledged replacement takes over before canceling its predecessor. Missing acknowledgment filters fail with backoff, which resets only after an accepted notification. Each resource sweep owns its URI buffer, with only the latest sweep allowed to publish.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: route HTTP subscription messages separately from finite SDK requests and dispose streams with the bridge.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: reestablish subscriptions on each negotiated stdio connection and correlate their notifications alongside ordinary in-flight request IDs.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: modern resource lists supply the listen filter instead of sending the removed resources/subscribe method; legacy subscriptions are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: keep subscription retry scheduling and cancellation on the shared clock, resolving the current runtime timers so deterministic fake-timer coverage exercises the same lifecycle.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: modern servers cannot push catalog or resource changes without an explicit listen request. Graceful completion must not reconnect, filter replacement must not create a delivery gap, unsupported resource updates must not refresh the catalog, and concurrent listings must not mix or republish stale resource sets.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: a listen stream must not expire with the SDK's ordinary request timeout or block tool calls.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: notifications on a shared stdio channel must match an acknowledged subscription ID.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: the modern subscription filter replaces the legacy per-resource RPC.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: raw subscription retry timers bypassed the MCP async-source guard.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: the builtin transport owns negotiation, wire request IDs, stream lifetime, and disconnect.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: the builtin resource helper chooses the protocol-specific subscription mechanism.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: the builtin owns the shared scheduler used by transport lifecycles.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/subscriptions.ts`: subscription state and filter updates.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/sdk-bridge.ts`: message delivery and close hooks.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: modern send and receive wrappers.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: resource subscription helper.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: shared clock scheduling and cancellation.
+
+## 2026-10-25 - Preserve modern MCP tool schemas and JSON results (senpi#4191)
+
+### What changed
+
+- Introduced explicit modern tool/result contracts and era-specific operations over the existing connection and MRTR request owner. Modern lists and calls bypass the SDK's legacy tool helpers.
+- Catalogs and persistent caches retain raw input/output schemas and the negotiated era. Modern exposure retains additional properties constraints and reference siblings.
+- Draft 2020-12 validates schemas, arguments, and structured output without coercion, network reference fetching, or shared schema identifiers. Schema depth and node counts are bounded.
+- Discovery and cache loading reject only tools with invalid or unsupported input/output schemas, warning with the tool name and a fixed reason, never argument values. Cached registration uses the connected client's era, including caches written before the era flag existed; an invalid current schema returns a structured refusal.
+- Modern tool operations use static imports and the service uses a top-level tool-contract type import. SDK schemas still load through the existing documented `sdk.lazy.ts` boundary, preserving the startup import budget.
+- Legacy cache entries retain the absent modern flag after connection, so unchanged metadata does not invalidate an existing once-only permission approval.
+- Legacy SDK helpers and legacy exposure conversion remain unchanged.
+
+### Why
+
+- The SDK's object-root schemas and draft-07 validator rejected valid modern definitions and falsy/non-object structured results before model exposure.
+- MCP 2026-07-28 `basic/index.mdx:255-258,291-293` requires 2020-12 and graceful unsupported-dialect errors, not draft-07 support. The explicit draft-07 example is rejected per tool rather than removing the server's valid tools.
+
+### Why an extension could not handle it
+
+- The builtin owns discovery, catalog persistence, request dispatch, and model-tool registration before third-party extensions can repair the rejected results.
+
+### Expected merge conflict zones
+
+- Catalog/cache tool types, exposure registration and invocation validation, and the shared service's wire-tool type alias.
+
 ## 2026-10-25 - Fixed processing error for ambiguous legacy origins (#4248)
 
 ### What changed

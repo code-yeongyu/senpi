@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { getApplyPatchWireMode } from "../../src/core/extensions/builtin/gpt-apply-patch/index.ts";
+import { hasGpt62Signal } from "../../src/core/extensions/builtin/prompt-preset/matchers.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -32,9 +33,10 @@ function hasGpt6SolOrLunaCatalogSignal(model: Model<Api>): boolean {
 	return /(?:^|[/@:._-])gpt[._-]?6(?:[._-]\d+|\d)?[._-](?:sol|luna)(?:$|[/@:._-])/.test(searchable);
 }
 
+// GPT-6.2 rows resolve to their own preset (prompt-presets-gpt-6-2.test.ts owns that sweep).
 function getGpt6SolAndLunaCatalogModels(): Model<Api>[] {
 	return getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[]).filter(hasGpt6SolOrLunaCatalogSignal),
+		getModels(provider).filter((model) => hasGpt6SolOrLunaCatalogSignal(model) && !hasGpt62Signal(model.id)),
 	);
 }
 

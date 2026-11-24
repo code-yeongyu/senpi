@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { processExitEvent } from "../helpers/process-exit-event.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -46,8 +47,6 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 		const supervisor = spawn(
 			process.execPath,
 			[
-				"--import",
-				"tsx",
 				join(import.meta.dirname, "../../src/modes/rpc/host-lifecycle.ts"),
 				"--socket",
 				socket,
@@ -64,7 +63,7 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 				]),
 			],
 			{
-				env: { ...process.env, TMPDIR: tmp, SENPI_CODING_AGENT_DIR: join(root, "agent") },
+				env: { ...hostSpawnEnv(), TMPDIR: tmp, SENPI_CODING_AGENT_DIR: join(root, "agent") },
 				stdio: ["ignore", "ignore", "inherit"],
 			},
 		);
@@ -81,7 +80,7 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 				expect(statSync(fifo).isFIFO()).toBe(true);
 				expect(statSync(fifo).mode & 0o777).toBe(0o600);
 			} else expect(existsSync(fifo)).toBe(false);
-			// The host is the supervisor's child listening on this hop; tsx also gives the supervisor an esbuild child.
+			// The host is the supervisor's child listening on this hop.
 			const [childPid] = execFileSync(
 				"pgrep",
 				["-P", String(supervisor.pid), "-f", `unix://${join(hop, "host.sock")}`],

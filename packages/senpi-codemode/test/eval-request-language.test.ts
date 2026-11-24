@@ -5,7 +5,7 @@ import type { EvalLanguage } from "../src/tool/types.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
 const LANGUAGE_TEACHING_ERROR = 'eval run requires language: one of "js", "py", "rb", "jl"';
-const JS_ONLY_LANGUAGE_TEACHING_ERROR = 'eval run requires language: one of "js"';
+const THREE_LANGUAGE_TEACHING_ERROR = 'eval run requires language: one of "js", "py", "rb"';
 const DEFAULT_ENABLED_LANGUAGE_TEACHING_ERROR = 'eval run requires language: one of "js", "py"';
 const INVALID_LANGUAGE_ERROR = "eval run language must be one of: js, py, rb, jl";
 const CODE_TEACHING_ERROR = "eval run requires code: the cell body to execute, verbatim";
@@ -34,10 +34,10 @@ function schemaFieldShape(value: object): { readonly description?: string; reado
 	};
 }
 
-function buildTool(): EvalTool {
+function buildTool(py = false): EvalTool {
 	const kernel = new FakeKernel([result("cell-1", "1", 1)]);
 	return createEvalTool({
-		enabledLanguages: { js: true, py: false, rb: false, jl: false },
+		enabledLanguages: { js: true, py, rb: false, jl: false },
 		kernelManager: new FakeManager([["js", kernel]]),
 		cellTimeoutSeconds: 30,
 		executeTool: vi.fn(),
@@ -63,8 +63,12 @@ describe("eval request language validation", () => {
 		expect(languageError(language).message).not.toBe(languageError(undefined).message);
 	});
 
-	it("rejects an omitted language instead of selecting a default kernel", () => {
+	// senpi#5154: an omitted language is filled only when unambiguous; otherwise no default kernel is selected.
+	it("rejects an omitted language when the kernel cannot be inferred", () => {
 		expect(() => parseEvalRequest({ code: "return 1", summary: "Evaluate a number" })).toThrow(TypeError);
+		expect(() => parseEvalRequest({ code: "return 1", summary: "Evaluate a number" }, ["js", "py"])).toThrow(
+			TypeError,
+		);
 	});
 
 	it.each(["peek", "stop"])("accepts %s without a language", (action) => {
@@ -93,8 +97,8 @@ describe("parseEvalRequest language and code enforcement", () => {
 		expect(parseError({ code: "return 1", summary: "run without a language" }, ["js", "py"]).message).toBe(
 			DEFAULT_ENABLED_LANGUAGE_TEACHING_ERROR,
 		);
-		expect(parseError({ code: "return 1", summary: "run without a language" }, ["js"]).message).toBe(
-			JS_ONLY_LANGUAGE_TEACHING_ERROR,
+		expect(parseError({ code: "import os", summary: "run without a language" }, ["js", "py", "rb"]).message).toBe(
+			THREE_LANGUAGE_TEACHING_ERROR,
 		);
 	});
 
@@ -125,7 +129,7 @@ describe("eval tool schema", () => {
 
 describe("eval tool execute error path", () => {
 	it("surfaces the actionable language error as a tool error when language is missing", async () => {
-		const tool = buildTool();
+		const tool = buildTool(true);
 		const call = tool.execute(
 			"cell-1",
 			{ code: "return 42", summary: "run without a language" },
@@ -134,6 +138,6 @@ describe("eval tool execute error path", () => {
 			fakeExtensionContext(),
 		);
 		await expect(call).rejects.toThrow(TypeError);
-		await expect(call).rejects.toThrow(JS_ONLY_LANGUAGE_TEACHING_ERROR);
+		await expect(call).rejects.toThrow(DEFAULT_ENABLED_LANGUAGE_TEACHING_ERROR);
 	});
 });

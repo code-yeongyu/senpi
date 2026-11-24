@@ -1,5 +1,5 @@
 import { afterEach, beforeEach } from "vitest";
-import type { AssistantMessageEvent } from "../src/types.ts";
+import type { AssistantMessage, AssistantMessageEvent } from "../src/types.ts";
 import {
 	type AssistantProgress,
 	type AssistantRecord,
@@ -69,6 +69,42 @@ export function firstEvent<T extends AssistantMessageEvent["type"]>(
 	);
 	if (!found) throw new Error(`no ${type} event${contentIndex === undefined ? "" : ` at ${contentIndex}`}`);
 	return found;
+}
+
+export function recordsOnForeignBlocks(records: AssistantRecord[], terminal: AssistantMessage): string[] {
+	return records.flatMap((record) => {
+		if (!("contentIndex" in record)) return [];
+		const index = isAssistantProgress(record)
+			? record.contentIndex
+			: (getAssistantCapture(record)?.contentIndex ?? record.contentIndex);
+		const kind = recordBlockKind(record);
+		const actual = terminal.content[index]?.type;
+		return kind === undefined || kind === actual ? [] : [`${record.type}:${index} names ${actual ?? "nothing"}`];
+	});
+}
+
+function recordBlockKind(record: AssistantRecord): AssistantMessage["content"][number]["type"] | undefined {
+	switch (record.type) {
+		case "message_block_state":
+			return record.block.type;
+		case "message_block_metadata":
+			return "textSignature" in record ? "text" : "name" in record ? "toolCall" : "thinking";
+		case "message_tool_arguments_reset":
+		case "toolcall_start":
+		case "toolcall_delta":
+		case "toolcall_end":
+			return "toolCall";
+		case "text_start":
+		case "text_delta":
+		case "text_end":
+			return "text";
+		case "thinking_start":
+		case "thinking_delta":
+		case "thinking_end":
+			return "thinking";
+		default:
+			return undefined;
+	}
 }
 
 export function mintedIdentityKeys(message: object | undefined): string[] {
