@@ -288,4 +288,66 @@ process.exit(0);
 			}
 		}
 	});
+
+	it("system prompt passthrough: the transcript's leading system message reaches the cmd prompt", async () => {
+		const mockBinDir = mkdtempSync(join(tmpdir(), "senpi-mock-bin-"));
+		const mockCmdScript = join(mockBinDir, "echo-stdin-cmd.js");
+		const scriptContent = `#!/usr/bin/env node
+let input = "";
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", finalText: input, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 }, stopReason: "stop" }) + "\\n");
+  process.exit(0);
+});
+`;
+		writeFileSync(mockCmdScript, scriptContent, { mode: 0o755 });
+		chmodSync(mockCmdScript, 0o755);
+
+		const { dir, cleanup } = createTempWorkspace({
+			cmdCliProvider: {
+				enabled: true,
+				executablePath: mockCmdScript,
+			},
+		});
+		try {
+			const runtime = createExtensionRuntime();
+			const eventBus = createEventBus();
+			await loadExtensionFromFactory(cmdCliExtension, dir, eventBus, runtime, "<builtin:cmd-cli>");
+			const queued = drainPendingProviderRegistrations(runtime);
+			expect(queued).toHaveLength(1);
+
+			const registered = queued[0];
+			expect(registered.kind).toBe("config");
+			if (registered.kind !== "config") return;
+			const { streamSimple } = registered.config;
+			if (!streamSimple) throw new Error("provider must expose streamSimple");
+
+			// Providers receive a normalized transcript: the system prompt (AGENTS.md
+			// instructions, permission framing) rides in the leading system message, never
+			// in a `systemPrompt` field.
+			const transcript = {
+				messages: [
+					{ role: "system", content: "SYSTEM-PROMPT-SENTINEL", timestamp: 0 },
+					{ role: "user", content: "REQUEST-SENTINEL", timestamp: 1 },
+				],
+			} as unknown as Parameters<typeof streamSimple>[1];
+
+			const events: AssistantMessageEvent[] = [];
+			for await (const event of streamSimple(testModel, transcript, {})) {
+				events.push(event);
+			}
+
+			const delta = events.find((event) => event.type === "text_delta");
+			if (!delta || delta.type !== "text_delta") throw new Error("expected a text_delta carrying the prompt");
+			expect(delta.delta).toContain("SYSTEM-PROMPT-SENTINEL");
+			expect(delta.delta).toContain("REQUEST-SENTINEL");
+		} finally {
+			cleanup();
+			try {
+				rmSync(mockBinDir, { recursive: true, force: true });
+			} catch {
+				// Ignore cleanup errors
+			}
+		}
+	});
 });

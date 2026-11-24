@@ -131,17 +131,16 @@ export function flattenContextPrompt(context: Context): string {
 	return sections.join("\n\n");
 }
 
-function normalizeStopReason(reason?: string): Extract<StopReason, "stop" | "length" | "toolUse" | "deferred"> {
+function normalizeStopReason(reason?: string): Extract<StopReason, "stop" | "length" | "deferred"> {
 	switch (reason) {
 		case "max_tokens":
 		case "length":
 			return "length";
-		case "toolUse":
-		case "tool_use":
-			return "toolUse";
 		case "deferred":
 			return "deferred";
 		default:
+			// cmd executes its own tools, so a tool_use result is a completed turn for the
+			// host, never a handoff to senpi's tool loop.
 			return "stop";
 	}
 }
@@ -193,10 +192,17 @@ export function streamCmdCli(
 ): AssistantMessageEventStream {
 	const stream = createAssistantMessageEventStream();
 	const signal = options?.signal;
+	const output = emptyAssistantMessage(model);
+
+	const failWith = (reason: "error" | "aborted", error: unknown): void => {
+		output.stopReason = reason;
+		output.errorMessage = error instanceof Error ? error.message : String(error);
+		stream.push({ type: "error", reason, error: output });
+	};
 
 	void (async () => {
 		if (signal?.aborted) {
-			stream.fail(new Error("Command Code CLI invocation was aborted"));
+			failWith("aborted", new Error("Command Code CLI invocation was aborted"));
 			return;
 		}
 
@@ -205,7 +211,7 @@ export function streamCmdCli(
 			const resolver = deps.resolveExecutable ?? resolveCmdCliExecutable;
 			executable = resolver(deps.executableDeps ?? defaultCmdCliExecutableDeps());
 		} catch (error) {
-			stream.fail(error instanceof Error ? error : new Error(String(error)));
+			failWith("error", error);
 			return;
 		}
 
@@ -229,11 +235,10 @@ export function streamCmdCli(
 				env,
 			}) as ChildProcessByStdio<Writable, Readable, Readable>;
 		} catch (error) {
-			stream.fail(error instanceof Error ? error : new Error(String(error)));
+			failWith("error", error);
 			return;
 		}
 
-		const output = emptyAssistantMessage(model);
 		const parser = new CmdCliStreamParser();
 		let started = false;
 		let openIndex = -1;
@@ -357,7 +362,8 @@ export function streamCmdCli(
 		child.once("error", (error) => {
 			if (abortTimer) clearTimeout(abortTimer);
 			if (signal) signal.removeEventListener("abort", onAbort);
-			stream.fail(error);
+			closeTextOpen();
+			failWith(abortRequested || signal?.aborted === true ? "aborted" : "error", error);
 		});
 
 		child.once("close", (exitCode) => {
@@ -371,23 +377,28 @@ export function streamCmdCli(
 			if (abortRequested) {
 				// The leader is gone but descendants that ignored SIGTERM may remain in its group.
 				killProcessGroup(child.pid, "SIGKILL");
-				stream.fail(new Error("Command Code CLI invocation was aborted"));
+				closeTextOpen();
+				failWith("aborted", new Error("Command Code CLI invocation was aborted"));
 				return;
 			}
 
 			if (resultError) {
-				stream.fail(resultError);
+				closeTextOpen();
+				failWith("error", resultError);
 				return;
 			}
 
 			if (exitCode !== 0) {
 				const stderrText = stderrBuffer.toString("utf8").trim();
-				stream.fail(new CmdCliProcessExitError(exitCode, stderrText));
+				closeTextOpen();
+				failWith("error", new CmdCliProcessExitError(exitCode, stderrText));
 				return;
 			}
 
 			if (!resultSeen) {
-				stream.fail(
+				closeTextOpen();
+				failWith(
+					"error",
 					new CmdCliResultError(
 						"malformed_stream",
 						malformedMessage ?? "Command Code CLI exited without a result line",
@@ -398,10 +409,8 @@ export function streamCmdCli(
 
 			ensureStarted();
 			closeTextOpen();
-			const doneReason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred"> =
-				output.stopReason === "length" || output.stopReason === "toolUse" || output.stopReason === "deferred"
-					? output.stopReason
-					: "stop";
+			const doneReason: Extract<StopReason, "stop" | "length" | "deferred"> =
+				output.stopReason === "length" || output.stopReason === "deferred" ? output.stopReason : "stop";
 			stream.push({
 				type: "done",
 				reason: doneReason,

@@ -56,12 +56,12 @@ function resolveFromPath(deps: CmdCliExecutableDeps): string | undefined {
 	const sep = deps.pathDelimiter ?? delimiter;
 	for (const directory of pathValue.split(sep)) {
 		if (!directory) continue;
+		// Only the exact `cmd` name is probed: a `cmd.exe` in a PATH directory is the
+		// Windows shell far more often than Command Code, and spawning it with `-p
+		// --output-format json` would pipe the conversation to the shell. Windows users
+		// point `cmdCliProvider.executablePath` (or an env override) at the real binary.
 		const candidate = executableCandidate(join(directory, "cmd"), deps);
 		if (candidate) return candidate;
-		if (process.platform === "win32") {
-			const winCandidate = executableCandidate(join(directory, "cmd.exe"), deps);
-			if (winCandidate) return winCandidate;
-		}
 	}
 	return undefined;
 }

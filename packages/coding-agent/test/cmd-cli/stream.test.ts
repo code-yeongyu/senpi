@@ -1,15 +1,9 @@
 import { createServer } from "node:net";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, AssistantMessageEvent, Context, Model } from "@earendil-works/pi-ai";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-	CmdCliProcessExitError,
-	CmdCliResultError,
-	flattenContextPrompt,
-	streamCmdCli,
-} from "../../src/core/extensions/builtin/cmd-cli/stream.ts";
+import { flattenContextPrompt, streamCmdCli } from "../../src/core/extensions/builtin/cmd-cli/stream.ts";
 
 const testModel: Model<Api> = {
 	id: "default",
@@ -36,7 +30,10 @@ describe("cmd-cli stream", () => {
 	let tempDir: string;
 
 	beforeAll(() => {
-		tempDir = mkdtempSync(join(tmpdir(), "cmd-cli-stream-test-"));
+		// A short /tmp path, not tmpdir(): Unix socket paths cap around 107 bytes, and a long
+		// TMPDIR would push server.listen past the limit (the error handler below rejects
+		// instead of hanging when that ever happens).
+		tempDir = mkdtempSync("/tmp/cmd-cli-stream-");
 	});
 
 	afterAll(() => {
@@ -56,12 +53,23 @@ describe("cmd-cli stream", () => {
 	}
 
 	async function abortOnFirstDelta(
-		stream: AsyncIterable<{ type: string }>,
+		stream: ReturnType<typeof streamCmdCli>,
 		controller: AbortController,
-	): Promise<void> {
+	): Promise<AssistantMessageEvent[]> {
+		const events: AssistantMessageEvent[] = [];
 		for await (const event of stream) {
+			events.push(event);
 			if (event.type === "text_delta") controller.abort();
 		}
+		return events;
+	}
+
+	function requireErrorEvent(
+		events: readonly AssistantMessageEvent[],
+	): Extract<AssistantMessageEvent, { type: "error" }> {
+		const failure = events.find((event) => event.type === "error");
+		if (!failure || failure.type !== "error") throw new Error("expected a terminating error event");
+		return failure;
 	}
 
 	describe("flattenContextPrompt", () => {
@@ -222,7 +230,33 @@ process.exit(0);
 			}
 		});
 
-		it("asserts non-zero exit surfaces typed CmdCliProcessExitError", async () => {
+		it("maps a tool_use result to a stop turn because cmd runs its own tools", async () => {
+			const fakeScript = `
+process.stdout.write(JSON.stringify({
+  type: "result",
+  subtype: "success",
+  stopReason: "tool_use",
+  usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 }
+}) + "\\n");
+process.exit(0);
+`;
+			const executable = createFakeExecutable(fakeScript, "tool-use-cmd");
+			const context: Context = {
+				messages: [{ role: "user", content: "Run your tools", timestamp: 1 }],
+			};
+
+			const stream = streamCmdCli(testModel, context, {}, { resolveExecutable: () => executable });
+			const events = await collectStreamEvents(stream);
+
+			const done = events.find((e) => e.type === "done");
+			if (!done || done.type !== "done") throw new Error("expected a terminating done event");
+			expect(done.reason).toBe("stop");
+			expect(done.message.stopReason).toBe("stop");
+			// The provider-native reason stays available for diagnostics.
+			expect(done.message.rawStopReason).toBe("tool_use");
+		});
+
+		it("surfaces a non-zero exit as an error event carrying the exit code and stderr", async () => {
 			const fakeScript = `
 process.stderr.write("Fatal error: connection failed\\n");
 process.exit(42);
@@ -233,20 +267,16 @@ process.exit(42);
 			};
 
 			const stream = streamCmdCli(testModel, context, {}, { resolveExecutable: () => executable });
-			let thrownError: unknown;
-			try {
-				await collectStreamEvents(stream);
-			} catch (error) {
-				thrownError = error;
-			}
-			expect(thrownError).toBeInstanceOf(CmdCliProcessExitError);
-			const exitError = thrownError as CmdCliProcessExitError;
-			expect(exitError.kind).toBe("process_exit");
-			expect(exitError.exitCode).toBe(42);
-			expect(exitError.stderr).toContain("Fatal error: connection failed");
+			const events = await collectStreamEvents(stream);
+
+			const failure = requireErrorEvent(events);
+			expect(failure.reason).toBe("error");
+			expect(failure.error.stopReason).toBe("error");
+			expect(failure.error.errorMessage).toContain("42");
+			expect(failure.error.errorMessage).toContain("Fatal error: connection failed");
 		});
 
-		it("asserts non-success result subtype surfaces typed CmdCliResultError", async () => {
+		it("surfaces a non-success result subtype as an error event", async () => {
 			const fakeScript = `
 process.stdout.write(JSON.stringify({
   type: "result",
@@ -261,16 +291,12 @@ process.exit(0);
 			};
 
 			const stream = streamCmdCli(testModel, context, {}, { resolveExecutable: () => executable });
-			let thrownError: unknown;
-			try {
-				await collectStreamEvents(stream);
-			} catch (error) {
-				thrownError = error;
-			}
-			expect(thrownError).toBeInstanceOf(CmdCliResultError);
-			const resultError = thrownError as CmdCliResultError;
-			expect(resultError.kind).toBe("result_error");
-			expect(resultError.subtype).toBe("rate_limit_exceeded");
+			const events = await collectStreamEvents(stream);
+
+			const failure = requireErrorEvent(events);
+			expect(failure.reason).toBe("error");
+			expect(failure.error.stopReason).toBe("error");
+			expect(failure.error.errorMessage).toContain("rate_limit_exceeded");
 		});
 
 		it("asserts abort kills the child process", async () => {
@@ -293,7 +319,11 @@ setInterval(() => {}, 1000);
 				{ signal: abortController.signal },
 				{ resolveExecutable: () => executable, abortGraceMs: 100 },
 			);
-			await expect(abortOnFirstDelta(stream, abortController)).rejects.toThrow(/aborted/);
+			const events = await abortOnFirstDelta(stream, abortController);
+			const failure = requireErrorEvent(events);
+			expect(failure.reason).toBe("aborted");
+			expect(failure.error.stopReason).toBe("aborted");
+			expect(failure.error.errorMessage).toContain("aborted");
 		});
 
 		it("asserts abort escalates from SIGTERM to SIGKILL when child ignores SIGTERM", async () => {
@@ -314,7 +344,11 @@ setInterval(() => {}, 1000);
 				{ signal: abortController.signal },
 				{ resolveExecutable: () => executable, abortGraceMs: 50 },
 			);
-			await expect(abortOnFirstDelta(stream, abortController)).rejects.toThrow(/aborted/);
+			const events = await abortOnFirstDelta(stream, abortController);
+			const failure = requireErrorEvent(events);
+			expect(failure.reason).toBe("aborted");
+			expect(failure.error.stopReason).toBe("aborted");
+			expect(failure.error.errorMessage).toContain("aborted");
 		});
 
 		it("kills a descendant that ignores SIGTERM once the group leader has exited", async () => {
@@ -329,7 +363,7 @@ setInterval(() => {}, 1000);
 				"group-leader",
 			);
 			const abortController = new AbortController();
-			const descendantGone = new Promise<void>((resolve) => {
+			const descendantGone = new Promise<void>((resolve, reject) => {
 				const server = createServer((socket) => {
 					socket.on("error", () => {});
 					socket.on("close", () => {
@@ -338,6 +372,9 @@ setInterval(() => {}, 1000);
 					});
 					abortController.abort();
 				});
+				// Without this handler a listen failure (e.g. a socket path past the ~107-byte
+				// limit) would never settle the promise and the test would hang to its timeout.
+				server.on("error", reject);
 				server.listen(socketPath);
 			});
 
@@ -349,7 +386,9 @@ setInterval(() => {}, 1000);
 				{ resolveExecutable: () => executable, abortGraceMs: 600_000 },
 			);
 
-			await expect(collectStreamEvents(stream)).rejects.toThrow(/aborted/);
+			const events = await collectStreamEvents(stream);
+			const failure = requireErrorEvent(events);
+			expect(failure.reason).toBe("aborted");
 			await descendantGone;
 		});
 
@@ -387,7 +426,12 @@ process.stdin.on("end", () => {
 				{},
 				{ resolveExecutable: () => executable },
 			);
-			await expect(collectStreamEvents(stream)).rejects.toBeInstanceOf(CmdCliResultError);
+			const events = await collectStreamEvents(stream);
+
+			const failure = requireErrorEvent(events);
+			expect(failure.reason).toBe("error");
+			expect(failure.error.stopReason).toBe("error");
+			expect(failure.error.errorMessage).toBeTruthy();
 		});
 
 		it("fails immediately when stream options signal is already aborted", async () => {
@@ -404,7 +448,12 @@ process.stdin.on("end", () => {
 				{ resolveExecutable: () => "/bin/does-not-matter" },
 			);
 
-			await expect(collectStreamEvents(stream)).rejects.toThrow(/aborted/);
+			const events = await collectStreamEvents(stream);
+			expect(events).toHaveLength(1);
+			const failure = requireErrorEvent(events);
+			expect(failure.reason).toBe("aborted");
+			expect(failure.error.stopReason).toBe("aborted");
+			expect(failure.error.errorMessage).toContain("aborted");
 		});
 	});
 });

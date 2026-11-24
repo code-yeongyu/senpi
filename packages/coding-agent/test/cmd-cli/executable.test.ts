@@ -39,6 +39,18 @@ describe("cmd-cli executable", () => {
 		expect(executable).toBe("/usr/bin/cmd");
 	});
 
+	it("never resolves the Windows cmd.exe shell from PATH, even when present", () => {
+		// A `cmd.exe` in a PATH directory is the Windows shell far more often than Command
+		// Code; spawning it would pipe the conversation to the shell. Resolution must skip it.
+		expect(() =>
+			resolveCmdCliExecutable({
+				env: (name) => (name === "PATH" ? "/Windows/System32" : undefined),
+				pathDelimiter: ":",
+				isExecutableFile: (path) => path === "/Windows/System32/cmd.exe",
+			}),
+		).toThrow(CmdCliNotInstalledError);
+	});
+
 	it("throws CmdCliNotInstalledError with kind=binary_missing when not found", () => {
 		let thrown: unknown;
 		try {

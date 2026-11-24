@@ -1,5 +1,6 @@
 import { getAgentDir } from "../../../../config.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
+import { toBuiltinProviderContext } from "../provider-context.ts";
 import type { ExtensionAPI } from "../../types.ts";
 import { type CmdCliExecutableDeps, defaultCmdCliExecutableDeps } from "./executable.ts";
 import { resolveCmdCliModels, STATIC_CMD_CLI_MODELS } from "./models.ts";
@@ -124,7 +125,10 @@ export function registerCmdCliExtension(pi: ExtensionAPI, deps: CmdCliExtensionD
 			return await resolveCmdCliModels({ executableDeps: effectiveExecutableDeps });
 		},
 		streamSimple: (model, context, options) => {
-			return streamCmdCli(model, context, options, effectiveStreamDeps);
+			// The transcript carries the system prompt (AGENTS.md instructions, permission
+			// framing) in its leading system message; replay it into the Context shape
+			// streamCmdCli flattens, the same way the subscription CLI providers do.
+			return streamCmdCli(model, toBuiltinProviderContext(context), options, effectiveStreamDeps);
 		},
 	});
 }
