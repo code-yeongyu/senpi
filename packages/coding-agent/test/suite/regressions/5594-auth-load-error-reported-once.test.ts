@@ -7,12 +7,31 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
-import { FILE_STORAGE_LOCK_OPTIONS } from "../../../src/core/lockfile-policy.ts";
+import { FILE_STORAGE_LOCK_OPTIONS, FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS } from "../../../src/core/lockfile-policy.ts";
 import { collectAuthDiagnostics, interactiveAuthNotices } from "../../../src/main.ts";
 
-const LOCK_WAIT_MS = 30_000;
+/**
+ * The async read waits out the lock retry budget on timers. Fake time drives that wait, and each round yields one
+ * macrotask so the real lock attempt (file I/O) between waits completes before the clock moves on.
+ */
+async function settleOnFakeClock<T>(work: Promise<T>): Promise<T> {
+	let settled = false;
+	void work.then(
+		() => {
+			settled = true;
+		},
+		() => {
+			settled = true;
+		},
+	);
+	while (!settled) {
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		await vi.advanceTimersByTimeAsync(FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS);
+	}
+	return work;
+}
 
 describe("senpi#5594 a broken or locked auth store is reported once per startup", () => {
 	let dir: string;
@@ -25,6 +44,7 @@ describe("senpi#5594 a broken or locked auth store is reported once per startup"
 		writeFileSync(authPath, "{ not json", { mode: 0o600 });
 	});
 	afterEach(() => {
+		vi.useRealTimers();
 		release?.();
 		release = undefined;
 		rmSync(dir, { recursive: true, force: true });
@@ -49,31 +69,27 @@ describe("senpi#5594 a broken or locked auth store is reported once per startup"
 		expect(diagnostics).toHaveLength(1);
 	});
 
-	it(
-		"an interactive start shows a held lock once",
-		async () => {
-			holdLock();
+	it("an interactive start shows a held lock once", async () => {
+		holdLock();
+		const storage = AuthStorage.create(authPath);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 
-			const notices = await interactiveAuthNotices(AuthStorage.create(authPath));
+		const notices = await settleOnFakeClock(interactiveAuthNotices(storage));
 
-			expect(notices.messages).toHaveLength(1);
-		},
-		LOCK_WAIT_MS,
-	);
+		expect(notices.messages).toHaveLength(1);
+	});
 
-	it(
-		"a print or RPC start reports a held lock once",
-		async () => {
-			holdLock();
+	it("a print or RPC start reports a held lock once", async () => {
+		holdLock();
+		const storage = AuthStorage.create(authPath);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 
-			const diagnostics = await collectAuthDiagnostics(AuthStorage.create(authPath), "runtime creation", {
-				persistSeen: false,
-			});
+		const diagnostics = await settleOnFakeClock(
+			collectAuthDiagnostics(storage, "runtime creation", { persistSeen: false }),
+		);
 
-			expect(diagnostics).toHaveLength(1);
-		},
-		LOCK_WAIT_MS,
-	);
+		expect(diagnostics).toHaveLength(1);
+	});
 
 	it("an async read of a store the first load already found broken does not record the failure again", async () => {
 		const storage = AuthStorage.create(authPath);
