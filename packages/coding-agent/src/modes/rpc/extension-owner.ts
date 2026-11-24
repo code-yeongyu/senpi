@@ -53,6 +53,7 @@ export class ExtensionTransportOwner {
 	readonly ownerId = randomUUID();
 	private readonly bindings = new Map<string, ExtensionOwner>();
 	private closed = false;
+	private effectsEnded = false;
 
 	get retired(): boolean {
 		return this.closed;
@@ -67,8 +68,18 @@ export class ExtensionTransportOwner {
 			bindingGeneration,
 			retirement: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
 		});
+		if (this.effectsEnded) owner.retire();
 		this.bindings.set(bindingGeneration, owner);
 		return owner;
+	}
+
+	/**
+	 * The peer sent its FIN (oh-my-openagent#14725): no extension effect is admitted for it any more, and replies tied
+	 * to its gates are consumed, as when it closes; replies to its ordinary commands are still delivered.
+	 */
+	endEffects(): void {
+		this.effectsEnded = true;
+		for (const owner of this.bindings.values()) owner.retire();
 	}
 
 	/** The gate already issued for a generation, without minting one. */

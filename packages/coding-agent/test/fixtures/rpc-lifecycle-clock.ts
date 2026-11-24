@@ -3,6 +3,7 @@ import net from "node:net";
 import { mock } from "node:test";
 import { type HostActivity, IdleExitDecider, runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 import { HOST_IDLE_EXIT_MS_ENV } from "../../src/modes/rpc/host-lifecycle-policy.ts";
+import { createServerArgs } from "../helpers/net-server-args.ts";
 import { signalEndpointReady } from "../helpers/rpc-endpoint-ready.ts";
 
 // Drive the real supervisor's clock and timer independently of socket I/O. The
@@ -38,8 +39,9 @@ mock.method(IdleExitDecider.prototype, "update", function (this: IdleExitDecider
 });
 const createServer = net.createServer;
 const onServer = signalEndpointReady(socket, () => process.send?.({ type: "ready" }));
-mock.method(net, "createServer", (accept: (socket: net.Socket) => void) => {
-	const server = createServer((socket) => {
+mock.method(net, "createServer", (...args: Parameters<typeof createServerArgs>) => {
+	const { options, accept } = createServerArgs(...args);
+	const server = createServer(options, (socket) => {
 		accept(socket);
 		// Register after the supervisor, so detached means its occupancy changed.
 		socket.once("close", () => process.send?.({ type: "detached" }));

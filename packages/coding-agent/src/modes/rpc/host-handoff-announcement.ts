@@ -35,9 +35,15 @@ export class HandoffAnnouncement {
 	deliverLate(stream: Duplex, arrivedBeforeDrain: boolean): boolean {
 		const record = this.record;
 		if (!arrivedBeforeDrain || record === undefined) return false;
-		void record.then((announced) =>
-			announced === undefined ? stream.destroy() : stream.end(`${JSON.stringify(announced)}\n`),
-		);
+		void record.then((announced) => {
+			if (announced === undefined) {
+				stream.destroy();
+				return;
+			}
+			stream.end(`${JSON.stringify(announced)}\n`);
+			// Read to the peer's FIN, or the stream never learns the peer left and holds its socket (omo#14725).
+			stream.resume();
+		});
 		return true;
 	}
 }

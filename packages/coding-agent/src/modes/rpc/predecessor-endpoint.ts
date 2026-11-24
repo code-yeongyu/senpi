@@ -17,7 +17,10 @@ export async function listenForSuccessor(
 ): Promise<() => Promise<void>> {
 	const path = join(dirname(childSocket), "route");
 	const endpoint = new RpcPublicEndpoint(agentDir, path);
-	const server = createServer((socket) => accept(new PublicRpcConnection(socket, endpoint, true).stream));
+	// Half-open like the host's own listener: the connection's owner ends it after the peer's FIN (omo#14725).
+	const server = createServer({ allowHalfOpen: true }, (socket) =>
+		accept(new PublicRpcConnection(socket, endpoint, true).stream),
+	);
 	const record = join(generationDir, "route.json");
 	const identity = await listen(server, path);
 	const unpublish = () =>

@@ -44,6 +44,7 @@ import { isHostOccupancyWatch } from "./host-observe-request.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
 import { HostOccupancyWatch } from "./host-occupancy-watch.ts";
 import { closeHostConnections, type HostConnection } from "./host-shutdown-connections.ts";
+import { endAfterPeerFin, PendingReplies } from "./host-peer-end.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
@@ -570,6 +571,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		}
 		const id = `${routed ? "generation-route" : "socket"}-${++nextConnection}`;
 		const sink = socketSink(socket);
+		const replies = new PendingReplies();
 		writer.registerConnection(id, sink, launchProof === undefined ? {} : { launchProof });
 		occupancy.admit(socket);
 		const detachReader = attachJsonlLineReader(
@@ -582,21 +584,25 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				// Do not serialize awaited commands: extension_ui_response and other
 				// re-entrant frames must be able to resolve a command already awaiting them.
 				occupancyWatch.begin(id);
-				void writer
-					.withConnection(id, () => handle(line))
-					.catch((cause) => {
-						process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
-					})
-					.finally(() => occupancyWatch.end(id));
+				replies.track(
+					writer
+						.withConnection(id, () => handle(line))
+						.catch((cause) => {
+							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`);
+						})
+						.finally(() => occupancyWatch.end(id)),
+				);
 			},
 			{
 				maxLineLength: MAX_RPC_LINE_CHARACTERS,
 				onOversizedLine: () => {
-					void writer
-						.withConnection(id, () => writer.enqueueControl(parseError(oversizedLineError())))
-						.catch((cause) =>
-							process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`),
-						);
+					replies.track(
+						writer
+							.withConnection(id, () => writer.enqueueControl(parseError(oversizedLineError())))
+							.catch((cause) =>
+								process.stderr.write(`senpi rpc connection ${id} failed: ${errorMessage(cause)}\n`),
+							),
+					);
 				},
 			},
 		);
@@ -623,14 +629,30 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		connections.set(id, { id, sink, socket, detach, close });
 		socket.once("close", detach);
 		socket.once("error", () => detach());
+		// After the reader's last line: from the FIN on, the peer's extension effects are refused (#4728 owner fence).
+		socket.once("end", () => writer.connectionContext.transportOf(id)?.endEffects());
+		endAfterPeerFin(
+			socket,
+			replies,
+			() => writer.flushConnection(id),
+			() => sink.close?.(),
+		);
 	};
-	const server = createServer((socket) => {
+	// Half-open: `serve()` ends a connection after its peer's FIN itself, once the replies it owes are out.
+	const server = createServer({ allowHalfOpen: true }, (socket) => {
 		const arrivedBeforeDrain = !draining && !shuttingDown;
 		admit(socket, (stream = socket, proof) => serve(stream, arrivedBeforeDrain, proof));
 	});
 	let stopRoute: (() => Promise<void>) | undefined;
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
+	});
+	// A listener that closes outside shutdown leaves a host that runs its sessions but takes no connection (omo#14725).
+	server.on("close", () => {
+		if (!shuttingDown)
+			process.stderr.write(
+				`senpi rpc socket listener closed: ${formatSocketAddress(socketPath)} accepts no connection\n`,
+			);
 	});
 	// Long-lived hosts outlive many session workers, and a terminated worker thread
 	// takes its children's exit watchers with it (measured: every spawn API leaks

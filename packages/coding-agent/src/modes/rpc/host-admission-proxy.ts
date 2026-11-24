@@ -7,6 +7,13 @@ import { launchProofRecordRefusal, RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-pr
 import type { PublicRpcConnection } from "./rpc-public-auth.ts";
 
 /**
+ * How long the proxy keeps a client whose FIN it forwarded, waiting for the host side to end (omo#14725). Longer than
+ * the host's own bound on its last replies (`PEER_END_REPLY_GRACE_MS`, 30 s), so a working host always ends first;
+ * kept here, not imported, because the supervisor's module graph is budgeted (`supervisor-import-graph.test.ts`).
+ */
+export const PROXY_CLIENT_END_GRACE_MS = 35_000;
+
+/**
  * Requests are size-bounded; each direction awaits downstream socket backpressure.
  * Opens remain concurrent with control commands. Stop refuses every pending open,
  * while other commands retain their wire order and child-owned semantics.
@@ -101,7 +108,18 @@ export function proxyWithAdmission(
 				await write(internal, `${line}\n`);
 			}
 		}
-		internal?.end();
+		// The client's FIN (the server is half-open): with no hop every reply is out once the loop ends; with one, the
+		// responses loop ends the client after the host side ends, and a host side that never does is cut (omo#14725).
+		if (!internal) {
+			await refusals;
+			client.end(() => client.destroy());
+			return;
+		}
+		if (!client.destroyed) {
+			const cut = setTimeout(fail, PROXY_CLIENT_END_GRACE_MS);
+			client.once("close", () => clearTimeout(cut));
+		}
+		internal.end();
 	}
 
 	async function responses(source: Duplex): Promise<void> {
@@ -185,7 +203,9 @@ async function* lines(socket: Readable, limit: number): AsyncGenerator<string | 
 	const decoder = new StringDecoder("utf8");
 	let buffer = "";
 	let discarding = false;
-	for await (const chunk of socket) {
+	// A plain `for await` destroys the stream when the input ends, which cut the client at its own FIN before its
+	// replies; the stream's owner closes it instead (omo#14725).
+	for await (const chunk of socket.iterator({ destroyOnReturn: false })) {
 		const text = typeof chunk === "string" ? chunk : decoder.write(chunk);
 		let offset = 0;
 		while (offset < text.length) {

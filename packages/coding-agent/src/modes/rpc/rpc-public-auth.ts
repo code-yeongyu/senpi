@@ -71,6 +71,9 @@ export class PublicRpcConnection {
 			this.input.end();
 		});
 		socket.once("end", () => this.raw.end());
+		// The peer's FIN ends the released input once its last line (flushed by the reader above) is in it, so the
+		// connection's owner sees the end of input while it can still answer: it ends the socket itself (omo#14725).
+		this.raw.once("end", () => this.input.end());
 		this.input.on("drain", () => socket.resume());
 		socket.on("data", (chunk: Buffer) => {
 			// Feed a coalesced chunk one LF segment at a time: proof verification can remove
@@ -116,12 +119,16 @@ export class PublicRpcConnection {
 		input.on("data", (chunk: Buffer) => {
 			if (!stream.push(chunk)) input.pause();
 		});
-		// Released frames already queued when the peer goes away are still delivered, then the view closes.
+		// Released frames already queued when the peer goes away are still delivered, then the view closes. After a FIN
+		// with the socket still open, the view only ends its readable side: its owner still writes the replies it owes.
 		input.once("end", () => {
 			stream.push(null);
-			stream.destroy();
+			if (this.socket.destroyed) stream.destroy();
 		});
-		if (input.readableEnded) stream.destroy();
+		this.socket.once("close", () => {
+			if (input.readableEnded) stream.destroy();
+		});
+		if (input.readableEnded && this.socket.destroyed) stream.destroy();
 		return stream;
 	}
 
