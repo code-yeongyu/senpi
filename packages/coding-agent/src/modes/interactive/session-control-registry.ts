@@ -10,16 +10,16 @@
  * A TUI endpoint has nothing to reattach to, so a clean exit removes its whole directory.
  */
 import { createHash } from "node:crypto";
-import { rmSync } from "node:fs";
-import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
+import { lstatSync, rmdirSync, rmSync } from "node:fs";
+import { chmod, lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { createDaemonDirectories, createHostDaemonPaths, type HostDaemonPaths } from "../rpc/host-daemon-paths.ts";
 import { thisProcessStartTime, writeHostRegistration } from "../rpc/host-daemon-registration.ts";
 import { acquireHostEnsureLock } from "../rpc/host-ensure-lock.ts";
 import { MAX_SOCKET_PATH_BYTES } from "../rpc/socket-ownership.ts";
-import { socketSecretPath } from "../rpc/socket-transport.ts";
+import { createSocketSecret, socketSecretPath } from "../rpc/socket-transport.ts";
 import { tuiSocketName } from "../rpc/tui-socket.ts";
 
 const PRIVATE_DIRECTORY_MODE = 0o700;
@@ -31,7 +31,11 @@ const REGISTRY_LOCK_WAIT_MS = 5_000;
  * even that is too long. The directory holds only TUI sockets and their secrets, so it has no `tui/` level: every
  * byte it saves keeps the socket inside an owned temp root a little longer (senpi#3758). The fallback root is
  * predictable, so it is used only when it is a real directory owned by this user with no group or
- * other access; anything else fails the registration instead of binding into it. On win32 the path is only the
+ * other access; anything else fails the registration instead of binding into it. Several terminals of one agent
+ * directory share it, so the socket's secret is written into it before this returns: from then until the terminal
+ * unregisters, the directory is never empty, and the last terminal to unregister removes it (senpi#7423). The
+ * privacy check runs again after the secret is written, because another terminal's exit may have removed the empty
+ * directory in between and `createSocketSecret` recreated it. On win32 the path is only the
  * logical address (the listener binds a named pipe hashed from it), so it never moves (senpi#4267).
  */
 export async function resolveTuiSocket(agentDir: string, instanceId: string): Promise<string> {
@@ -41,7 +45,7 @@ export async function resolveTuiSocket(agentDir: string, instanceId: string): Pr
 		await makePrivateDirectory(dirname(primary));
 		return primary;
 	}
-	const fallbackName = `senpi-rpc-${createHash("sha256").update(agentDir).digest("hex").slice(0, 8)}`;
+	const fallbackName = `${FALLBACK_DIRECTORY_PREFIX}${createHash("sha256").update(agentDir).digest("hex").slice(0, 8)}`;
 	const scopedRoot = join(tmpdir(), fallbackName);
 	// Test launchers supply a short owned TMPDIR. A normal user's long macOS temp path
 	// still needs the original short system fallback to fit sun_path.
@@ -53,7 +57,23 @@ export async function resolveTuiSocket(agentDir: string, instanceId: string): Pr
 	if (Buffer.byteLength(fallback) > MAX_SOCKET_PATH_BYTES) {
 		throw new Error(`socket path ${fallback} exceeds ${MAX_SOCKET_PATH_BYTES} bytes`);
 	}
+	await createSocketSecret(socketSecretPath(fallback));
+	await assertPrivateDirectory(root);
 	return fallback;
+}
+
+const FALLBACK_DIRECTORY_PREFIX = "senpi-rpc-";
+
+/** The shared fallback root of this socket, never the primary `<agentDir>/rpc/tui/`; a symlinked root is never removed. */
+function sharedFallbackDirectory(socket: string): string | undefined {
+	const directory = dirname(socket);
+	return basename(directory).startsWith(FALLBACK_DIRECTORY_PREFIX) ? directory : undefined;
+}
+
+/** Only an empty directory is removed: a sibling terminal's socket or secret keeps it. */
+function keepsSiblings(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === "ENOTEMPTY" || code === "EEXIST" || code === "ENOENT";
 }
 
 async function makePrivateDirectory(directory: string): Promise<void> {
@@ -107,6 +127,12 @@ export async function unregisterTuiEndpoint(entry: TuiRegistryEntry): Promise<vo
 		await rm(entry.socket, { force: true });
 		await rm(socketSecretPath(entry.socket), { force: true });
 		await rm(entry.paths.dir, { recursive: true, force: true });
+		const shared = sharedFallbackDirectory(entry.socket);
+		if (shared && (await lstat(shared).catch(() => undefined))?.isDirectory()) {
+			await rmdir(shared).catch((error: unknown) => {
+				if (!keepsSiblings(error)) throw error;
+			});
+		}
 	} finally {
 		await release?.();
 	}
@@ -116,4 +142,11 @@ export function unregisterTuiEndpointSync(entry: TuiRegistryEntry): void {
 	rmSync(entry.socket, { force: true });
 	rmSync(socketSecretPath(entry.socket), { force: true });
 	rmSync(entry.paths.dir, { recursive: true, force: true });
+	const shared = sharedFallbackDirectory(entry.socket);
+	if (!shared || !lstatSync(shared, { throwIfNoEntry: false })?.isDirectory()) return;
+	try {
+		rmdirSync(shared);
+	} catch (error) {
+		if (!keepsSiblings(error)) throw error;
+	}
 }
