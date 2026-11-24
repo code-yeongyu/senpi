@@ -1,3 +1,21 @@
+## 2026-11-22 - Host generation rows retain the measured footprint (senpi#3707)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts` reports `host_footprint_mb` beside each generation's RSS fields. Ended generations report `null`.
+
+### Why
+
+- Status already paid for the kernel measurement but discarded it when constructing the row.
+
+### Why an extension could not handle it
+
+- The host CLI projects generation records without a session extension.
+
+### Expected merge conflict zones
+
+- The generation row type and its live/dead memory projection.
+
 ## 2026-11-22 - A predecessor that exits inside the route handshake is a gone route (#7365, senpi#7202)
 
 ### What changed

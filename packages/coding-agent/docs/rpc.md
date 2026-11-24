@@ -130,6 +130,21 @@ Pause and resume wire events go only to connections attached to that session.
 `open_session.context.task_status`, updated through `set_session_context`, is the task owner's lifecycle label.
 Handover parks with `completed`, `cancelled`, `error`, `failed`, `lost`, or
 `interrupted` are removed with a stderr diagnostic instead of being reopened.
+`open_session.context.approvals = "refuse"` declares that no client answers this session's prompts (an agent
+opened it and nobody attaches to it): a tool call the permission preset would ask about is refused at once with a
+reason the model reads, never raised as a dialog. The engine records it (a `permission-approvals-refused` entry
+naming the session id) whenever such an open finds no record for that id yet, written and synced to the session file
+before the session starts; when that write or sync fails the open fails (a record already there is synced again
+first). A labelled open that attaches to a session this host already runs records it the same way before it answers,
+and the running session refuses from its next ask; a session running in a worker refuses such an attach with
+`session_path_in_use` (`reason: "approvals_label_unsupported"`). A labelled `claim_session` answers only once the
+record is in the claimed session's file. Every later open of the file refuses too,
+with or without the label, including a session first labelled after it already had messages. The label belongs to
+the session that open created or reopened: a session the connection later replaces it with (`new_session`,
+`switch_session`, `fork`, `clone`) does not inherit it, nor does the record a host keeps to reopen a retained
+session after a restart, and a fork or clone copies the entry under a new session id,
+where it does not apply, so the copy asks. Any other value, or no value, on a session that never carried it keeps
+the prompt.
 Other context keys remain opaque.
 
 Automatic turn admission is also bounded independently of the hold. On unattended resume,
@@ -4404,6 +4419,7 @@ codes or code prefixes in `error`:
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
 - `invalid_path` (relative `sessionPath`/`cwd`)
 - `session_cwd_not_directory` (`open_session` whose `cwd`, named or taken from a session file's header, exists but is not a directory; `errorData { cwd }`; nothing is opened or created)
+- `host_unavailable: <detail>` (`errorCode: "host_unavailable"`, `errorData { reason: "internal_connection_failed", detail }`): the host supervisor accepted the connection but could not reach its host process for it, so the request was never delivered. Every request on that connection gets this answer; reconnect to try again. The supervisor also writes the cause to its stderr, once per outage rather than once per refused connection, and logs again when connections succeed.
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
@@ -7652,7 +7668,7 @@ Logins are fire-command-then-subscribe: the command answers as soon as the flow 
 - `auth_login_end` `{provider, success, error?, replaced?, backupPath?}`: exactly one per login; `error` is a non-secret message. When a successful login replaced the provider's credential of the other kind (an OAuth login over a stored API key), `replaced` names that kind (`"api_key"` or `"oauth"`) and `backupPath` is the copy of `auth.json` taken before it (absent when the credential store is not a file). A login of the same kind adds an account and carries neither field. A successful `anthropic-subscription` sign-in through the Claude CLI also carries `account` `{name}` (the account it signed in) and `check` `{model, outcome: "ok"|"failed", reason?, at}`, the one-turn connection test run right after sign-in; a failed test keeps the account.
 - `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.
 
-`logout` `{provider, slotId?}` invokes the shared runtime revocation path. With `slotId`, only that account is signed out. A provider with remote revocation (ChatGPT Subscription) keeps the signed-out registration for later reauthorization. A provider without it (such as Anthropic Subscription, whose Claude CLI accounts hold no tokens to clear) signs the account out by removing it. For SIWC, the response carries `data: {status: "revoked" | "remote_revocation_unconfirmed"}`. The latter must be shown as "remote revocation not confirmed; disconnect the app in ChatGPT Settings". For ChatGPT Subscription, tokens are cleared locally while the registration remains available for later reauthorization. `account_remove` remains explicit registration deletion. Terminal equivalents are `/gpt-account reauthorize <id>` and `/gpt-account signout <id>`.
+`logout` `{provider, slotId?, expectedLoginId?}` invokes the shared runtime revocation path. With `slotId`, only that account is signed out. A provider with remote revocation (ChatGPT Subscription) keeps the signed-out registration for later reauthorization. A provider without it (such as Anthropic Subscription, whose Claude CLI accounts hold no tokens to clear) signs the account out by removing it. For SIWC, the response carries `data: {status: "revoked" | "remote_revocation_unconfirmed"}`. The latter must be shown as "remote revocation not confirmed; disconnect the app in ChatGPT Settings". For ChatGPT Subscription, tokens are cleared locally while the registration remains available for later reauthorization. `account_remove` remains explicit registration deletion. Terminal equivalents are `/gpt-account reauthorize <id>` and `/gpt-account signout <id>`.
 
 Some providers need input mid-flow (a pasted authorization code, a text or secret value, a choice between accounts). Those prompts reuse the extension UI dialog channel described in the next section:
 
@@ -7714,6 +7730,8 @@ When `auth.json` exists but cannot be loaded, `get_auth_providers` `data` also c
 While another process holds `auth.json`'s lock, `get_auth_providers` `data` also carries `storeBusy: true`. The request still answers within about a second: the rows come from `auth.json` read without its lock, so a stored sign-in stays configured instead of reading as missing. A client can say the sign-in store is busy and read again; `storeBusy` is absent once the store has been read under its lock.
 
 `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a literal key the app stored when it is at least 12 characters long. OAuth rows, `!command` and `$ENV` references, and short keys have none.
+
+A `get_auth_providers` row also carries `loginId` when the provider has a stored sign-in that has one: a random, non-secret id every sign-in writes anew (a token refresh keeps it). A client that asks the user to confirm a sign-out sends it back as `logout` `expectedLoginId`; the engine then signs out only while the stored sign-in still carries that id, compared under the credential store's write lock. Any difference (a newer sign-in, none, an empty id, or a sign-in older than the id) answers `success: false` with `errorCode: "stale_login"` and changes nothing: no credential, runtime key, Claude CLI sign-in or remote revocation is touched. The client re-reads `get_auth_providers` and asks again. Without `expectedLoginId`, `logout` signs out whatever is stored, as before.
 
 Every `get_auth_providers` row whose provider is defined carries `origin`, which says where the definition lives so a client can name what to edit when the app cannot remove the entry itself:
 
