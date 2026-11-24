@@ -6707,6 +6707,10 @@
 			"reason": "timing attribution only, no A1-A3 decision; a split costs timing attribution: work entered by another copy is not marked speculative",
 			"ground": "ii"
 		},
+		"packages/coding-agent/src/core/opener-approvals.ts#refusalRecords": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/output-guard.ts#rawStdoutWriteTail": {
 			"class": "per-copy-safe",
 			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
