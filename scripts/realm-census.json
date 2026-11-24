@@ -2594,6 +2594,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/ai/src/utils/retry.ts#HTTP_408_REASON_PHRASE": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/ai/src/utils/retry.ts#NON_QUOTA_NON_RETRYABLE_PATTERN": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
