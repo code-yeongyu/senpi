@@ -16,14 +16,17 @@ function nudgedRules(entry: SessionEntry): readonly unknown[] {
 }
 
 /**
- * Whether this rule already sent its one corrective follow-up since the user's last message. Read from the
- * session, so a host that rebuilds the extension between turns cannot re-arm it (senpi#2967); the engine-wide
- * turn bound covers every other source.
+ * Whether this rule already sent its one corrective follow-up in the current episode. Read from the session, so a
+ * host that rebuilds the extension between turns cannot re-arm it (senpi#2967). An episode ends at the user's next
+ * message, or when the agent acts again (calls a tool) after the correction: the correction worked, so a later
+ * violation in a long autonomous run gets its own correction instead of a pause (senpi#4537).
  */
 export function ruleAlreadyCorrected(entries: readonly SessionEntry[], rule: string): boolean {
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
 		if (entry.type === "message" && entry.message.role === "user") return false;
+		// An interrupted stream can persist a partial toolCall that never ran. Its result proves dispatch.
+		if (entry.type === "message" && entry.message.role === "toolResult") return false;
 		if (nudgedRules(entry).includes(rule)) return true;
 	}
 	return false;
