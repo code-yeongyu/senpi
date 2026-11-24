@@ -1,6 +1,11 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
-import { InMemoryCredentialStore, revokeStoredOAuth } from "./auth/credential-store.ts";
+import {
+	assertExpectedLogin,
+	deleteStored,
+	InMemoryCredentialStore,
+	revokeStoredOAuth,
+} from "./auth/credential-store.ts";
 import { stampLogin } from "./auth/pool/login-id.ts";
 import {
 	appendLoginSlot,
@@ -866,6 +871,7 @@ class ModelsImpl implements MutableModels {
 		const signal = operationSignal(options?.signal);
 		signal.throwIfAborted();
 		const oauth = this.providers.get(providerId)?.auth.oauth;
+		const expectedLoginId = options?.expectedLoginId;
 		try {
 			if (oauth?.revoke) {
 				this.signingOut.set(providerId, (this.signingOut.get(providerId) ?? 0) + 1);
@@ -877,15 +883,23 @@ class ModelsImpl implements MutableModels {
 				const current = await this.credentials.read(providerId, { signal });
 				const next = removeSlot(current, options.slotId);
 				if (next === undefined) {
-					await this.credentials.delete(providerId, { signal });
+					await deleteStored(this.credentials, providerId, expectedLoginId, { signal });
 					return;
 				}
-				await this.credentials.modify(providerId, async () => next, { signal });
+				await this.credentials.modify(
+					providerId,
+					async (stored) => {
+						assertExpectedLogin(providerId, stored, expectedLoginId);
+						return next;
+					},
+					{ signal },
+				);
 				return;
 			}
-			await this.credentials.delete(providerId, { signal });
+			await deleteStored(this.credentials, providerId, expectedLoginId, { signal });
 		} catch (error) {
 			signal.throwIfAborted();
+			if (error instanceof ModelsError && error.code === "stale_login") throw error;
 			throw new ModelsError("auth", `Credential store delete failed for ${providerId}`, { cause: error });
 		} finally {
 			if (oauth?.revoke) {

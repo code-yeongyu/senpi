@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createConnection, createServer, Socket } from "node:net";
@@ -238,5 +239,41 @@ describe.skipIf(process.platform === "win32")("supervisor admission framing", ()
 		expect(replies.map((reply) => reply.id)).toEqual(["large", "late"]);
 		expect(replies[1]).toMatchObject({ errorCode: "host_stopping" });
 		expect(replies[0].success).toBe(true);
+	});
+});
+
+// senpi#7388: a public client whose connection to the host fails used to be reset before any reply. The proxy runs in a
+// child so the test reads what the supervisor really writes to fd 2 (a detached daemon's only diagnostic channel).
+describe.skipIf(process.platform === "win32")("a failed connection to the host", () => {
+	const fixture = join(import.meta.dirname, "../fixtures/hop-failure-proxy.ts");
+
+	it.each([
+		["fails its handshake", "keyed"],
+		["finds no listener (a hop without an internal key)", "keyless"],
+	])("refuses every client with host_unavailable and logs the outage once when the connection %s", async (_, mode) => {
+		const child = spawn(process.execPath, [fixture, mode], { stdio: ["ignore", "pipe", "pipe"] });
+		let stdout = "";
+		let stderr = "";
+		child.stdout.on("data", (chunk) => (stdout += chunk));
+		child.stderr.on("data", (chunk) => (stderr += chunk));
+		const [code] = await once(child, "close");
+
+		expect(code).toBe(0);
+		const replies = stdout
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		expect(replies).toMatchObject(
+			["open-1", "open-2"].map((id) => ({
+				id,
+				command: "open_session",
+				success: false,
+				errorCode: "host_unavailable",
+				errorData: { reason: "internal_connection_failed" },
+			})),
+		);
+		const lines = stderr.split("\n").filter((line) => line.startsWith("senpi rpc host supervisor:"));
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toContain("connection to the host failed");
 	});
 });
