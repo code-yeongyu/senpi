@@ -3,6 +3,7 @@ import {
 	type AnyModel,
 	type Api,
 	type ApiStreamOptions,
+	assertExpectedLogin,
 	type AssistantImages,
 	type AssistantMessage,
 	type AssistantMessageEvent,
@@ -1505,6 +1506,13 @@ export class ModelRuntime implements Models {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			const storage = this.authStorage;
+			// A stale `expectedLoginId` refuses before the Claude CLI sign-out; the store compares again when it removes (senpi#7406).
+			if (options.expectedLoginId !== undefined)
+				assertExpectedLogin(
+					providerId,
+					await this.credentials.read(providerId, { signal }),
+					options.expectedLoginId,
+				);
 			// With `slotId` only that account leaves the Claude CLI store; its signed-in siblings stay.
 			const notices =
 				storage === undefined

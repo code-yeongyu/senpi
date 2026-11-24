@@ -72,7 +72,8 @@ type RpcCommandBody =
 			 * `pi.sessionContext` and republished on `list_sessions { include_workers: true }`.
 			 * At most 32 keys matching `^[a-z][a-z0-9_]*$`, each value at most 16 KiB, at most
 			 * 32 KiB of JSON in total; anything else is refused with `invalid_session_context`.
-			 * The host never interprets them. Requires the host capability `session_context`.
+			 * The host interprets one: `approvals: "refuse"` declares that nobody answers this session's prompts
+			 * (see `docs/rpc.md`); every other label is opaque to it. Requires the host capability `session_context`.
 			 */
 			context?: Record<string, string>;
 			/**

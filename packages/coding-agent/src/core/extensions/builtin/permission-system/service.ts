@@ -254,6 +254,7 @@ export class PermissionService {
 			presetBound = false,
 			ruleAliases,
 			executed,
+			onPending,
 		}: {
 			readonly autoApproveAsk?: boolean;
 			readonly approveBlanketAsk?: boolean;
@@ -265,6 +266,8 @@ export class PermissionService {
 			readonly ruleAliases?: readonly string[];
 			/** The strings the tool opens (design 6.2): matched literally as aliases and by identity. */
 			readonly executed?: readonly string[];
+			/** Called once the request is registered as pending: the decision is `ask` and needs a reply. */
+			readonly onPending?: () => void;
 		} = {},
 	): Promise<void> {
 		const info: Request = {
@@ -328,6 +331,7 @@ export class PermissionService {
 			.finally(() => this.requestIdentities.delete(info.id));
 
 		this.emitter.emitAsked(info);
+		onPending?.();
 
 		await pendingPromise;
 	}
