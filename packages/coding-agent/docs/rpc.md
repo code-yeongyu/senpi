@@ -1930,7 +1930,9 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
   successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
   host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
   sides carry one; equal builds and builds uncomparable only for a missing epoch are not older; version strings
-  are never compared) and refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
+  are never compared). An omo dev build, whose version has the prerelease part `omob` (`0.0.0-omob.<omo>.<senpi>`),
+  names no release position: a pair with one is ordered by the build epoch alone when both sides carry one
+  (senpi#7428). It refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
   spawning anything when the successor is strictly older, or when either ordinal is not senpi CalVer and the
   successor therefore cannot be proven not older (senpi#7040); `detail` names both engines. An `ensure` with the
   upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr. `allowDowngrade` (`host handoff --allow-downgrade`)
