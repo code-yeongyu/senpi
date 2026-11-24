@@ -241,6 +241,48 @@ describe("google-shared role alternation (#2114)", () => {
 		expect(parts[1]).toEqual({ text: "Now summarize it" });
 	});
 
+	it("keeps every replay of a saved tool-loop history valid as new prompts arrive (omo#9747)", () => {
+		// The stuck-session shape: the saved history ends in tool results plus a trailing user note, and
+		// each new prompt replays it with one more user message appended. On every request the folded
+		// user turn must still end with its functionResponse, or each retry hits the same 400.
+		const savedHistory: Context["messages"] = [
+			{ role: "user", content: "Read the file", timestamp: Date.now() },
+			assistant([
+				{
+					type: "toolCall",
+					id: "call_a",
+					name: "read",
+					arguments: { path: "a.txt" },
+					thoughtSignature: VALID_SIG,
+				},
+			]),
+			{
+				role: "toolResult",
+				toolCallId: "call_a",
+				toolName: "read",
+				content: [{ type: "text", text: "alpha" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+			{ role: "user", content: "<system-reminder>cell detached</system-reminder>", timestamp: Date.now() },
+		];
+		const firstRetry: Context["messages"] = [
+			...savedHistory,
+			{ role: "user", content: "are you there?", timestamp: Date.now() },
+		];
+		const secondRetry: Context["messages"] = [
+			...firstRetry,
+			{ role: "user", content: "please continue", timestamp: Date.now() },
+		];
+
+		for (const messages of [savedHistory, firstRetry, secondRetry]) {
+			const contents = convertMessages(model, normalizeContext({ messages }));
+			const lastTurn = contents[contents.length - 1];
+			expect(lastTurn?.role).toBe("user");
+			expect(lastTurn?.parts?.[lastTurn.parts.length - 1]?.functionResponse?.id).toBe("call_a");
+		}
+	});
+
 	it("leaves an already alternating conversation unchanged", () => {
 		const context: Context = {
 			messages: [
