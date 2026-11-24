@@ -435,6 +435,52 @@ describe("RPC auth and connection handler contracts", () => {
 		await handler.dispose();
 	});
 
+	// senpi#7406: a client signs out the sign-in it showed (`get_auth_providers` `loginId`); a newer one is kept.
+	it("signs out only the sign-in named by expectedLoginId and refuses a stale one as stale_login", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const send = async (command: Record<string, unknown>) => {
+			const id = randomUUID();
+			await handler.handleInputLine(JSON.stringify({ ...command, id }));
+			return collected.waitFor((message) => message.id === id);
+		};
+		const shownLoginId = async () => {
+			const reply = (await send({ type: "get_auth_providers" })) as {
+				data: { providers: { id: string; authType: string; loginId?: string }[] };
+			};
+			return reply.data.providers.find((row) => row.id === "openai" && row.authType === "api_key")?.loginId;
+		};
+		const storedOpenai = () =>
+			(JSON.parse(readFileSync(harness.authPath, "utf-8")) as Record<string, unknown>).openai;
+
+		expect(await send({ type: "login_api_key", provider: "openai", key: "sk-FAKEKEY-first" })).toMatchObject({
+			success: true,
+		});
+		const confirmed = await shownLoginId();
+		expect(confirmed).toEqual(expect.any(String));
+		expect(await send({ type: "login_api_key", provider: "openai", key: "sk-FAKEKEY-second" })).toMatchObject({
+			success: true,
+		});
+		const newer = await shownLoginId();
+		expect(newer).not.toBe(confirmed);
+		const newerEntry = storedOpenai();
+
+		expect(await send({ type: "logout", provider: "openai", expectedLoginId: confirmed })).toMatchObject({
+			success: false,
+			errorCode: "stale_login",
+		});
+		expect(storedOpenai()).toEqual(newerEntry);
+		expect(await shownLoginId()).toBe(newer);
+
+		expect(await send({ type: "logout", provider: "openai", expectedLoginId: newer })).toMatchObject({
+			success: true,
+		});
+		expect(storedOpenai()).toBeUndefined();
+		await handler.dispose();
+	});
+
 	it("refuses a login_api_key without a usable key and stores nothing (#3867)", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);

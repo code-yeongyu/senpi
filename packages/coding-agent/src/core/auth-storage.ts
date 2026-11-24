@@ -1155,6 +1155,21 @@ export class AuthStorage implements CredentialStore {
 		this.updateReadState(latestData);
 	}
 
+	async deleteLogin(provider: string, loginId: string, options?: AuthOperationOptions): Promise<boolean> {
+		options?.signal?.throwIfAborted();
+		let latestData = this.readState.data;
+		const deleted = await this.storage.withLockAsync(async (content) => {
+			const currentData = this.parseStorageData(content);
+			latestData = currentData;
+			if (currentData[provider]?.loginId !== loginId) return { result: false };
+			delete currentData[provider];
+			return { result: true, next: JSON.stringify(currentData, null, 2) };
+		}, options);
+		if (deleted) this.runtimeOverrides.delete(provider);
+		this.updateReadState(latestData);
+		return deleted;
+	}
+
 	/** List credential metadata without resolving configured key values. */
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
 		const entries = new Map(
