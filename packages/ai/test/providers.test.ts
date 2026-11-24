@@ -532,10 +532,16 @@ describe("builtin providers", () => {
 		["service-account", "project-id", "", "location"],
 	])("rejects %s login with project %j and location %j", async (method, project, location, field) => {
 		const answers = [method, project, location, "/test/credentials.json"];
+		const login = googleVertexProvider().auth.apiKey?.login;
+		if (login === undefined) throw new Error("google-vertex must expose an API-key login");
 		await expect(
-			googleVertexProvider().auth.apiKey!.login!({
+			login({
 				signal: neverAbortedSignal,
-				prompt: async () => answers.shift()!,
+				prompt: async () => {
+					const answer = answers.shift();
+					if (answer === undefined) throw new Error("login asked more questions than the test answers");
+					return answer;
+				},
 				notify: () => {},
 			}),
 		).rejects.toThrow(new RegExp(field, "i"));
