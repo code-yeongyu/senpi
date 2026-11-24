@@ -93,6 +93,7 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
+import { recordOpenerRefusal, refusesApprovals } from "./core/opener-approvals.ts";
 import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
@@ -1188,6 +1189,9 @@ export function createCliRuntimeFactory(
 			startupLoadingIndicator.setPhase("opening session");
 		}
 		markSwitch("sessionOptions");
+		// A labelled open fails here, before any session exists, when its refusal cannot be made durable. A runtime that
+		// replaces the session (new, switch, fork, clone) is built without the label (`replacementLaunchProfile`).
+		if (refusesApprovals(launchProfile?.sessionContext)) await recordOpenerRefusal(sessionManager);
 		const timer = startOpenTimer("runtime-session");
 		const created = await createAgentSessionFromServices({
 			services,

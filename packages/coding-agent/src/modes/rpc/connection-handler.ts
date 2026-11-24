@@ -31,9 +31,9 @@ import { ExtensionOwnerLifetime } from "./extension-owner-lifetime.ts";
 
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import { type ImageContent, ModelsError, type OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
-import { VERSION } from "../../config.ts";
+import { APP_NAME, VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
@@ -1270,6 +1270,9 @@ export function createRpcConnectionHandler(
 				},
 				signal: controller.signal,
 			};
+			// Sign in with ChatGPT names the host it signs in: both logins carry this installation's device id,
+			// as the TUI's does (senpi#7127).
+			const getDeviceId = () => session.settingsManager.getOrCreateDeviceId();
 			if (slotId !== undefined) {
 				const reauthorize = selectedOAuthAccount(authStorage, provider, slotId);
 				await session.modelRuntime.login(
@@ -1304,11 +1307,11 @@ export function createRpcConnectionHandler(
 							}
 						},
 					},
-					{ reauthorize, reauthorizeSlot: slotId },
+					{ reauthorize, reauthorizeSlot: slotId, getDeviceId },
 				);
 				emitProviderAccountsChanged(provider);
 			} else {
-				await authStorage.login(provider as OAuthProviderId, callbacks);
+				await authStorage.login(provider as OAuthProviderId, callbacks, { getDeviceId, appName: APP_NAME });
 			}
 			session.modelRegistry.refresh();
 			emitProviderAccountsChanged(provider, "login");
@@ -2408,6 +2411,7 @@ export function createRpcConnectionHandler(
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
 				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => {
 					const origin = modelRegistry.getProviderOrigin(info.id);
+					const loginId = modelRegistry.authStorage.get(info.id)?.loginId;
 					return {
 						id: info.id,
 						name: info.name,
@@ -2415,6 +2419,7 @@ export function createRpcConnectionHandler(
 						status: authMethodStatus(modelRegistry, info),
 						...storedKeyHint(modelRegistry, info),
 						...(origin === undefined ? {} : { origin }),
+						...(loginId === undefined ? {} : { loginId }),
 					};
 				});
 				// Read after the rows: building them re-reads a store that failed to load (#4413).
@@ -2474,9 +2479,19 @@ export function createRpcConnectionHandler(
 				// signs out one ChatGPT account and keeps its registration.
 				if (command.slotId !== undefined)
 					selectedOAuthAccount(session.modelRegistry.authStorage, command.provider, command.slotId);
-				const { notices, revocation } = await session.modelRuntime.logoutProvider(command.provider, {
-					slotId: command.slotId,
-				});
+				let signedOut: Awaited<ReturnType<typeof session.modelRuntime.logoutProvider>>;
+				try {
+					signedOut = await session.modelRuntime.logoutProvider(command.provider, {
+						slotId: command.slotId,
+						expectedLoginId: command.expectedLoginId,
+					});
+				} catch (cause) {
+					// The shown sign-in was replaced or removed; nothing changed, so the client re-reads and asks again (senpi#7406).
+					if (cause instanceof ModelsError && cause.code === "stale_login")
+						return error(id, "logout", cause.message, "stale_login");
+					throw cause;
+				}
+				const { notices, revocation } = signedOut;
 				if (command.slotId === undefined) session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
 				await session.modelRegistry.refresh();
 				emitProviderAccountsChanged(command.provider);

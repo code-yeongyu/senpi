@@ -12,6 +12,45 @@
 
 ### Removed
 
+## [2026.11.24] - 2026-11-24
+
+### Breaking Changes
+
+### Added
+
+- `edit` and `write` results warn when a JS, TS or JSON file that parsed before the call no longer parses after it (or a newly written one does not parse), naming the first syntax error, with its line and column where the position is confirmed (for JSON, always the strict `JSON.parse` error; CR, CRLF and LF each count as one line break); `.mjs`/`.cjs`/`.mts`/`.cts` are checked without JSX while `.js` accepts it; the change is still applied, and a failing syntax checker never fails the call ([#7256](https://github.com/code-yeongyu/senpi/pull/7256))
+
+### Changed
+
+### Fixed
+
+- Host status reports the measured memory footprint for each generation ([#7210](https://github.com/code-yeongyu/senpi/pull/7210)).
+- A session opened with `open_session.context.approvals = "refuse"` (an agent-created thread nobody attaches to) refuses a tool call its permission preset would ask about, with a reason the model reads, instead of waiting forever on a dialog no client answers. The engine writes and syncs a record of it to the session file before the session starts (the open fails if it cannot), so every later open of that file keeps refusing; a session the connection later replaces it with (`new_session`, `switch_session`, `fork`, `clone`) starts without it, and a labelled open that attaches to a running session or claims a parked one records it before it answers ([#7270](https://github.com/code-yeongyu/senpi/pull/7270))
+- An `open_session` that names only a session file no longer fails with "a filesystem step did not answer in time" on a loaded host: when the moved-path probe times out, the file is found the way the host then opens it ([#7389](https://github.com/code-yeongyu/senpi/pull/7389))
+
+### Removed
+
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+- On a model without image input, an image returned by a tool is described by the `look_at` vision model and the description takes the image's place in the tool result ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+
+### Changed
+
+### Fixed
+
+- On macOS, tool calls that name a path under `/home` (an automount that may never answer) no longer leave filesystem threads stuck. Enough of them used to stall every file operation in the engine while the session kept running. Such paths are now resolved in a short-lived child process with a deadline, so a working automounter still mounts them and the path policy sees where their symlinks lead; a path whose automount never answers is refused instead ([#7158](https://github.com/code-yeongyu/senpi/pull/7158))
+- An RPC host's idle shutdown no longer recreates a removed agent/endpoint directory when writing its terminal crash record ([#7220](https://github.com/code-yeongyu/senpi/pull/7220)).
+- The placeholder for an image a model cannot see names `look_at` and says it takes the file path, whenever `look_at` is available ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+- Claude, GLM and Kimi prompt presets tell the model to edit source files with the file-editing tool the session offers (`edit`/`write` or `apply_patch`), as direct calls rather than from `eval` cell code, and keep routing a call fed by an earlier result to a direct tool call ([#7275](https://github.com/code-yeongyu/senpi/pull/7275))
+- Reopening a session right after an RPC host handover no longer fails with `read ECONNRESET` when the previous generation exits during the successor's connection to it; the open falls back to the local reopen ([#7365](https://github.com/code-yeongyu/senpi/pull/7365))
+- A custom `models.json` provider using `anthropic-messages` with an `sk-ant-oat...` token as `apiKey` (for example a self-hosted Anthropic-compatible proxy) works again: the key is sent as a plain `x-api-key` instead of failing before any request ([#7392](https://github.com/code-yeongyu/senpi/pull/7392))
+
+### Removed
+
 ## [2026.11.22-2] - 2026-11-22
 
 ### Breaking Changes
