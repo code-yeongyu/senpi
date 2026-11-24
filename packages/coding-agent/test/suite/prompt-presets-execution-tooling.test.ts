@@ -2,11 +2,13 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { presetSharedSections } from "../../src/core/extensions/builtin/prompt-preset/contract.ts";
 import {
+	buildExecutionToolingSection,
 	EXECUTION_TOOLING_RULES,
 	type ExecutionToolingConcern,
 	type ExecutionToolingDialect,
 	type ExecutionToolingRule,
 	type ExecutionToolingRuleId,
+	renderExecutionToolingDirective,
 } from "../../src/core/extensions/builtin/prompt-preset/execution-tooling.ts";
 import { type PromptPresetSettings, resolvePreset } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
 import type { PromptPresetName } from "../../src/core/extensions/builtin/prompt-preset/settings.ts";
@@ -42,14 +44,15 @@ function buildPrompt(presetName: PromptPresetName, selectedTools: readonly strin
 	return preset.prompt;
 }
 
-/** The wording `presetName` renders: the full shared-section presets keep the pre-diet directive (senpi#5665). */
+/** The wording `presetName` renders for `toolNames`: the full shared-section presets keep the pre-diet directive (senpi#5665). */
 function directiveFor(
 	rule: ExecutionToolingRule,
 	presetName: PromptPresetName,
 	dialect: ExecutionToolingDialect,
+	toolNames: readonly string[],
 ): string {
-	const sections = presetName === "auto" ? "diet" : presetSharedSections(presetName);
-	return (sections === "full" ? rule.fullDirective : rule.directive)[dialect];
+	const sharedSections = presetName === "auto" ? "diet" : presetSharedSections(presetName);
+	return renderExecutionToolingDirective(rule, { toolNames, dialect, sharedSections });
 }
 
 function occurrences(haystack: string, needle: string): number {
@@ -90,6 +93,25 @@ const OUT_OF_SCOPE: readonly PromptPresetName[] = ["gpt-5.5", "grok-4.6", "deeps
 
 const evalRules = () => EXECUTION_TOOLING_RULES.filter((rule) => rule.concern === "code-cell-routing");
 
+const FILE_EDITING_TOOLS = ["edit", "write", "apply_patch"];
+
+/** Session tools -> the file-editing tools the section must name (senpi#7275 review findings). */
+const EDIT_TOOL_PROFILES: ReadonlyArray<readonly [string, readonly string[], readonly string[]]> = [
+	["eval + edit + write", ["eval", "edit", "write"], ["edit", "write"]],
+	["eval + apply_patch", ["eval", "apply_patch"], ["apply_patch"]],
+	["eval + write", ["eval", "write"], ["write"]],
+	["eval only", ["eval"], []],
+];
+
+const backtickedTokens = (text: string): string[] => [...text.matchAll(/`([^`]+)`/g)].map(([, token = ""]) => token);
+
+const DIALECT_WORDINGS = [
+	["claude", "diet"],
+	["claude", "full"],
+	["kimi", "diet"],
+	["kimi", "full"],
+] as const;
+
 describe("execution tooling directive", () => {
 	it("models the directives as parsed rule data with one wording per dialect", () => {
 		// given
@@ -112,21 +134,23 @@ describe("execution tooling directive", () => {
 
 	it.each(PRESET_DIALECT)("renders every %s directive exactly once when eval is selected", (presetName, dialect) => {
 		// given
-		const prompt = buildPrompt(presetName, ["eval", "monitor", "read", "bash"]);
+		const tools = ["eval", "monitor", "read", "bash", "edit", "write"];
+		const prompt = buildPrompt(presetName, tools);
 
 		// then
 		for (const rule of EXECUTION_TOOLING_RULES) {
-			expect(occurrences(prompt, directiveFor(rule, presetName, dialect)), rule.id).toBe(1);
+			expect(occurrences(prompt, directiveFor(rule, presetName, dialect, tools)), rule.id).toBe(1);
 		}
 	});
 
 	it.each(PRESET_DIALECT)("renders nothing for %s when eval is not selected", (presetName, dialect) => {
 		// given
-		const prompt = buildPrompt(presetName, ["read", "bash"]);
+		const tools = ["read", "bash"];
+		const prompt = buildPrompt(presetName, tools);
 
 		// then
 		for (const rule of EXECUTION_TOOLING_RULES) {
-			expect(prompt, rule.id).not.toContain(directiveFor(rule, presetName, dialect));
+			expect(prompt, rule.id).not.toContain(directiveFor(rule, presetName, dialect, [...tools, "eval"]));
 		}
 	});
 
@@ -137,8 +161,41 @@ describe("execution tooling directive", () => {
 
 		// then
 		for (const rule of evalRules()) {
-			expect(occurrences(evalSelected, directiveFor(rule, presetName, dialect)), rule.id).toBe(1);
-			expect(monitorOnly, rule.id).not.toContain(directiveFor(rule, presetName, dialect));
+			expect(occurrences(evalSelected, directiveFor(rule, presetName, dialect, ["eval", "read"])), rule.id).toBe(1);
+			expect(monitorOnly, rule.id).not.toContain(
+				directiveFor(rule, presetName, dialect, ["eval", "monitor", "bash"]),
+			);
+		}
+	});
+
+	it.each(EDIT_TOOL_PROFILES)("names exactly the offered editing tools for %s", (_profile, toolNames, editTools) => {
+		for (const [dialect, sharedSections] of DIALECT_WORDINGS) {
+			// given
+			const options = { toolNames, dialect, sharedSections };
+			const tokens = backtickedTokens(buildExecutionToolingSection(options));
+			const editToolsIn = (id: ExecutionToolingRuleId): string[] => {
+				const rule = EXECUTION_TOOLING_RULES.find((candidate) => candidate.id === id);
+				const ruleTokens = rule ? backtickedTokens(renderExecutionToolingDirective(rule, options)) : [];
+				return FILE_EDITING_TOOLS.filter((name) => ruleTokens.includes(name));
+			};
+
+			// then
+			const wording = `${dialect}/${sharedSections}`;
+			expect(editToolsIn("eval-routing-decision"), `${wording} routing`).toEqual(editTools);
+			expect(editToolsIn("eval-stay-direct"), `${wording} stay-direct`).toEqual(editTools);
+			expect(
+				FILE_EDITING_TOOLS.filter((name) => tokens.includes(name)),
+				wording,
+			).toEqual(editTools);
+			expect([...new Set(tokens.filter((token) => !toolNames.includes(token)))], wording).toEqual([
+				"parallel(thunks)",
+			]);
+		}
+	});
+
+	it("renders no section, and so no tool name, when eval is not offered", () => {
+		for (const [dialect, sharedSections] of DIALECT_WORDINGS) {
+			expect(buildExecutionToolingSection({ toolNames: FILE_EDITING_TOOLS, dialect, sharedSections })).toBe("");
 		}
 	});
 
@@ -157,12 +214,15 @@ describe("execution tooling directive", () => {
 
 	it.each(OUT_OF_SCOPE)("keeps the directive out of %s", (presetName) => {
 		// given
-		const prompt = buildPrompt(presetName, ["eval", "monitor", "read", "bash"]);
+		const toolNames = ["eval", "monitor", "read", "bash"];
+		const prompt = buildPrompt(presetName, toolNames);
 
 		// then
 		for (const rule of EXECUTION_TOOLING_RULES) {
 			for (const dialect of ["claude", "kimi"] as const) {
-				expect(prompt, `${rule.id}/${dialect}`).not.toContain(rule.directive[dialect]);
+				expect(prompt, `${rule.id}/${dialect}`).not.toContain(
+					renderExecutionToolingDirective(rule, { toolNames, dialect }),
+				);
 			}
 		}
 	});

@@ -2,7 +2,7 @@ import { echoedRoles } from "./delegation-record.ts";
 import { commandAuthority } from "./command-authority.ts";
 import { CONNECTION_ROLE_CAPABILITIES } from "./connection-roles.ts";
 import { readAuthority } from "./connection-authority.ts";
-import { PredecessorPeer, type RouteRecord } from "./predecessor-peer.ts";
+import { PredecessorPeer, type RouteRecord, routeEndpointGone } from "./predecessor-peer.ts";
 import type { Attachment, Route, RouteTable } from "./predecessor-route-table.ts";
 import { switchRoute } from "./predecessor-switch.ts";
 import { routedAttachExtras } from "./predecessor-wire.ts";
@@ -113,12 +113,10 @@ export async function attach(
 	} catch (cause) {
 		if (!attachment.count) table.dropPeer(route, caller);
 		if (!route.attachments.size && !route.row) table.forget(route);
-		const gone =
-			cause instanceof Error && "code" in cause && (cause.code === "ENOENT" || cause.code === "ECONNREFUSED");
 		return error(
 			command.id,
 			command.type,
-			gone ? "generation_route_gone" : cause instanceof Error ? cause.message : String(cause),
+			routeEndpointGone(cause) ? "generation_route_gone" : cause instanceof Error ? cause.message : String(cause),
 		);
 	}
 }
