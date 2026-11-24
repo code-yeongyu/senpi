@@ -862,7 +862,18 @@ export type AgentSessionEvent =
 	// login_start command responds immediately, then the OAuth URL and the
 	// terminal result arrive here, because an interactive browser round-trip
 	// cannot fit inside the request timeout.
-	| { type: "auth_login_url"; provider: string; url: string }
+	/**
+	 * For a device-code login `url` is the verification page and `userCode` is the code the user types there, with the
+	 * provider's poll interval and expiry when it gives them (senpi#7125). Browser logins carry only `url`.
+	 */
+	| {
+			type: "auth_login_url";
+			provider: string;
+			url: string;
+			userCode?: string;
+			intervalSeconds?: number;
+			expiresInSeconds?: number;
+	  }
 	/**
 	 * A login progress line, such as a `provider_login_start` handler's download status (senpi#4436). The line is
 	 * `text`, not `message`: event consumers detect chat-message events with `"message" in event`.

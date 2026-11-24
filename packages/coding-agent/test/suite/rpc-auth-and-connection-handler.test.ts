@@ -369,6 +369,43 @@ describe("RPC auth and connection handler contracts", () => {
 		await handler.dispose();
 	});
 
+	// senpi#7125: a device-code login is only finishable when the client receives the code the user must type.
+	it("frames a device-code login with the user code next to the verification URL", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		vi.spyOn(harness.authStorage, "login").mockImplementation(async (providerId, callbacks) => {
+			callbacks.onDeviceCode({
+				verificationUri: "https://stub.example/device",
+				userCode: "ABCD-EFGH",
+				intervalSeconds: 5,
+				expiresInSeconds: 900,
+			});
+			harness.authStorage.set(providerId, {
+				type: "oauth",
+				access: "FAKE-ACCESS",
+				refresh: "FAKE-REFRESH",
+				expires: Date.now() + 3_600_000,
+			});
+		});
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const url = collected.waitFor((message) => message.type === "auth_login_url");
+		const end = collected.waitFor((message) => message.type === "auth_login_end");
+
+		await handler.handleInputLine(JSON.stringify({ id: "device", type: "login_start", provider: "anthropic" }));
+
+		expect(await url).toEqual({
+			type: "auth_login_url",
+			provider: "anthropic",
+			url: "https://stub.example/device",
+			userCode: "ABCD-EFGH",
+			intervalSeconds: 5,
+			expiresInSeconds: 900,
+		});
+		expect(await end).toMatchObject({ provider: "anthropic", success: true });
+		await handler.dispose();
+	});
+
 	it("frames login failures as a terminal auth event", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);

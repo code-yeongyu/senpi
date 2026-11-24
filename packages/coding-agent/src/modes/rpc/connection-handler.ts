@@ -1262,7 +1262,15 @@ export function createRpcConnectionHandler(
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
 				onDeviceCode: (info) => {
-					outputEvent({ type: "auth_login_url", provider, url: info.verificationUri });
+					// The user code is what the user types on the verification page; without it the login cannot finish (senpi#7125).
+					outputEvent({
+						type: "auth_login_url",
+						provider,
+						url: info.verificationUri,
+						userCode: info.userCode,
+						intervalSeconds: info.intervalSeconds,
+						expiresInSeconds: info.expiresInSeconds,
+					});
 				},
 				...createRpcLoginPromptCallbacks(createExtensionUIContext(), loginSignal),
 				onProgress: (message) => {
