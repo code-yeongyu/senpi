@@ -3601,7 +3601,8 @@ registrant opens no socket and writes no registry directory.
   same call binds nothing - the host's public socket is the endpoint - see "Waking a host session (`wake`)".
 - **Socket and auth.** The endpoint listens on `<agentDir>/rpc/tui/t-<16hex>.sock` (16 hex of the SHA-256 of a
   fresh instance id). When that path is longer than a Unix socket path allows, it moves to
-  `/tmp/senpi-rpc-<8hex>/tui/`, which must be a private directory of this user. The directory is 0700 and the
+  `<tmpdir>/senpi-rpc-<8hex>/`, or to `/tmp/senpi-rpc-<8hex>/` when the temp directory is too deep as well; either
+  must be a private directory of this user. The directory is 0700 and the
   socket 0600. A 32-byte secret is written 0600 beside the socket, and every connection must send it first, the
   TUI-specific handshake; public RPC hosts use [challenge-response](#authentication). A wrong TUI secret
   is disconnected before a line is read. After that it is

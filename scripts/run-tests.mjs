@@ -20,7 +20,7 @@ const before = process.env.SENPI_TEST_TEMP_GUARD === "1" ? tempEntries(parent) :
 // control forks' makeTmpCopies, so the environment must be scoped before loading Vitest.
 // Keep a run's fallback TUI socket inside its root, even under a long inherited
 // macOS/agent TMPDIR. This models the 103-byte contract in socket-ownership.ts.
-const socketPath = join(parent, "st-XXXXXX", "senpi-rpc-00000000", "tui", "t-0000000000000000.sock");
+const socketPath = join(parent, "st-XXXXXX", "senpi-rpc-00000000", "t-0000000000000000.sock");
 const rootParent = process.platform !== "win32" && Buffer.byteLength(socketPath) > 103 ? "/tmp" : parent;
 const root = mkdtempSync(join(rootParent, "st-"));
 if (before) console.log(`[test-temp] owned root: ${JSON.stringify(basename(root))}`);
