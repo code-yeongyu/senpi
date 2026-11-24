@@ -24,6 +24,16 @@ const failureDetails: Record<RecoveryStreamFailure, { diagnosticType: string; er
 		},
 	};
 
+/** The refused event and the validator's state at that moment: what the provider stream actually sent. */
+export type RecoveryFailureEvent = {
+	type: string;
+	index: number;
+	blocks: number;
+	activeIndex: number | null;
+	activeKind: string | null;
+	lastEndedIndex: number;
+};
+
 export function terminateRecoveryStreamForFailure(
 	stream: AssistantMessageEventStream,
 	projection: StreamMessageProjection,
@@ -31,9 +41,10 @@ export function terminateRecoveryStreamForFailure(
 		source: AssistantMessage;
 		failure: RecoveryStreamFailure;
 		protocol: ToolCallFormat;
+		event?: RecoveryFailureEvent;
 	},
 ): void {
-	const { source, failure, protocol } = options;
+	const { source, failure, protocol, event } = options;
 	const details = failureDetails[failure];
 	projection.sync(source);
 	const message = projection.finalize(source, false);
@@ -45,7 +56,7 @@ export function terminateRecoveryStreamForFailure(
 		{
 			type: details.diagnosticType,
 			timestamp: Date.now(),
-			details: { protocol, status: details.status },
+			details: { protocol, status: details.status, ...(event === undefined ? {} : { event }) },
 		},
 	];
 	stream.push({ type: "error", reason: "error", error: message }, rewriteHint(rewrittenFrom));
