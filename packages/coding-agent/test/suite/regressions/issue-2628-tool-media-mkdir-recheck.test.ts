@@ -1,27 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { persistToolImage, toolMediaRoot } from "../../../src/modes/rpc/tool-media-store.ts";
-
-const swap = vi.hoisted((): { directory?: string; target?: string } => ({}));
-
-vi.mock("node:fs", async (importOriginal) => {
-	const fs = await importOriginal<typeof import("node:fs")>();
-	return {
-		...fs,
-		mkdirSync: (...args: Parameters<typeof fs.mkdirSync>) => {
-			const created = fs.mkdirSync(...args);
-			const [directory] = args;
-			if (typeof directory === "string" && directory === swap.directory && swap.target !== undefined) {
-				fs.rmdirSync(directory);
-				fs.symlinkSync(swap.target, directory, "junction");
-			}
-			return created;
-		},
-	};
-});
 
 // senpi#2628: the first check cannot see a link introduced after mkdir.
 it("refuses to write a tool image through a symlink introduced after mkdir", () => {
@@ -32,17 +14,25 @@ it("refuses to write a tool image through a symlink introduced after mkdir", () 
 		const callDirectory = join(toolMediaRoot(scope), createHash("sha256").update(ref.toolCallId).digest("hex"));
 		const outside = join(fixture, "outside");
 		mkdirSync(outside);
-		swap.directory = callDirectory;
-		swap.target = outside;
+		const swapAfterMkdir = (directory: string) => {
+			mkdirSync(directory, { recursive: true, mode: 0o700 });
+			if (directory !== callDirectory) return;
+			rmdirSync(directory);
+			symlinkSync(outside, directory, "junction");
+		};
 
-		const outcome = persistToolImage(scope, ref, { data: "iVBORw0KGgo=", mimeType: "image/png" });
+		const outcome = persistToolImage(
+			scope,
+			ref,
+			{ data: "iVBORw0KGgo=", mimeType: "image/png" },
+			undefined,
+			swapAfterMkdir,
+		);
 
 		expect(readlinkSync(callDirectory)).toBe(outside);
 		expect(readdirSync(outside)).toEqual([]);
 		expect(outcome).toEqual({ unavailableReason: "storage_error" });
 	} finally {
-		delete swap.directory;
-		delete swap.target;
 		rmSync(fixture, { recursive: true, force: true });
 	}
 });
