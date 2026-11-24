@@ -358,7 +358,7 @@ const FINAL_MESSAGE_SHAPE =
 const STOP_CHECKS =
 	"Decide up front what proves this task done - the related tests, the checks the repository requires, and the real surface when behavior the user sees changed - and name exactly that in your stop condition. Run those checks once and fit the work to them, nothing beyond. A passed check is settled: never verify again on top of what is already verified, and re-run only after a new change or a failure. Finding the root cause and finishing the work on it is the value that matters most.";
 
-export const GPT6_ASTRA_RULES = [
+const GPT6_ASTRA_RULES = [
 	{ id: "initiative-bias", concern: "initiative", directive: INITIATIVE_BIAS },
 	{ id: "approval-last", concern: "initiative", directive: APPROVAL_LAST },
 	{ id: "ask-channel", concern: "initiative", directive: ASK_CHANNEL, requiresTool: ASK_TOOLS },
