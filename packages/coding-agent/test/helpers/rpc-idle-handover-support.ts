@@ -7,6 +7,7 @@
 import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { engineBuildIdentity } from "../../src/core/engine-build-identity.ts";
 import { daemonEnvironment } from "../../src/modes/rpc/host-daemon-env.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
 import { probeHost } from "../../src/modes/rpc/host-probe.ts";
@@ -92,6 +93,7 @@ export function beginHandoverCommand(rig: HandoverRig, overrides: WireRecord = {
 		if_instance_id: rig.instanceId,
 		if_generation: rig.generation,
 		target_runtime_build_id: rig.buildB.runtimeBuildId,
+		target_engine: { text: engineBuildIdentity().text, ordinal: engineBuildIdentity().ordinal },
 		launch: { command: launch.command, args: launch.args },
 		host_args: rig.buildB.hostArgs,
 		env,

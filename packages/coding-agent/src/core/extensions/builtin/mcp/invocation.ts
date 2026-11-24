@@ -113,6 +113,10 @@ export function createMcpInvocationResolver(scope: InvocationScope): McpInvocati
 			});
 			try {
 				await Promise.race([ready, interrupted]);
+			} catch (error) {
+				readySignal.throwIfAborted();
+				if (!scope.isCurrent()) return refuse("unavailable", "MCP session or server configuration was replaced.");
+				throw error;
 			} finally {
 				clearTimeout(timeout);
 				readySignal.removeEventListener("abort", abort);

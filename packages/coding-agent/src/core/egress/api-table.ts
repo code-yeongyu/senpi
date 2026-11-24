@@ -24,8 +24,8 @@ export interface ApiFacts {
 	readonly sdkLogging: SdkLoggingKnob;
 }
 
-const NO_SDK_LOGGER: SdkLoggingKnob = { kind: "none" };
-const SDK_LOG_LEVEL_OFF: SdkLoggingKnob = { kind: "client-option", option: "logLevel", off: "off" };
+const NO_SDK_LOGGER = { kind: "none" } as const satisfies SdkLoggingKnob;
+const SDK_LOG_LEVEL_OFF = { kind: "client-option", option: "logLevel", off: "off" } as const satisfies SdkLoggingKnob;
 
 export const API_FACTS = {
 	"openai-completions": { capability: "cloud", fetchInjection: "yes", sdkLogging: SDK_LOG_LEVEL_OFF },
@@ -46,11 +46,11 @@ export const API_FACTS = {
 	"cursor-agent": { capability: "callback-stream", fetchInjection: "no", sdkLogging: NO_SDK_LOGGER },
 } as const satisfies Record<KnownApi, ApiFacts>;
 
-const UNKNOWN_API: ApiFacts = {
+const UNKNOWN_API = {
 	capability: "ambient-credential",
 	fetchInjection: "unknown",
 	sdkLogging: { kind: "unknown" },
-};
+} as const satisfies ApiFacts;
 
 function isTabledApi(api: string): api is KnownApi {
 	return Object.hasOwn(API_FACTS, api);

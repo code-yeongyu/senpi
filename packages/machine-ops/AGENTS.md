@@ -5,8 +5,11 @@
 
 ## RULES
 
-- Import only `node:*`, `bun:*`, `@earendil-works/pi-pty` and this package's own files. `test/dependency-boundary.test.ts`
-  enforces it; never import from `packages/agent` or `packages/coding-agent`.
+- Import only `node:*`, `bun:*`, `@earendil-works/pi-pty`, the zero-dependency `@earendil-works/pi-realm-registry`
+  helper and this package's own files. `test/dependency-boundary.test.ts` enforces it; never import from
+  `packages/agent` or `packages/coding-agent`.
+- State that one engine copy writes and another reads lives behind `realmRegistry` (`files/mutation-queue.ts`), never in
+  module scope: a process can hold more than one copy of this package (omo#12965).
 - No concurrency cap anywhere. Ordering exists only where semantics need it: one canonical path's mutations
   (`files/mutation-queue.ts`) and one handle's input.
 - Filesystem and spawn errors pass through unchanged so the tools keep their exact error text; errors the layer

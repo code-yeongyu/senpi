@@ -16,6 +16,7 @@ const child = spawnHostChild({
 	instanceId: "synthetic",
 	cleanupPaths: [],
 	publicSocket: "unused",
+	trustHandOff: {},
 });
 const exited = once(child, "exit");
 child.stdin?.end();

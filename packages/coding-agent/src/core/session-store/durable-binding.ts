@@ -127,6 +127,12 @@ export class DurableSessionBinding {
 	private projectedSize: number;
 	// Bumped by every store commit: a deferred whole-image ledger record is skipped once a later write superseded it.
 	private generation = 0;
+	// Projected appends not yet in the ledger, in file order. A later append's record carries them, so a burst of appends
+	// keeps the ledger's prefix chain even though only the last one's record runs.
+	private unrecordedTails: { readonly key: string; readonly line: string; readonly offset: number }[] = [];
+	// A whole-file write whose ledger record a later append superseded: the chain has no start until a record covers the
+	// whole file, so the next record writes today's whole image instead of the tails.
+	private wholeUnrecorded = false;
 
 	private readonly binding: DurableStoreBinding;
 	private readonly handle: SyncSessionHandle;
@@ -217,10 +223,16 @@ export class DurableSessionBinding {
 		const offset = this.projectedSize;
 		this.projectedSize += Buffer.byteLength(entry.line) + 1;
 		const sessionId = String(this.handle.header().id);
+		this.unrecordedTails.push({ key: entry.key, line: entry.line, offset });
 		this.record(path, async () => {
+			const tails = [...this.unrecordedTails];
+			const whole = this.wholeUnrecorded ? projectionImage(this.handle.header(), this.handle.entries()) : undefined;
 			const written = await stampOf(path);
-			if (written !== undefined)
-				await this.importer.recordProjectedTail(path, sessionId, { ...entry, offset }, written);
+			if (written === undefined) return;
+			if (whole === undefined) await this.importer.recordProjectedTail(path, sessionId, tails, written);
+			else await this.importer.recordProjection(path, whole, written);
+			this.unrecordedTails.splice(0, tails.length);
+			if (whole !== undefined) this.wholeUnrecorded = false;
 		});
 	}
 
@@ -229,9 +241,13 @@ export class DurableSessionBinding {
 		const path = resolve(sessionFile);
 		const contents = projectionImage(this.handle.header(), this.handle.entries());
 		this.projectedSize = Buffer.byteLength(contents);
+		this.unrecordedTails = [];
+		this.wholeUnrecorded = true;
 		this.record(path, async () => {
 			const written = await stampOf(path);
-			if (written !== undefined) await this.importer.recordProjection(path, contents, written);
+			if (written === undefined) return;
+			await this.importer.recordProjection(path, contents, written);
+			this.wholeUnrecorded = false;
 		});
 	}
 
@@ -282,6 +298,8 @@ export class DurableSessionBinding {
 				this.binding.store.commitSync(this.binding.epoch, [{ op: "delete", key: staleKey(path) }], () => {});
 				this.stale = false;
 				this.projectedSize = Buffer.byteLength(contents);
+				this.unrecordedTails = [];
+				this.wholeUnrecorded = false;
 				const written = await stampOf(path);
 				if (written !== undefined && generation === this.generation) {
 					await this.importer.recordProjection(path, contents, written);

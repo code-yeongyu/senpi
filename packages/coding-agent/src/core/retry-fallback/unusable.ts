@@ -3,7 +3,28 @@ import { formatSelector } from "./chains.ts";
 import { isHealthExhaustionFailure } from "./circuit-probes.ts";
 import type { CircuitFailure } from "./controller-types.ts";
 import type { SelectorCooldowns } from "./cooldown.ts";
+import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
+import { isBillingErrorMessage } from "./billing.ts";
 import { usageLimitScope } from "./usage-limit.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
+import { accountsWithCapacity } from "../subscription-limits/usage-capacity.ts";
+
+// A weekly window binds the account (seven_day) or one family (seven_day_opus/...); the text alone cannot tell.
+const WEEKLY_LIMIT = /\bweekly\b[^.]*\blimit\b/i;
+const MODEL_FAMILY = /(?:^|[^a-z])(opus|sonnet|haiku|fable|mythos)(?:[^a-z]|$)/i;
+
+/** The model family a model id belongs to, when it names one. */
+function modelFamilyOf(modelId: string): string | undefined {
+	return MODEL_FAMILY.exec(modelId)?.[1]?.toLowerCase();
+}
+
+/** A once-per-provider check of a limit that named no family (senpi#5596). */
+export type UsageLimitScopeProbe = {
+	readonly provider: string;
+	readonly heldFamily: string;
+	readonly probeFamily: string;
+	readonly outcome: "served" | "widened";
+};
 
 /**
  * Chain entries this session has seen refuse to serve for a reason retrying cannot
@@ -15,19 +36,73 @@ import { usageLimitScope } from "./usage-limit.ts";
 export class UnusableEntries {
 	private readonly cooldowns: SelectorCooldowns;
 	private readonly accountErrors = new Map<string, string>();
+	/** Wall-clock time each provider's account hold began: only usage reported after it can lift it (senpi#6536). */
+	private readonly accountHeldSince = new Map<string, number>();
+	/** Providers whose limit named no family: the family it hit, awaiting one request on another family. */
+	private readonly pendingProbes = new Map<string, string>();
+	private readonly widenedFamilies = new Map<string, readonly string[]>();
+	private readonly familyErrors = new Map<string, string>();
 
 	constructor(cooldowns: SelectorCooldowns) {
 		this.cooldowns = cooldowns;
 	}
 
-	note(model: Model<Api>, failure: CircuitFailure): void {
+	note(model: Model<Api>, failure: CircuitFailure): UsageLimitScopeProbe | undefined {
 		const scope = usageLimitScope(failure.errorMessage);
+		const family = modelFamilyOf(model.id);
+		// A subscription limit that names no family may bind only this family: hold it and let one request on
+		// another family decide, instead of marking every model of the account spent (senpi#5596).
+		if (
+			scope === "account" &&
+			family !== undefined &&
+			failure.errorMessage !== undefined &&
+			WEEKLY_LIMIT.test(failure.errorMessage) &&
+			!isBillingErrorMessage(failure.errorMessage) &&
+			rateLimitModelFamily(failure.errorMessage) === undefined
+		) {
+			const held = this.pendingProbes.get(model.provider);
+			if (held === undefined || held === family) {
+				this.pendingProbes.set(model.provider, family);
+				this.cooldowns.note(familyKey(model.provider, family), failure);
+				this.familyErrors.set(familyKey(model.provider, family), failure.errorMessage);
+				return undefined;
+			}
+			this.pendingProbes.delete(model.provider);
+			this.widenedFamilies.set(model.provider, [held, family]);
+			this.noteAccount(model.provider, failure);
+			this.accountErrors.set(model.provider, failure.errorMessage);
+			return { provider: model.provider, heldFamily: held, probeFamily: family, outcome: "widened" };
+		}
 		if (scope === "account") {
-			this.cooldowns.note(accountKey(model.provider), failure);
+			this.noteAccount(model.provider, failure);
 			if (failure.errorMessage) this.accountErrors.set(model.provider, failure.errorMessage);
 		} else if (scope === "model" || isHealthExhaustionFailure(failure.errorMessage)) {
 			this.cooldowns.note(entryKey(model), failure);
 		}
+		return undefined;
+	}
+
+	/** A response served on `model`: a pending family probe on another family resolves as served. */
+	noteServed(model: Pick<Model<Api>, "provider" | "id">): UsageLimitScopeProbe | undefined {
+		const held = this.pendingProbes.get(model.provider);
+		const family = modelFamilyOf(model.id);
+		if (held === undefined || family === undefined || family === held) return undefined;
+		this.pendingProbes.delete(model.provider);
+		return { provider: model.provider, heldFamily: held, probeFamily: family, outcome: "served" };
+	}
+
+	/** The weekly-limit family hold on `model`, while it lasts (senpi#5596). */
+	heldFamily(model: Model<Api>): { readonly family: string; readonly errorMessage: string } | undefined {
+		const family = modelFamilyOf(model.id);
+		if (family === undefined) return undefined;
+		const key = familyKey(model.provider, family);
+		const errorMessage = this.familyErrors.get(key);
+		return errorMessage !== undefined && this.cooldowns.isSuppressed(key) ? { family, errorMessage } : undefined;
+	}
+
+	/** The two families a no-family limit was confirmed on before it widened to the account. */
+	widenedFamiliesOf(provider: string): readonly string[] | undefined {
+		return this.isProviderSpent(provider) ? this.widenedFamilies.get(provider) : undefined;
 	}
 
 	isProviderSpent(provider: string): boolean {
@@ -48,14 +123,38 @@ export class UnusableEntries {
 	 * (senpi#5568). A hold with a reset the provider stated is kept. Returns whether a hold was dropped.
 	 */
 	releaseGuessedAccountHold(provider: string): boolean {
-		if (!this.isProviderSpent(provider) || this.accountResetAt(provider) !== undefined) return false;
+		if (this.accountResetAt(provider) !== undefined) return false;
+		return this.releaseAccountHold(provider);
+	}
+
+	/**
+	 * Drops the provider's account hold when usage one of its accounts reported after the hold began shows it can
+	 * serve again: the provider lifted the limit before the reset it stated (senpi#6536). Returns whether one was dropped.
+	 */
+	releaseAccountHoldShownServable(provider: string, usage: readonly AccountLimits[]): boolean {
+		const since = this.accountHeldSince.get(provider);
+		if (since === undefined || !this.isProviderSpent(provider)) return false;
+		if (accountsWithCapacity(usage, provider, since, this.cooldowns.wallClock()).length === 0) return false;
+		return this.releaseAccountHold(provider);
+	}
+
+	/** Drops the provider's account hold, whatever its length; returns whether one was held (senpi#5590). */
+	releaseAccountHold(provider: string): boolean {
+		if (!this.isProviderSpent(provider)) return false;
 		this.cooldowns.clear(accountKey(provider));
 		this.accountErrors.delete(provider);
+		this.accountHeldSince.delete(provider);
+		this.clearFamilyHolds(provider);
 		return true;
 	}
 
 	isUnusable(model: Model<Api>): boolean {
-		return this.isProviderSpent(model.provider) || this.cooldowns.isSuppressed(entryKey(model));
+		const family = modelFamilyOf(model.id);
+		return (
+			this.isProviderSpent(model.provider) ||
+			this.cooldowns.isSuppressed(entryKey(model)) ||
+			(family !== undefined && this.cooldowns.isSuppressed(familyKey(model.provider, family)))
+		);
 	}
 
 	clear(model: Model<Api>): void {
@@ -63,15 +162,36 @@ export class UnusableEntries {
 		this.cooldowns.clear(entryKey(model));
 		this.cooldowns.clear(accountKey(model.provider));
 		this.accountErrors.delete(model.provider);
+		this.accountHeldSince.delete(model.provider);
+		this.clearFamilyHolds(model.provider);
 	}
 
 	/** The provider's accounts changed (a login, an added or re-authorized account): every hold it earned is stale. */
 	clearProvider(provider: string, models: readonly Model<Api>[]): void {
 		this.cooldowns.clear(accountKey(provider));
 		this.accountErrors.delete(provider);
+		this.accountHeldSince.delete(provider);
 		for (const model of models) {
 			if (model.provider === provider) this.cooldowns.clear(entryKey(model));
 		}
+		this.clearFamilyHolds(provider);
+	}
+
+	private noteAccount(provider: string, failure: CircuitFailure): void {
+		this.cooldowns.note(accountKey(provider), failure);
+		this.accountHeldSince.set(provider, this.cooldowns.wallClock());
+	}
+
+	/** A family hold and its pending probe go wherever the provider's own holds go (senpi#5596). */
+	private clearFamilyHolds(provider: string): void {
+		const prefix = familyKey(provider, "");
+		for (const key of [...this.familyErrors.keys()]) {
+			if (!key.startsWith(prefix)) continue;
+			this.cooldowns.clear(key);
+			this.familyErrors.delete(key);
+		}
+		this.pendingProbes.delete(provider);
+		this.widenedFamilies.delete(provider);
 	}
 }
 
@@ -80,6 +200,10 @@ function accountKey(provider: string): string {
 	// Gateways with distinct model accounts share a key; pooled slots can reset earlier
 	// than the last surfaced account error. Explicit /model selection permits a probe.
 	return `account:${provider}`;
+}
+
+function familyKey(provider: string, family: string): string {
+	return `family:${provider}:${family}`;
 }
 
 function entryKey(model: Model<Api>): string {

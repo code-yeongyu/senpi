@@ -1,6 +1,8 @@
 import { join } from "node:path";
+import { bindPermissionDecision } from "./permission-mode.ts";
 import {
 	Agent,
+	type AgentOptions,
 	type AgentMessage,
 	createInternalAgentChannel,
 	setDefaultStreamFn,
@@ -39,7 +41,7 @@ import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import type { ThinkingLevelSource } from "./session-thinking-memory.ts";
-import { DEFAULT_TOOL_NAMES, SettingsManager } from "./settings-manager.ts";
+import { SettingsManager } from "./settings-manager.ts";
 import {
 	canStartOn,
 	isAutomaticPick,
@@ -75,6 +77,11 @@ import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 import { type ExecutionPipelineWitnessSink, resolveWitnessSink } from "./execution/pipeline-witness-sink.ts";
 
 export interface CreateAgentSessionOptions {
+	/**
+	 * Makes each finished model step durable before the loop acts on it (hosted custody, C6 C.P3). Passed to the Agent
+	 * this function builds; fused and split-local sessions leave it unset.
+	 */
+	commitStep?: AgentOptions["commitStep"];
 	/**
 	 * Where this session's execution-pipeline receipts go (S18b part 3): a sink outside the session, never a session entry.
 	 * Unset: the file `SENPI_EXECUTION_PIPELINE_WITNESS` names (one JSON line per call), else no receipts.
@@ -197,6 +204,7 @@ export {
 	type ToolRegistryBuild,
 	type ToolRegistryInput,
 } from "./runtime/bootstrap.ts";
+import { resolveToolSelection } from "./runtime/active-tools.ts";
 export type { Skill } from "./skills.ts";
 export type { Tool } from "./tools/index.ts";
 
@@ -442,15 +450,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		model,
 	);
 
-	const configuredDefaultToolNames = settingsManager.getDefaultTools();
-	const sessionDefaultToolNames =
-		options.tools === undefined && options.noTools === undefined ? configuredDefaultToolNames : undefined;
-	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
-	const excludedToolNames = options.excludeTools;
-	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
-	const initialActiveToolNames = (
-		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? DEFAULT_TOOL_NAMES))
-	).filter((name) => !excludedToolNameSet?.has(name));
+	const {
+		defaultToolNames: sessionDefaultToolNames,
+		allowedToolNames,
+		excludedToolNames,
+		initialActiveToolNames,
+	} = resolveToolSelection(options, settingsManager.getDefaultTools());
 
 	// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 	let agent: Agent;
@@ -504,6 +509,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	agent = new Agent({
 		internalChannel,
 		onExecutionPipeline: resolveWitnessSink(options.executionPipelineWitness),
+		...(options.commitStep ? { commitStep: options.commitStep } : {}),
 		initialState: {
 			systemPrompt: "",
 			model,
@@ -723,6 +729,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection, undefined, model);
 	}
 	sessionRef.current = session;
+	bindPermissionDecision(session);
 	const extensionsResult = resourceLoader.getExtensions();
 
 	return {

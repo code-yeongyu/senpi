@@ -24,7 +24,7 @@ function createModel(id: string, provider: string, api: Api = "anthropic-message
 
 function hasFable5CatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
-	if (/claude-fable-5[-.]1(?:$|[/@._:-])/.test(searchable)) return false;
+	if (/claude-fable-5[-.][12](?:$|[/@._:-])/.test(searchable)) return false;
 	return /(?:^|[/@._-])claude-fable-5(?:$|[/@._:-])/.test(searchable);
 }
 

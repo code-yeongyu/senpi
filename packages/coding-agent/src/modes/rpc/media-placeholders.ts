@@ -44,6 +44,7 @@ const MEDIA_BEARING_RESPONSE_COMMANDS = new Set([
 	"get_tree",
 	"get_state",
 	"open_session",
+	"claim_session",
 ]);
 
 /** Why a host could not keep a tool image on disk for the client to read. */

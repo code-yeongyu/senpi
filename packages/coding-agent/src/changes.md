@@ -1,3 +1,486 @@
+## 2026-11-23 - A labelled open records its approvals refusal durably before the session exists (senpi#7270)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory`'s runtime factory calls `recordOpenerRefusal` (`core/opener-approvals.ts`) before `createAgentSessionFromServices` when the launch profile carries `sessionContext.approvals = "refuse"`. The record is written to the session file and synced; a failure rejects runtime creation, so the open fails.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#14649: a thread nobody answers must never ask. Review of senpi#7270 showed a record written from an extension's `session_start` could fail silently (the runner reports handler errors and the open still succeeds), so the write moved to the engine, ahead of the session.
+
+### Why an extension could not handle it
+
+- An extension's `session_start` failure cannot fail an open: `ExtensionRunner.emit` catches it and reports an extension error. Only the runtime factory runs before the session exists and can reject the open.
+
+### Expected merge conflict zones
+
+- `createCliRuntimeFactory`'s `createRuntime`, between `markSwitch("sessionOptions")` and `startOpenTimer("runtime-session")`, and the import block.
+
+## 2026-11-20 - Use loaded flag declarations to identify positional messages (#7116)
+
+### What changed
+
+- `main.ts` recovers positional messages in their original order after loading an extension with a boolean flag used in the invocation.
+
+### Why
+
+- A string option consumes its following value; a boolean option must not consume the next message.
+
+### Why an extension could not handle it
+
+- The CLI owns the positional message list passed to the interactive session.
+
+### Expected merge conflict zones
+
+- Startup immediately after collecting extension flag declarations.
+
+## 2026-11-05 - Root exports for the resolver and the credential store (custody CK18, senpi#5865)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `AuthStorage`, `resolveConfigValue`, `ConfigValueObserver` and `ConfigValueObservation` from the package root.
+
+### Why
+
+The device service resolves and refreshes credentials through the same resolver and store lock as the CLI (#5837); it needs them as public API.
+
+### Why an extension could not handle it
+
+The package root's export list is the public contract; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `auth-storage.ts` export line in `index.ts`.
+
+## 2026-11-19 - Agent children never inherit the RPC host's identity (senpi#7034)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `childEnvironmentOf` (from `modes/rpc/host-identity-env.ts`) so `senpi-codemode` builds its kernel environments with the same helper through the public package API.
+
+### Why
+
+- An RPC host keeps its generation identity and launch defaults in its own `process.env`. Every agent-facing child built from that env handed them on, so a senpi started from a session's shell or eval cell adopted the parent host's identity (senpi#7034, design from senpi#5635/#5653).
+
+### Why an extension could not handle it
+
+- The child environments are built by core helpers (shell env, tool child, RPC client) before any extension can intervene, and the hand-off names are owned by the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: the one export line; upstream has no RPC host hand-off.
+
+## 2026-11-18 - The parent config walk stops at the account home (senpi#6459)
+
+### What changed
+
+- `packages/coding-agent/src/nearest-parent-config.ts`: `findNearestParentConfigDir` stops the upward walk at the account-database home (`userInfo().homedir`, normalized) in addition to the caller-supplied home directory.
+
+### Why
+
+- With `$HOME` redirected to a temp dir (test harness, sandbox), a checkout under the real home climbed past the stubbed home and adopted the real account's `~/.senpi/agent` as *project* config; `test/suite/regressions/4272-recovery-health.test.ts` then failed with `RealAgentDirInTestError` on any machine whose checkout sits under a home with a real agent dir (senpi#6459, duplicate analysis in #6640). Home stays excluded so its config remains the global fallback layer; the account home now bounds the walk from the other side, so a redirected `$HOME` can never read the real account's global layer as project config.
+
+### Why an extension could not handle it
+
+- Agent-dir resolution runs in `resolveAgentDir` during bootstrap, before extensions load; extensions cannot re-bound the parent walk.
+
+### Expected merge conflict zones
+
+- LOW: the loop head of `findNearestParentConfigDir` and the file's imports.
+
+## 2026-11-18 - Answer `session-of-pid` before the engine loads (#6978)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` exports `attestSessionSpawn`, `resolvePidSession`, `sessionSpawnsDir` and their types, so the codemode extension attests the kernel processes it spawns for a session.
+- `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/bun/cli.ts` and `packages/coding-agent/src/cli-main.ts` call `dispatchSessionOfPidCommand()` (new `src/cli/session-of-pid-command.ts`) right after the agent-directory command. `session-of-pid <pid> --json` prints one version-1 JSON record from `resolvePidSession` and exits 0 when the pid is attested, 1 when it is not, 2 on invalid arguments.
+
+### Why
+
+- A gate in a shared rpc host must learn which session called it (senpi#6972). The caller's `PI_SESSION_ID` is whatever its last `exec` set; the engine's spawn records plus the kernel ancestry are not.
+
+### Why an extension could not handle it
+
+- The command is a metadata query of every CLI entry, answered before providers, migrations or hosts load, like `config agent-dir`.
+
+### Expected merge conflict zones
+
+- LOW: the metadata-command dispatch lines at the top of `src/cli.ts`, `src/bun/cli.ts` and `src/cli-main.ts`, and the export list in `src/index.ts`.
+
+## 2026-11-18 - Re-land: a remembered trust answer never stands in for an explicit no-decision entry (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: #6823's memo again (keyed by what was saved for the folder and by the store's `revision()`), awaiting the now asynchronous `revision()`.
+
+### Why
+
+- #6823 was reverted (#6954) for synchronous fs calls on the RPC session path; it re-lands with asynchronous trust store I/O.
+
+### Why an extension could not handle it
+
+- The memo lives in the CLI runtime factory's closure.
+
+### Expected merge conflict zones
+
+- LOW: the saved-trust read at the top of `createServices` in `main.ts`.
+
+## 2026-10-30 - Attach presentation tools at the host SDK boundary (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/index.ts` explicitly attaches the standalone HTML tool through `attachHostTools`.
+- `packages/coding-agent/src/host-tools.ts` provides generic host registration; calls use a host route while one is announced and otherwise run the standalone implementation.
+- `packages/coding-agent/src/host-tools.ts` takes `HostTool` entries (`{ tool, settleRouted? }`); `settleRouted` applies the tool's own session-level step to a routed result before the session records it.
+- `packages/coding-agent/src/host-tools.ts` clears an unavailable host route but throws `AbortError` instead of running the standalone fallback when the call's signal has been aborted.
+- A host bridge must re-announce `senpi:host-tool-route` after an extension reload because the new registration starts without a route.
+- `packages/coding-agent/src/index.ts` exports the attachment contract.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts` adds `HOST_TOOLS_CAPABILITY` (`host_tools`), and `packages/coding-agent/src/modes/rpc/host-capabilities.ts` advertises it from every multi-session host, so an app offers its host tool attachment only to an engine that can route it.
+- The HTML implementation moved from engine builtins to `src/extensions/html-render/` without changing its schema, file preparation, result, or lazy exposure. `src/extensions/html-render/index.ts` holds the extension factory: one pending-page ledger per instance, cleared on `agent_end` and `session_shutdown`.
+- The public SDK exposes writeHtmlPage and showHtmlPageTool. Both standalone execution and desktop host attachments use the same writer; its prepared bytes are compared against the pre-change output.
+- `writeHtmlPage(params, cwd, shownInline = true)` keeps main's truthful result (senpi#6273): the standalone tool passes whether its session's surface shows the page (`app`); a host attachment serves its own renderer, so it defaults to shown inline. Only the result text depends on it; the written file bytes do not. The writer refuses a page whose loaded image is missing and inlines images into `details.html` up to `MAX_HANDED_PAGE_CHARACTERS`.
+- `handHtmlPage` holds every model-issued `show_html_page` result to the session's `MAX_HANDED_PAGES_CHARACTERS`, whether the standalone writer or a host route produced it, because both ride the same transcript; past the budget the page is handed as written.
+
+### Why
+
+- A bare SDK engine must not acquire host presentation tools unconditionally. The CLI retains file output while desktop can supply the same callable through MCP.
+
+### Why an extension could not handle it
+
+- The implementation is an extension. Its default composition and public SDK export are owned by the host entry point.
+
+### Expected merge conflict zones
+
+- The `src/index.ts` public exports and `src/extensions/index.ts` host factories.
+
+## 2026-11-18 - Revert: the trust memo keyed by the no-decision entry (#6823)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` returns to the saved-trust read and per-process memo it had before #6823.
+
+### Why
+
+- #6823 added five synchronous fs calls on the RPC session path (`existsSync` and `readFileSync` in `readGeneration`, `renameSync` and `writeFileSync` in `setMany`, `statSync` in `revision`), which breaks the frozen, shrink-only no-sync baseline (`test/suite/no-sync-in-session-path.test.ts`). It merged on a runner exit code while its filed receipt was red. It re-lands with those calls asynchronous.
+
+### Why an extension could not handle it
+
+- This reverts core code that #6823 changed.
+
+### Expected merge conflict zones
+
+- LOW: the same lines #6823 touched.
+
+## 2026-11-18 - Opening a store session keeps the terminal's session folder (senpi#6941, omo-desktop-app#8097)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `openWithHomeSessionDir` opens a named or picked session file and, without an explicit `--session-dir`, adopts the folder's own session dir as home when the file lives in a registered app store. `--session <id|path>`, `--resume`, `--continue` of a moved session, `--session-id` of an existing session and the rebind path all open through it.
+
+### Why
+
+- `--session <id>` finds app-store sessions now that listing includes registered stores; opened plainly, the store became the session's home, so the next list dropped the terminal's own sessions and `/new` wrote into the app's store (review M1 at cc4c386231).
+
+### Why an extension could not handle it
+
+- Startup session selection runs in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `openSessionOrExit`, `rebindSessionOrExit` and the `--resume` / `--continue` / `--session-id` returns in `createSessionManager`.
+
+## 2026-11-18 - The attaching start passes its command line; both ends must be a terminal (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `admitOrExit(sessionFile, appMode, attach?)` takes the command line (`HeldSessionAttach`) from `createSessionManager`. An attach admission builds the plan (a refusal exits 1 with a notice) and runs `runAttachedTui` with the socket, session, `tuiMode`, `theme` and `startup`. Without the context (a rebind), it never attaches. `canAsk` now also requires stdout to be a terminal.
+
+### Why
+
+- senpi#6911 L1 and L4: the command line reaches the attached session, and `omo --session X > log` keeps the exit-76 refusal instead of failing in the attached view's terminal check.
+
+### Why an extension could not handle it
+
+- Mode dispatch happens in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `admitOrExit`, `openSessionOrExit` and the top of `createSessionManager`.
+
+## 2026-11-17 - Startup runs the attached TUI for a host-held session (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `admitOrExit(sessionFile, appMode, canAttach = true)` runs `runAttachedTui` on the admitted socket and session, then exits, so the in-process runtime never opens the held file. `rebindSessionOrExit` passes `canAttach = false` (a rebind rewrites the file).
+
+### Why
+
+- Follows the senpi#6909 admission: the terminal follows the host's live session as one more client, so one writer remains.
+
+### Why an extension could not handle it
+
+- Mode dispatch happens in `main.ts` before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `admitOrExit` and `rebindSessionOrExit`.
+
+## 2026-11-16 - A remembered trust answer never stands in for an explicit no-decision entry (desktop pull request worktrees)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the runtime factory reads what is saved for the folder with `getSavedProjectTrustState`. Its per-process memo of an unsaved answer (`projectTrustByCwd`) records what was saved for the folder when the answer was given and the store's `revision()`. An answer given with nothing saved holds while nothing is saved for the folder. An answer given under the explicit no-decision entry (`set_project_trust` `no_inherit`) holds only while the store revision is unchanged. A saved decision is always re-read, never remembered.
+
+### Why
+
+- #6823 review H1: both undecided values read as `null`, so a folder this process had earlier resolved trusted without saving (for example through a `project_trust` handler, or a session-only answer) stayed trusted for every later session after `no_inherit`, which defeats the marker in the desktop's own flow (it saves `no_inherit` on an open session).
+- #6823 review L1: keying the memo by the entry it was answered under keeps an answer given under `no_inherit` ("Trust (this session only)") for the process's later sessions of that folder (`/new`, `/fork`), which open without a prompt, instead of dropping it silently.
+- #6823 review M1: a memo keyed only by the saved value came back after an intervening save restored that value (`no_inherit`, `do_not_trust`, `no_inherit`); a `no_inherit` answer now needs an unchanged store revision, and every write through the store by an engine with this change, in any process, bumps the revision's generation under the store lock (review round 3, L1; an older engine's writes are seen only through modification time and size). An answer given with nothing saved keeps the base behaviour and survives writes for other folders (round 3, L2).
+
+### Why an extension could not handle it
+
+- The memo lives in the CLI runtime factory's closure.
+
+### Expected merge conflict zones
+
+- LOW: the saved-trust read at the top of `createServices` in `main.ts`.
+
+## 2026-11-16 - Export `withCredentialProxy` (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `withCredentialProxy` and `CREDENTIAL_PLACEHOLDER` for the codemode kernels.
+
+### Why
+
+- Eval kernels and their children must see the same withheld view as the bash tool.
+
+### Why an extension could not handle it
+
+- The codemode package reaches engine state only through the public entry.
+
+### Expected merge conflict zones
+
+- LOW: one export line beside the kill-guard runtime exports.
+
+## 2026-11-15 - The hand's durable, bounded wake outbox (senpi#5778, PR #6767)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/hand-wakes.ts` (new): `openHandWakeOutbox` on the hand's state file (it claims the file's next owner epoch, so an older hand is refused from then on), with `HAND_WAKE_LIMITS` (256 per scope, 1024 in total) and `onFault`; `handWakesOver`, a hand's scopes' wakes over its wake link.
+- `packages/coding-agent/src/modes/hand/hand-entry.ts`: opens the outbox at `<agentDir>/rpc/hand-wakes.json` after the live-hand check (faults reported on stderr), splits the `hand.wake` lane off the transport (`splitLanes`), starts the hand wake link and gives the loopless hand its wakes.
+
+### Why
+
+- A wake committed before a hand process dies must be re-offered by the next one, and the file must stay bounded by what is pending (#6767 review H1, M1).
+
+### Why an extension could not handle it
+
+- The hand entry owns the transport and the process lifetime.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runHand` in `hand-entry.ts`.
+
+## 2026-11-15 - Correction: what `--hand` as its extensions' home changes (senpi#5898, corrects #6747)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/hand-entry.ts`: `runHand` builds its hand with `twoSidedHome: "hand"` (#6747). Its forwarded loop hooks that run there are `input`, `before_agent_start`, `before_provider_request` and `session_start` (#6747's entry left out `before_provider_request`), and `agent_end` from this PR. The same option also moves two-sided extensions' tool hooks: on `--hand`, `extensionToolHandlers` (`packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`) no longer forwards their `tool_call`/`tool_result` to the loop; they run on the hand, beside the same extensions' loop hooks.
+
+### Why
+
+- #6747's review (L1): its fragment named neither `hand-entry.ts` nor the tool-hook placement change. Fragments are immutable once written, so the correction rides this PR.
+
+### Why an extension could not handle it
+
+- Where a two-sided extension's hooks run is the loopless runtime's choice, made by the hand's entry point.
+
+### Expected merge conflict zones
+
+- LOW: the `createLooplessHand` call in `runHand`.
+
+## 2026-11-16 - The private-fd capture releases startup fillers first (senpi#6769)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: `capturedState()` runs `releaseInheritedStartupFillers(process.env)` on the main thread before it reads and removes `SENPI_PRIVATE_FDS` / `SENPI_PRIVATE_FDS_FINAL`. The release is idempotent: it strips the hand-off's filler list, so an entry's own earlier or later release does nothing more.
+- `packages/coding-agent/src/private-fd-startup-release.ts`: the doc comment states that the capture runs the same release.
+
+### Why
+
+- The bundled CLI entry (`dist/bundle/cli.js`) evaluates the release's side effect in its own body, after every imported chunk, so the capture had already deleted the table. The release then treated the slots the table named as fillers and closed them. A supervisor-started engine (`host ensure`) lost its private descriptors, for example a desktop's memory-sync socket at fd 5.
+
+### Why an extension could not handle it
+
+- The descriptor is closed during the engine's startup, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the top of `capturedState()` in `private-fds.ts`; its import list.
+
+## 2026-11-15 - The public entry exports the device machine pieces (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `createToolMachine`, `ToolMachine`, `ToolPathPolicy`, `MachineOps`, `MachineExecRequest`, `MachineExecResult`, `OpContext`, `DeviceUnavailableError` and `DeviceMachineConflictError`.
+
+### Why
+
+- An extension such as the omo-senpi plugin builds the device machine against the published package; `@code-yeongyu/senpi-machine-ops` is a private workspace package.
+
+### Why an extension could not handle it
+
+- Without the exports an extension cannot build a `ToolMachine` or match the typed errors with `instanceof`.
+
+### Expected merge conflict zones
+
+- LOW: the tools export block in `src/index.ts`.
+
+## 2026-11-13 - A binary's `update --self` points at the download page when its release lookup fails (senpi#6633)
+
+### What changed
+
+- `packages/coding-agent/src/package-manager-cli.ts`: `selfUpdatePlanAfterLookupFailure` (exported) decides what `update --self` does when the latest-version lookup throws or returns nothing. A standalone binary prints the failure and "Download from: https://github.com/code-yeongyu/senpi/releases/latest" and exits cleanly; every other install still fails with "Could not determine latest ... version". `getSelfUpdatePlan` calls it with `detectInstallMethod()`.
+
+### Why
+
+- Since senpi#6633 a binary's lookup asks the unauthenticated GitHub API (60 requests per hour per IP). A rate limit made `update --self` fail before it reached the download instruction, although a binary has no in-place update to run anyway.
+
+### Why an extension could not handle it
+
+- `update --self` is a built-in CLI command in this file; no extension hook wraps its version lookup.
+
+### Expected merge conflict zones
+
+- LOW: the lookup try/catch in `getSelfUpdatePlan` in `package-manager-cli.ts`.
+
+## 2026-11-12 - A cold experimental server gets a load-tolerant startup wait (senpi#6487)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: `activateServer` waits for the server it started under its own bound, `ACTIVATION_STARTUP_HANG_MS` (120 s), measured with `performance.now()`. It used `ACTIVATION_TIMEOUT_MS` (10 s) on `Date.now()`. The wait still ends at once when the server accepts a connection, exits, fails to spawn, or the activation lock is lost. The activation lock timings are unchanged.
+
+### Why
+
+- A cold start on a loaded host took longer than 10 s, so the client failed with "Timed out waiting for automatically activated server" while the server was still starting (seen in the experimental runtime tests at load ~30 on a 14-core host). A system clock step could also end the wall-clock wait early.
+
+### Why an extension could not handle it
+
+- Server activation is the experimental client's own startup path; no extension runs before it.
+
+### Expected merge conflict zones
+
+- LOW: the activation constants and the startup wait loop in `activateServer`.
+
+## 2026-11-09 - Startup fillers are released only while the process still holds them (senpi#6282)
+
+### What changed
+
+- `packages/coding-agent/src/private-fd-startup-fillers.ts`: `releaseInheritedStartupFillers()` closes a listed filler slot only when, on POSIX, the startup pipe at `STARTUP_EVENT_FD` is still a socket and the slot is a socket that is not a copy of stdin, stdout, stderr or that pipe. Otherwise the slot is left open; the list is still stripped from the hand-off. Windows keeps the plain list.
+
+### Why
+
+- A compiled omo launch re-execs itself (the engine trust exec) after Bun marked every inherited descriptor from 4 up close-on-exec, so the host's first entry held a filler list for slots it no longer had while Bun's own copies of stdout and stderr sat at 5 and 6. Closing them by number made the internal bootstrap's first stderr write fail with `EBADF: bad file descriptor, write`, and the task host exited within seconds of every spawn (senpi#6282).
+
+### Why an extension could not handle it
+
+- The release runs in the startup stub every host and supervisor entry imports before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the new helpers above `releaseInheritedStartupFillers` and its loop condition.
+
+## 2026-11-09 - Isolated CLI re-launch no longer replays the caller's eval entry mode (senpi#2952)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: `requiresIsolatedProcess()` now decides on the sanitized argv from `utils/runtime-exec-argv.ts` instead of the raw `process.execArgv`, and `spawnFullCli()` forwards `runtimeExecArgv()` instead of the raw argv. Both entries now carry the `SENPI_CLI_ISOLATED_CHILD=1` recursion guard in the child environment (previously only the bundled entry did).
+
+### Why
+
+- An embedder that loads the CLI entry from `node -e` had its own `-e` code replayed in the isolated child (`node -e <caller code> dist/cli-main.js`), which re-imported the entry and spawned again: the unbundled entry recursed until an external guard stopped it, the bundled entry replayed the caller once (senpi#2952, the one site #2950 did not cover).
+
+### Why an extension could not handle it
+
+- The isolated re-launch decision and argv forwarding live in the CLI bootstrap itself, before any extension loads; no extension hook runs early enough to sanitize the argv the launcher replays.
+
+### Expected merge conflict zones
+
+- LOW: the `runtimeExecArgv` import, the `requiresIsolatedProcess()` decision, and the `spawnFullCli()` spawn line plus child environment in `cli.ts`.
+
+## 2026-11-09 - Hide the console window for self-update bootstrap commands on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/self-update-bootstrap.ts`: `runCommand` now passes `windowsHide: true` to its spawn.
+
+### Why
+
+- Update commands (npm/bun) are console-subsystem exes on Windows, but `runCommand` inherits the parent console (`stdio: "inherit"`), so `windowsHide` hides no new window here; the flag is kept for uniformity with the other win32 spawns.
+
+### Why an extension could not handle it
+
+- The spawn is the self-update bootstrap's own command runner, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the bootstrap runner.
+
+## 2026-11-07 - A saved trust decision outranks the per-process trust memo (senpi#6176)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` uses `projectTrustByCwd` only while nothing is saved for the folder, and passes `projectTrustLocked` from `--approve`/`--no-approve`.
+
+### Why
+
+- The memo kept an RPC session's "untrusted" for the folder, so a decision saved later through `set_project_trust` never reached the next session the same engine opened.
+
+### Why an extension could not handle it
+
+- The memo and the runtime factory are core startup code.
+
+### Expected merge conflict zones
+
+- LOW: the project-trust block at the top of the runtime-services step.
+
+## 2026-11-07 - Public export of the rpc remote source seam (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `registerRpcRemoteSource` and the `RpcRemote*` types.
+
+### Why
+
+- oh-my-openagent#12719: omo implements the source against these types.
+
+### Why an extension could not handle it
+
+- The package's public surface is this file.
+
+### Expected merge conflict zones
+
+- LOW: the export block after `read-classifiers.ts`.
+
+## 2026-11-05 - Startup refuses or takes over a held session before touching its file (senpi#5756)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createSessionManager` admits an existing session file on its resolved path before anything loads, migrates, settles, rebinds or runs it: `openSessionOrExit` and `rebindSessionOrExit` admit first, the `--resume` picker admits the picked file before `resolveResumeTarget` can rebind it, and `--continue` and `--session-id` admit before loading. Forking only reads its source and is not admitted. A refusal exits `SESSION_HELD_EXIT_CODE` (76), a declined take-over exits 0. Prompting is offered only in interactive mode with a TTY on stdin.
+
+### Why
+
+The startup path only warned (#2951/#2956) when another live process held the session, so a second run of the same session started (the startup path of #5744, which #5750 fixed for `/resume`). Loading a held file before refusing could also rewrite it (version migration) or truncate the tail the holder was still appending.
+
+### Why an extension could not handle it
+
+Session selection and opening happen in `main.ts` before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: `openSessionOrExit`, `rebindSessionOrExit`, the `--resume`, `--continue` and `--session-id` branches of `createSessionManager`, and the `session-opening.ts` import.
+
 ## 2026-11-06 - Opt senpi and its children out of Windows EcoQoS throttling (senpi#6125)
 
 ### What changed

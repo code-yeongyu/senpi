@@ -18,6 +18,7 @@ import {
 	forgetColdSeedCalibration,
 	restoreColdSeedCalibration,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/cold-seed-budget.ts";
+import { claudeCodeMaxContextTokens } from "../../../src/core/extensions/builtin/anthropic-subscription/context-window.ts";
 import { _resetLongContextForTesting } from "../../../src/core/extensions/builtin/anthropic-subscription/long-context.ts";
 import {
 	type Options,
@@ -168,8 +169,8 @@ it.each([
 		...(maxTokens === undefined ? {} : { maxTokens }),
 	});
 	expect(attempts).toHaveLength(2);
-	expect(attempts[1].env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("200000");
 	const retryCap = Number(attempts[1].env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS);
+	expect(attempts[1].env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe(String(claudeCodeMaxContextTokens(200_000, retryCap)));
 	if (cap !== undefined) expect(retryCap).toBe(cap);
 	else {
 		expect(retryCap).toBeGreaterThanOrEqual(8_192);

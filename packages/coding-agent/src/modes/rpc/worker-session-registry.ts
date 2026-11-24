@@ -1,4 +1,6 @@
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { refusesApprovals, replacementLaunchProfile } from "../../core/opener-approvals.ts";
+import { clientNamedPreset, withClientPreset } from "../../core/permission-mode.ts";
 import { outsideCommand } from "./command-authority.ts";
 import type { SessionPathReservations as DaemonPathReservations } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
@@ -16,6 +18,7 @@ import {
 } from "./session-registry.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import type { SessionWriteGrant } from "./session-worker-protocol.ts";
+import { sessionRowStatusFields } from "./session-status-source.ts";
 import type { WorkerSessionClaims } from "./worker-session-claims.ts";
 import { openWorkerSession } from "./worker-session-open.ts";
 import type { WorkerCapacity } from "./worker-capacity.ts";
@@ -60,6 +63,9 @@ export class WorkerSessionRegistry {
 	get size(): number {
 		return this.entries.size;
 	}
+	reserveHandle(): string {
+		return `rpc-${++this.serial}`;
+	}
 
 	holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
 		return this.options.pathReservations?.holderPids?.(observedStarts) ?? Promise.resolve([]);
@@ -75,7 +81,7 @@ export class WorkerSessionRegistry {
 				closeGraceMs: this.closeGraceMs,
 				size: this.options.capacity?.inUse() ?? this.size,
 				now: this.now,
-				nextHandle: () => `rpc-${++this.serial}`,
+				nextHandle: () => this.reserveHandle(),
 				knownReservationKey: (path) => this.knownReservationKey(path),
 				attach: (owner, path, options, requested) => this.attach(owner, path, options, requested),
 				reserve: (handle, path) => this.reserve(handle, path),
@@ -181,6 +187,7 @@ export class WorkerSessionRegistry {
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				// A worker isolate's session has no tool child of its own yet (senpi#3566 todo 4 serves the in-process host).
 				tool_child: { state: "none" },
+				...sessionRowStatusFields(entry),
 			};
 		});
 	}
@@ -209,10 +216,21 @@ export class WorkerSessionRegistry {
 		options?: RpcSessionOpenOptions,
 		requested: RpcSessionLaunchProfile = { cwd: "" },
 	): Promise<OpenRpcSession> {
-		const { promptSurface, browserEngine, permissionPreset } = requested;
+		const { promptSurface, browserEngine } = requested;
+		// A host-default preset folded into a preset-less attach is not a client choice (see session-registry-attach.ts).
+		const permissionPreset = clientNamedPreset(requested);
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
+		// The worker's live permission system cannot be told from here that nobody answers it: refused before anything moves.
+		if (refusesApprovals(requested.sessionContext))
+			throw new RpcSessionRegistryError(
+				"session_path_in_use",
+				"a labelled open cannot attach to a session in a worker",
+				{
+					reason: "approvals_label_unsupported",
+				},
+			);
 		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
 		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {
 			entry.profile = frozenProfile({ ...entry.profile, promptSurface });
@@ -224,10 +242,12 @@ export class WorkerSessionRegistry {
 		}
 		// Sent even when the record already names it: only the worker sees its live session (senpi#2842).
 		if (permissionPreset !== undefined) {
-			entry.profile = frozenProfile({ ...entry.profile, permissionPreset });
+			entry.profile = frozenProfile(withClientPreset(entry.profile, permissionPreset));
 			await entry.worker.setPermissionPreset(permissionPreset);
 		}
 		const result = this.openResult(owner, entry);
+		// A restore that finds the session already open adds no attachment (senpi#7020).
+		if (options?.unattached === true) return { ...result, attached: true };
 		entry.attachments++;
 		this.claims.get(owner)?.setAttached(true);
 		// Retention is a property of the live session: any attach may ask for it, and
@@ -280,6 +300,10 @@ export class WorkerSessionRegistry {
 		if (!sessionPath) return;
 		entry.reservationKey = sessionPath;
 		entry.sessionPath = sessionPath;
+		// A replacement (another durable id) is another session: the opener's label stays with the one it opened.
+		const sessionId = entry.worker?.snapshot?.state.sessionId;
+		if (sessionId !== undefined && entry.durableSessionId !== undefined && sessionId !== entry.durableSessionId)
+			entry.profile = replacementLaunchProfile(entry.profile) ?? entry.profile;
 	}
 
 	/** The live view a full budget is reconciled against; absent while the entry cannot report one. */

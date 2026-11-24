@@ -18,6 +18,7 @@ describe("senpi#3026 model-facing stale stop", () => {
 				agentDir: base.cwd,
 				mode: "rpc",
 				tools: [],
+				issuedByModel: true,
 				executeTool: async () => {
 					throw new Error("Unexpected nested tool execution");
 				},

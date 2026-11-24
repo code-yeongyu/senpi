@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import type { ExtensionAPI, InlineExtension } from "../../src/core/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { bashToolSystemPromptContribution } from "../../src/core/tools/bash.ts";
 import { builtInExtensions } from "../../src/extensions/index.ts";
 import { type CliRuntimeConfiguration, createCliRuntimeFactory } from "../../src/main.ts";
 import { handToolCatalog, type ToolDeclaration, toolCatalog } from "../../src/modes/hand/tool-catalog.ts";
 import { createLooplessRuntimeFactory } from "../../src/modes/rpc/runtime-factory-loopless.ts";
+import { expectedOnHand } from "./catalog-fixture.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -123,21 +123,6 @@ async function fusedCatalogFor(configuration: CliRuntimeConfiguration) {
 
 function names(catalog: readonly ToolDeclaration[]): string[] {
 	return catalog.map((tool) => tool.name);
-}
-
-/**
- * The one intended difference: a hand runs the core `bash` without the session's PI_* environment (senpi#5433,
- * `exposeSessionEnvironment: false`, the hand knowing nothing of the session), so that tool does not advertise
- * the guideline about those variables. The fused declaration is compared with exactly that guideline removed,
- * and only when the hand's core `bash` really lacks it.
- */
-function expectedOnHand(fused: ToolDeclaration, hand: ToolDeclaration): ToolDeclaration {
-	const sessionEnvironment: readonly string[] = bashToolSystemPromptContribution.guidelines;
-	const onlySessionEnvironment =
-		fused.name === "bash" &&
-		hand.promptGuidelines === undefined &&
-		JSON.stringify(fused.promptGuidelines) === JSON.stringify(sessionEnvironment);
-	return onlySessionEnvironment ? { ...fused, promptGuidelines: undefined } : fused;
 }
 
 describe("a hand exposes the same tool catalog as the fused engine for the same configuration", () => {

@@ -52,6 +52,8 @@ export class ConnectionRoles {
 	private readonly origins = new Map<string, RpcRemoteOrigin>();
 	/** A worker isolate's first-seen delegation per connection (`retain`), kept for the worker's life. */
 	private readonly retained = new Map<string, DelegationDescriptor>();
+	/** A worker isolate's connections whose bind or command carried a delegation (a legacy one is never retained). */
+	private readonly carried = new Set<string>();
 	private source: ((connectionId: string) => DelegatedConnectionView | undefined) | undefined;
 
 	/** The host reads each connection's live record from its writer's delegations. */
@@ -132,6 +134,11 @@ export class ConnectionRoles {
 		if (this.acceptsOrigin(connectionId, origin)) this.origins.set(connectionId, origin);
 	}
 
+	/** Whether the forwarder stated this delegated connection's device is the host's own account (senpi#6342). */
+	sameAccount(connectionId: string | undefined): boolean {
+		return this.viewOf(roleConnection(connectionId))?.descriptor.principal.sameAccount === true;
+	}
+
 	/** The remote device this connection speaks for: a delegated connection's principal, else its declared origin. */
 	originOf(connectionId: string | undefined): RpcRemoteOrigin | undefined {
 		const key = roleConnection(connectionId);
@@ -140,6 +147,23 @@ export class ConnectionRoles {
 		return principal.deviceName === undefined
 			? { deviceId: principal.deviceId }
 			: { deviceId: principal.deviceId, deviceName: principal.deviceName };
+	}
+
+	/** Whether the connection is delegated (a remote device's): on the host, retained by a worker, or carried to one. */
+	isDelegated(connectionId: string | undefined): boolean {
+		const key = roleConnection(connectionId);
+		return this.viewOf(key) !== undefined || this.carried.has(key);
+	}
+
+	/**
+	 * Whether the forwarder itself granted `role` to this connection (senpi#6305): only a host-mode delegation's live,
+	 * unretired authority word counts. No client claim, legacy-mode delegation or local connection can satisfy it.
+	 */
+	grantedByForwarder(connectionId: string | undefined, role: string): boolean {
+		const descriptor = this.viewOf(roleConnection(connectionId))?.descriptor;
+		if (descriptor?.mode !== "host" || descriptor.authority === undefined) return false;
+		const state = readAuthority(descriptor.authority);
+		return !state.retired && state.roles.includes(role);
 	}
 
 	has(connectionId: string | undefined, role: string): boolean {
@@ -171,6 +195,12 @@ export class ConnectionRoles {
 		this.claims.delete(connectionId);
 		this.origins.delete(connectionId);
 		this.retained.delete(connectionId);
+		this.carried.delete(connectionId);
+	}
+
+	/** Worker isolate: a bind or command for `connectionId` carried a delegation, in either mode. */
+	noteCarriedDelegation(connectionId: string): void {
+		this.carried.add(connectionId);
 	}
 
 	/** Forgets every connection, for a worker isolate whose session ends. */
@@ -178,5 +208,6 @@ export class ConnectionRoles {
 		this.claims.clear();
 		this.origins.clear();
 		this.retained.clear();
+		this.carried.clear();
 	}
 }

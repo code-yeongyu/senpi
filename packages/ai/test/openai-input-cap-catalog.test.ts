@@ -11,14 +11,16 @@ const DOCUMENTED_TOTALS = new Map([
 	[400_000, 272_000],
 	[1_050_000, 922_000],
 ]);
-// GPT-6 Sol and GPT-6.1 Sol document a 1,050,000 window; their project prompt budget is 400,000, which
+// GPT-6 Sol, GPT-6.1 Sol and GPT-6.2 Sol document a 1,050,000 window; their project prompt budget is 400,000, which
 // happens to equal the 400,000-tier total. Only those exact pairings are a deliberate budget rather than
 // an uncapped row.
 const DELIBERATE_TIER_BUDGETS = new Map([
 	["gpt-6-sol", 400_000],
 	["gpt-6.1-sol", 400_000],
-	// Venice spells the point release without the dot (openai-gpt-61-sol).
+	["gpt-6.2-sol", 400_000],
+	// Venice spells the point releases without the dot (openai-gpt-61-sol, openai-gpt-62-sol).
 	["gpt-61-sol", 400_000],
+	["gpt-62-sol", 400_000],
 ]);
 
 function isFlagshipFamily(id: string): boolean {
@@ -70,6 +72,9 @@ describe("OpenAI flagship catalog rows store the input cap", () => {
 		["vercel-ai-gateway", "openai/gpt-6-sol-fast", 400_000],
 		["vercel-ai-gateway", "openai/gpt-6.1-sol-fast", 400_000],
 		["venice", "openai-gpt-61-sol", 400_000],
+		["openrouter", "openai/gpt-6.2-astra", 600_000],
+		["openrouter", "openai/gpt-6.2-sol", 400_000],
+		["venice", "openai-gpt-62-sol", 400_000],
 		["opencode", "gpt-6.1-sol", 400_000],
 		["github-copilot", "gpt-6.1-sol", 400_000],
 		["openai", "gpt-5-pro", 272_000],
@@ -78,6 +83,10 @@ describe("OpenAI flagship catalog rows store the input cap", () => {
 		["chatgpt-subscription", "gpt-6.1-sol", 500_000],
 		["chatgpt-subscription", "gpt-6.1-sol-fast", 500_000],
 		["chatgpt-subscription", "gpt-6.1-sol-ultrafast", 500_000],
+		// #6942: openai/codex's models.json gives 6.2 Sol the same 500k.
+		["chatgpt-subscription", "gpt-6.2-sol", 500_000],
+		["chatgpt-subscription", "gpt-6.2-sol-ultrafast", 500_000],
+		["chatgpt-subscription", "gpt-6.2-astra", 600_000],
 		["chatgpt-subscription", "gpt-6-sol", 400_000],
 		["chatgpt-subscription", "gpt-6-astra", 600_000],
 		["chatgpt-subscription", "gpt-6-luna", 922_000],
@@ -104,6 +113,8 @@ describe("OpenAI flagship catalog rows store the input cap", () => {
 		expect(byId.get("gpt-6-astra")).toBe(600_000);
 		expect(byId.get("gpt-6-sol")).toBe(400_000);
 		expect(byId.get("gpt-6.1-sol")).toBe(400_000);
+		expect(byId.get("gpt-6.2-sol")).toBe(400_000);
+		expect(byId.get("gpt-6.2-astra")).toBe(600_000);
 		expect(byId.get("gpt-6-luna")).toBe(922_000);
 	});
 });

@@ -243,7 +243,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 	 * session's reaches every connection. No client asked for this teardown, so there is
 	 * no close response to answer.
 	 */
-	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded"): void {
+	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded" | "host_shutdown"): void {
 		this.sealLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
 	}
 

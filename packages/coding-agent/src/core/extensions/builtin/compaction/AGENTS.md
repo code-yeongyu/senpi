@@ -25,7 +25,6 @@ compaction/
 ├── tool-truncation.ts        # Emergency/compaction-budget truncation for oversized bash/read results
 ├── speculation-lead.ts       # Speculative lead and grace-band policy primitives
 ├── tool-admission.ts         # Deterministic diskless tool-result admission projections
-├── token-budget-reminder.ts  # Per-generation context budget reminder state
 ├── yield.ts                  # Structural yield capture and ineffective-compaction accounting
 ├── checkpoint-state.ts       # Snapshots agent state (model, thinking, todos) at compact boundaries
 ├── todo-bridge.ts            # Carries todos through compaction so the summary preserves them
