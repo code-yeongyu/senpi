@@ -1,3 +1,21 @@
+## 2026-11-23 - Replacement runtimes do not inherit the opener's approvals label (senpi#7270)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: every replacement (`switchSession`, `newSession`, both `fork` paths, the in-memory fork, `importFromJsonl`) passes `replacementLaunchProfile(this._launchProfile)`, the launch profile without `sessionContext.approvals`, to the runtime factory, and `apply` drops the label from the runtime's own profile. `persistSession` (a claimed park) records and syncs the refusal of a labelled session before the claim is answered.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#14649 and review M2 of senpi#7270: the label is the opener's declaration about the session it opened. A fork or clone is a new session under a new id, and reusing the launch profile made it refuse with no opener opting in. Review M6: a claimed park became persistent without writing its in-memory refusal to disk.
+
+### Why an extension could not handle it
+
+- The launch profile is reused inside `AgentSessionRuntime` before any extension of the replacement loads; the extension sees only the resulting `pi.sessionContext` and cannot tell an inherited label from its own opener's.
+
+### Expected merge conflict zones
+
+- The `launchProfile:` argument of each `this.createRuntime({ ... })` call in `agent-session-runtime.ts`, the top of `apply` and of `persistSession`, and the import block.
+
 ## 2026-11-12 - A runtime's session hold is taken before it is constructed, and the writer fence reads the boot instant first (senpi#3152)
 
 ### What changed

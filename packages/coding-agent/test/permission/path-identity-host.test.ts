@@ -153,31 +153,39 @@ describe("path identity resolver worker (design 6.7 / 11.1.3)", () => {
 	});
 
 	it("a wedge on one volume key leaves another key fully served (R3-M2) and the boot-volume keys are independent", async () => {
+		// The wedged volume is a dedicated automount no fixture root can sit under. Wedging /home instead failed on every
+		// host whose temp directory is under /home (#7403): the served walk below runs on the real fixture root, which this
+		// darwin mount table maps to the wedged /home key, so the open breaker rejected it.
+		const wedged = "/System/Volumes/Data/wedged";
 		const snapshot = parseMountTable(
 			[
 				"/dev/disk1 on / (apfs, local)",
 				"/dev/disk2 on /System/Volumes/Data (apfs, local)",
 				"map auto_home on /System/Volumes/Data/home (autofs, nobrowse)",
+				`map -hosts on ${wedged} (autofs, nobrowse)`,
 			].join("\n"),
 			"darwin",
 		);
 		const resolver = make(() =>
 			fixtureTransport({
 				snapshot,
-				firmlinks: ["/Users", "/private", "/home", "/tmp"],
-				stall: (request) => requestPath(request).startsWith("/home/"),
+				firmlinks: ["/Users", "/private", "/home", "/tmp", "/wedged"],
+				stall: (request) => requestPath(request).startsWith("/wedged/"),
 			}),
 		);
 		resolver.start();
+		expect(resolver.volumeKey("/wedged/x")).toBe(wedged);
 		expect(resolver.volumeKey("/home/x")).toBe("/System/Volumes/Data/home");
 		expect(resolver.volumeKey("/Users/x")).toBe("/System/Volumes/Data");
 		expect(resolver.volumeKey("/usr/bin/x")).toBe("/");
+		expect(resolver.volumeKey(root)).not.toBe(wedged);
 		for (let attempt = 0; attempt < 2; attempt++) {
-			const stalled = settled(resolver.detect(`/home/wedged${attempt}`));
+			const stalled = settled(resolver.detect(`/wedged/stalled${attempt}`));
 			await flush(DEADLINE);
 			expect(await stalled).toEqual({ ok: true, value: true });
 		}
-		expect(resolver.breakerState("/System/Volumes/Data/home")).toBe("open");
+		expect(resolver.breakerState(wedged)).toBe("open");
+		expect(resolver.breakerState("/System/Volumes/Data/home")).toBe("closed");
 		expect(resolver.breakerState("/System/Volumes/Data")).toBe("closed");
 		expect(resolver.breakerState("/")).toBe("closed");
 		const served = resolver.walk(`${root}/link/secret`);
