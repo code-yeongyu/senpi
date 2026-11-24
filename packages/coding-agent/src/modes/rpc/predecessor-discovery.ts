@@ -3,7 +3,13 @@ import { readJsonObject } from "./host-state-json.ts";
 import { readHandoverParkedSessions } from "./host-handover-parked.ts";
 import { readSessionPathClaims } from "./host-reservations.ts";
 import { hostGeneration } from "./protocol-identity.ts";
-import { PredecessorPeer, RouteDisconnected, type RouteEndpoint, RouteTimedOut } from "./predecessor-peer.ts";
+import {
+	PredecessorPeer,
+	RouteDisconnected,
+	type RouteEndpoint,
+	RouteTimedOut,
+	routeEndpointGone,
+} from "./predecessor-peer.ts";
 import type { RouteTable } from "./predecessor-route-table.ts";
 import { isRoutedSessionRow } from "./predecessor-wire.ts";
 import { authRecord } from "./rpc-auth-proof.ts";
@@ -12,7 +18,6 @@ import { SOCKET_HANDSHAKE_TIMEOUT_MS } from "./socket-transport.ts";
 
 /** How long a listing waits for a predecessor's answer: as long as its handshake may take. */
 export const PREDECESSOR_DISCOVERY_TIMEOUT_MS = SOCKET_HANDSHAKE_TIMEOUT_MS;
-const GONE_CODES: readonly unknown[] = ["ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE"];
 
 /**
  * Discovery is read-only: no route peer used for a list counts as an attachment or opens a runtime. A predecessor
@@ -99,9 +104,5 @@ async function listPredecessor(table: RouteTable, endpoint: RouteEndpoint, paths
 }
 
 function unanswered(cause: unknown): boolean {
-	return (
-		cause instanceof RouteDisconnected ||
-		cause instanceof RouteTimedOut ||
-		(cause instanceof Error && "code" in cause && GONE_CODES.includes(cause.code))
-	);
+	return cause instanceof RouteDisconnected || cause instanceof RouteTimedOut || routeEndpointGone(cause);
 }
