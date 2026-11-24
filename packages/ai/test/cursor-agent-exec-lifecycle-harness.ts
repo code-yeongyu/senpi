@@ -122,6 +122,7 @@ async function observeServerTask(task: Promise<void>): Promise<unknown> {
 }
 
 export const STREAM_HEALTH_THRESHOLD_MS = 50;
+const CHECKPOINTED_TEXT = "checkpointed";
 const HEARTBEAT_GAP_MS = 20;
 const HEARTBEAT_COUNT = 5;
 
@@ -184,6 +185,7 @@ export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 			}
 			if (mode === "checkpointResume" && attempt === 1) {
 				httpStream.write(checkpointFrame());
+				httpStream.write(textDeltaFrame(CHECKPOINTED_TEXT));
 				return;
 			}
 			if (mode === "checkpointResume") {
@@ -194,9 +196,9 @@ export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
 	if (!address || typeof address === "string") throw new Error("Expected TCP server address");
-	// heartbeatOnly owns the clock: the health timer only fires when the server
-	// advances it between heartbeats, never because the host stalled.
-	const driveClock = mode === "heartbeatOnly";
+	// heartbeatOnly and checkpointResume own the clock: the health timer only fires when the server advances it
+	// between heartbeats, or the drain loop below advances it after the checkpoint, never because the host stalled.
+	const driveClock = mode === "heartbeatOnly" || mode === "checkpointResume";
 	if (driveClock) vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 	try {
 		const cursorStream = streamCursorAgent(
@@ -211,8 +213,13 @@ export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 				turnEndDrainTimeoutMs: 50,
 			} satisfies CursorAgentOptions,
 		);
-		for await (const _event of cursorStream) {
-			// Drain the public stream while the fake server drives retry behavior.
+		for await (const event of cursorStream) {
+			// Drain the public stream while the fake server drives retry behavior. The
+			// client handles frames in order, so this delta proves it processed the
+			// checkpoint written before it; only then does the silence reach the stall.
+			if (driveClock && event.type === "text_delta" && event.delta === CHECKPOINTED_TEXT) {
+				await vi.advanceTimersByTimeAsync(STREAM_HEALTH_THRESHOLD_MS);
+			}
 		}
 		return { attempts, heartbeatSpanMs, actions, message: await cursorStream.result() };
 	} finally {
