@@ -12,6 +12,7 @@ import type {
 	Credential,
 	CredentialInfo,
 	CredentialStore,
+	LoginOptions,
 	OAuthAuth,
 	OAuthCredential,
 	OAuthLoginCallbacks,
@@ -1258,7 +1259,8 @@ export class AuthStorage implements CredentialStore {
 		);
 	}
 
-	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+	/** `options` reach the provider's login as they do through the runtime login (device id, app name). */
+	async login(providerId: string, callbacks: OAuthLoginCallbacks, options?: LoginOptions): Promise<void> {
 		const oauth = this.oauthAuth(providerId);
 		if (!oauth) throw new Error(`Unknown OAuth provider: ${providerId}`);
 		const signal = callbacks.signal ?? new AbortController().signal;
@@ -1268,7 +1270,7 @@ export class AuthStorage implements CredentialStore {
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
 		const before = this.get(providerId);
-		const credential = await oauth.login(interaction);
+		const credential = await oauth.login(interaction, options);
 		this.set(providerId, credential);
 		if (this.authPath === undefined) return;
 		// Lazy like ModelRuntime.loadCredentialPool: the pool store pulls zod, which must stay out of the
