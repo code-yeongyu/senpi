@@ -25,6 +25,12 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		argumentHint: "<provider/model>",
 		requiresArguments: false,
 	},
+	{
+		name: "models",
+		description: "Alias of /model (opens the model selector UI)",
+		argumentHint: "<provider/model>",
+		requiresArguments: false,
+	},
 	{ name: "tree", description: "Navigate session tree (switch branches)" },
 	{ name: "thinking", description: "Set thinking level", argumentHint: "<level>", requiresArguments: false },
 	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling" },
