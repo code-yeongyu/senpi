@@ -1,7 +1,7 @@
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createConnection, createServer, Socket } from "node:net";
-import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,12 +9,6 @@ import { HostAdmission } from "../../src/modes/rpc/host-admission.ts";
 import { ClientOccupancy } from "../../src/modes/rpc/host-client-occupancy.ts";
 import { closeServer, createPublicProxy, listen } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
-
-// The supervisor logs with a synchronous write to fd 2 (host-supervisor-log.ts); record it and still write through.
-vi.mock("node:fs", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:fs")>();
-	return { ...actual, writeSync: vi.fn(actual.writeSync) };
-});
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -248,78 +242,37 @@ describe.skipIf(process.platform === "win32")("supervisor admission framing", ()
 	});
 });
 
-// senpi#7388: a public client whose connection to the host fails used to be reset before any reply.
+// senpi#7388: a public client whose connection to the host fails used to be reset before any reply. The proxy runs in a
+// child so the test reads what the supervisor really writes to fd 2 (a detached daemon's only diagnostic channel).
 describe.skipIf(process.platform === "win32")("a failed connection to the host", () => {
-	async function failingHop(internalKey?: Buffer) {
-		const dir = await mkdtemp(join(tmpdir(), "hop-fail-"));
-		const internalPath = join(dir, "i.sock");
-		const publicPath = join(dir, "p.sock");
-		// With a key, the host accepts and then drops the hop before its handshake; without one, nothing listens.
-		const internal = internalKey ? createServer((peer) => peer.destroy()) : undefined;
-		if (internal) await listen(internal, internalPath);
-		const admission = new HostAdmission({
-			protocolVersion: 1,
-			serverVersion: "fixture",
-			capabilities: [],
-			instanceId: "hop",
-		});
-		const clients = new ClientOccupancy(() => {});
-		const server = createPublicProxy({
-			internalSocket: internalPath,
-			...(internalKey ? { internalKey } : {}),
-			clients,
-			admission,
-			onDetach: () => {},
-		});
-		await listen(server, publicPath);
-		const sockets: Socket[] = [];
-		cleanups.push(async () => {
-			for (const socket of sockets) socket.destroy();
-			clients.destroyAll();
-			await new Promise<void>((resolve) => server.close(() => resolve()));
-			if (internal) await new Promise<void>((resolve) => internal.close(() => resolve()));
-			await rm(dir, { recursive: true, force: true });
-		});
-		const request = async (id: string): Promise<Record<string, unknown>> => {
-			const client = createConnection(publicPath);
-			sockets.push(client);
-			// A reset before any reply settles as `{ closed: true }`, so the old behavior fails on the assertion, not a timeout.
-			const reply = new Promise<Record<string, unknown>>((resolve) => {
-				attachJsonlLineReader(client, (line) => resolve(JSON.parse(line)));
-				client.once("close", () => resolve({ closed: true }));
-				client.once("error", () => resolve({ closed: true }));
-			});
-			await once(client, "connect");
-			client.write(`${JSON.stringify({ id, type: "open_session", cwd: dir })}\n`);
-			return reply;
-		};
-		return { request };
-	}
-
-	const refusal = (id: string) => ({
-		id,
-		command: "open_session",
-		success: false,
-		errorCode: "host_unavailable",
-		errorData: { reason: "internal_connection_failed" },
-	});
-	const supervisorLines = (): string[] =>
-		vi
-			.mocked(fs.writeSync)
-			.mock.calls.filter(([fd]) => fd === 2)
-			.map(([, text]) => String(text))
-			.filter((text) => text.startsWith("senpi rpc host supervisor:"));
+	const fixture = join(import.meta.dirname, "../fixtures/hop-failure-proxy.ts");
 
 	it.each([
-		["fails its handshake", Buffer.alloc(32, 7)],
-		["finds no listener (a hop without an internal key)", undefined],
-	])("refuses every client with host_unavailable and logs the outage once when the connection %s", async (_, key) => {
-		vi.mocked(fs.writeSync).mockClear();
-		const { request } = await failingHop(key);
+		["fails its handshake", "keyed"],
+		["finds no listener (a hop without an internal key)", "keyless"],
+	])("refuses every client with host_unavailable and logs the outage once when the connection %s", async (_, mode) => {
+		const child = spawn(process.execPath, [fixture, mode], { stdio: ["ignore", "pipe", "pipe"] });
+		let stdout = "";
+		let stderr = "";
+		child.stdout.on("data", (chunk) => (stdout += chunk));
+		child.stderr.on("data", (chunk) => (stderr += chunk));
+		const [code] = await once(child, "close");
 
-		expect(await request("open-1")).toMatchObject(refusal("open-1"));
-		expect(await request("open-2")).toMatchObject(refusal("open-2"));
-		const lines = supervisorLines();
+		expect(code).toBe(0);
+		const replies = stdout
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		expect(replies).toMatchObject(
+			["open-1", "open-2"].map((id) => ({
+				id,
+				command: "open_session",
+				success: false,
+				errorCode: "host_unavailable",
+				errorData: { reason: "internal_connection_failed" },
+			})),
+		);
+		const lines = stderr.split("\n").filter((line) => line.startsWith("senpi rpc host supervisor:"));
 		expect(lines).toHaveLength(1);
 		expect(lines[0]).toContain("connection to the host failed");
 	});
