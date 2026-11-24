@@ -20,7 +20,6 @@
  * (`host-launch-spec.ts`). The environment the daemon is spawned with is an allowlist of NAMES
  * (`host-daemon-env.ts`), never this process's whole environment.
  */
-import { writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { APP_NAME, getAgentDir } from "../config.ts";
 import { envValue } from "../core/brand.ts";
@@ -38,7 +37,7 @@ import {
 	runHostRequest,
 } from "../modes/rpc/host-runner.ts";
 import { type ParsedHostArgs, parseHostArgs } from "./host-command-args.ts";
-import { emit } from "./host-emit.ts";
+import { emit, writeAllSync } from "./host-emit.ts";
 import { presenterBootstrapStream } from "../modes/rpc/mcp-presenter-bootstrap.ts";
 
 export { parseHostArgs } from "./host-command-args.ts";
@@ -80,7 +79,7 @@ export async function runHostCommand(args: readonly string[]): Promise<number> {
 			presenterBootstrap,
 			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
 		}).finally(() => presenterBootstrap?.destroy());
-		if (parsed.subcommand === "shard-path" && !parsed.json) writeSync(1, `${String(outcome.payload.socket)}\n`);
+		if (parsed.subcommand === "shard-path" && !parsed.json) writeAllSync(1, `${String(outcome.payload.socket)}\n`);
 		else emit(outcome.payload);
 		return outcome.exitCode;
 	} catch (error: unknown) {
