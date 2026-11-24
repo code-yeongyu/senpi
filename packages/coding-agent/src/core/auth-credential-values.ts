@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import type { ApiKeyCredential, Credential } from "@earendil-works/pi-ai";
-import { projectSlot } from "@earendil-works/pi-ai/auth/pool/slots";
+import { type CredentialSlot, listSlots, projectSlot } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
 	type ConfigReference,
 	ConfigReferenceError,
@@ -139,4 +139,20 @@ export async function resolveStoredSlot(
 		...projected,
 		key: await resolveStoredReference(key, { field, authPath: slot.authPath, env: projected.env }),
 	};
+}
+
+/** A slot still holds sign-in material: tokens that are present and not marked signed out. */
+function slotHoldsSessionMaterial(slot: CredentialSlot): boolean {
+	return slot.signedOut !== true && Boolean(slot.access || slot.refresh);
+}
+
+/**
+ * Whether an OAuth credential holds no session material anywhere: the flat fields and every pooled
+ * account are cleared or signed out, exactly as `revokeStoredOAuth` leaves a provider after
+ * revoking it. Such an entry is a retained registration, not a sign-in — no request resolves
+ * against it — so a full provider logout drops it instead of leaving it listed as stored (senpi#6644).
+ */
+export function fullySignedOutOAuthCredential(credential: Credential | undefined): boolean {
+	if (credential?.type !== "oauth") return false;
+	return !listSlots(credential).some(slotHoldsSessionMaterial);
 }
