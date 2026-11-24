@@ -2,6 +2,7 @@
  * The registry's path claims: the in-process reservation set and the cross-generation claim
  * (`host-reservations.ts`) follow whatever file each entry's runtime is actually writing.
  */
+import { replacementLaunchProfile } from "../../core/opener-approvals.ts";
 import { SESSION_PATH_RETRY_AFTER_MS, type SessionPathReservations } from "./host-reservations.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { type RpcSessionEntry, RpcSessionRegistryError } from "./session-registry-types.ts";
@@ -121,7 +122,14 @@ export function syncRuntimeMetadata(
 			entry.reservationKey = currentKey;
 			entry.sessionPath = currentPath;
 		}
-		entry.durableSessionId = manager.getSessionId();
+		const sessionId = manager.getSessionId();
+		// A replacement is another session: the opener's approvals label stays with the one it opened, including in
+		// the profile a retained session is recorded and later reopened from.
+		if (entry.durableSessionId !== undefined && entry.durableSessionId !== sessionId) {
+			const profile = replacementLaunchProfile(entry.profile);
+			if (profile !== undefined) entry.profile = profile;
+		}
+		entry.durableSessionId = sessionId;
 		entry.cwd = manager.getCwd();
 	}
 }

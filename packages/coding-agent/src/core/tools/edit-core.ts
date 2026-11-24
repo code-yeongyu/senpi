@@ -13,6 +13,7 @@ import {
 } from "./edit-diff.ts";
 import { decodeUtf8, encodeUtf8 } from "./encoding.ts";
 import { fsErrorCode } from "./fs-error-code.ts";
+import { createSyntaxChecker, parseBreakWarning, type SyntaxChecker } from "./syntax-check.ts";
 import {
 	type FileMutationQueue,
 	inProcessFileMutationQueue,
@@ -123,6 +124,8 @@ export interface CoreEditToolOptions {
 	withMutationQueue?: FileMutationQueue;
 	/** The path `filesystemPolicy` judges. Default: the resolved path as is. */
 	canonicalizePath?: ToolPathCanonicalizer;
+	/** Parse check behind the parse-break warning. Default: JSON only. */
+	checkSyntax?: SyntaxChecker;
 }
 
 function prepareEditArguments(input: unknown): EditToolInput {
@@ -174,6 +177,7 @@ export function createCoreEditToolDefinition(
 	const resolvePath = options.resolvePath ?? resolvePosixToolPath;
 	const withMutationQueue = options.withMutationQueue ?? inProcessFileMutationQueue;
 	const canonicalizePath = options.canonicalizePath ?? lexicalCanonicalPath;
+	const checkSyntax = options.checkSyntax ?? createSyntaxChecker();
 	return {
 		name: "edit",
 		label: "edit",
@@ -244,13 +248,10 @@ export function createCoreEditToolDefinition(
 
 				const diffResult = generateDiffString(baseContent, newContent);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);
+				const warning = parseBreakWarning(checkSyntax, path, normalizedContent, newContent);
+				const summary = `Successfully replaced ${edits.length} block(s) in ${path}.`;
 				return {
-					content: [
-						{
-							type: "text",
-							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
-						},
-					],
+					content: [{ type: "text", text: warning === undefined ? summary : `${summary}\n\n${warning}` }],
 					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
 				};
 			});
