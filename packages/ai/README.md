@@ -81,6 +81,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **OpenRouter**
 - **Vercel AI Gateway**
 - **OpenGateway** (OpenAI-compatible multi-provider gateway, `owner/model` ids)
+- **100milionseek** (OpenAI-compatible daily-quota gateway)
 - **ZAI Coding Plan (Global)** (with separate China provider)
 - **MiniMax** (with separate China provider)
 - **Together AI**

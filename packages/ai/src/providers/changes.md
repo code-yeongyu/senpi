@@ -345,3 +345,21 @@ The catalog's private fetch helper creates the failure.
 ### Expected merge conflict zones
 
 - LOW: the Kimi K3 cost constants when upstream reprices Kimi models.
+## 2026-11-24 - 100milionseek fork-owned catalog
+
+### What changed
+
+- Added `100milionseek.ts` and `100milionseek.models.ts`, then registered the provider and its fork-owned catalog in `all.ts`.
+
+### Why
+
+- The OpenAI-compatible service is not in models.dev. Keeping its model row in a fork-owned catalog prevents a generation run from removing the provider's only shipped model.
+
+### Why an extension could not handle it
+
+- Builtin provider registration and fork-owned catalog aggregation run before user extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the `FORK_OWNED_CATALOGS` map and `builtinProviders()` array in `all.ts`.
+

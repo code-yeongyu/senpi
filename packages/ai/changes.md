@@ -2304,3 +2304,22 @@ Upstream manifest edits at the next sync.
 ### Expected merge conflict zones
 
 - None beyond the entry above.
+## 2026-11-24 - 100milionseek API-key provider
+
+### What changed
+
+- Added `packages/ai/src/providers/100milionseek.ts` and its hand-owned `100milionseek.models.ts` catalog with `deepseek-v4.1-flash-free`, the OpenAI-compatible endpoint, free-model pricing, limits, and explicit compatibility flags.
+- Registered the provider in `all.ts`, added its id to `KnownProvider`, mapped `100MILIONSEEK_API_KEY` in `env-api-keys.ts`, marked its shard as fork-owned, and added focused provider/catalog coverage.
+
+### Why
+
+- 100milionseek is not described by models.dev, so it could not appear in `/login` or the built-in provider list without a local custom provider. A built-in API-key factory makes repeated `/login 100milionseek` the supported multi-account path.
+
+### Why an extension could not handle it
+
+- The login target and built-in model catalog are owned by the core provider registry. A user extension cannot add a first-class `/login` provider target or ship a default catalog row.
+
+### Expected merge conflict zones
+
+- LOW: the built-in provider import/list in `src/providers/all.ts`, the `KnownProvider` union in `src/types.ts`, the first mapping row in `src/env-api-keys.ts`, and the supported-provider list in `README.md`.
+

@@ -71,6 +71,7 @@ function hasVertexAdcCredentials(env?: ProviderEnv): boolean {
 }
 
 const API_KEY_ENV_VARS: Readonly<Record<string, string>> = {
+	"100milionseek": "100MILIONSEEK_API_KEY",
 	"alibaba-token-plan": "ALIBABA_TOKEN_PLAN_API_KEY",
 	"ant-ling": "ANT_LING_API_KEY",
 	"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",
