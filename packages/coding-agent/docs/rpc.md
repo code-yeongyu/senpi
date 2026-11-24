@@ -130,6 +130,21 @@ Pause and resume wire events go only to connections attached to that session.
 `open_session.context.task_status`, updated through `set_session_context`, is the task owner's lifecycle label.
 Handover parks with `completed`, `cancelled`, `error`, `failed`, `lost`, or
 `interrupted` are removed with a stderr diagnostic instead of being reopened.
+`open_session.context.approvals = "refuse"` declares that no client answers this session's prompts (an agent
+opened it and nobody attaches to it): a tool call the permission preset would ask about is refused at once with a
+reason the model reads, never raised as a dialog. The engine records it (a `permission-approvals-refused` entry
+naming the session id) whenever such an open finds no record for that id yet, written and synced to the session file
+before the session starts; when that write or sync fails the open fails (a record already there is synced again
+first). A labelled open that attaches to a session this host already runs records it the same way before it answers,
+and the running session refuses from its next ask; a session running in a worker refuses such an attach with
+`session_path_in_use` (`reason: "approvals_label_unsupported"`). A labelled `claim_session` answers only once the
+record is in the claimed session's file. Every later open of the file refuses too,
+with or without the label, including a session first labelled after it already had messages. The label belongs to
+the session that open created or reopened: a session the connection later replaces it with (`new_session`,
+`switch_session`, `fork`, `clone`) does not inherit it, nor does the record a host keeps to reopen a retained
+session after a restart, and a fork or clone copies the entry under a new session id,
+where it does not apply, so the copy asks. Any other value, or no value, on a session that never carried it keeps
+the prompt.
 Other context keys remain opaque.
 
 Automatic turn admission is also bounded independently of the hold. On unattended resume,
@@ -2239,8 +2254,9 @@ which prints the bare socket path).
   `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
   1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
-  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive, unit }`, newest
-  ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, `unit`
+  this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, host_footprint_mb, sessions, current, alive, unit }`, newest
+  ordinal last: `rss_mb` is the RSS of that generation's process tree; `host_rss_mb` and `host_footprint_mb` are the RSS
+  and kernel memory footprint of its supervisor and host processes. An unavailable measurement is `null`. `unit` names
   the cgroup and unit its supervisor runs in (`{ cgroup, name, own }`, `null` off Linux or for an ended generation), and `sessions` counts the session files it
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
@@ -4195,7 +4211,7 @@ names a valid preset.
 
 `open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. A folder that exists but is not a directory (a file, a socket), named or taken from a header, refuses the open with `session_cwd_not_directory` (`errorData { cwd }`) before any session is opened or created. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
 
-An open that names no folder never falls back to the host's own for a session file it could not read: a file that exists but cannot be read, and a moved-path probe whose step timed out, refuse the open (`open_failed`) instead. A `cwd` of `null` means no folder was named, as the host's launch profile already reads it.
+An open that names no folder never falls back to the host's own for a session file it could not read: a file that exists but cannot be read refuses the open (`open_failed`) instead. When the moved-path probe's step times out (a loaded host or a slow mount), the host finds the file the way it then opens it and reads that file's header, rather than refusing the open. A `cwd` of `null` means no folder was named, as the host's launch profile already reads it.
 
 Hosts that do this advertise `open_session_header_cwd`. A host without it opens every `sessionPath` that names no `cwd` in its own folder, so a client that reopens a session by path on such a host must pass the folder.
 

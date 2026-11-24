@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
+import { createLocalSyntaxChecker } from "./bun-syntax-check.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { defaultToolMachine } from "./machine.ts";
@@ -42,6 +43,7 @@ export function createWriteToolDefinition(
 			withMutationQueue: withFileMutationQueue,
 			canonicalizePath: canonicalizeFilesystemPath,
 			readBaseline: readLocalWriteBaseline,
+			checkSyntax: createLocalSyntaxChecker(),
 		}),
 		...writeRenderers,
 	};
