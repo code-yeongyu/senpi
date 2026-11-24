@@ -139,14 +139,32 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 			return map.get(raw);
 		};
 		// An id seen under an id key is the same id wherever else it is embedded (`turnKey: "1:<entry id>"`): it gets the
-		// same token there. Tokens are numbered by first keyed occurrence. Only generated-looking values (a digit, at least
-		// EMBEDDED_ID_MIN characters) are searched for in text, so a word-like id never masks prose.
+		// same token there. Tokens are numbered by first keyed occurrence. An id of at least EMBEDDED_ID_MIN characters
+		// with a digit is replaced anywhere in text. One without a digit (a random hex entry id can have none: `bfcdbaee`)
+		// is replaced only as a whole token (no letter or digit on either side) of a structured value, a string without
+		// whitespace, so a word-like id never masks prose.
 		for (const raw of keyedIds) token("id", raw);
-		const embedded = [...maps.id.keys()]
-			.filter((raw) => raw.length >= EMBEDDED_ID_MIN && /\d/.test(raw))
+		const searched = [...maps.id.keys()]
+			.filter((raw) => raw.length >= EMBEDDED_ID_MIN)
 			.sort((a, b) => b.length - a.length);
-		const replaceIds = (text) =>
-			embedded.reduce((out, raw) => (out.includes(raw) ? out.split(raw).join(maps.id.get(raw)) : out), text);
+		const embedded = searched.filter((raw) => /\d/.test(raw));
+		const digitless = searched.filter((raw) => !/\d/.test(raw));
+		const digitlessToken =
+			digitless.length === 0
+				? undefined
+				: new RegExp(
+						`(?<![\\p{L}\\p{N}])(?:${digitless.map((raw) => raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})(?![\\p{L}\\p{N}])`,
+						"gu",
+					);
+		const replaceIds = (text) => {
+			const out = embedded.reduce(
+				(acc, raw) => (acc.includes(raw) ? acc.split(raw).join(maps.id.get(raw)) : acc),
+				text,
+			);
+			return digitlessToken === undefined || /\s/.test(out)
+				? out
+				: out.replace(digitlessToken, (raw) => maps.id.get(raw));
+		};
 		return walkValue(value, (_epoch, namespace) => `<ts:${namespace}:${rank(namespace)}>`, token, replaceIds);
 	};
 
