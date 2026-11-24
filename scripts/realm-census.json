@@ -3378,6 +3378,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/dynamic-prompt/handoff.ts#REPLY_LANGUAGE_RULE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts#ROUTE_RULES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -5614,6 +5618,10 @@
 		"packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts#hostIdentity": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts#kernelBootRecords": {
+			"class": "per-copy-safe",
+			"reason": "memoized kernel probe; each copy reads the same host boot record, and readers refresh before trusting a boot mismatch"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/terminal/pty.lazy.ts#loaded": {
 			"class": "per-copy-safe",
@@ -9936,6 +9944,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/machine-ops/src/files/automount-trigger.ts#active": {
+			"class": "per-copy-safe",
+			"reason": "trigger lookup holding a derived-value cache of the mount table, plus the child-resolver options (swapped only by tests); a split only re-reads the table"
+		},
 		"packages/machine-ops/src/files/bounded-realpath.ts#RESOLUTION_TIMED_OUT": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
@@ -11617,6 +11629,26 @@
 		"packages/coding-agent/src/extensions/html-render/image-references.ts#URL_ATTRIBUTES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#PREDECESSOR_DISCOVERY_TIMEOUT_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#ROUTE_GONE_CODES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-routes.ts#ROUTE_GONE_ERRORS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-wire.ts#ROW_STATES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#PREDECESSOR_REQUEST_TIMEOUT_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
 		}
 	}
 }

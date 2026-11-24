@@ -1,3 +1,123 @@
+## 2026-11-22 - A predecessor that exits inside the route handshake is a gone route (#7365, senpi#7202)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/predecessor-peer.ts`: `routeEndpointGone(cause)` classifies a predecessor route endpoint that ended before it proved itself: `ENOENT`, `ECONNREFUSED`, `ECONNRESET` or `EPIPE`.
+- `packages/coding-agent/src/modes/rpc/predecessor-attach.ts`: `attach()` answers `generation_route_gone` for every such failure, not only `ENOENT` and `ECONNREFUSED`, so a routed open goes back to the local claim path (`RETRY_ROUTED_OPEN`, bounded by the close grace window) instead of answering the raw socket error.
+- `packages/coding-agent/src/modes/rpc/predecessor-discovery.ts`: discovery uses the same classification instead of its own `GONE_CODES` copy.
+- `scripts/realm-census.json`: the census entry follows the constant to `predecessor-peer.ts#ROUTE_GONE_CODES`.
+
+### Why
+
+- senpi#7202: a client reopening its parked session right after a handover can reach the successor while the predecessor's strict-transfer claim still stands. The successor routes the open to the predecessor's route socket. A predecessor that exits during that handshake resets the connection (`read ECONNRESET` with the successor's frame unread, `write EPIPE` before it is written), and the open answered `{"success":false,"error":"read ECONNRESET"}`. Only the handshake was sent, so nothing reached the predecessor and the route is gone. Discovery already treated both codes that way.
+
+### Why an extension could not handle it
+
+- Generation routing between RPC host generations is host-internal; no extension reaches it.
+
+### Expected merge conflict zones
+
+- LOW: the catch of `attach()` in `predecessor-attach.ts`, `unanswered()` and the imports in `predecessor-discovery.ts`, and the one census key.
+
+## 2026-11-22 - Terminal crash records never recreate a removed endpoint dir (senpi#5090)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-crash-record.ts`: `recordHostCrash` and `acquireRecordLock` no longer `mkdirSync` the daemon dir; both skip when the dir is absent, so a shutdown/crash record lands only in existing daemon storage and a deleted endpoint stays deleted.
+
+### Why
+
+- A supervised RPC host outlived the task harness's sandbox cleanup and its idle-stop terminal record (`engine_stop`/`idle`/`stopIntent=false`, the supervisor as sender) recreated the cleaned agent tree with `crashes.lock` plus `crashes.jsonl` inside it (senpi#5090). Storage removal is final; the record writer annotates state, it never creates it. The absent-dir lock attempt also burned the lock's whole retry budget on a SQLite open that cannot succeed.
+
+### Why an extension could not handle it
+
+- The terminal record is written by the lifecycle supervisor's exit path on its way down; no extension runs there, and the recursive directory creation lived inside the record writer itself.
+
+### Expected merge conflict zones
+
+- LOW: `host-crash-record.ts` record/lock helpers; MEDIUM: any parallel change to the same file's retry or lock budget.
+
+## 2026-11-12 - A multi-session switch takes the replacement's hold first; the resident writer reads the boot instant asynchronously (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-registry-switch.ts`: the replacement runtime's hold is taken with `holdRuntimeSession` and passed into its constructor BEFORE the switched runtime releases its own, as before, so the shared holder record never disappears in between; a throwing construction releases the new hold.
+- `packages/coding-agent/src/modes/rpc/host-handover-resident-writer.ts`: `currentResidentWriter` is async, and the handover verdict closure resolves the boot instant before it reads or records a verdict; a writer that looks like another boot is checked against a fresh read first.
+- `packages/coding-agent/src/modes/rpc/session-router-residency.ts`: awaits `currentResidentWriter()` while retaining the separate `live` flag on handover records.
+
+### Why
+
+- The boot instant is read asynchronously (senpi#3152), and the session hold moved out of the runtime's constructor.
+
+### Why an extension could not handle it
+
+- The RPC registry and handover are host internals.
+
+### Expected merge conflict zones
+
+- LOW: `createEntrySwitchSession` and `currentResidentWriter`.
+
+## 2026-11-20 - A generation handoff never runs a session twice, hands every session over at its next turn boundary, and alarms when overdue (senpi#7098)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: a claim this host publishes carries `strict_transfer: true` and STANDS while its owner runs, attached or not; the owner removes it when the session parks or closes. A claim without the flag keeps the #1893 rule (a superseded, detached owner is reclaimable).
+- `packages/coding-agent/src/modes/rpc/session-drain-hold.ts` (`holdUnattendedTurns` -> `holdDrainedTurns`), `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts`: each drain pass holds the automatic turns of every open session, attached ones too, so each session parks at its next turn boundary and the drained generation exits.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts` (`SupervisorDrain` `overdue`, `recordDrainOverdue`), `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-crash-record.ts`: every handoff-grace expiry while the generation still drains appends `{ kind: "rpc-host-drain-overdue", generation, drainingForMs }` to `crashes.jsonl` and asks for another drain pass; `isHostCrash` counts only terminal records.
+- `packages/coding-agent/src/modes/rpc/predecessor-endpoint.ts`, `predecessor-peer.ts`, `predecessor-routes.ts`, `predecessor-route-table.ts`, `predecessor-discovery.ts`, `predecessor-attach.ts`, `predecessor-switch.ts`, `predecessor-wire.ts` (new), `host-handover-parked.ts` (`isHandoverParkedEntry` exported), `session-router-open.ts`, `session-router-routing.ts`, `session-registry*.ts`, `multi-session-host.ts` and the attachment/read paths: a successor that meets a standing strict-transfer claim of a live predecessor attaches to that session on the predecessor's authenticated private endpoint and forwards commands and records under its own handle; when the predecessor parks it, the successor reopens the park under the same handle (a routed open waits for that switch at most the close grace window). `list_sessions` names the `generation` and `hostInstanceId` that holds each routed row. The listing asks the predecessor with a deadline (`PREDECESSOR_DISCOVERY_TIMEOUT_MS`) and treats a predecessor that exits or stalls mid-answer as contributing no routed rows; rows and parks it sends are parsed, not cast. A command waiting for the switch answers `generation_switch_pending` after the close grace window, or the reason the switch could not finish. Every other predecessor request is bounded too (`PREDECESSOR_REQUEST_TIMEOUT_MS`, the host's stall threshold): a late answer is followed by a liveness probe, and a predecessor that answers neither is cut with `predecessor_request_timeout`; a narrowing declaration it does not install cuts that copy and is still acknowledged.
+
+### Why
+
+- During a handoff the predecessor keeps every session still mid-turn, and a detached retained lane runs its turns with no client attached. Reading `attached: false` as "parked" let a reopen on the successor build a second runtime over a file the predecessor was still writing (forked transcript, deliveries admitted by two processes, `unknown_session` and steer timeouts through the public socket). Attached sessions kept chaining automatic turns, so the predecessor never exited, and its grace expiry left nothing on record.
+
+### Why an extension could not handle it
+
+- Path claims, the drain, the supervisor's grace timer, socket authentication and routing handles are the RPC host's own.
+
+### Expected merge conflict zones
+
+- MEDIUM: the shared host's socket setup in `multi-session-host.ts` and the session router's open, close and listing paths. LOW: `standingOwner()` in `host-reservations.ts`, `SupervisorDrain.drain()`.
+
+## 2026-11-20 - A host's supervisor runs in its own systemd scope, never its caller's unit (senpi#7099)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-unit-placement.ts` (new): `placeHostLaunch` starts a generation's supervisor as `systemd-run --user --scope --unit=senpi-host-<instanceId>.scope --collect --quiet -- <argv>` when `systemctl --user is-system-running` answers for the spawn environment, `systemd-run` is on its `PATH` and a throwaway probe scope starts (a manager refusing transient scopes keeps the unplaced spawn); otherwise the launch is unchanged. `readHostUnit` reads `/proc/<pid>/cgroup` into `{ cgroup, name, own }`.
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the initial start and a handoff's successor spawn through `placeHostLaunch` with the environment they already built.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-status-all.ts`: each generation row carries `unit`.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: `host ensure` and `host handoff` print `unit`, plus `lifetime_tied_to` naming the unit whose stop would end the host when it is not the generation's own.
+
+### Why
+
+- A supervisor is setsid'd but stays in its caller's cgroup on Linux. Started from a transient unit (a terminal's per-terminal service, an ssh scope, a CI job), it was SIGTERMed when that unit stopped: crash record `{ kind: "rpc-host", code: 143, detection: "supervisor", stopIntent: false }` and every session lost. `systemd-run --scope` execs the argv in place, so the pid and every inherited descriptor stay as they were; no live process is moved between cgroups.
+
+### Why an extension could not handle it
+
+- How the host supervisor is spawned is owned by the RPC host's ensure and handoff paths.
+
+### Expected merge conflict zones
+
+- LOW: the spawn call in `startHost()` and `startSuccessor()`, the `generations` reads in `host-status.ts` / `host-status-all.ts`, and the ensure/handoff payloads in `host-runner.ts`.
+
+## 2026-11-20 - Session status snapshots report last known activity (senpi#6415)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-status-source.ts` and `packages/coding-agent/src/modes/rpc/session-status.ts`: expose the registry's last activity time to the status stream for both in-process and worker sessions.
+- `packages/coding-agent/src/modes/rpc/session-status-stream.ts`: when no status change has been recorded, snapshot rows use that activity time if known and otherwise keep the subscription-time fallback. A recorded change still takes precedence.
+
+### Why
+
+- A subscription could make an idle session appear freshly active to remote session lists.
+
+### Why an extension could not handle it
+
+- The stamp is built inside the host's session status stream.
+
+### Expected merge conflict zones
+
+- LOW: the registry entry projection and the snapshot timestamp fallback.
+
 ## 2026-11-16 - get_auth_providers says when the sign-in store is busy (senpi#6841)
 
 ### What changed

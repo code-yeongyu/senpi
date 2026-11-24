@@ -12,6 +12,90 @@
 
 ### Removed
 
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+- `downgradeUnsupportedImages` is exported from `api/transform-messages` and takes `imageDescriptionTool`: with it, the placeholder that replaces an image for a model without image input names a tool that can describe the image ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opencode`, `opencode-go`, `openrouter`).
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 2 models.
+- A Claude OAuth token (`sk-ant-oat...`) given as an API key to an `anthropic-messages` model is no longer refused with `ClaudeOAuthTokenRefusedError`; it is sent as a plain `x-api-key` to the model's `baseUrl` like any other key. `ClaudeOAuthTokenRefusedError` and `isClaudeOAuthTokenRefusedError` are removed ([#7392](https://github.com/code-yeongyu/senpi/pull/7392))
+
+### Fixed
+
+### Removed
+
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+### Removed
+
+## [2026.11.20] - 2026-11-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Bedrock Claude models' on-demand routes carry their own price band (e.g. Haiku 5.5 $0.11/$0.55 per MTok) instead of the global inference band, in the bundled model catalog ([#7122](https://github.com/code-yeongyu/senpi/pull/7122))
+
+### Removed
+
 ## [2026.11.19-5] - 2026-11-19
 
 ### Breaking Changes

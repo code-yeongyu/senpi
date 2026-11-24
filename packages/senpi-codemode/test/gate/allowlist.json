@@ -1,6 +1,15 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#7201": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/js-cell-parse-message.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/js-cell-parse-message.ts",
+				"legacyContracts/test/eval-js-parse-diagnostic.test.ts/locates malformed shell interpolation in the submitted JS cell without running it"
+			],
+			"reason": "senpi#7201 (8cd001c88b, merged as e1c67a3fef): a JS cell that fails to parse now reports the location in the submitted cell. The new module tool/js-cell-parse-message.ts enters the extension and first-kernel import scopes through tool/run-eval-cell.ts; its only import is @babel/parser, which both scopes already load, so no host runtime module enters either scope. The contract row is the new test that pins the diagnostic for malformed shell interpolation without running the cell. Main's codemode-gate went red on these as unreviewed additions after the merge (#7205); no existing cell changed.",
+			"changes": []
+		},
 		"senpi#6978": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/session-spawn-attestation.ts",

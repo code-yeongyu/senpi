@@ -18,6 +18,8 @@ import { SOCKET_HANDSHAKE_TIMEOUT_MS } from "./socket-transport.ts";
 export interface RpcKeyOptions {
 	/** Credential lookup only; never selects the session's configuration profile. */
 	readonly keyRoot?: string;
+	/** Generation-private routes must prove this exact launch; legacy grace is not a route credential. */
+	readonly expectedLaunchId?: string;
 }
 
 const keyRoots = new AsyncLocalStorage<string>();
@@ -63,6 +65,7 @@ export async function connectAuthenticatedRpcSocket(
 				first,
 				rpcKeyRoot(options),
 				Math.max(1, deadline - Date.now()),
+				options.expectedLaunchId,
 			);
 			socket.off("error", ignoreLateError);
 			return { socket, protocol };
@@ -83,6 +86,7 @@ async function authenticate(
 	first: Readonly<Record<string, unknown>>,
 	root: string,
 	timeoutMs: number,
+	expectedLaunchId?: string,
 ): Promise<Readonly<Record<string, unknown>>> {
 	let pending:
 		| {
@@ -145,6 +149,8 @@ async function authenticate(
 		const nonce = randomBytes(32).toString("hex");
 		const response = await exchange({ ...first, auth: { client_nonce: nonce } });
 		const data = authRecord(response.data);
+		if (expectedLaunchId !== undefined && authRecord(data?.auth)?.launch_id !== expectedLaunchId)
+			throw new RpcEndpointAuthError("host_identity_unproven", path);
 		if (data?.auth === undefined) return response;
 		const auth = authRecord(data.auth);
 		if (
@@ -157,6 +163,7 @@ async function authenticate(
 		const record = await readRpcKeyRecord(root, auth.launch_id);
 		if (socket.destroyed) throw new Error(`RPC authentication timed out on ${path}`);
 		if (record === undefined) {
+			if (expectedLaunchId !== undefined) throw new RpcEndpointAuthError("host_identity_unproven", path);
 			process.stderr.write(
 				`senpi rpc client: no key record for launch ${auth.launch_id} under ${root}; continuing unauthenticated (refused from the next release; set SENPI_RPC_KEY_ROOT to the host's agent dir)\n`,
 			);

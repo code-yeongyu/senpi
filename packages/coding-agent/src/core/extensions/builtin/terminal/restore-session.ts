@@ -173,7 +173,7 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 		// A corrupt manifest is left as it was (fail closed); a readable one is rewritten to the truth.
 		if (restoredFromReadableManifest) await writer.persistRestored();
 		state.ensurePersistence = null;
-		const self = { pid: process.pid, bootAtMs: processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
+		const self = { pid: process.pid, bootAtMs: await processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
 		// Housekeeping only: a failed sweep leaves the files for the next start to reclaim.
 		void sweepTerminalStateDir(dir, { self, keep: new Set([`${encoded}.lease`, `${encoded}.json`]) }).catch(
 			() => undefined,

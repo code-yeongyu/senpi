@@ -52,9 +52,10 @@ test("shared setup preserves the toolchain pins and installs and builds once", (
 test("all original commands and execution guards remain with WebView last", () => {
 	assert.deepEqual(suites.map((step) => step.id),
 		["process", "rpc", "terminal_pty", "terminal_extension", "inspector", "webview"]);
+	// Keep the macOS suite budgets from #3939 until #7192; the Linux/Windows caps can change independently.
+	const macosSuiteCaps = { process: 12, rpc: 15, terminal_pty: 15, terminal_extension: 15, inspector: 20, webview: 12 };
 	for (const name of originals) {
 		const original = jobs[name];
-		let partBudget = 0;
 		for (const step of original.steps.filter((candidate) =>
 			/run-tests\.mjs|npm run test/.test(candidate.run ?? ""))) {
 			const replacement = suites.find((candidate) => candidate.name === step.name);
@@ -62,14 +63,9 @@ test("all original commands and execution guards remain with WebView last", () =
 			assert.equal(replacement.run, step.run, step.name);
 			assert.equal(replacement["working-directory"], step["working-directory"], step.name);
 			assert.deepEqual(replacement.env, step.env, step.name);
-			if (step["timeout-minutes"] !== undefined) {
-				assert.equal(replacement["timeout-minutes"], step["timeout-minutes"], `${step.name} keeps its own old step cap`);
-			}
-			assert.ok(replacement["timeout-minutes"] > 0, step.name);
-			partBudget += replacement["timeout-minutes"];
+			assert.equal(replacement["timeout-minutes"], macosSuiteCaps[replacement.id], `${step.name} keeps its macOS cap`);
 			assert.equal(replacement["continue-on-error"], undefined, step.name);
 		}
-		assert.ok(partBudget <= original["timeout-minutes"], `${name} suite steps stay within its old job cap`);
 		for (const step of original.steps.filter((candidate) =>
 			/Require the .*executed|orphaned kernel|readiness log|exit-event compiler/.test(candidate.name))) {
 			assert.ok(combined.steps.some((candidate) => candidate.name === step.name && candidate.run === step.run), step.name);

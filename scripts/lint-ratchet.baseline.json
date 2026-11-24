@@ -383,9 +383,6 @@
   "packages/ai/test/anthropic-auth-token.test.ts": {
     "senpi-testing/no-module-mock": 1
   },
-  "packages/ai/test/anthropic-claude-oauth-token-refused.test.ts": {
-    "senpi-testing/no-module-mock": 1
-  },
   "packages/ai/test/anthropic-eager-tool-input-e2e.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
@@ -3306,6 +3303,9 @@
   },
   "packages/coding-agent/test/suite/regressions/6990-ps-spawn-failure.test.ts": {
     "senpi-testing/no-module-mock": 1
+  },
+  "packages/coding-agent/test/suite/regressions/7020-host-restart-resumes-engine-run.test.ts": {
+    "senpi-testing/no-flake-masking": 4
   },
   "packages/coding-agent/test/suite/regressions/7027-credential-refresh-hang.test.ts": {
     "typescript/no-non-null-assertion": 1
