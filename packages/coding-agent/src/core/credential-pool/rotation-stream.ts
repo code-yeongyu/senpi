@@ -9,7 +9,7 @@ import {
 } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import type { SdkErrorKind } from "../extensions/builtin/anthropic-subscription/errors.ts";
 import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
-import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
+import { AUTH_BLOCK_REPROBE_MS, hasRefusedGrant } from "./auth-reprobe.ts";
 import { appendCredentialBlockLog, redactBlockExcerpt } from "./block-log.ts";
 import { type CredentialBlock, classifyCredentialFailure, credentialFailureText } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
@@ -86,6 +86,9 @@ function blockPatch(
 	modelId?: string,
 	lineage: readonly string[] = [],
 ): Omit<CredentialSlotState, "stateVersion"> {
+	// An already-running model request can finish after a sibling request lost the
+	// refresh grant. Its verdict cannot repair that same grant.
+	if (sameLineage(current, credentialRevision, lineage) && hasRefusedGrant(current)) return current;
 	if (block.reason === "rate_limit" && block.modelFamily !== undefined && modelId !== undefined) {
 		const blockedUntil = now + Math.min(policy?.cooldownCapMs ?? block.cooldownMs, block.cooldownMs);
 		return modelBlockPatch(block.modelFamily, modelId, blockedUntil, current, now, credentialRevision, lineage);
@@ -116,7 +119,11 @@ function blockPatch(
 		};
 	}
 	if (block.reason === "auth_error")
-		return { ...base, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error" };
+		return {
+			...base,
+			blockReason: "auth_error",
+			...(block.refusedGrant ? { refusedGrant: true } : { blockedUntil: now + AUTH_BLOCK_REPROBE_MS }),
+		};
 	return { ...base, blockReason: block.reason };
 }
 
@@ -246,6 +253,7 @@ export function streamWithCredentialRotation(
 			const written = await writeHealthUnlessStoreBusy(`success on ${slot.name}`, () =>
 				sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) => {
 					if (!current) return undefined;
+					if (hasRefusedGrant(current) && current.credentialRevision === slot.materialRevision) return current;
 					// Serving one model says nothing about another model's quota:
 					// only the blocks on the model that just served are lifted.
 					const modelBlocks = pruneModelBlocks(current.modelBlocks, now(), options.modelId);
@@ -261,6 +269,7 @@ export function streamWithCredentialRotation(
 						lease: undefined,
 						blockedUntil: undefined,
 						blockReason: undefined,
+						refusedGrant: undefined,
 						usageLimit: undefined,
 						// A healthy answer ends the failure run; a later limit starts its backoff afresh (senpi#3771).
 						failureCount: undefined,
