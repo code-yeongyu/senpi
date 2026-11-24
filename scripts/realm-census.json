@@ -3058,6 +3058,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/auth-storage.ts#localAsyncAuthLocks": {
+			"class": "realm-registry",
+			"reason": "local-async-auth-locks/v1: the async auth-store lock holders of every copy are registered here, so a synchronous writer in any copy sees that its own realm holds the lock and fails fast instead of spinning on a lock only its blocked event loop can release (design 3.2, 3.3)"
+		},
 		"packages/coding-agent/src/core/auth-storage.ts#sharedAuthFileReadState": {
 			"class": "per-copy-safe",
 			"reason": "parsed-credential read cache; must not sit behind a documented key, and file reads re-validate (design 3.2)"
