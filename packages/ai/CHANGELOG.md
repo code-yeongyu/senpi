@@ -1,12 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.24] - 2026-11-24
 
 ### Breaking Changes
 
 ### Added
 
 ### Changed
+
+- The OpenGateway model catalog now matches the gateway: it removes `openai/gpt-4-turbo`, `openai/o1`, `openai/o3-mini`, `openai/o4-mini`; updates limits, prices, or capabilities for 2 models.
 
 ### Fixed
 

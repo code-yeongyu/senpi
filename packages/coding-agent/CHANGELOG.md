@@ -1,14 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.24] - 2026-11-24
 
 ### Breaking Changes
 
 ### Added
 
+- `edit` and `write` results warn when a JS, TS or JSON file that parsed before the call no longer parses after it (or a newly written one does not parse), naming the first syntax error, with its line and column where the position is confirmed (for JSON, always the strict `JSON.parse` error; CR, CRLF and LF each count as one line break); `.mjs`/`.cjs`/`.mts`/`.cts` are checked without JSX while `.js` accepts it; the change is still applied, and a failing syntax checker never fails the call ([#7256](https://github.com/code-yeongyu/senpi/pull/7256))
+
 ### Changed
 
 ### Fixed
+
+- Host status reports the measured memory footprint for each generation ([#7210](https://github.com/code-yeongyu/senpi/pull/7210)).
+- A session opened with `open_session.context.approvals = "refuse"` (an agent-created thread nobody attaches to) refuses a tool call its permission preset would ask about, with a reason the model reads, instead of waiting forever on a dialog no client answers. The engine writes and syncs a record of it to the session file before the session starts (the open fails if it cannot), so every later open of that file keeps refusing; a session the connection later replaces it with (`new_session`, `switch_session`, `fork`, `clone`) starts without it, and a labelled open that attaches to a running session or claims a parked one records it before it answers ([#7270](https://github.com/code-yeongyu/senpi/pull/7270))
+- An `open_session` that names only a session file no longer fails with "a filesystem step did not answer in time" on a loaded host: when the moved-path probe times out, the file is found the way the host then opens it ([#7389](https://github.com/code-yeongyu/senpi/pull/7389))
 
 ### Removed
 
