@@ -1,6 +1,14 @@
 import { formatThrownValue } from "./diagnostics.ts";
 
-export type ModelsErrorCode = "model_source" | "model_validation" | "provider" | "stream" | "auth" | "oauth";
+/** `stale_login`: a sign-out named a `loginId` the stored sign-in no longer carries; nothing changed (senpi#7406). */
+export type ModelsErrorCode =
+	| "model_source"
+	| "model_validation"
+	| "provider"
+	| "stream"
+	| "auth"
+	| "oauth"
+	| "stale_login";
 
 export class ModelsError extends Error {
 	readonly code: ModelsErrorCode;

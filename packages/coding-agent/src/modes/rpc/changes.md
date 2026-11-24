@@ -1,3 +1,60 @@
+## 2026-11-22 - Host generation rows retain the measured footprint (senpi#3707)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts` reports `host_footprint_mb` beside each generation's RSS fields. Ended generations report `null`.
+
+### Why
+
+- Status already paid for the kernel measurement but discarded it when constructing the row.
+
+### Why an extension could not handle it
+
+- The host CLI projects generation records without a session extension.
+
+### Expected merge conflict zones
+
+- The generation row type and its live/dead memory projection.
+
+## 2026-11-22 - A predecessor that exits inside the route handshake is a gone route (#7365, senpi#7202)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/predecessor-peer.ts`: `routeEndpointGone(cause)` classifies a predecessor route endpoint that ended before it proved itself: `ENOENT`, `ECONNREFUSED`, `ECONNRESET` or `EPIPE`.
+- `packages/coding-agent/src/modes/rpc/predecessor-attach.ts`: `attach()` answers `generation_route_gone` for every such failure, not only `ENOENT` and `ECONNREFUSED`, so a routed open goes back to the local claim path (`RETRY_ROUTED_OPEN`, bounded by the close grace window) instead of answering the raw socket error.
+- `packages/coding-agent/src/modes/rpc/predecessor-discovery.ts`: discovery uses the same classification instead of its own `GONE_CODES` copy.
+- `scripts/realm-census.json`: the census entry follows the constant to `predecessor-peer.ts#ROUTE_GONE_CODES`.
+
+### Why
+
+- senpi#7202: a client reopening its parked session right after a handover can reach the successor while the predecessor's strict-transfer claim still stands. The successor routes the open to the predecessor's route socket. A predecessor that exits during that handshake resets the connection (`read ECONNRESET` with the successor's frame unread, `write EPIPE` before it is written), and the open answered `{"success":false,"error":"read ECONNRESET"}`. Only the handshake was sent, so nothing reached the predecessor and the route is gone. Discovery already treated both codes that way.
+
+### Why an extension could not handle it
+
+- Generation routing between RPC host generations is host-internal; no extension reaches it.
+
+### Expected merge conflict zones
+
+- LOW: the catch of `attach()` in `predecessor-attach.ts`, `unanswered()` and the imports in `predecessor-discovery.ts`, and the one census key.
+
+## 2026-11-22 - Terminal crash records never recreate a removed endpoint dir (senpi#5090)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-crash-record.ts`: `recordHostCrash` and `acquireRecordLock` no longer `mkdirSync` the daemon dir; both skip when the dir is absent, so a shutdown/crash record lands only in existing daemon storage and a deleted endpoint stays deleted.
+
+### Why
+
+- A supervised RPC host outlived the task harness's sandbox cleanup and its idle-stop terminal record (`engine_stop`/`idle`/`stopIntent=false`, the supervisor as sender) recreated the cleaned agent tree with `crashes.lock` plus `crashes.jsonl` inside it (senpi#5090). Storage removal is final; the record writer annotates state, it never creates it. The absent-dir lock attempt also burned the lock's whole retry budget on a SQLite open that cannot succeed.
+
+### Why an extension could not handle it
+
+- The terminal record is written by the lifecycle supervisor's exit path on its way down; no extension runs there, and the recursive directory creation lived inside the record writer itself.
+
+### Expected merge conflict zones
+
+- LOW: `host-crash-record.ts` record/lock helpers; MEDIUM: any parallel change to the same file's retry or lock budget.
+
 ## 2026-11-12 - A multi-session switch takes the replacement's hold first; the resident writer reads the boot instant asynchronously (senpi#3152)
 
 ### What changed
