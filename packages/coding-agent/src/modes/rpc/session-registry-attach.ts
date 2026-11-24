@@ -7,6 +7,7 @@
  * {reason: "open_in_progress", retry_after_ms} naming an attached current owner, and the in-flight
  * open keeps running untouched.
  */
+import { recordOpenerRefusal, refusesApprovals } from "../../core/opener-approvals.ts";
 import { clientNamedPreset, withClientPreset } from "../../core/permission-mode.ts";
 import type { SessionPathOwner, SessionPathReservations } from "./host-reservations.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
@@ -120,6 +121,7 @@ export async function attachToOpenSession(
 			attached: true,
 		};
 	}
+	if (refusesApprovals(profile.sessionContext)) await recordAttachRefusal(entry);
 	const wasParked = entry.retainOnDisconnect === true && entry.attachments === 0;
 	entry.attachments += 1;
 	entry.detachedAt = undefined;
@@ -165,4 +167,22 @@ export function applyAttachedProfile(entry: RpcSessionEntry, profile: RpcSession
 		entry.profile = frozenProfile(withClientPreset(entry.profile, namedPreset));
 		entry.runtime?.setPermissionPreset(namedPreset);
 	}
+}
+
+/**
+ * A labelled open of a session this host already runs declares nobody answers it from now on: the refusal is written
+ * and synced before the attach is answered, and the live permission system reads it at its next ask. A session
+ * running in a worker cannot be reached from here, so such an attach is refused instead of answered without it.
+ */
+async function recordAttachRefusal(entry: RpcSessionEntry): Promise<void> {
+	const manager = entry.runtime?.session.sessionManager;
+	if (manager === undefined)
+		throw new RpcSessionRegistryError(
+			"session_path_in_use",
+			"a labelled open cannot attach to a session in a worker",
+			{
+				reason: "approvals_label_unsupported",
+			},
+		);
+	await recordOpenerRefusal(manager);
 }

@@ -60,27 +60,37 @@ function refreshCursorForTest(refreshToken: string): Promise<OAuthCredential> {
 	);
 }
 
-/**
- * Fakes only what the flow uses (`setTimeout`/`clearTimeout` for the poll
- * sleep, `Date` for expiry math) so `setImmediate` stays real and
- * {@link flushUntilPollScheduled} can yield genuine event-loop turns.
- */
+/** Fakes only what the flow uses: `setTimeout`/`clearTimeout` for the poll sleep, `Date` for expiry math. */
 function useCursorFakeTimers(): void {
 	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 }
 
 /**
- * login() awaits real (threadpool) crypto for PKCE before scheduling its
- * first poll sleep; each real event-loop turn lets that crypto complete, so
- * subsequent fake-timer advances are deterministic even when the whole suite
- * runs in parallel.
+ * Starts a login and exposes when its first poll sleep is scheduled. login()
+ * awaits real (threadpool) PKCE crypto, then notifies `progress` and enters
+ * the poll loop in the same synchronous step, so the `progress` event
+ * (subscribed before login starts) marks the poll timer as armed however long
+ * the crypto took. A login that settles first fails the wait instead of hanging.
  */
-async function flushUntilPollScheduled(): Promise<void> {
-	for (let i = 0; i < 2000; i++) {
-		if (vi.getTimerCount() > 0) return;
-		await new Promise((resolve) => setImmediate(resolve));
-	}
-	throw new Error("Login never scheduled its first poll");
+function startCursorLogin(options?: { signal?: AbortSignal; onEvent?: (event: AuthEvent) => void }): {
+	login: Promise<OAuthCredential>;
+	firstPollScheduled: Promise<void>;
+} {
+	const progress = Promise.withResolvers<void>();
+	const login = loginCursorForTest({
+		signal: options?.signal,
+		onEvent: (event) => {
+			options?.onEvent?.(event);
+			if (event.type === "progress") progress.resolve();
+		},
+	});
+	const settledEarly = login.then(() => {
+		throw new Error("Login settled before scheduling its first poll");
+	});
+	const firstPollScheduled = Promise.race([progress.promise, settledEarly]).then(() => {
+		expect(vi.getTimerCount()).toBe(1);
+	});
+	return { login, firstPollScheduled };
 }
 
 describe("Cursor OAuth login", () => {
@@ -117,9 +127,9 @@ describe("Cursor OAuth login", () => {
 		);
 
 		const events: AuthEvent[] = [];
-		const loginPromise = loginCursorForTest({ onEvent: (event) => events.push(event) });
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin({ onEvent: (event) => events.push(event) });
 
-		await flushUntilPollScheduled();
+		await firstPollScheduled;
 		const authUrlEvent = events.find((event) => event.type === "auth_url");
 		if (authUrlEvent?.type !== "auth_url") throw new Error("Expected an auth_url event");
 		const loginUrl = new URL(authUrlEvent.url);
@@ -168,11 +178,11 @@ describe("Cursor OAuth login", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginCursorForTest();
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin();
 		const failure = expect(loginPromise).rejects.toThrow(
 			"Cursor login was rejected (HTTP 401: invalid_request: challenge mismatch)",
 		);
-		await flushUntilPollScheduled();
+		await firstPollScheduled;
 		await vi.advanceTimersByTimeAsync(1000);
 		await vi.advanceTimersByTimeAsync(1200);
 		await failure;
@@ -200,8 +210,8 @@ describe("Cursor OAuth login", () => {
 			}),
 		);
 
-		const loginPromise = loginCursorForTest();
-		await flushUntilPollScheduled();
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin();
+		await firstPollScheduled;
 		for (let i = 0; i < 6; i++) {
 			await vi.advanceTimersByTimeAsync(10_000);
 		}
@@ -216,11 +226,11 @@ describe("Cursor OAuth login", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginCursorForTest();
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin();
 		const failure = expect(loginPromise).rejects.toThrow(
 			"Cursor login polling failed after repeated network errors: socket hang up",
 		);
-		await flushUntilPollScheduled();
+		await firstPollScheduled;
 		for (let i = 0; i < 3; i++) {
 			await vi.advanceTimersByTimeAsync(10_000);
 		}
@@ -233,9 +243,9 @@ describe("Cursor OAuth login", () => {
 		const fetchMock = vi.fn(async () => jsonResponse({ message: "internal" }, 500));
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginCursorForTest();
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin();
 		const failure = expect(loginPromise).rejects.toThrow("Cursor login polling failed (HTTP 500: internal)");
-		await flushUntilPollScheduled();
+		await firstPollScheduled;
 		for (let i = 0; i < 3; i++) {
 			await vi.advanceTimersByTimeAsync(10_000);
 		}
@@ -262,8 +272,8 @@ describe("Cursor OAuth login", () => {
 			}),
 		);
 
-		const loginPromise = loginCursorForTest();
-		await flushUntilPollScheduled();
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin();
+		await firstPollScheduled;
 		for (let i = 0; i < 5; i++) {
 			await vi.advanceTimersByTimeAsync(10_000);
 		}
@@ -279,9 +289,9 @@ describe("Cursor OAuth login", () => {
 			vi.fn(async () => jsonResponse({ error: "not found" }, 404)),
 		);
 
-		const loginPromise = loginCursorForTest({ signal: controller.signal });
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin({ signal: controller.signal });
 		const failure = expect(loginPromise).rejects.toThrow("Login cancelled");
-		await flushUntilPollScheduled();
+		await firstPollScheduled;
 		await vi.advanceTimersByTimeAsync(1000);
 		controller.abort();
 		await failure;
@@ -292,9 +302,9 @@ describe("Cursor OAuth login", () => {
 		const fetchMock = vi.fn(async () => jsonResponse({ error: "not found" }, 404));
 		vi.stubGlobal("fetch", fetchMock);
 
-		const loginPromise = loginCursorForTest();
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin();
 		const failure = expect(loginPromise).rejects.toThrow("Cursor login timed out waiting for browser approval");
-		await flushUntilPollScheduled();
+		await firstPollScheduled;
 		await vi.runAllTimersAsync();
 		await failure;
 		expect(fetchMock).toHaveBeenCalledTimes(150);
@@ -307,9 +317,9 @@ describe("Cursor OAuth login", () => {
 			vi.fn(async () => jsonResponse({ accessToken: "only-access" })),
 		);
 
-		const loginPromise = loginCursorForTest();
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin();
 		const failure = expect(loginPromise).rejects.toThrow("Invalid Cursor OAuth response field: refreshToken");
-		await flushUntilPollScheduled();
+		await firstPollScheduled;
 		await vi.advanceTimersByTimeAsync(1000);
 		await failure;
 	});
@@ -323,8 +333,8 @@ describe("Cursor OAuth login", () => {
 			vi.fn(async () => jsonResponse({ accessToken: "opaque-token", refreshToken: "refresh-1" })),
 		);
 
-		const loginPromise = loginCursorForTest();
-		await flushUntilPollScheduled();
+		const { login: loginPromise, firstPollScheduled } = startCursorLogin();
+		await firstPollScheduled;
 		await vi.advanceTimersByTimeAsync(1000);
 		const credential = await loginPromise;
 		expect(credential.expires).toBe(startTime.getTime() + 1000 + 3600_000 - 300_000);
