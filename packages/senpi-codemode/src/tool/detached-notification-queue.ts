@@ -9,35 +9,31 @@ export interface PendingDetachedNotification {
 	 * delivered, with the result the cell has.
 	 */
 	readonly ready?: Promise<void>;
+	/** Called once the notification was handed to the notifier, or its delivery failed. */
+	readonly onDelivered?: () => void;
 }
 
-interface QueuedNotification {
-	readonly snapshot: PendingDetachedNotification["snapshot"];
-	readonly release?: () => void;
-}
+type QueuedNotification = Omit<PendingDetachedNotification, "ready">;
 
 export class DetachedNotificationQueue {
 	readonly #notifier: EvalDetachedCellNotifier | undefined;
-	readonly #holdWhileSettling: (() => () => void) | undefined;
 	#pending: QueuedNotification[] = [];
 	readonly #waiting = new Set<Promise<void>>();
 	#flush: Promise<void> | undefined;
 
-	constructor(notifier: EvalDetachedCellNotifier | undefined, holdWhileSettling?: () => () => void) {
+	constructor(notifier: EvalDetachedCellNotifier | undefined) {
 		this.#notifier = notifier;
-		this.#holdWhileSettling = holdWhileSettling;
 	}
 
 	enqueue(notification: PendingDetachedNotification): void {
-		const { ready, snapshot } = notification;
+		const { ready, ...queued } = notification;
 		if (ready === undefined) {
-			this.#push({ snapshot });
+			this.#push(queued);
 			return;
 		}
-		const release = this.#holdWhileSettling?.();
 		const deliver = () => {
 			this.#waiting.delete(waiting);
-			this.#push(release === undefined ? { snapshot } : { snapshot, release });
+			this.#push(queued);
 		};
 		const waiting = ready.then(deliver, deliver);
 		this.#waiting.add(waiting);
@@ -59,20 +55,30 @@ export class DetachedNotificationQueue {
 		if (this.#flush !== undefined) return;
 		const flush = Promise.resolve().then(async () => {
 			const pending = this.#pending.splice(0);
-			try {
-				const notifications = await Promise.all(
-					pending.map(async (item) => buildDetachedCellNotification(await item.snapshot())),
-				);
-				this.#notifier?.notify(notifications);
-			} finally {
-				for (const item of pending) item.release?.();
+			const delivered = this.#deliver(pending);
+			const failures: unknown[] = [];
+			await delivered.catch((error: unknown) => failures.push(error));
+			for (const item of pending) {
+				try {
+					item.onDelivered?.();
+				} catch (error) {
+					failures.push(error);
+				}
 			}
+			if (failures.length > 0) throw failures[0];
 		});
 		this.#flush = flush;
 		void flush.then(
 			() => this.#finish(flush),
 			() => this.#finish(flush),
 		);
+	}
+
+	async #deliver(pending: readonly QueuedNotification[]): Promise<void> {
+		const notifications = await Promise.all(
+			pending.map(async (item) => buildDetachedCellNotification(await item.snapshot())),
+		);
+		this.#notifier?.notify(notifications);
 	}
 
 	#finish(flush: Promise<void>): void {

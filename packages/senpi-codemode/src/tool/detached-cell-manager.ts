@@ -21,6 +21,7 @@ import {
 } from "./detached-cell-state.ts";
 import { detachedStatusEntries, detachedWakeSourceState } from "./detached-cell-status.ts";
 import { DetachedNotificationQueue } from "./detached-notification-queue.ts";
+import { SettlingCells } from "./detached-settling.ts";
 import { createManagedCell, type LiveResultProvider, type ManagedCell } from "./managed-cell.ts";
 import { SettledImageSpill } from "./settled-image-spill.ts";
 import { TerminalSnapshotStore } from "./terminal-snapshot-store.ts";
@@ -92,6 +93,7 @@ export class EvalDetachedCellManager {
 	readonly #detached = new Map<string, ManagedCell>();
 	/** Ended cells whose final result is still settling, by id; a new cell under the id supersedes the old one. */
 	readonly #amending = new Map<string, ManagedCell>();
+	readonly #settling = new SettlingCells<ManagedCell>(() => this.#emitWakeSourceState([...this.#detached.values()]));
 	readonly #terminalSnapshots: TerminalSnapshotStore;
 	readonly #notificationQueue: DetachedNotificationQueue;
 	readonly #now: () => number;
@@ -102,7 +104,7 @@ export class EvalDetachedCellManager {
 	constructor(options: EvalDetachedCellManagerOptions = {}) {
 		this.#onStatusChange = options.onStatusChange;
 		this.#onWakeSourceState = options.onWakeSourceState;
-		this.#notificationQueue = new DetachedNotificationQueue(options.notifier, options.holdWhileSettling);
+		this.#notificationQueue = new DetachedNotificationQueue(options.notifier);
 		this.#now = options.now ?? Date.now;
 		this.#hardLimitSeconds = options.hardLimitSeconds ?? DEFAULT_HARD_LIMIT_SECONDS;
 		this.#runBudgetSeconds = options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS;
@@ -302,6 +304,10 @@ export class EvalDetachedCellManager {
 		this.#refreshTerminalSnapshot(cell);
 		if (cell.wasDetached) {
 			this.#detached.delete(cell.cellId);
+			const settling =
+				cell.finalResult === undefined || cell.notificationQueued
+					? undefined
+					: { ready: cell.finalResult, onDelivered: this.#settling.hold(cell) };
 			this.#emitStatus();
 			if (!cell.notificationQueued) {
 				cell.notificationQueued = true;
@@ -310,7 +316,7 @@ export class EvalDetachedCellManager {
 						await cell.interruptOutcome?.promise;
 						return this.#snapshot(cell);
 					},
-					...(cell.finalResult === undefined ? {} : { ready: cell.finalResult }),
+					...settling,
 				});
 			}
 		}
@@ -380,7 +386,7 @@ export class EvalDetachedCellManager {
 	}
 
 	#emitWakeSourceState(liveCells: readonly ManagedCell[]): void {
-		this.#onWakeSourceState?.(detachedWakeSourceState(liveCells));
+		this.#onWakeSourceState?.(detachedWakeSourceState([...liveCells, ...this.#settling.values()]));
 	}
 
 	#snapshot(cell: ManagedCell): EvalDetachedCellSnapshot {

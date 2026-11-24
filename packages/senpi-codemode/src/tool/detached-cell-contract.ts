@@ -44,11 +44,6 @@ export interface EvalDetachedCellStatusEntry {
 export interface EvalDetachedCellManagerOptions {
 	readonly artifactsDir?: string;
 	readonly notifier?: EvalDetachedCellNotifier;
-	/**
-	 * Opens a hold on the session while a completion notification waits for its cell's written files to settle, and
-	 * returns its release, called once after the notification is handed to the notifier.
-	 */
-	readonly holdWhileSettling?: () => () => void;
 	/** Wall-clock kill deadline in seconds; defaults to the bash-parity 1800s. */
 	readonly hardLimitSeconds?: number;
 	/** Kill deadline for a cell's own execution time in seconds; a per-call `timeout` replaces it. Defaults to 300s. */

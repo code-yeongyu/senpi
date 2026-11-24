@@ -27,7 +27,6 @@ import {
 import { jsRuntimeInfo } from "./extension/runtime-info.ts";
 import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from "./extension/session-manager.ts";
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
-import { createSettleHold, type SettleHoldLifecycle } from "./extension/settle-hold.ts";
 import { activeBunSkillPath, registerBunSkillContribution } from "./extension/skill-contribution.ts";
 import { StartRecovery, withStartRecovery } from "./extension/start-recovery.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
@@ -67,8 +66,6 @@ export interface CodemodeExtensionAPI {
 	): void;
 	/** True on a hand whose loop runs elsewhere (senpi H3); a host without it is never one. */
 	isLoopRemote?(): boolean;
-	/** Optional host custody; a host without it delivers detached-cell notifications without a settle hold. */
-	lifecycle?: SettleHoldLifecycle;
 	/** Optional host event bus; a host without one turns extension event emission into a harmless no-op. */
 	events?: { emit(name: string, data: unknown): void };
 	/** Optional host RPC surface for forwarding extension-owned events to connected clients. */
@@ -117,8 +114,6 @@ function monitorIsRegistered(pi: CodemodeExtensionAPI): boolean {
 
 export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCodemodeOptions = {}): void {
 	const manager = new SessionManagerProxy();
-	const holdWhileSettling = createSettleHold(pi.lifecycle);
-	const settleHoldOption = holdWhileSettling === undefined ? {} : { holdWhileSettling };
 	const complete = options.complete ?? ((request, ctx) => createCompletionHandler()(ctx)(request));
 	const renderers = {
 		renderCall: renderEvalCall,
@@ -249,7 +244,6 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 				settings: defaultCodemodeSettings,
 				cellManager: new EvalDetachedCellManager({
 					notifier,
-					...settleHoldOption,
 					maxDetachedCells: resolveMaxDetachedCells(defaultCodemodeSettings),
 					retainedResultsBytes: resolveRetainedResultsBytes(defaultCodemodeSettings),
 					hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
@@ -295,7 +289,6 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		const cellManager = new EvalDetachedCellManager({
 			artifactsDir: runtime.artifactsDir,
 			notifier,
-			...settleHoldOption,
 			maxDetachedCells: resolveMaxDetachedCells(runtime.settings),
 			retainedResultsBytes: resolveRetainedResultsBytes(runtime.settings),
 			retainedImagesBytes: resolveRetainedImagesBytes(runtime.settings),
