@@ -11,8 +11,11 @@
  *      compaction, edits and wake deliveries are answered with a `handover_pending` error, while
  *      every turn already running keeps running and keeps its control traffic;
  *   3. it waits for its next safe idle point - no open session busy, no request in flight. An idle
- *      session that is merely retained is not work. The wait has NO deadline: a long turn delays the
- *      handover, it is never aborted for it;
+ *      session that is merely retained is not work. A long turn delays the handover, it is never
+ *      aborted for it; but the wait is bounded (`IDLE_HANDOVER_WAIT_LIMIT_MS`, senpi#7427): a host
+ *      that is not idle by then abandons the operation as `handover_blocked { reason:
+ *      "idle_wait_expired" }` and admits input again, so work that never stops cannot keep the host
+ *      refusing everything;
  *   4. it starts the successor through the ordinary generation handoff (successor proven on the
  *      public socket, then this generation drains and parks its idle sessions for the successor to
  *      reopen by path). A successor that does not come up leaves this generation serving and admits
@@ -110,6 +113,8 @@ export interface HostIdleHandoverOptions {
 	readonly releaseNewWork?: () => void;
 	/** How often a pending operation re-checks for idle between request settlements. */
 	readonly pollMs?: number;
+	/** How long a pending operation waits for idle before it is abandoned; `IDLE_HANDOVER_WAIT_LIMIT_MS` when absent. */
+	readonly waitLimitMs?: number;
 	readonly log?: (line: string) => void;
 }
 
@@ -131,6 +136,8 @@ const NEW_WORK_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 const DEFAULT_POLL_MS = 200;
+/** senpi#7427: a pending handover that has not found an idle point by then is abandoned and admits work again. */
+export const IDLE_HANDOVER_WAIT_LIMIT_MS = 10 * 60_000;
 
 interface Operation {
 	readonly request: IdleHandoverRequest;
@@ -141,6 +148,7 @@ export class HostIdleHandover {
 	private readonly options: HostIdleHandoverOptions;
 	private operation: Operation | undefined;
 	private timer: ReturnType<typeof setInterval> | undefined;
+	private deadline: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(options: HostIdleHandoverOptions) {
 		this.options = options;
@@ -199,6 +207,9 @@ export class HostIdleHandover {
 		}
 		this.timer = setInterval(() => this.observe(), this.options.pollMs ?? DEFAULT_POLL_MS);
 		this.timer.unref?.();
+		const limit = this.options.waitLimitMs ?? IDLE_HANDOVER_WAIT_LIMIT_MS;
+		this.deadline = setTimeout(() => this.abandon(operation, limit), limit);
+		this.deadline.unref?.();
 		return answer(operation);
 	}
 
@@ -238,9 +249,23 @@ export class HostIdleHandover {
 		this.options.log?.(`handover ${operation.view.operationId} ${operation.view.state}`);
 	}
 
+	/** Nothing was handed over and nothing was held by the switch, so the host only admits work again. */
+	private abandon(operation: Operation, limitMs: number): void {
+		if (operation.view.state !== "handover_pending") return;
+		this.stopTimer();
+		operation.view = {
+			...operation.view,
+			state: "handover_blocked",
+			reason: `idle_wait_expired: the host found no idle point within ${limitMs} ms; it keeps serving and admits new work`,
+		};
+		this.options.log?.(`handover ${operation.view.operationId} ${operation.view.state}: idle_wait_expired`);
+	}
+
 	private stopTimer(): void {
 		if (this.timer !== undefined) clearInterval(this.timer);
+		if (this.deadline !== undefined) clearTimeout(this.deadline);
 		this.timer = undefined;
+		this.deadline = undefined;
 	}
 }
 

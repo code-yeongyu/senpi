@@ -2048,8 +2048,11 @@ owns the operation:
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
 3. it waits for its next safe idle point: no request in flight and no open session busy by the same activity
-   judgement a drain parks by. A retained session with no work is idle. The wait has no deadline; a long turn
-   delays the handover and is never aborted for it;
+   judgement a drain parks by. A retained session with no work is idle. A long turn delays the handover and is
+   never aborted for it, but the wait is bounded at 10 minutes (senpi#7427): a host that finds no idle point by
+   then abandons the operation as `handover_blocked` with a `reason` starting `idle_wait_expired:`, keeps
+   serving and admits work again, so work that never stops cannot keep it refusing everything. A new
+   `host handoff --when idle` may then be asked for;
 4. it hands the socket over through the generation handoff above, launched from the CLI's runtime with the
    CLI's daemon environment, and drains. The successor is told the target id and exits before it listens when
    its own runtime digests to another one (its files changed since the request). A successor that never
