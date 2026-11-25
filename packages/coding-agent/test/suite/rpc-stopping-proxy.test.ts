@@ -277,3 +277,59 @@ describe.skipIf(process.platform === "win32")("a failed connection to the host",
 		expect(lines[0]).toContain("connection to the host failed");
 	});
 });
+
+// senpi#7425: a connection refused with host_unavailable stays open to read its refusals, but it can never reach the
+// host, so it must not count as attached occupancy and hold the supervisor's idle exit. A working hop still counts.
+describe.skipIf(process.platform === "win32")("occupancy of a refused connection", () => {
+	it.each([
+		["a refused connection does not", false, 0],
+		["a connection that reached the host does", true, 1],
+	])("%s count as attached occupancy while it stays connected", async (_, hostListens, expected) => {
+		const dir = await mkdtemp(join(tmpdir(), "refused-occ-"));
+		const internalPath = join(dir, "i.sock");
+		const publicPath = join(dir, "p.sock");
+		const internal = hostListens
+			? createServer((peer) =>
+					attachJsonlLineReader(peer, (line) => {
+						const command = JSON.parse(line);
+						peer.write(
+							`${JSON.stringify({ type: "response", id: command.id, command: command.type, success: true })}\n`,
+						);
+					}),
+				)
+			: undefined;
+		if (internal) await listen(internal, internalPath);
+		const clients = new ClientOccupancy(() => {});
+		const server = createPublicProxy({
+			internalSocket: internalPath,
+			clients,
+			admission: new HostAdmission({
+				protocolVersion: 1,
+				serverVersion: "fixture",
+				capabilities: [],
+				instanceId: "occ",
+			}),
+			onDetach: () => {},
+		});
+		await listen(server, publicPath);
+		const client = createConnection(publicPath);
+		cleanups.push(async () => {
+			client.destroy();
+			clients.destroyAll();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			if (internal) await new Promise<void>((resolve) => internal.close(() => resolve()));
+			await rm(dir, { recursive: true, force: true });
+		});
+		const reply = new Promise<Record<string, unknown>>((resolve) =>
+			attachJsonlLineReader(client, (line) => resolve(JSON.parse(line))),
+		);
+		await once(client, "connect");
+		client.write(`${JSON.stringify({ id: "open-1", type: "open_session", cwd: dir })}\n`);
+
+		expect((await reply).success).toBe(hostListens);
+		expect(client.destroyed).toBe(false);
+		expect(clients.attachedCount).toBe(expected);
+		expect(clients.occupancy(undefined)).toBe(expected);
+		expect(clients.unclassifiedCount).toBe(0);
+	});
+});
