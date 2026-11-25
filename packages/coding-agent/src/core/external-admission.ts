@@ -190,7 +190,9 @@ export class ExternalAdmission {
 		}
 		// Input meant to start a turn that finds a delivery start whose run has not begun joins that start, as a prompt
 		// joins a pending prompt start: the run takes the steering queue before its first provider request (omo#14972).
-		if (input.whenIdle !== "queue" && this.startPending()) {
+		// Input that asks to reach the live turn (`whenBusy: "steer"`) and finds the session busy is steered the same way:
+		// the idle-or-busy choice is made here, atomically, so a sender's view of the turn can never be stale.
+		if ((input.whenIdle !== "queue" && this.startPending()) || (input.whenBusy === "steer" && this.isBusy())) {
 			this.pending.set(id, "steer");
 			this.port.enqueue(message, "steer");
 			return { kind: "steered", turn_epoch };

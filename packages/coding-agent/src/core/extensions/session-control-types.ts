@@ -82,6 +82,12 @@ export interface AdmitExternalMessageInput {
 	 * turn, like an RPC `steer`/`follow_up` with `whenIdle: "queue"`.
 	 */
 	readonly whenIdle?: "start" | "queue";
+	/**
+	 * What a busy session does with it: `steer` puts it into the running turn (no turn pinned; the steering queue the
+	 * run reads at its next boundary). Absent, a busy session queues it as its `deliverAs` says. Decided at admission,
+	 * where the run state lives, so a sender never races the turn boundary.
+	 */
+	readonly whenBusy?: "steer";
 }
 
 /**
