@@ -1,18 +1,31 @@
 /** The flag vocabulary of the engine command metadata, and the flag sets several commands share. */
-/** The launch slice that adds the inputs this slice does not export (endpoint, key root, presenter, setup). */
-export const GATED_SLICE = "E1a-s";
+
+/**
+ * How one flag's text becomes an input value. `list`: the flag repeats and each occurrence adds one item.
+ * `comma_list`: one value holds every item, joined by commas. `json`: the value is a JSON document.
+ * `duration`: a number with a unit (`30m`, `1h`), answered as milliseconds.
+ */
+export type EngineFlagFormat = "list" | "comma_list" | "json" | "duration";
 
 export type EngineFlagMapping =
 	/** Fills `field` of the call's input; `value` is what a flag that takes no value sets. */
-	| { readonly kind: "input"; readonly field: string; readonly value?: boolean | string }
-	/** Selects this command among the forms of the same argv; fills nothing. */
-	| { readonly kind: "selector" }
+	| {
+			readonly kind: "input";
+			readonly field: string;
+			readonly value?: boolean | string;
+			readonly format?: EngineFlagFormat;
+	  }
+	/** Selects this command among the forms of the same argv; fills nothing. `value` is the one value it takes. */
+	| { readonly kind: "selector"; readonly value?: string }
 	/** Changes only how the answer is printed. */
 	| { readonly kind: "render" }
 	/** Accepted by the parser for every form of the command, with no effect on this one. */
 	| { readonly kind: "ignored" }
-	/** An input the exported function gains in E1a-s; recorded as a gap, never as unmapped. */
-	| { readonly kind: "gated"; readonly slice: typeof GATED_SLICE; readonly field: string };
+	/**
+	 * A credential input. The exported function reads it from a readable handle and never from argv; the flag is
+	 * the command line's own way to give it and is never produced from the function's input.
+	 */
+	| { readonly kind: "handle"; readonly field: string };
 
 export interface EngineCommandFlag {
 	/** The long flag first, then its short aliases. */
@@ -27,6 +40,10 @@ export interface EngineCommandPositional {
 	readonly name: string;
 	readonly field: string;
 	readonly optional: boolean;
+	/** Every remaining positional fills the field, in order. */
+	readonly variadic?: boolean;
+	/** The text each positional of this field begins with (`@` for a file). */
+	readonly prefix?: string;
 }
 
 export interface EngineCommandMetadata {
@@ -39,9 +56,12 @@ export interface EngineCommandMetadata {
 	readonly flags: readonly EngineCommandFlag[];
 }
 
-export const input = (field: string, value?: boolean | string): EngineFlagMapping =>
-	value === undefined ? { kind: "input", field } : { kind: "input", field, value };
-export const gated = (field: string): EngineFlagMapping => ({ kind: "gated", slice: GATED_SLICE, field });
+export const input = (field: string, value?: boolean | string, format?: EngineFlagFormat): EngineFlagMapping => ({
+	kind: "input",
+	field,
+	...(value === undefined ? {} : { value }),
+	...(format === undefined ? {} : { format }),
+});
 export const flag = (names: readonly string[], takesValue: boolean, mapping: EngineFlagMapping): EngineCommandFlag => ({
 	names,
 	takesValue,
@@ -55,10 +75,16 @@ export const requiredFlag = (
 	...flag(names, takesValue, mapping),
 	required: true,
 });
-export const positional = (name: string, field: string, optional = false): EngineCommandPositional => ({
+export const positional = (
+	name: string,
+	field: string,
+	optional = false,
+	shape: { readonly variadic?: boolean; readonly prefix?: string } = {},
+): EngineCommandPositional => ({
 	name,
 	field,
 	optional,
+	...shape,
 });
 
 export const TRUST_FLAGS = [
@@ -67,43 +93,44 @@ export const TRUST_FLAGS = [
 ];
 export const LOCAL_FLAG = flag(["--local", "-l"], false, input("local", true));
 
-/** The launch setup flags (design 6.9, `setup`); `--list-models` and `--print-prompt-sizes` read them today. */
+/** The launch setup flags (design 6.9, `setup`), with the field and value each fills. */
 export const SETUP_FLAGS: readonly EngineCommandFlag[] = [
-	["--model", true, "setup.model"],
-	["--provider", true, "setup.provider"],
-	["--models", true, "setup.model_patterns"],
-	["--thinking", true, "setup.reasoning"],
-	["--system-prompt", true, "setup.system_prompt"],
-	["--append-system-prompt", true, "setup.append_system_prompt"],
-	["--tools", true, "setup.tools.allow"],
-	["--exclude-tools", true, "setup.tools.deny"],
-	["--no-tools", false, "setup.tools.none"],
-	["--no-builtin-tools", false, "setup.tools.no_builtin"],
-	["--extension", true, "setup.extensions.paths"],
-	["--no-extensions", false, "setup.extensions.none"],
-	["--skill", true, "setup.skills.names"],
-	["--no-skills", false, "setup.skills.none"],
-	["--prompt-template", true, "setup.prompt_templates.paths"],
-	["--no-prompt-templates", false, "setup.prompt_templates.none"],
-	["--theme", true, "setup.themes.paths"],
-	["--no-themes", false, "setup.themes.none"],
-	["--use-theme", true, "setup.themes.use"],
-	["--no-context-files", false, "setup.context_files"],
-	["--approve", false, "setup.project_trust"],
-	["--no-approve", false, "setup.project_trust"],
-	["--offline", false, "setup.offline"],
-	["--session-runtime", true, "setup.session_runtime"],
-	["--tool-runtime", true, "setup.tool_runtime"],
-	["--auto-title-sessions", false, "setup.auto_title"],
-].map(([name, takesValue, field]) => flag([String(name)], takesValue === true, gated(String(field))));
+	flag(["--model"], true, input("setup.model")),
+	flag(["--provider"], true, input("setup.provider")),
+	flag(["--models"], true, input("setup.model_patterns", undefined, "comma_list")),
+	flag(["--thinking"], true, input("setup.reasoning")),
+	flag(["--system-prompt"], true, input("setup.system_prompt")),
+	flag(["--append-system-prompt"], true, input("setup.append_system_prompt", undefined, "list")),
+	flag(["--tools", "-t"], true, input("setup.tools.allow", undefined, "comma_list")),
+	flag(["--exclude-tools", "-xt"], true, input("setup.tools.deny", undefined, "comma_list")),
+	flag(["--no-tools", "-nt"], false, input("setup.tools.none", true)),
+	flag(["--no-builtin-tools", "-nbt"], false, input("setup.tools.no_builtin", true)),
+	flag(["--extension", "-e"], true, input("setup.extensions.paths", undefined, "list")),
+	flag(["--no-extensions", "-ne"], false, input("setup.extensions.none", true)),
+	flag(["--skill"], true, input("setup.skills.names", undefined, "list")),
+	flag(["--no-skills", "-ns"], false, input("setup.skills.none", true)),
+	flag(["--prompt-template"], true, input("setup.prompt_templates.paths", undefined, "list")),
+	flag(["--no-prompt-templates", "-np"], false, input("setup.prompt_templates.none", true)),
+	flag(["--theme"], true, input("setup.themes.paths", undefined, "list")),
+	flag(["--no-themes"], false, input("setup.themes.none", true)),
+	flag(["--use-theme"], true, input("setup.themes.use")),
+	flag(["--no-context-files", "-nc"], false, input("setup.context_files", false)),
+	flag(["--approve", "-a"], false, input("setup.project_trust", true)),
+	flag(["--no-approve", "-na"], false, input("setup.project_trust", false)),
+	flag(["--offline"], false, input("setup.offline", true)),
+	flag(["--session-runtime"], true, input("setup.session_runtime")),
+	flag(["--tool-runtime"], true, input("setup.tool_runtime")),
+	flag(["--auto-title-sessions"], false, input("setup.auto_title", true)),
+];
 
+/** The endpoint selector of the host commands: paths only, never the credentials under them. */
 const ENDPOINT_FLAGS = [
-	flag(["--socket"], true, gated("endpoint.socket")),
-	flag(["--rpc-key-root"], true, gated("endpoint.key_root")),
+	flag(["--socket"], true, input("endpoint.socket")),
+	flag(["--rpc-key-root"], true, input("endpoint.key_root")),
 ];
 export const PRESENTER_FLAGS = [
-	flag(["--mcp-presenter-fd"], true, gated("presenter.bootstrap_fd")),
-	flag(["--mcp-presenter-enforcement"], false, gated("presenter.enforcement")),
+	flag(["--mcp-presenter-fd"], true, input("presenter.bootstrap_fd")),
+	flag(["--mcp-presenter-enforcement"], false, input("presenter.enforcement", true)),
 ];
 const HOST_JSON = flag(["--json"], false, { kind: "render" });
 /** `host` accepts these for every subcommand; the ones a subcommand does not read are `ignored` there. */

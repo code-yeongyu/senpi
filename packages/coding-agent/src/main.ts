@@ -13,12 +13,7 @@ import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp, resolveSessionRuntime } from "./cli/args.ts";
-import {
-	type AuthCheckResult,
-	checkProviderAuth,
-	createAuthCheckModelRuntime,
-	getProviderCredential,
-} from "./cli/auth-check.ts";
+import { runAuthCheck } from "./cli/auth-check.ts";
 import {
 	type AuthCommand,
 	AuthCommandError,
@@ -27,10 +22,12 @@ import {
 	isAuthCommandHelp,
 	parseAuthCommand,
 	printAuthCommandHelp,
-	validateAuthCommandArgs,
 } from "./cli/auth-command.ts";
 import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { LaunchKeyError, readLaunchKey } from "./cli/launch-key.ts";
+import { createModelListingServices, resolveCliPaths } from "./cli/model-listing.ts";
+import { sessionFlagRefusal } from "./cli/session-flag-refusal.ts";
 import { chooseCrossProjectAction, confirmSameRepositoryRebind } from "./cli/cross-project-session.ts";
 import {
 	dispatchConfigCommand,
@@ -78,9 +75,8 @@ import {
 	createAgentSessionServices,
 } from "./core/agent-session-services.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
-import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
+import { AuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
-import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
@@ -107,7 +103,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
-import { assertValidSessionId, SessionManager, sessionFileNameId } from "./core/session-manager.ts";
+import { SessionManager, sessionFileNameId } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
@@ -132,7 +128,7 @@ import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes
 import type { PreparableRuntimeFactory } from "./modes/rpc/host-warm.ts";
 import { completeCompactFactory } from "./modes/rpc/compact-runtime-factory.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
-import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
+import { normalizePath, resolvePath } from "./utils/paths.ts";
 import { readPipedStdin } from "./utils/piped-stdin.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
@@ -284,37 +280,15 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 			return true;
 		}
 
-		const requestedAuth = validateAuthCommandArgs(parsed, command.kind);
-		let result: AuthCheckResult;
-		let credential: string | undefined;
-		try {
-			const credentials = command.noRefresh ? new ReadOnlyAuthStorage() : AuthStorage.create();
-			const modelRuntime = await createAuthCheckModelRuntime(credentials);
-			result = await checkProviderAuth(parsed, modelRuntime, { refresh: !command.noRefresh });
-			if (command.credentials && result.status === "ready") {
-				credential = await getProviderCredential(result.provider, modelRuntime, credentials, {
-					refresh: !command.noRefresh,
-				});
-				if (!credential) {
-					result = { status: "not_ready", provider: result.provider, reason: "credential_not_available" };
-				}
-			}
-		} catch {
-			result = {
-				status: "invalid",
-				provider: requestedAuth.provider ?? requestedAuth.model!,
-				reason: "invalid_state",
-			};
-		}
-		let accounts: CredentialAccountSummary[] = [];
-		if (command.json && result.status !== "invalid") {
-			try {
-				const credentials = command.noRefresh ? new ReadOnlyAuthStorage() : AuthStorage.create();
-				accounts = await summarizeCredentialAccounts(result.provider, await credentials.read(result.provider));
-			} catch {
-				// Account enrichment must never turn a readable auth state into a failure.
-			}
-		}
+		const {
+			result,
+			accounts = [],
+			credential,
+		} = await runAuthCheck(parsed, {
+			refresh: !command.noRefresh,
+			json: command.json,
+			credential: command.credentials,
+		});
 		const output = command.json
 			? JSON.stringify({ ...result, accounts, ...(credential ? { credentials: credential } : {}) })
 			: (credential ?? result.status);
@@ -433,63 +407,6 @@ export async function promptConfirm(message: string): Promise<boolean> {
 		});
 		rl.once("close", () => settle(false));
 	});
-}
-
-function validateForkFlags(parsed: Args): void {
-	if (!parsed.fork) return;
-
-	const conflictingFlags = [
-		parsed.session ? "--session" : undefined,
-		parsed.continue ? "--continue" : undefined,
-		parsed.resume ? "--resume" : undefined,
-		parsed.noSession ? "--no-session" : undefined,
-	].filter((flag): flag is string => flag !== undefined);
-
-	if (conflictingFlags.length > 0) {
-		console.error(chalk.red(`Error: --fork cannot be combined with ${conflictingFlags.join(", ")}`));
-		process.exit(1);
-	}
-}
-
-function validateRebindFlags(parsed: Args): void {
-	if (!parsed.rebind) return;
-
-	const conflictingFlags = [
-		parsed.session ? "--session" : undefined,
-		parsed.fork ? "--fork" : undefined,
-		parsed.continue ? "--continue" : undefined,
-		parsed.resume ? "--resume" : undefined,
-		parsed.noSession ? "--no-session" : undefined,
-		parsed.sessionId !== undefined ? "--session-id" : undefined,
-	].filter((flag): flag is string => flag !== undefined);
-
-	if (conflictingFlags.length > 0) {
-		console.error(chalk.red(`Error: --rebind cannot be combined with ${conflictingFlags.join(", ")}`));
-		process.exit(1);
-	}
-}
-
-function validateSessionIdFlags(parsed: Args): void {
-	if (parsed.sessionId === undefined) return;
-
-	const conflictingFlags = [
-		parsed.session ? "--session" : undefined,
-		parsed.continue ? "--continue" : undefined,
-		parsed.resume ? "--resume" : undefined,
-	].filter((flag): flag is string => flag !== undefined);
-
-	if (conflictingFlags.length > 0) {
-		console.error(chalk.red(`Error: --session-id cannot be combined with ${conflictingFlags.join(", ")}`));
-		process.exit(1);
-	}
-
-	try {
-		assertValidSessionId(parsed.sessionId);
-	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		console.error(chalk.red(`Error: ${message}`));
-		process.exit(1);
-	}
 }
 
 /**
@@ -890,10 +807,6 @@ function buildSessionOptions(
 	}
 
 	return { options, cliThinkingFromModel, diagnostics };
-}
-
-function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
-	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
 async function promptForMissingSessionCwd(
@@ -1325,6 +1238,16 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
+	const launchKey = await readLaunchKey().catch((error: unknown) =>
+		error instanceof LaunchKeyError ? error : new LaunchKeyError("the launch key could not be read"),
+	);
+	if (launchKey instanceof LaunchKeyError || (launchKey !== undefined && parsed.apiKey !== undefined)) {
+		const message =
+			launchKey instanceof LaunchKeyError ? launchKey.message : "--api-key and a launch key cannot be combined";
+		console.error(chalk.red(`Error: ${message}`));
+		process.exit(1);
+	}
+	if (launchKey !== undefined) parsed.apiKey = launchKey;
 	const toolRuntimeResolution = resolveToolRuntime(parsed);
 	// --version and --help never run a tool, so a bad tool-runtime env value must not block them.
 	if (!toolRuntimeResolution.ok && !parsed.version && !parsed.help) {
@@ -1383,14 +1306,11 @@ export async function main(args: string[], options?: MainOptions) {
 		});
 	}
 
-	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
-		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
+	const sessionRefusal = sessionFlagRefusal(parsed);
+	if (sessionRefusal !== undefined) {
+		console.error(chalk.red(`Error: ${sessionRefusal}`));
 		process.exit(1);
 	}
-
-	validateForkFlags(parsed);
-	validateRebindFlags(parsed);
-	validateSessionIdFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
 	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(cwd);
@@ -1399,9 +1319,6 @@ export async function main(args: string[], options?: MainOptions) {
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
 	reportDiagnostics(collectSettingsDiagnosticsWithContext(startupSettingsManager, "startup session lookup"));
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
-	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
-	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
-	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
 
 	// Help is answered from the flags alone, so it stops here instead of continuing into the model
 	// runtime, the session manager and the rest of the resource load. The flags are cached for the
@@ -1430,23 +1347,11 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (parsed.listModels !== undefined) {
-		const services = await createAgentSessionServices({
+		const services = await createModelListingServices(parsed, {
 			cwd,
 			agentDir,
 			settingsManager: startupSettingsManager,
-			extensionFlagValues: parsed.unknownFlags,
-			resourceLoaderOptions: {
-				additionalExtensionPaths: resolvedExtensionPaths,
-				additionalSkillPaths: resolvedSkillPaths,
-				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
-				additionalThemePaths: resolvedThemePaths,
-				noExtensions: parsed.noExtensions,
-				noSkills: true,
-				noPromptTemplates: true,
-				noThemes: true,
-				noContextFiles: true,
-				extensionFactories,
-			},
+			extensionFactories,
 		});
 		reportDiagnostics([
 			...services.diagnostics,

@@ -23,19 +23,36 @@ import type { HostStopGeneration } from "../modes/rpc/host-stop-generation.ts";
 import { presenterBootstrapStream } from "../modes/rpc/mcp-presenter-bootstrap.ts";
 import { type EngineResult, engineError, engineOk } from "./result.ts";
 
-export interface HostEnsureInput {
+/** Which endpoint a host operation reaches: paths only (security design 5.6); the transport reads what is under them. */
+export interface HostEndpointSelector {
+	readonly socket?: string;
+	readonly key_root?: string;
+}
+
+/** The private enrollment channel a new host receives on descriptor 4, and its enforcement opt-in. */
+export interface HostPresenterInput {
+	readonly bootstrap_fd: 4;
+	readonly enforcement?: true;
+}
+
+export interface HostEndpointInput {
+	readonly endpoint?: HostEndpointSelector;
+}
+
+export interface HostEnsureInput extends HostEndpointInput {
 	/** A launch spec FILE; its owner and mode make it trustworthy, its directory resolves extension paths. */
 	readonly launch_spec?: string;
 	readonly policy?: HostDecisionPolicy;
+	readonly presenter?: HostPresenterInput;
 }
 
-export interface HostStatusInput {
+export interface HostStatusInput extends HostEndpointInput {
 	/** Every endpoint under the agent directory, read without pruning. */
 	readonly all?: boolean;
 	readonly include_workers?: boolean;
 }
 
-export interface HostStopInput {
+export interface HostStopInput extends HostEndpointInput {
 	readonly drain?: boolean;
 	/** With `drain`: the generation to drain, by instance id. */
 	readonly instance?: string;
@@ -46,8 +63,9 @@ export interface HostStopInput {
 	readonly expected_generation?: HostStopGeneration;
 }
 
-export interface HostHandoffInput {
+export interface HostHandoffInput extends HostEndpointInput {
 	readonly launch_spec?: string;
+	readonly presenter?: HostPresenterInput;
 	/** Hand a host on a newer engine down to this one. */
 	readonly allow_downgrade?: boolean;
 	/** The conditional form: the running host hands over to this runtime at its next safe idle point. */
@@ -61,11 +79,11 @@ export interface HostHandoffInput {
 	};
 }
 
-export interface HostGcInput {
+export interface HostGcInput extends HostEndpointInput {
 	readonly agent_dir?: string;
 }
 
-export interface HostShardPathInput {
+export interface HostShardPathInput extends HostEndpointInput {
 	readonly kind: ShardKind;
 	readonly owner: string;
 	readonly root?: string;
@@ -80,9 +98,9 @@ export type HostOperation =
 	| ({ readonly operation: "shard_path" } & HostShardPathInput);
 
 /**
- * The endpoint and its credentials. The CLI passes them from `--socket`, `--rpc-key-root`,
- * `--mcp-presenter-fd` and `--mcp-presenter-enforcement`; the exported functions never take them
- * (their contract belongs to the security design) and always run against the default endpoint.
+ * The endpoint, its key root and the presenter channel, as the core takes them: the CLI passes them from
+ * `--socket`, `--rpc-key-root`, `--mcp-presenter-fd` and `--mcp-presenter-enforcement`, the exported functions
+ * from `endpoint` and `presenter` (`hostEndpointOptions`).
  */
 export interface HostEndpointOptions {
 	readonly socket?: string;
@@ -99,6 +117,18 @@ export interface HostAnswer {
 
 /** `refused`: a host this client may not act on. `usage`: an unusable input or launch spec. */
 export type HostCode = "refused" | "failed" | "usage";
+
+export function hostEndpointOptions(input: {
+	readonly endpoint?: HostEndpointSelector;
+	readonly presenter?: HostPresenterInput;
+}): HostEndpointOptions {
+	return {
+		...(input.endpoint?.socket === undefined ? {} : { socket: input.endpoint.socket }),
+		...(input.endpoint?.key_root === undefined ? {} : { keyRoot: resolve(input.endpoint.key_root) }),
+		...(input.presenter === undefined ? {} : { presenterBootstrapFd: input.presenter.bootstrap_fd }),
+		...(input.presenter?.enforcement === true ? { mcpPresenterEnforcement: true } : {}),
+	};
+}
 
 /** The endpoint this client would reach: the one it was given, the branded override, or the default. */
 export function resolveHostSocket(explicit: string | undefined, agentDir: string): string {
@@ -218,7 +248,10 @@ export async function runHostOperation(
 	operation: HostOperation,
 	endpoint: HostEndpointOptions = {},
 ): Promise<EngineResult<HostAnswer, HostCode>> {
-	const invalid = invalidInput(operation);
+	const invalid =
+		endpoint.presenterBootstrapFd !== undefined && endpoint.presenterBootstrapFd !== 4
+			? "presenter.bootstrap_fd must be 4"
+			: invalidInput(operation);
 	if (invalid !== undefined)
 		return answer(HOST_EXIT_USAGE, { action: "error", reason: "invalid_input", detail: invalid });
 	try {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { getAgentDir } from "../../src/config.ts";
-import { engine, ENGINE_COMMANDS, GATED_SLICE } from "../../src/engine/index.ts";
+import { engine, ENGINE_COMMANDS } from "../../src/engine/index.ts";
 
 const CLI = join(__dirname, "..", "..", "src", "cli.ts");
 
@@ -129,52 +129,54 @@ describe("the CLI and the exported function answer the same data for the same in
 	});
 });
 
-describe("the exported surface takes no gated input (E1a-s)", () => {
-	it("ignores an endpoint, key root or presenter channel passed to a host function", async () => {
-		const smuggled = {
-			kind: "p",
-			owner: "x",
-			socket: join(root, "evil.sock"),
-			keyRoot: root,
-			key_root: root,
-			presenterBootstrapFd: 4,
-		} as const;
-		const shard = await engine.host.shardPath(smuggled);
-		expect(shard.kind === "ok" && shard.value.payload.socket).toBe(
-			join(getAgentDir(), "rpc", "shards", "p-945b87278a044a9c.sock"),
-		);
-		const status = await engine.host.status({ socket: join(root, "evil.sock") } as never);
-		expect(status.kind === "error" && status.error.details?.payload).toMatchObject({
-			socket: join(getAgentDir(), "rpc", "rpc.sock"),
+describe("the gated inputs are inputs of the exported functions (senpi#7451)", () => {
+	it("host status reaches the endpoint the selector names, as --socket does", async () => {
+		const socket = join(root, "named.sock");
+		const status = await engine.host.status({ endpoint: { socket } });
+		const printed = cli("host", "status", "--socket", socket, "--json");
+		expect(printed.status).toBe(3);
+		expect(status.kind === "error" && status.error.details?.payload).toEqual(JSON.parse(printed.stdout));
+		expect(status.kind === "error" && status.error.details?.payload).toMatchObject({ socket });
+	});
+
+	it("refuses a presenter channel on any descriptor but 4, before contacting a host", async () => {
+		const ensured = await engine.host.ensure({ presenter: { bootstrap_fd: 3 } as never });
+		expect(ensured).toMatchObject({
+			kind: "error",
+			error: { code: "usage", details: { payload: { detail: "presenter.bootstrap_fd must be 4" } } },
 		});
 	});
 
-	it("records every endpoint, key-root, presenter and launch-setup flag as an E1a-s gap, never as an input", () => {
-		const gatedPrefixes = ["endpoint.", "presenter.", "setup."];
+	it("maps every endpoint, key-root, presenter and setup flag to an input field, and the launch key to a handle", () => {
 		for (const command of ENGINE_COMMANDS) {
 			for (const flag of command.flags) {
 				const name = flag.names[0] ?? "";
-				const gatedFlag =
-					["--socket", "--rpc-key-root", "--mcp-presenter-fd", "--mcp-presenter-enforcement"].includes(name) ||
-					(["models.list", "promptSizes"].includes(command.call) && !flag.required);
-				if (gatedFlag) {
-					expect(flag.mapping, `${command.call} ${name}`).toMatchObject({ kind: "gated", slice: GATED_SLICE });
+				if (["--socket", "--rpc-key-root", "--mcp-presenter-fd", "--mcp-presenter-enforcement"].includes(name)) {
+					expect(flag.mapping, `${command.call} ${name}`).toMatchObject({ kind: "input" });
+					expect(flag.mapping.kind === "input" && flag.mapping.field).toMatch(/^(endpoint|presenter)\./u);
 				}
-				if (flag.mapping.kind === "gated") {
-					expect(
-						gatedPrefixes.some(
-							(prefix) => flag.mapping.kind === "gated" && flag.mapping.field.startsWith(prefix),
-						),
-					).toBe(true);
+				if (["models.list", "promptSizes"].includes(command.call) && !flag.required) {
+					expect(flag.mapping.kind === "input" && flag.mapping.field, `${command.call} ${name}`).toMatch(
+						/^setup\./u,
+					);
 				}
-				if (flag.mapping.kind === "input") {
-					expect(
-						gatedPrefixes.some(
-							(prefix) => flag.mapping.kind === "input" && flag.mapping.field.startsWith(prefix),
-						),
-					).toBe(false);
-				}
+				if (name === "--api-key") expect(flag.mapping).toEqual({ kind: "handle", field: "api_key" });
 			}
+		}
+		const launchCalls = ENGINE_COMMANDS.filter((command) => command.call.startsWith("launch.")).map((c) => c.call);
+		expect(launchCalls).toEqual([
+			"launch.interactive",
+			"launch.print",
+			"launch.rpc",
+			"launch.hand",
+			"launch.headless",
+		]);
+		for (const call of launchCalls) {
+			const command = ENGINE_COMMANDS.find((entry) => entry.call === call);
+			expect(
+				command?.flags.some((flag) => flag.names[0] === "--api-key"),
+				call,
+			).toBe(true);
 		}
 	});
 
