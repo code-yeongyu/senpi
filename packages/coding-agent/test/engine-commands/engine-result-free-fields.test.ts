@@ -1,8 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { engine } from "../../src/engine/index.ts";
 import type { LaunchPrintEvent } from "../../src/engine/launch-print-stream.ts";
-import { RESULT_FREE_FIELDS } from "../../src/engine/result-free-fields.ts";
-import type { FieldPaths, FreeFieldPaths } from "../../src/engine/result-fields.ts";
+import { type engine, type FieldPaths, type FreeFieldPaths, RESULT_FREE_FIELDS } from "../../src/engine/index.ts";
 
 type Engine = typeof engine;
 type Answer<F> = F extends (...args: never[]) => infer R ? Awaited<R> : never;

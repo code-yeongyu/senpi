@@ -24,6 +24,9 @@ export type {
 } from "./auth.ts";
 export type { AuthAccount, AuthAccountCheck, AuthAccountCheckCode } from "../cli/auth-account-check.ts";
 export type { SessionAuthAccount, SessionAuthStatus } from "./auth-session.ts";
+export type { FieldPaths, FreeFieldPaths } from "./result-fields.ts";
+export { RESULT_FREE_FIELDS } from "./result-free-fields.ts";
+export type { ResultFieldOrigin, ResultFreeField } from "./result-free-fields.ts";
 export { toSessionAuthStatus } from "./auth-session.ts";
 export { AUTH_ACCOUNT_CHECK_CODES } from "../cli/auth-account-check.ts";
 export type { PromptSizesInput } from "./default-runtime.ts";

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getAgentDir } from "../../src/config.ts";
+import * as entry from "../../src/engine/index.ts";
 import { engine, ENGINE_COMMANDS } from "../../src/engine/index.ts";
 
 /** The leaves of design #14944 section 6.8 that carry no credential (slice E1a), after amendment 1. */
@@ -58,6 +59,24 @@ describe("the exported leaves, the metadata and the design's leaf set are the sa
 
 	it("describes exactly those leaves in the command metadata", () => {
 		expect([...new Set(ENGINE_COMMANDS.map((command) => command.call))].sort()).toEqual(LEAVES);
+	});
+
+	it("exposes the contracts the omo root reads from the entry itself, never from an internal path", () => {
+		expect(Object.keys(entry).sort()).toEqual(
+			[
+				"ENGINE_COMMANDS",
+				"LaunchInputSchema",
+				"LaunchOptionsSchema",
+				"LaunchPresenterSchema",
+				"LaunchSessionSchema",
+				"LaunchSetupSchema",
+				"RESULT_FREE_FIELDS",
+				"AUTH_ACCOUNT_CHECK_CODES",
+				"engine",
+				"toSessionAuthStatus",
+			].sort(),
+		);
+		expect(entry.RESULT_FREE_FIELDS.length).toBeGreaterThan(0);
 	});
 
 	it("marks the resource-setting leaf as performed by the config TUI", () => {
