@@ -193,7 +193,10 @@ import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
 	ENGINE_TURN_START_ENTRY_TYPE,
+	type EngineTurnCap,
 	type EngineTurnStartRecord,
+	type EngineTurnStop,
+	engineTurnCapOf,
 	engineTurnHistory,
 	engineTurnLimitNotice,
 	engineTurnStop,
@@ -504,7 +507,7 @@ import {
 	STALL_WARNING_MS,
 	watchForStall,
 } from "./stall-warning.ts";
-import { stopResumeDirective } from "./stop-resume-directive.ts";
+import { type ResumeCause, stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
 	type ClampedThinkingSelection,
@@ -1238,13 +1241,15 @@ export interface ResumeSessionRequest {
 
 export interface ResumeSessionAnswer {
 	readonly resumed: boolean;
-	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped";
+	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped" | "engine_turn_cap";
 	readonly parentSessionId?: string;
 	readonly pauseSeq: number;
 	readonly turnStarted: boolean;
 	readonly deliveredNotices: number;
 	readonly deliveredHeldInputs: number;
 	readonly replayed?: boolean;
+	/** The engine-turn cap this Resume continued, or (`reason: "engine_turn_cap"`) would not release without a turn (senpi#7138). */
+	readonly engineTurnCap?: EngineTurnCap;
 }
 
 /**
@@ -1650,6 +1655,7 @@ export class AgentSession {
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
 		heldBy: () => this._peerDeliveryHolds(),
+		cappedBy: () => this._peerDeliveryCap(),
 		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
 		start: (message) =>
 			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
@@ -8062,6 +8068,17 @@ export class AgentSession {
 		}
 	}
 
+	/**
+	 * The cap a peer delivery's turn would meet now (senpi#7138), counted as `_stopEngineTurn` will count it: a delivery
+	 * that releases an unattended hold is the released turn, outside the resume window.
+	 */
+	private _peerDeliveryCap(): EngineTurnCap | undefined {
+		const stop = this._engineTurnStopNow(
+			this._engineTurnHold.holdsSource(engineWakeSource(SESSION_CONTROL_DELIVERY_TYPE)),
+		);
+		return stop === null ? undefined : engineTurnCapOf(stop);
+	}
+
 	/** The holds a peer delivery cannot release (senpi#6490); `externalAdmission` answers `held` with them. */
 	private _peerDeliveryHolds(): HoldKind[] {
 		return holdsKeepingPeerDelivery(
@@ -8175,7 +8192,9 @@ export class AgentSession {
 		const holds = this._engineTurnHold.holds;
 		const idle = { pauseSeq, turnStarted: false, deliveredNotices: 0, deliveredHeldInputs: 0 };
 		const answered = (answer: ResumeSessionAnswer) => ({ answer, settled: Promise.resolve() });
-		if (holds.length === 0 && !this._engineTurnHold.awaitingInput)
+		// Nothing held: the engine-turn cap may still pause automatic turns, and Resume continues those too (senpi#7138).
+		const cap = holds.length === 0 && !this._engineTurnHold.awaitingInput ? this.engineTurnCap : undefined;
+		if (holds.length === 0 && !this._engineTurnHold.awaitingInput && cap === undefined)
 			return answered({ resumed: false, reason: "not_paused", ...idle });
 		const inherited = this._runHolds.inheritedOwner();
 		if (inherited !== undefined && holds.every((hold) => hold.kind === "inherited_hold"))
@@ -8189,6 +8208,9 @@ export class AgentSession {
 			return answered({ resumed: false, reason: "stopped", ...idle });
 		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
+		// Only a turn a person asked for lifts the cap, so a release that starts no turn names the cap instead.
+		if (cap !== undefined && request.mode === "release")
+			return answered({ resumed: false, reason: "engine_turn_cap", engineTurnCap: cap, ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
 			// A person's resume attends the session like their input does, so an unattended hold it frees stays freed.
@@ -8207,6 +8229,13 @@ export class AgentSession {
 			});
 		const deliveredNotices = this._engineTurnHold.noticeCount;
 		const deliveredHeldInputs = this._heldInputs.pending().length;
+		if (cap !== undefined) {
+			const { turnStarted, settled } = await this._resumeAfterStop(onQueued, "engine_turn_cap");
+			return {
+				answer: { resumed: true, pauseSeq, turnStarted, deliveredNotices, deliveredHeldInputs, engineTurnCap: cap },
+				settled,
+			};
+		}
 		// Payload-free notices (including goals) revalidate through their producer after release.
 		// An interruption must not add a directive-only turn when that work has already completed.
 		const resumeHeldTurn =
@@ -8254,8 +8283,10 @@ export class AgentSession {
 	 * once its send settled without one) and returns its settlement, which finishes the release only if the shared
 	 * resume settlement delivered the turn.
 	 */
-	private async _resumeAfterStop(onQueued?: () => void): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
-		const resumeCause = this._resumeCause();
+	private async _resumeAfterStop(
+		onQueued?: () => void,
+		resumeCause: ResumeCause = this._resumeCause(),
+	): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
 		const sources = this._engineTurnHold.releaseAll("resume_session");
 		const { turnId, delivered } = await this._startResumeTurn(onQueued, resumeCause);
 		const settled = (async () => {
@@ -8283,7 +8314,7 @@ export class AgentSession {
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
 	private async _startResumeTurn(
 		onQueued?: () => void,
-		resumeCause: "stop" | "interrupted" = "stop",
+		resumeCause: ResumeCause = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
 		const settlement = Promise.withResolvers<void>();
 		this._resumeSettlement = settlement.promise;
@@ -8334,7 +8365,7 @@ export class AgentSession {
 		continues: ReadonlySet<string>,
 		heldInputs: HeldInput[],
 		onQueued?: () => void,
-		resumeCause: "stop" | "interrupted" = "stop",
+		resumeCause: ResumeCause = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
 		return startRunResumeTurn({
 			resumeCause,
@@ -8623,6 +8654,12 @@ export class AgentSession {
 		return this._engineTurnHold.isHeld();
 	}
 
+	/** The engine-turn cap that pauses automatic turns now, if any (senpi#7138); a person's message or Resume lifts it. */
+	get engineTurnCap(): EngineTurnCap | undefined {
+		const stop = this._engineTurnStopNow(false);
+		return stop === null ? undefined : engineTurnCapOf(stop);
+	}
+
 	private _createLifecycleBinding(): LifecycleSessionBinding {
 		return new LifecycleSessionBinding(this, {
 			append: (type, data) => {
@@ -8802,31 +8839,18 @@ export class AgentSession {
 		// The turn a Resume or a peer's message just released is the turn it was answered with (`started`): the resume
 		// window, which counts every engine turn since the last real input, the reopened lane's own history included,
 		// bounds the automatic turns after it, never that turn itself (senpi#7020).
-		const resumeWindow = this._engineResumeWindow && !released;
-		const stop = engineTurnStop(
-			this.sessionManager.reduceHistory(engineTurnHistory),
-			Date.now(),
-			{
-				...this.settingsManager.getEngineTurnSettings(),
-				maxPerResumeWindow: resumeWindow ? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow : 0,
-			},
-			this._engineTurnStarts,
-		);
+		const stop = this._engineTurnStopNow(released);
 		if (stop === null) return false;
 		const details = { customType, ...stop, at: Date.now() };
 		if (!this._engineTurnPauseRecorded && !enginePauseSinceLastTurn(this.sessionManager.getBranch())) {
 			this._engineTurnPauseRecorded = true;
+			const cap = engineTurnCapOf(stop);
 			try {
 				this._emitEntryAppended(
 					this.sessionManager.appendCustomEntry(ENGINE_PAUSED_ENTRY_TYPE, {
-						reason:
-							stop.reason === "resume-window"
-								? "cap-per-resume-window"
-								: stop.reason === "per-user-input"
-									? "cap-per-message"
-									: "cap-per-minute",
+						reason: cap.reason,
 						customType,
-						count: stop.reason !== "tool-free-rate" ? stop.sinceUserInput : stop.toolFreeInWindow,
+						count: cap.count,
 						at: details.at,
 					}),
 				);
@@ -8851,6 +8875,18 @@ export class AgentSession {
 			this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
 		}
 		return true;
+	}
+
+	/** The engine-wide bound one more engine turn would meet now; a `released` turn is outside the resume window. */
+	private _engineTurnStopNow(released: boolean): EngineTurnStop | null {
+		const settings = this.settingsManager.getEngineTurnSettings();
+		const resumeWindow = this._engineResumeWindow && !released;
+		return engineTurnStop(
+			this.sessionManager.reduceHistory(engineTurnHistory),
+			Date.now(),
+			{ ...settings, maxPerResumeWindow: resumeWindow ? settings.maxPerResumeWindow : 0 },
+			this._engineTurnStarts,
+		);
 	}
 
 	/** Environment context a new turn must carry: set when cwd or date differs from the latest one visible (senpi#2093). */

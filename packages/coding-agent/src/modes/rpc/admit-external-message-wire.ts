@@ -6,6 +6,7 @@
  * both paths refuse the same records.
  */
 import type { HoldKind } from "../../core/engine-turn-hold.ts";
+import type { EngineTurnCap } from "../../core/engine-turn-limit.ts";
 import type {
 	ExternalAdmissionKind,
 	ExternalDeliverAs,
@@ -38,6 +39,8 @@ export interface RpcAdmitExternalMessageReply {
 	turnId: string;
 	/** `held` only: the kinds of the holds that keep the delivery until a person releases them (senpi#6490). */
 	holds?: HoldKind[];
+	/** `held` only: the engine-turn cap that stopped the delivery's turn (senpi#7138). */
+	engineTurnCap?: EngineTurnCap;
 }
 
 export interface RpcAdmitExternalMessageResponse {

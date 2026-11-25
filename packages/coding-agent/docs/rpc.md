@@ -86,6 +86,11 @@ while the turn was admitted); held input and notices stay held until a turn that
 A repeated `effectId` answers the recorded outcome with `replayed: true` and resumes nothing again, also after a
 reopen. A session with nothing held answers
 `not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
+A session the engine-turn cap paused (no hold, but `get_state.engineTurnCap` is present; senpi#7138) is not
+`not_paused`: Resume continues it with one turn that carries any held input and messages the cap kept and a hidden
+note that automatic turns were paused, and that turn ends the cap's count as a person's message does. The answer is
+`resumed: true` with `engineTurnCap` naming the cap it lifted. `mode: "release"` starts no turn, so it cannot lift a
+cap: it answers `resumed: false, reason: "engine_turn_cap"` with `engineTurnCap` and changes nothing.
 
 `unlessStopped: true` is for a resume another session or a tool asks for, not a person (senpi#7016): while a person's
 Stop or a parent's run hold is live it answers `resumed: false, reason: "stopped"` and releases nothing, so only the
@@ -109,7 +114,12 @@ paused: boolean;
 pausedNoticeCount: number;
 holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
 // HoldKind = "unattended" | "session_hold" | "run_fence" | "inherited_hold" (senpi#3811)
+engineTurnCap?: { reason: "cap-per-resume-window" | "cap-per-message" | "cap-per-minute"; count: number };
 ```
+
+`engineTurnCap` is present only while an engine-turn cap (below) stops automatic turns: `reason` is the reason the
+`engine-paused` record carries, `count` the count it stopped at. It is not a hold, so `paused` and `holds` do not
+reflect it; a person's message or `resume_session` lifts it.
 
 `since` is an ISO timestamp. This is the shared engine hold ledger; this release
 keys each record by `key` (defaulting to its kind) and preserves opaque `data`
@@ -152,7 +162,9 @@ Automatic turn admission is also bounded independently of the hold. On unattende
 history since the last real input. A real input ends that resume window. The
 normal `engineTurns.maxPerUserInput` defaults to 0 (off). Only admitted new engine
 turns count, not wakes steered into running work or pending compaction; a limit emits the existing engine-paused
-notice and record. Setting either cap to 0 disables that particular cap.
+notice and record. Setting either cap to 0 disables that particular cap. A peer delivery
+(`admit_external_message`) that would start a turn the cap stops is answered `held` with `engineTurnCap`, never
+`started` (senpi#7138); its message is recorded and the turn a person's message or `resume_session` starts answers it.
 
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
@@ -3648,7 +3660,7 @@ registrant opens no socket and writes no registry directory.
     (`admitExternalMessage`), so input the user submitted and the runtime has not taken yet holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
     steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
-    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run; or with `engineTurnCap`: recorded behind the engine-turn cap, senpi#7138); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3706,6 +3718,9 @@ registrant opens no socket and writes no registry directory.
   - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
     an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
     hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).
+  - `held` with `engine_turn_cap` (`{ reason, count }`, the `engine-paused` reason) instead of `holds`: the
+    engine-turn cap stops the turn the delivery would start (senpi#7138). The delivery is recorded without a turn,
+    and the turn a person's message or Resume starts answers it; do not send it again.
   - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
     its entry and it is not admissible again yet (see `failed` below).
 
@@ -6341,7 +6356,7 @@ Response:
 - `whenIdle`: `start` (default) starts a turn on an idle session; `queue` holds it for the next turn.
 - `expectedTurnId` is `get_state.currentTurnId` (a string). A steer whose `expectedTurnId` is not the current turn, or a mid-turn steer that names none, answers `kind: "turn_conflict"` and admits nothing. The reply's `turnId` is the session's turn at admission, in the same form.
 - `chainCount` is a thread call's hop count, checked against `threads.chainCountLimit` before anything is admitted (refused with `chain_count_limit` / `invalid_chain_count`, as on `prompt`/`steer`/`follow_up`); the admitted hop is written as `details.chain_count`.
-- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). `held` (senpi#6490): the session is idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run hold); the delivery is kept as a held notice and starts once that hold is released, and `holds` lists the hold kinds, for example `{ "kind": "held", "turnId": "0", "holds": ["session_hold"] }`. An `unattended` hold alone is released by the delivery, which answers `started`. A caller that predates `held` must treat it as neither success nor a refusal to retry: the delivery is admitted and waits on that device for its person. The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
+- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). `held` (senpi#6490): the session is idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run hold); the delivery is kept as a held notice and starts once that hold is released, and `holds` lists the hold kinds, for example `{ "kind": "held", "turnId": "0", "holds": ["session_hold"] }`. An `unattended` hold alone is released by the delivery, which answers `started`. `held` with `engineTurnCap` instead of `holds` (senpi#7138): the engine-turn cap stops the turn the delivery would start, for example `{ "kind": "held", "turnId": "8", "engineTurnCap": { "reason": "cap-per-resume-window", "count": 8 } }`; the delivery is recorded without a turn and is answered by the turn a person's message or `resume_session` starts (`get_state.engineTurnCap` shows the cap until then). A caller that predates `held` must treat it as neither success nor a refusal to retry: the delivery is admitted and waits on that device for its person. The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
 - On a connection that speaks for a remote device (a delegated connection, or one whose `set_client_info` declared `remoteOrigin`), the engine stamps that device as `details.remote_origin` and writes `text` unchanged, so the model reads exactly what a delivery on a local connection carries and no device (senpi#6250). It keeps `text` as `details.display_text` when no `displayText` is given, and refuses a `command_line` sender (`sender_not_allowed`). A delegated connection that names no remote device is refused (`delegated_origin_unknown`), never admitted as a local delivery. A record that names `remote_origin` is refused on every connection. The turn that consumes the delivery takes the connection's origin, so a remote device's follow-up runs under the delegated approval-mode rule even inside a local turn.
 - Once `release_session` has closed the session's admission, the record answers `success: false` with the release's message: the delivery stays with its sender.
 

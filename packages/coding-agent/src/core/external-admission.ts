@@ -26,6 +26,7 @@ import {
 	type SessionControlRemoteOrigin,
 } from "./extensions/session-control-types.ts";
 import type { HoldKind } from "./engine-turn-hold.ts";
+import type { EngineTurnCap } from "./engine-turn-limit.ts";
 import type { CustomMessage } from "./messages.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
@@ -37,6 +38,8 @@ export interface ExternalAdmissionPort {
 	readonly isBusy: () => boolean;
 	/** The holds a delivery cannot release, so a start is kept as a held notice instead (senpi#6490); empty when none. */
 	readonly heldBy: () => readonly HoldKind[];
+	/** The engine-turn cap that would stop a delivery's turn now, so a start is answered `held` (senpi#7138). */
+	readonly cappedBy: () => EngineTurnCap | undefined;
 	/** Synchronously enqueues into the runtime's own queue for `lane`. */
 	readonly enqueue: (message: SessionControlDeliveryMessage, lane: ExternalDeliverAs) => void;
 	/** Starts a turn carrying `message`; settles when that run is over, whether or not it wrote the entry. */
@@ -176,6 +179,7 @@ export class ExternalAdmission {
 		const message = deliveryMessage(input, stamp);
 		if (!this.isBusy() && input.whenIdle !== "queue") {
 			const holds = this.port.heldBy();
+			const cap = holds.length > 0 ? undefined : this.port.cappedBy();
 			this.pending.set(id, "start");
 			// A start that settles without writing the entry left it queued for later (the runtime's
 			// admission-retention path): from then on it is held like any queued delivery.
@@ -183,7 +187,11 @@ export class ExternalAdmission {
 				if (this.pending.get(id) === "start") this.pending.set(id, "followUp");
 			});
 			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
-			return holds.length > 0 ? { kind: "held", holds: [...holds], turn_epoch } : { kind: "started", turn_epoch };
+			if (holds.length > 0) return { kind: "held", holds: [...holds], turn_epoch };
+			// A capped start is recorded without a turn: the sender is told which cap stopped it (senpi#7138).
+			return cap === undefined
+				? { kind: "started", turn_epoch }
+				: { kind: "held", engine_turn_cap: cap, turn_epoch };
 		}
 		if (input.deliverAs === "steer" && this.isBusy()) {
 			if (input.expected_turn_id === undefined) return { kind: "turn_conflict", turn_epoch };
