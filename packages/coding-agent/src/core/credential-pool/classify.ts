@@ -33,7 +33,7 @@ export const RETRY_SAME_MAX_ATTEMPTS = 2;
 export const ACCOUNT_POOL_REFUSAL_NOTE = "No request was sent: the account pool refused it locally.";
 
 export type CredentialBlock =
-	| { reason: "auth_error" }
+	| { reason: "auth_error"; refusedGrant?: true }
 	| { reason: "account_disabled" }
 	| {
 			reason: "rate_limit";
@@ -261,14 +261,24 @@ function oauthBodyErrorCode(message: string): string | undefined {
  * names a client or request fault outranks both. A refresh that failed in any other way (TLS
  * interception, a captive portal's HTML, a WAF page, a moved endpoint) is not a verdict on the login.
  */
-function isRefusedGrant(refresh: ModelsError): boolean {
+function refreshAuthBlock(refresh: ModelsError): Extract<CredentialBlock, { reason: "auth_error" }> | undefined {
 	const cause: unknown = refresh.cause;
-	if (!(cause instanceof OAuthTokenEndpointError)) return false;
+	if (!(cause instanceof OAuthTokenEndpointError)) return undefined;
 	const code = cause.oauthError ?? oauthBodyErrorCode(cause.message);
-	if (code !== undefined && CLIENT_FAULT_CODES.has(code)) return false;
-	if (cause.credentialRefused || cause.status === 401) return true;
-	if (code !== undefined && REFUSED_GRANT_CODES.has(code)) return [400, 403, 404].includes(cause.status);
-	return cause.status === 400 && REFUSED_GRANT_TOKEN.test(cause.message);
+	if (code !== undefined && CLIENT_FAULT_CODES.has(code)) return undefined;
+	if (code !== undefined && REFUSED_GRANT_CODES.has(code) && [400, 401, 403, 404].includes(cause.status)) {
+		return { reason: "auth_error", refusedGrant: true };
+	}
+	// An unidentified rejection (including a prose match) can move the request to a sibling,
+	// but it is not evidence that the grant itself can never recover.
+	if (
+		cause.credentialRefused ||
+		cause.status === 401 ||
+		(cause.status === 400 && REFUSED_GRANT_TOKEN.test(cause.message))
+	) {
+		return { reason: "auth_error" };
+	}
+	return undefined;
 }
 
 /**
@@ -413,7 +423,8 @@ export function classifyCredentialFailure(
 	const statusFault = status === 408 || status === 429 || (status !== undefined && status >= 500 && status < 600);
 	const refresh = failedRefresh(error);
 	if (refresh !== undefined) {
-		if (!statusFault && isRefusedGrant(refresh)) return { kind: "failover", block: { reason: "auth_error" } };
+		const block = statusFault ? undefined : refreshAuthBlock(refresh);
+		if (block !== undefined) return { kind: "failover", block };
 		// Any other failed refresh is not a verdict on this account, so no branch below may block it; a
 		// network fault still retries the same account as it does for a model request (senpi#2081).
 		return isRefreshNetworkFault(refresh, text)

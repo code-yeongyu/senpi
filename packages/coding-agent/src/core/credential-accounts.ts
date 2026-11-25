@@ -242,6 +242,8 @@ function liveBlock(reason: string | undefined, blockedUntil: number | undefined,
 function sidecarBlock(sidecar: CredentialSlotState | undefined, now: number): SlotBlock {
 	if (sidecar?.usageLimit) return { blocked: true, paused: true, usageUrl: "https://chatgpt.com/settings/usage" };
 	if (sidecar === undefined || isAvailable(sidecar, now)) return UNBLOCKED;
+	if (sidecar.blockReason === "auth_error" && sidecar.blockedUntil === undefined)
+		return { blocked: true, blockedReason: "auth_error" };
 	return liveBlock(sidecar?.blockReason, sidecar?.blockedUntil, now);
 }
 

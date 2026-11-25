@@ -27,6 +27,8 @@ import {
 import {
 	grantForFlow,
 	registrationForFlow,
+	usesStagedRegistration,
+	withoutStagedFlowCredentials,
 	withPromotedRegistration,
 	withRegistration,
 } from "./registered-redirect.ts";
@@ -235,6 +237,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
+		if (
+			(scope === "all" || scope === "client" || scope === "tokens") &&
+			usesStagedRegistration(this.#store.read(), this.#options)
+		) {
+			await this.#store.update((current) => withoutStagedFlowCredentials(current, scope));
+			return;
+		}
 		if (scope === "all") {
 			await this.#store.clear();
 			return;
