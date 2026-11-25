@@ -104,4 +104,12 @@ export class RuntimeCredentials implements CredentialStore {
 		await this.store.delete(providerId, options);
 		this.overrides.delete(providerId);
 	}
+
+	/** A backing store that cannot compare refuses (`false`) rather than removing unconditionally (senpi#7406). */
+	async deleteLogin(providerId: string, loginId: string, options?: AuthOperationOptions): Promise<boolean> {
+		options?.signal?.throwIfAborted();
+		const deleted = (await this.store.deleteLogin?.(providerId, loginId, options)) ?? false;
+		if (deleted) this.overrides.delete(providerId);
+		return deleted;
+	}
 }
