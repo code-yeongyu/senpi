@@ -3056,15 +3056,19 @@ session answered `granted`. A caller's grant never overrides a host opt-out, and
 `unanswered`, so an older peer never grants. `attach_session.telemetry` adds the attaching caller's answer for as long
 as it stays attached: while any attached caller has not granted, the session's telemetry is off for everyone on it.
 `set_telemetry_consent { sessionId, consent }` changes the sending connection's answer on a live session without
-restarting anything; a connection that is not attached receives `session_not_attached`. On a session a caller opened,
+restarting anything. On a session a caller opened,
 the open's answer and every `set_telemetry_consent` also become the session's standing answer, which it keeps after the
 connection leaves (a retained session stays off after a revocation until a caller grants on purpose) and which a
 handover reopen replays; an attach's answer counts only while that connection stays attached. One session's callers never decide for
 another session of the same host. Extensions read the decision as `ctx.telemetryPermitted` at collection and again
 before delivering anything they buffered. Provider attribution headers (app identity only) keep the host's rule for an
 unanswered caller and are removed from the next request once any caller of the session declines or revokes. Probe
-`telemetry_consent` in `get_protocol_info` before sending the field; any other value is refused with
-`invalid_launch_profile`. The SDK sends the change with `RpcClient.setTelemetryConsent(consent, sessionId?)`.
+`telemetry_consent` in `get_protocol_info` before sending the field. A malformed answer on `open_session`,
+`attach_session` or `set_telemetry_consent` is refused with `errorCode: "invalid_telemetry_consent"` and
+`errorData.reason`; `set_telemetry_consent` from a connection that is not attached is refused with
+`errorCode: "session_not_attached"`. A change is reported only after the session confirmed the policy it produces (an
+in-process session takes it at once, a worker acknowledges it); otherwise nothing is kept, an attach is undone, and the
+answer is `errorCode: "telemetry_update_unconfirmed"` while the session keeps its previous policy. The SDK sends the change with `RpcClient.setTelemetryConsent(consent, sessionId?)`.
 
 #### Fallback chain per session (`retry_fallback_profile`)
 
@@ -4448,7 +4452,7 @@ codes or code prefixes in `error`:
 - `invalid_session_context: <reason>` from `set_session_context` (a reserved host or lineage key, a bad key or value, or a patched context over 4096 bytes; `errorData { reason, action }`)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
 - `invalid_session_env: <detail>` (`open_session.env` malformed, or naming a variable outside the host's caller-passable set; see "Caller env per session")
-- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, a malformed `open_session.retryFallback`, an `open_session.telemetry` or `attach_session.telemetry` other than `{ consent: "granted" | "declined" | "unanswered" }`, an empty or non-string `open_session.expectedHostInstance`, or `open_session.provider` without `modelId` or the reverse)
+- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, a malformed `open_session.retryFallback`, an empty or non-string `open_session.expectedHostInstance`, or `open_session.provider` without `modelId` or the reverse)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `warm_failed: <detail>` (`warm` could not load its profile, for example a `cwd` that does not exist; not remembered, so a retry loads again)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)

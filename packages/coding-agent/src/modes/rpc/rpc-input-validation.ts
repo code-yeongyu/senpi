@@ -290,6 +290,12 @@ export function sessionBrowserEngineError(value: unknown): string | undefined {
 	return `browserEngine must be "connected", "builtin" or "none".`;
 }
 
+/** Detail for a bare telemetry answer (`set_telemetry_consent.consent`) the host refuses. */
+export function sessionTelemetryConsentError(value: unknown): string | undefined {
+	if (isTelemetryConsent(value)) return undefined;
+	return `consent must be "granted", "declined" or "unanswered".`;
+}
+
 /** Detail for a telemetry answer (`open_session.telemetry`, `attach_session.telemetry`) the host refuses. */
 export function sessionTelemetryError(value: unknown): string | undefined {
 	if (value === undefined) return undefined;

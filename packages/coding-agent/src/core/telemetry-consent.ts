@@ -73,6 +73,13 @@ export class SessionTelemetryCallers {
 		if (this.standing !== "host") this.standing = consent;
 	}
 
+	/** An independent copy: a change is applied to it and kept only once the session confirmed the result. */
+	copy(): SessionTelemetryCallers {
+		const copy = new SessionTelemetryCallers(this.standing);
+		for (const [connection, consent] of this.live) copy.live.set(connection, consent);
+		return copy;
+	}
+
 	/** A connection stopped being attached; its live answer goes with it, the standing one stays. */
 	leave(connection: string): void {
 		this.live.delete(connection);

@@ -11,10 +11,13 @@ import { claimClose, finalizeClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { connectionLeft } from "./session-router-relocation.ts";
-import { declareTelemetry } from "./session-router-telemetry.ts";
+import {
+	declareTelemetry,
+	RPC_ERROR_INVALID_TELEMETRY_CONSENT,
+	telemetryUnconfirmed,
+} from "./session-router-telemetry.ts";
 import { sessionTelemetryError } from "./rpc-input-validation.ts";
-import { RPC_ERROR_INVALID_LAUNCH_PROFILE } from "./rpc-types.ts";
-import type { TelemetryConsent } from "../../core/telemetry-consent.ts";
+import { RpcSessionRegistryError } from "./session-registry-types.ts";
 
 function identityMatches(
 	host: RouterContext,
@@ -54,15 +57,26 @@ function drainingRefusal(
 }
 
 /** Synchronous ownership admission shared by ordinary attach and atomic reclaim. */
-function attach(host: RouterContext, owner: string, sessionId: string, telemetry?: TelemetryConsent): void {
+function attach(host: RouterContext, owner: string, sessionId: string): void {
 	if (!host.registry.attachSession) throw new Error("live attachment is unavailable");
 	host.registry.attachSession(sessionId);
 	recordAttachment(host, owner, sessionId);
-	// An in-process session takes the new permit before this returns; a worker's follows over its channel.
-	void declareTelemetry(host, sessionId, owner, telemetry, "attach").catch((cause: unknown) => {
-		process.stderr.write(`senpi rpc telemetry permit for session ${sessionId} not delivered: ${String(cause)}\n`);
-	});
 	host.writer.status.publish(sessionId, "attach", "client");
+}
+
+/**
+ * The attaching caller's telemetry answer (senpi#7446), confirmed by the session before the attach is reported. An
+ * answer the session did not confirm undoes the attach: the caller never holds a session whose policy it cannot prove.
+ */
+async function confirmAttachTelemetry(
+	host: RouterContext,
+	owner: string,
+	command: Extract<RpcAttachmentCommand, { type: "attach_session" }>,
+): Promise<RpcResponse | undefined> {
+	if (await declareTelemetry(host, command.sessionId, owner, command.telemetry?.consent, "attach")) return undefined;
+	releaseOwnerAttachment(host, owner, command.sessionId);
+	await releaseDisconnectAttachment(host, command.sessionId);
+	return telemetryUnconfirmed(command.id, command.type, command.sessionId);
 }
 
 export function attachSession(
@@ -73,7 +87,7 @@ export function attachSession(
 	if (draining) return draining;
 	const telemetryError = sessionTelemetryError(command.telemetry);
 	if (telemetryError)
-		return error(command.id, command.type, RPC_ERROR_INVALID_LAUNCH_PROFILE, { detail: telemetryError });
+		return error(command.id, command.type, RPC_ERROR_INVALID_TELEMETRY_CONSENT, { reason: telemetryError });
 	const entry = host.registry.peek(command.sessionId);
 	if (entry?.state !== "open" || !host.bindings.has(command.sessionId))
 		return error(command.id, command.type, "unknown_session", {});
@@ -81,13 +95,16 @@ export function attachSession(
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
-	const telemetry = command.telemetry?.consent;
 	if (command.takeover === true)
-		return takeOver(host, command, owner, () => attach(host, owner, command.sessionId, telemetry));
+		return takeOver(host, command, owner, () => attach(host, owner, command.sessionId)).then(async (reply) =>
+			reply.success ? ((await confirmAttachTelemetry(host, owner, command)) ?? reply) : reply,
+		);
 	if (command.admissionId !== undefined && host.admissions)
 		return compactOpen(host, command, async (accept, signal) => {
 			signal.throwIfAborted();
-			attach(host, owner, command.sessionId, telemetry);
+			attach(host, owner, command.sessionId);
+			const unconfirmed = await confirmAttachTelemetry(host, owner, command);
+			if (unconfirmed !== undefined) throw new RpcSessionRegistryError("telemetry_update_unconfirmed");
 			try {
 				await accept({ sessionId: command.sessionId, durableSessionId: command.durableSessionId, attached: true });
 			} catch (cause) {
@@ -98,17 +115,20 @@ export function attachSession(
 			return undefined;
 		});
 	try {
-		attach(host, owner, command.sessionId, telemetry);
-		return {
-			id: command.id,
-			type: "response",
-			command: command.type,
-			success: true,
-			data: { sessionId: command.sessionId, attached: true },
-		};
+		attach(host, owner, command.sessionId);
 	} catch (cause) {
 		return error(command.id, command.type, code(cause), detail(cause) ?? {});
 	}
+	return confirmAttachTelemetry(host, owner, command).then(
+		(unconfirmed): RpcResponse =>
+			unconfirmed ?? {
+				id: command.id,
+				type: "response",
+				command: command.type,
+				success: true,
+				data: { sessionId: command.sessionId, attached: true },
+			},
+	);
 }
 
 export async function releaseAttachment(

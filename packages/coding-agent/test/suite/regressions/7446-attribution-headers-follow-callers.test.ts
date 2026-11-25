@@ -73,6 +73,21 @@ async function attributedPrompts(
 	return perPrompt;
 }
 
+it("leaves a classic launch on the host setting alone for both events and headers", async () => {
+	// given
+	const on = await attributedSession(true);
+	const off = await attributedSession(false);
+
+	// when
+	await on.session.prompt("classic on");
+	await off.session.prompt("classic off");
+
+	// then
+	expect([on.session.telemetryPermitted(), off.session.telemetryPermitted()]).toEqual([true, false]);
+	expect([...new Set(await on.attributed(0, on.requestCount()))]).toEqual([true]);
+	expect([...new Set(await off.attributed(0, off.requestCount()))]).toEqual([false]);
+});
+
 it("keeps the headers for an unanswered caller while the host setting is on", async () => {
 	const perPrompt = await attributedPrompts(true, [(callers) => callers.answer("older-peer", "unanswered")]);
 

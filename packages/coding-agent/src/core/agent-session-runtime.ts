@@ -90,6 +90,14 @@ export interface AgentSessionLaunchProfile {
 	telemetryConsent?: TelemetryConsent;
 }
 
+/**
+ * Hands a session its callers' verdict. Optional on the session surface: an embedder's or a suite's stand-in session
+ * implements only what it needs, and a session without the hook produces no caller-attributed telemetry to gate.
+ */
+function applyTelemetryCallers(session: AgentSession, verdict: TelemetryCallersVerdict): void {
+	if (typeof session.setTelemetryCallers === "function") session.setTelemetryCallers(verdict);
+}
+
 /** The fallback policy one session runs with, chosen by its opener (e.g. a task child's own chain). */
 export interface SessionRetryFallbackProfile {
 	readonly modelFallback: boolean;
@@ -195,7 +203,7 @@ export class AgentSessionRuntime {
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
 		this._telemetryCallers = openingCallersVerdict(launchProfile?.telemetryConsent);
-		_session.setTelemetryCallers(this._telemetryCallers);
+		applyTelemetryCallers(_session, this._telemetryCallers);
 		markHostDefaultPresetFlag(_session, launchProfile);
 		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
 		// Taken by the async creator (the holder record needs the async boot instant); the constructor never touches it.
@@ -370,7 +378,7 @@ export class AgentSessionRuntime {
 	/** The callers' half of the telemetry decision, as the host recomputes it (senpi#7446); replacements keep it. */
 	setTelemetryCallers(verdict: TelemetryCallersVerdict): void {
 		this._telemetryCallers = verdict;
-		this._session.setTelemetryCallers(verdict);
+		applyTelemetryCallers(this._session, verdict);
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
@@ -535,7 +543,7 @@ export class AgentSessionRuntime {
 		applyClientPermissionMode(this._session, clientNamedPreset(profile), { announce: false });
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
 		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
-		this._session.setTelemetryCallers(this._telemetryCallers);
+		applyTelemetryCallers(this._session, this._telemetryCallers);
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;

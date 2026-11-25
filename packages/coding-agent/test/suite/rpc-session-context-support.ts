@@ -270,6 +270,12 @@ export async function contextHost(
 			if (outcome.success) throw new Error("open_session unexpectedly succeeded");
 			return outcome.error ?? "";
 		},
+		/** The launch profile the host keeps for a session (what a park or handover records). */
+		profile(sessionId: string) {
+			const profile = registry.peek(sessionId)?.profile;
+			if (profile === undefined) throw new Error(`no session ${sessionId}`);
+			return profile;
+		},
 		/** The system prompt the session's runtime currently holds. */
 		systemPrompt(sessionId: string): string {
 			const prompt = registry.peek(sessionId)?.runtime?.session.systemPrompt;

@@ -16,6 +16,7 @@ import { open } from "./session-router-open.ts";
 import { validatedOpenProfile } from "./session-router-open-profile.ts";
 import { holdOpenConnection, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
 import { syncRetainedRecord } from "./session-router-residency.ts";
+import { RpcSessionRegistryError } from "./session-registry-types.ts";
 
 type ParkCommand = Extract<RpcCommand, { type: "park_session" }>;
 type ClaimCommand = Extract<RpcCommand, { type: "claim_session" }>;
@@ -155,7 +156,8 @@ async function claimReady(
 		if (host.draining || host.drainExitRequested) return miss();
 		entry.acceptance?.applyTranscript(runtime.session.sessionManager.drainTranscript());
 		ownOpen(host, claimed, owner);
-		await declareTelemetry(host, claimed.sessionId, owner, command.telemetry?.consent, "answer");
+		if (!(await declareTelemetry(host, claimed.sessionId, owner, command.telemetry?.consent, "answer")))
+			throw new RpcSessionRegistryError("telemetry_update_unconfirmed");
 		host.bindings
 			.get(claimed.sessionId)
 			?.setClientCapabilities?.(

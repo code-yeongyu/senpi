@@ -26,6 +26,7 @@ import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import type { RouterContext } from "./session-router-context.ts";
 
 import { error } from "./session-router-errors.ts";
+import { RPC_ERROR_INVALID_TELEMETRY_CONSENT } from "./session-router-telemetry.ts";
 /** `open_session.spawnedBy` must name the parent, root and task when present; the open answers `invalid_spawned_by` otherwise. */
 export function invalidSpawnedBy(command: Extract<RpcCommand, { type: "open_session" }>): boolean {
 	const ancestry = command.spawnedBy;
@@ -93,7 +94,7 @@ export function validatedOpenProfile(
 		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
 	const telemetryError = sessionTelemetryError(command.telemetry);
 	if (telemetryError)
-		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${telemetryError}`);
+		return error(command.id, "open_session", RPC_ERROR_INVALID_TELEMETRY_CONSENT, { reason: telemetryError });
 	const envError = sessionEnvError(command.env);
 	if (envError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_ENV}: ${envError}`);
 	const sessionEnv = inheritedSessionEnv(parentSessionEnv(host, command.spawnedBy?.parentSessionId), command.env);

@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { buildRpcSessionState } from "../../src/modes/rpc/connection-handler.ts";
+import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import {
@@ -21,6 +22,7 @@ interface OpenFields {
 	sessionPath?: string;
 	retain_on_disconnect?: boolean;
 	kind?: "interactive" | "worker";
+	telemetry?: { consent: "granted" | "declined" | "unanswered" };
 }
 
 function acknowledged(signal: SharedArrayBuffer): Promise<void> {
@@ -40,6 +42,8 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 	const paths = new Map<EventEmitter, string>();
 	const posted: Array<{ worker: EventEmitter; message: HostToSessionWorker }> = [];
 	let serial = 0;
+	/** Whether this fixture's workers refuse a telemetry verdict update (senpi#7446 fail-closed coverage). */
+	const telemetryUpdates = { refuse: false };
 	const snapshotFor = (path: string, activity?: Partial<WorkerSnapshot>): WorkerSnapshot => ({
 		state: { ...baseState, sessionId: `durable-${path}`, sessionFile: path },
 		sessionPath: path,
@@ -75,9 +79,18 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 			case "command":
 			case "prompt_surface":
 			case "browser_engine":
-			case "telemetry_callers":
 			case "permission_preset":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
+				break;
+			case "telemetry_callers":
+				queueMicrotask(() =>
+					this.emit(
+						"message",
+						telemetryUpdates.refuse
+							? { type: "result", request: message.request, error: "telemetry_update_refused" }
+							: { type: "result", request: message.request },
+					),
+				);
 				break;
 			case "close":
 				queueMicrotask(() => this.emit("exit", 0));
@@ -140,6 +153,7 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 		writer,
 		records,
 		posted,
+		telemetryUpdates,
 		clock,
 		cwd: harness.tempDir,
 		settle,
@@ -150,6 +164,13 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 			);
 			await settle();
 			return (failure as WireRecord | undefined) ?? records.find((record) => record.id === id);
+		},
+		/** Any command as `connection` (registering it first), answered directly or through its own record. */
+		async send(connection: string, command: RpcCommand): Promise<WireRecord | undefined> {
+			const id = `send-${++requests}`;
+			const direct = await writer.withConnection(connect(connection), () => router.handle({ ...command, id }));
+			await settle();
+			return (direct as WireRecord | undefined) ?? records.find((record) => record.id === id);
 		},
 		async close(connection: string, sessionId: string): Promise<void> {
 			await writer.withConnection(connection, () =>
