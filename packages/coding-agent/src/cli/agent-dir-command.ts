@@ -28,5 +28,5 @@ export async function dispatchAgentDirectoryCommand(args: readonly string[]): Pr
 		);
 		return;
 	}
-	await exitAfterOutput(`${JSON.stringify({ version: 1, ok: true, ...result.value })}\n`, 0);
+	await exitAfterOutput(`${JSON.stringify(result.value)}\n`, 0);
 }

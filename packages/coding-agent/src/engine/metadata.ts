@@ -82,6 +82,13 @@ export const ENGINE_COMMANDS: readonly EngineCommandMetadata[] = [
 	},
 	{ call: "config.resources", argv: ["config"], positionals: [], flags: [LOCAL_FLAG, ...TRUST_FLAGS] },
 	{
+		call: "config.setResource",
+		argv: ["config"],
+		via: "tui",
+		positionals: [],
+		flags: [LOCAL_FLAG, ...TRUST_FLAGS],
+	},
+	{
 		call: "schedule.list",
 		argv: ["schedule", "list"],
 		positionals: [],

@@ -11785,6 +11785,42 @@
 		"packages/coding-agent/src/engine/metadata-launch.ts#LAUNCH_COMMANDS": {
 			"class": "constant",
 			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#config": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#schedule": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#queries": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-host.ts#host": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-packages.ts#packages": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-packages.ts#models": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/index.ts#engine": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-launch.ts#auth": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-launch.ts#launch": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
 		}
 	}
 }

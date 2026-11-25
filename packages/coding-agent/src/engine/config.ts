@@ -27,7 +27,7 @@ export interface ResolvedResources {
 	readonly project: ResolvedPaths;
 }
 
-export type ResourceConfigCode = "project_untrusted" | "not_found" | "not_writable" | "write_failed";
+export type ResourceConfigCode = "project_untrusted" | "trust_required" | "not_found" | "not_writable" | "write_failed";
 
 /** The resolved resources plus the settings they were read from: what the config TUI edits. */
 export interface OpenedResourceConfig extends ResolvedResources {
@@ -39,9 +39,9 @@ export async function openResourceConfig(
 	scope: EngineCommandScope,
 	input: ResourcesInput,
 ): Promise<EngineResult<OpenedResourceConfig, ResourceConfigCode>> {
-	const { settingsManager, trustDiagnostics } = await openCommandSettings(scope, {
-		...(input.trust === undefined ? {} : { trust: input.trust }),
-	});
+	const opened = await openCommandSettings(scope, input.trust);
+	if ("kind" in opened) return opened;
+	const { settingsManager, trustDiagnostics } = opened;
 	if (input.local === true && !settingsManager.isProjectTrusted()) {
 		return engineError(
 			"project_untrusted",
@@ -142,12 +142,19 @@ export async function setResource(
 ): Promise<EngineResult<ChangedResource, ResourceConfigCode>> {
 	const opened = await openResourceConfig(
 		scope,
-		setting.local === true ? { local: true, ...(setting.trust === undefined ? {} : { trust: setting.trust }) } : {},
+		setting.local === true
+			? { local: true, ...(setting.trust === undefined ? {} : { trust: setting.trust }) }
+			: { trust: false },
 	);
 	if (opened.kind === "error") return opened;
 	const { settingsManager, global, project } = opened.value;
 	const context = { settingsManager, cwd: scope.cwd, agentDir: scope.agentDir };
-	const item = findResource(setting.local === true ? project : global, setting);
+	// A project override keeps acting on the resource the TUI listed before any override existed: the inherited
+	// global entry. Once overridden, the project resolution names it as a project resource with another source.
+	const item =
+		setting.local === true
+			? (findResource(global, setting) ?? findResource(project, setting))
+			: findResource(global, setting);
 	const notFound = `No ${setting.resource.type} resource ${setting.resource.path} from ${setting.source}`;
 	if (item === undefined) return engineError("not_found", notFound, { diagnostics: opened.diagnostics });
 	const changedBase = { source: setting.source, resource: setting.resource };

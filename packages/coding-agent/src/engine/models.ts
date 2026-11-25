@@ -87,13 +87,24 @@ export interface ModelsListInput {
 	readonly setup?: LaunchSetup;
 }
 
+/**
+ * One listed model without its transport: `headers` (a configured header can be a literal Authorization
+ * token) and `baseUrl` (a URL can embed one) never leave the engine through a listing.
+ */
+export type ListedModel = Omit<Model<Api>, "headers" | "baseUrl">;
+
+function listed(model: Model<Api>): ListedModel {
+	const { headers: _headers, baseUrl: _baseUrl, ...rest } = model;
+	return rest;
+}
+
 export interface ModelListing {
 	/** The models.json load error, when the file could not be read; the listing still answers. */
 	readonly loadError?: string;
 	/** How many models the runtime has before the pattern is applied. */
 	readonly available: number;
 	/** The models matching the pattern, by provider then id. */
-	readonly models: readonly Model<Api>[];
+	readonly models: readonly ListedModel[];
 }
 
 /** The model listing of one runtime: the core the CLI and the exported `models.list` share. */
@@ -102,5 +113,5 @@ export function listModelsOf(modelRuntime: ModelRuntime, input: ModelsListInput)
 	const all = [...modelRuntime.getModels()];
 	const matching = input.pattern ? fuzzyFilter(all, input.pattern, (m) => `${m.provider} ${m.id}`) : all;
 	const models = [...matching].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
-	return engineOk({ ...(loadError ? { loadError } : {}), available: all.length, models });
+	return engineOk({ ...(loadError ? { loadError } : {}), available: all.length, models: models.map(listed) });
 }

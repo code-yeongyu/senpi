@@ -52,6 +52,8 @@ export interface EngineCommandMetadata {
 	/** The leading argv words; empty for a root flag such as `--list-tips`. */
 	readonly argv: readonly string[];
 	readonly aliases?: readonly (readonly string[])[];
+	/** `tui`: not an argv leaf of its own; the command's terminal UI performs it (a space press on a resource). */
+	readonly via?: "tui";
 	readonly positionals: readonly EngineCommandPositional[];
 	readonly flags: readonly EngineCommandFlag[];
 }

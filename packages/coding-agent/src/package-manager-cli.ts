@@ -17,6 +17,7 @@ import { runOmoLocalUpdateBeta } from "./beta/omo-local-update.ts";
 import { CONFIG_IMPORT_PI_ARGV, runConfigImportPi } from "./cli/config-import-pi.ts";
 import { CONFIG_COMMAND_USAGE, printConfigCommandHelp } from "./cli/config-command-help.ts";
 import { selectConfig } from "./cli/config-selector.ts";
+import { cliTrustDecider, savedProjectTrust } from "./cli/command-trust.ts";
 import { renderEngineDiagnostics } from "./cli/engine-diagnostics-render.ts";
 import {
 	APP_NAME,
@@ -36,16 +37,19 @@ import {
 import { brandProfile } from "./core/brand.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { type HeldFileLock, lockWithLossHandling } from "./core/file-lock.ts";
-import { type ConfiguredPackage, DefaultPackageManager, type ProgressEvent } from "./core/package-manager.ts";
-import { type EngineCommandScope, openCommandSettings, settingsDiagnostics } from "./engine/command-settings.ts";
+import { type ConfiguredPackage, type ProgressEvent } from "./core/package-manager.ts";
+import type { EngineCommandScope } from "./engine/command-settings.ts";
 import { openResourceConfig } from "./engine/config.ts";
 import { updateModelCatalogs } from "./engine/models.ts";
 import {
 	installPackage,
 	listPackages,
+	openPackageManager,
 	type PackageCommandCode,
 	removePackage,
+	runPackageStep,
 	updatePackages,
+	updateStep,
 } from "./engine/packages.ts";
 import type { EngineResult } from "./engine/result.ts";
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
@@ -729,7 +733,12 @@ export interface PackageCommandRuntimeOptions {
 }
 
 function commandScope(runtimeOptions: PackageCommandRuntimeOptions): EngineCommandScope {
-	return { cwd: process.cwd(), agentDir: getAgentDir(), extensionFactories: runtimeOptions.extensionFactories ?? [] };
+	const base = {
+		cwd: process.cwd(),
+		agentDir: getAgentDir(),
+		extensionFactories: runtimeOptions.extensionFactories ?? [],
+	};
+	return { ...base, decideTrust: cliTrustDecider(base) };
 }
 
 function printProgressStart(event: ProgressEvent): void {
@@ -842,14 +851,15 @@ async function runEngineUpdate(
 ): Promise<boolean> {
 	const scope = commandScope(runtimeOptions);
 	const { agentDir } = scope;
-	const { settingsManager, trustDiagnostics } = await openCommandSettings(scope, {
-		...(options.projectTrustOverride === undefined ? {} : { trust: options.projectTrustOverride }),
-		useSavedProjectTrustOnly: true,
+	const opened = await openPackageManager(scope, {
+		trust: savedProjectTrust(scope.cwd, agentDir, options.projectTrustOverride),
+		writesProjectConfig: false,
+		onProgress: printProgressStart,
 	});
-	renderEngineDiagnostics([...trustDiagnostics, ...settingsDiagnostics(settingsManager, "package command")]);
+	if ("kind" in opened) return renderPackageResult(opened, () => {});
+	renderEngineDiagnostics(opened.diagnostics);
+	const { settingsManager } = opened;
 	const selfUpdateNpmCommand = settingsManager.getGlobalSettings().npmCommand;
-	const packageManager = new DefaultPackageManager({ cwd: scope.cwd, agentDir, settingsManager });
-	packageManager.setProgressCallback(printProgressStart);
 
 	try {
 		// BETA(omo-local-update): remove this block, src/beta/omo-local-update*.ts and all test/omo-local-update* files to drop the feature.
@@ -876,7 +886,12 @@ async function runEngineUpdate(
 			console.log(chalk.dim(`Extensions are skipped. Run ${APP_NAME} update --extensions to update extensions.`));
 		}
 		if (updateTargetIncludesExtensions(target)) {
-			await packageManager.update();
+			const updated = await runPackageStep(opened, updateStep(undefined));
+			if (updated.kind === "error") {
+				console.error(chalk.red(`Error: ${updated.error.message}`));
+				process.exitCode = 1;
+				return true;
+			}
 			console.log(chalk.green("Updated packages"));
 		}
 		if (updateTargetIncludesSelf(target)) {
@@ -1051,7 +1066,10 @@ export async function handlePackageCommand(
 			return renderPackageResult(
 				await updatePackages(
 					commandScope(runtimeOptions),
-					{ ...(target.source === undefined ? {} : { source: target.source }), ...trust },
+					{
+						...(target.source === undefined ? {} : { source: target.source }),
+						trust: savedProjectTrust(process.cwd(), getAgentDir(), options.projectTrustOverride),
+					},
 					progress,
 				),
 				(value) => console.log(chalk.green(value.source ? `Updated ${value.source}` : "Updated packages")),
