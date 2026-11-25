@@ -172,6 +172,9 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// Local credential/auth sidecar lock exhaustion is infrastructure contention,
 	// not a provider failure and must stay on the transient retry path.
 	"Credential store is busy: lock",
+	// Gemini ends a generation with MALFORMED_RESPONSE and no content, intermittently and on the server; the same
+	// request usually succeeds on the next attempt. The Google adapters report it as `Provider stopped with: <reason>`.
+	"Provider stopped with: MALFORMED_RESPONSE",
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
 	"currently experiencing high demand",

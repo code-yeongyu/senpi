@@ -94,6 +94,7 @@ import { stream as streamGoogleGenerativeAi } from "../src/api/google-generative
 import { stream as streamGoogleVertex } from "../src/api/google-vertex.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Api, Model, StreamOptions } from "../src/types.ts";
+import { isRetryableAssistantError } from "../src/utils/retry.ts";
 
 beforeEach(() => {
 	googleGenAiMock.streamChunks = undefined;
@@ -178,6 +179,20 @@ describe("Google raw stop reasons", () => {
 		expect(message.stopReason).toBe("length");
 		expect(message.rawStopReason).toBe("MAX_TOKENS");
 		expect(message.content.some((block) => block.type === "toolCall")).toBe(true);
+	});
+
+	// The Gemini API returns MALFORMED_RESPONSE for a generation that produced nothing usable, but the SDK's
+	// FinishReason enum does not list it. It is intermittent server-side, so the turn retry may take it.
+	it.each(adapters)("keeps MALFORMED_RESPONSE as a retryable provider error for $name", async ({ createStream }) => {
+		googleGenAiMock.finishReason = "MALFORMED_RESPONSE";
+		googleGenAiMock.includeFunctionCall = false;
+
+		const message = await createStream().result();
+
+		expect(message.stopReason).toBe("error");
+		expect(message.rawStopReason).toBe("MALFORMED_RESPONSE");
+		expect(message.errorMessage).toBe("Provider stopped with: MALFORMED_RESPONSE");
+		expect(isRetryableAssistantError(message)).toBe(true);
 	});
 
 	it.each(adapters)("maps STOP with a tool call to toolUse for $name", async ({ createStream }) => {
