@@ -68,17 +68,17 @@ function fakeMcpTool(name: string): ToolDefinition {
 	};
 }
 
-function mcpFeedExtension(): ExtensionFactory {
+function mcpFeedExtension(catalog: readonly ToolSearchDocument[]): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
-		for (const entry of CATALOG) pi.registerTool(fakeMcpTool(entry.name));
+		for (const entry of catalog) pi.registerTool(fakeMcpTool(entry.name));
 		let armed = false;
 		pi.on("before_agent_start", async () => {
 			if (armed) return undefined;
 			armed = true;
-			getToolSearchService().feed("mcp", CATALOG, {
+			getToolSearchService().feed("mcp", catalog, {
 				activate: (names) => pi.setActiveTools([...new Set([...pi.getActiveTools(), ...names])]),
 			});
-			pi.setActiveTools(pi.getActiveTools().filter((name) => !CATALOG.some((doc) => doc.name === name)));
+			pi.setActiveTools(pi.getActiveTools().filter((name) => !catalog.some((doc) => doc.name === name)));
 			return undefined;
 		});
 	};
@@ -89,11 +89,11 @@ afterEach(() => {
 	for (const harness of harnesses.splice(0)) harness.cleanup();
 });
 
-async function makeHarness(): Promise<Harness> {
+async function makeHarness(catalog: readonly ToolSearchDocument[] = CATALOG): Promise<Harness> {
 	const harness = await createHarness({
 		extensionFactories: [
 			{ factory: toolSearchExtension, path: "<builtin:tool-search>" },
-			{ factory: mcpFeedExtension(), path: "/workspace/extensions/mcp-feed.ts" },
+			{ factory: mcpFeedExtension(catalog), path: "/workspace/extensions/mcp-feed.ts" },
 		],
 	});
 	harnesses.push(harness);
@@ -149,13 +149,30 @@ describe("shared tool_search: MCP catalog listing + by-name activation of zero-t
 		expect(searchText).not.toContain("mcp_fs_read-file");
 	});
 
-	it("declares an explicitly loaded tool before the model calls it", async () => {
-		const harness = await makeHarness();
-		const selected = "mcp_docs_get-library-docs";
+	it("declares the selected exact name even when similar names crowd it out of ranked search", async () => {
+		const selected = "mcp_docs_find-exact";
+		const catalog = Array.from({ length: 9 }, (_, index): ToolSearchDocument => {
+			const label = `find${"-".repeat(index + 1)}exact`;
+			return {
+				name: `mcp_docs_${label}`,
+				label,
+				aliases: [label],
+				description:
+					index === 0
+						? "Look up fixture records by matching a number against the identifier from the database."
+						: "",
+				keywords: [],
+				source: "mcp",
+				group: "docs",
+				ownerLabel: "docs",
+				registrationId: `mcp\0docs\0${label}`,
+			};
+		});
+		const harness = await makeHarness(catalog);
 		harness.setResponses([
 			(context) => {
 				expect(mcpNames(context)).toEqual(["tool_search"]);
-				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "library documentation" }), {
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "Look up fixture records" }), {
 					stopReason: "toolUse",
 				});
 			},
@@ -177,7 +194,8 @@ describe("shared tool_search: MCP catalog listing + by-name activation of zero-t
 		const messages = harness.sessionManager
 			.getEntries()
 			.flatMap((entry) => (entry.type === "message" ? [entry.message] : []));
-		expect(messages.some((message) => message.role === "toolResult" && message.toolName === selected)).toBe(true);
+		const result = messages.find((message) => message.role === "toolResult" && message.toolName === selected);
+		expect(result).toMatchObject({ isError: false, content: [{ type: "text", text: `called ${selected}` }] });
 	});
 
 	it.each<JsonObject>([

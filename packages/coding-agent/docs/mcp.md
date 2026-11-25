@@ -249,7 +249,7 @@ local `tool_search` for the session.
 | Tier | When | Cost profile |
 |---|---|---|
 | direct | `exposure:"direct"`, `directTools:true`, or `auto` at/below `searchThreshold` | Every tool schema on every request |
-| search (Tier-B) | `exposure:"search"` or `auto` above the threshold | Full catalog registered; deferred schemas stay out of requests until their tools are loaded or called |
+| search (Tier-B) | `exposure:"search"` or `auto` above the threshold | Full catalog registered; local deferral omits inactive schemas until their tools are loaded or called. Stub and native search modes can declare tools earlier. |
 | proxy (Tier-C) | `exposure:"proxy"` only — never `auto` | One `mcp_<server>` gateway tool (`search`/`describe`/`call` with JSON-string args); cheapest, but no provider-side argument validation |
 
 Searching only lists matches. To expose one result as a callable tool on the next model request,

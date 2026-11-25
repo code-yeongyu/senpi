@@ -60,10 +60,9 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 				...(params.source === undefined ? {} : { source: params.source }),
 				...(params.group === undefined ? {} : { group: params.group }),
 			};
-			const matches = service.search(params.query, MAX_RESULTS, options);
 			if (params.load === true) {
 				const name = params.query.trim();
-				const loaded = matches.some((match) => match.name === name) && service.activateTool(name);
+				const loaded = service.activateTool(name, options);
 				return {
 					content: [
 						{
@@ -76,6 +75,7 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 					details: { matched: loaded ? [name] : [], query: params.query, loaded },
 				};
 			}
+			const matches = service.search(params.query, MAX_RESULTS, options);
 			const hiddenHints = service.hiddenToolHints(params.query);
 			// A tool the query names keeps its redirect hint, which already carries its exact eval call.
 			const hinted = new Set(hiddenHints.map((hint) => hint.name));
