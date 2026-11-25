@@ -4,7 +4,8 @@
  *
  * Fail closed: a change is computed on a copy and kept only after the session confirmed the verdict it produces (an
  * in-process runtime takes it synchronously, a worker acknowledges it). A change the session did not confirm is not
- * kept, so the host's record never claims a policy the session is not running, and the caller gets a typed refusal.
+ * kept and the caller gets a typed refusal; a worker that did not confirm a stricter verdict is ended, so nothing it
+ * still holds is collected or delivered.
  */
 import {
 	openingCallersVerdict,
@@ -54,46 +55,110 @@ function sameVerdict(left: TelemetryCallersVerdict, right: TelemetryCallersVerdi
 	return left.events === right.events && left.attribution === right.attribution;
 }
 
-/** True once the session runs `verdict`. A session with neither a runtime nor a worker runs nothing. */
-async function confirm(entry: RpcSessionEntry, verdict: TelemetryCallersVerdict): Promise<boolean> {
-	if (entry.runtime) {
-		// A stand-in runtime without the hook cannot run the verdict, so the change is not confirmed.
-		if (typeof entry.runtime.setTelemetryCallers !== "function") return false;
-		entry.runtime.setTelemetryCallers(verdict);
-		return true;
-	}
-	if (!entry.worker) return true;
-	try {
-		await entry.worker.setTelemetryCallers(verdict);
-		return true;
-	} catch (cause) {
-		process.stderr.write(`senpi rpc telemetry verdict not confirmed by its worker: ${String(cause)}\n`);
-		return false;
-	}
+/** Whether `next` withdraws a use `confirmed` permits. */
+function tightens(confirmed: TelemetryCallersVerdict, next: TelemetryCallersVerdict): boolean {
+	return (confirmed.events && !next.events) || (confirmed.attribution && !next.attribution);
 }
 
-/** Applies `change` to a copy, delivers the verdict if it moved, and keeps the copy only when it was confirmed. */
-function transition(entry: RpcSessionEntry, change: (callers: SessionTelemetryCallers) => void): Promise<boolean> {
-	const state = stateOf(entry);
-	return state.serially(async () => {
-		const next = state.callers.copy();
-		change(next);
-		const verdict = next.verdict();
-		if (!sameVerdict(verdict, state.confirmed)) {
-			if (!(await confirm(entry, verdict))) return false;
-			state.confirmed = verdict;
-		}
-		state.callers = next;
-		const telemetryConsent = next.standingConsent();
-		if (telemetryConsent !== undefined && telemetryConsent !== entry.profile.telemetryConsent)
-			entry.profile = Object.freeze({ ...entry.profile, telemetryConsent });
-		return true;
+/**
+ * How long a worker has to acknowledge a STRICTER verdict before the host ends it (senpi#7446). This bounds the window
+ * in which a worker can still collect or export under the use its callers withdrew.
+ */
+export const TELEMETRY_REVOKE_ACK_MS = 2_000;
+/** How long the host waits to OBSERVE an ended worker's exit before it reports the end as unconfirmed. */
+export const TELEMETRY_END_CONFIRM_MS = 2_000;
+
+/** `confirmed`: the session runs the verdict. `ended`: the host observed the worker gone. `unconfirmed`: neither. */
+export type TelemetryOutcome = "confirmed" | "ended" | "unconfirmed";
+
+function within<T>(promise: Promise<T>, ms: number): Promise<T | "deadline"> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => resolve("deadline"), ms);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(cause: unknown) => {
+				clearTimeout(timer);
+				reject(cause);
+			},
+		);
 	});
 }
 
 /**
- * A connection became a caller of `sessionId` with this answer (silence is `unanswered`). False when the session did
- * not confirm the result: the answer was not kept, and the caller must not be reported attached.
+ * Hands the session `verdict`. An in-process runtime takes it synchronously. A worker must acknowledge it; one that
+ * refuses, fails or misses the deadline on a STRICTER verdict is ended, and the end counts only once its exit is seen.
+ * A looser verdict it did not acknowledge leaves it on its stricter, confirmed one.
+ */
+async function deliver(
+	entry: RpcSessionEntry,
+	confirmed: TelemetryCallersVerdict,
+	verdict: TelemetryCallersVerdict,
+): Promise<TelemetryOutcome> {
+	if (entry.runtime) {
+		// A stand-in runtime without the hook cannot run the verdict, so the change is not confirmed.
+		if (typeof entry.runtime.setTelemetryCallers !== "function") return "unconfirmed";
+		entry.runtime.setTelemetryCallers(verdict);
+		return "confirmed";
+	}
+	const worker = entry.worker;
+	if (!worker) return "confirmed";
+	const withdraws = tightens(confirmed, verdict);
+	const acknowledged = worker.setTelemetryCallers(verdict).then(
+		() => true,
+		(cause: unknown) => {
+			process.stderr.write(`senpi rpc telemetry verdict refused by its worker: ${String(cause)}\n`);
+			return false;
+		},
+	);
+	const answer = withdraws ? await within(acknowledged, TELEMETRY_REVOKE_ACK_MS) : await acknowledged;
+	if (answer === true) return "confirmed";
+	if (!withdraws) return "unconfirmed";
+	worker.failClosed(RPC_ERROR_TELEMETRY_UPDATE_UNCONFIRMED);
+	return (await within(worker.exited, TELEMETRY_END_CONFIRM_MS)) === "deadline" ? "unconfirmed" : "ended";
+}
+
+/**
+ * Applies `change` to a copy and delivers the verdict if it moved. The answers that WITHDRAW a use are recorded on the
+ * host at once (a revocation is never lost to a slow worker); the verdict the session runs is recorded only once it is
+ * confirmed, or once the worker is seen to have ended, so the host never reports "off" it cannot prove. An answer that
+ * only adds a use is recorded only once the session confirmed it, so an unconfirmed grant stays off.
+ */
+function transition(
+	entry: RpcSessionEntry,
+	change: (callers: SessionTelemetryCallers) => void,
+): Promise<TelemetryOutcome> {
+	const state = stateOf(entry);
+	return state.serially(async () => {
+		const next = state.callers.copy();
+		change(next);
+		const previous = state.confirmed;
+		const verdict = next.verdict();
+		const keepAnswers = (): void => {
+			state.callers = next;
+			const telemetryConsent = next.standingConsent();
+			if (telemetryConsent !== undefined && telemetryConsent !== entry.profile.telemetryConsent)
+				entry.profile = Object.freeze({ ...entry.profile, telemetryConsent });
+		};
+		if (sameVerdict(verdict, previous)) {
+			keepAnswers();
+			return "confirmed";
+		}
+		const withdraws = tightens(previous, verdict);
+		if (withdraws) keepAnswers();
+		const outcome = await deliver(entry, previous, verdict);
+		if (outcome === "unconfirmed") return outcome;
+		if (!withdraws) keepAnswers();
+		state.confirmed = verdict;
+		return outcome;
+	});
+}
+
+/**
+ * A connection became a caller of `sessionId` with this answer (silence is `unanswered`). Anything but `confirmed`
+ * means the answer is not in effect as a running policy, and the caller must not be reported attached.
  */
 export async function declareTelemetry(
 	host: RouterContext,
@@ -101,10 +166,10 @@ export async function declareTelemetry(
 	connection: string | undefined,
 	consent: TelemetryConsent | undefined,
 	kind: TelemetryDeclarationKind,
-): Promise<boolean> {
-	if (connection === undefined) return true;
+): Promise<TelemetryOutcome> {
+	if (connection === undefined) return "confirmed";
 	const entry = host.registry.peek(sessionId);
-	if (entry?.state !== "open") return true;
+	if (entry?.state !== "open") return "confirmed";
 	return transition(entry, (callers) => callers[kind](connection, consent ?? "unanswered"));
 }
 
@@ -116,12 +181,22 @@ export function telemetryCallerLeft(host: RouterContext, sessionId: string, conn
 	void transition(entry, (callers) => callers.leave(connection));
 }
 
-/** The typed refusal for an answer the session did not confirm. */
-export function telemetryUnconfirmed(id: string | undefined, command: string, sessionId: string): RpcResponse {
+/**
+ * The typed refusal for an answer the session did not run. `workerEnded` is true only when the host observed the
+ * session's worker gone (nothing is collected or delivered any more); false means the end, if requested, is unproven.
+ */
+export function telemetryUnconfirmed(
+	id: string | undefined,
+	command: string,
+	sessionId: string,
+	outcome: Exclude<TelemetryOutcome, "confirmed">,
+): RpcResponse {
 	return error(id, command, RPC_ERROR_TELEMETRY_UPDATE_UNCONFIRMED, {
 		sessionId,
+		workerEnded: outcome === "ended",
 		reason: "the session did not confirm the telemetry policy this answer produces",
-		action: "retry; until it succeeds the session keeps its previous policy",
+		action:
+			"a stricter answer ends a session that could not confirm it; a looser one leaves its stricter policy, retry",
 	});
 }
 
@@ -141,8 +216,8 @@ export async function setTelemetryConsent(
 		});
 	try {
 		host.registry.getForCommand(command.sessionId, command.type);
-		if (!(await declareTelemetry(host, command.sessionId, connection, command.consent, "answer")))
-			return telemetryUnconfirmed(command.id, command.type, command.sessionId);
+		const outcome = await declareTelemetry(host, command.sessionId, connection, command.consent, "answer");
+		if (outcome !== "confirmed") return telemetryUnconfirmed(command.id, command.type, command.sessionId, outcome);
 		return { id: command.id, type: "response", command: command.type, success: true };
 	} catch (cause) {
 		return error(command.id, command.type, code(cause), detail(cause));

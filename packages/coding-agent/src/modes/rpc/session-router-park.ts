@@ -156,7 +156,9 @@ async function claimReady(
 		if (host.draining || host.drainExitRequested) return miss();
 		entry.acceptance?.applyTranscript(runtime.session.sessionManager.drainTranscript());
 		ownOpen(host, claimed, owner);
-		if (!(await declareTelemetry(host, claimed.sessionId, owner, command.telemetry?.consent, "answer")))
+		if (
+			(await declareTelemetry(host, claimed.sessionId, owner, command.telemetry?.consent, "answer")) !== "confirmed"
+		)
 			throw new RpcSessionRegistryError("telemetry_update_unconfirmed");
 		host.bindings
 			.get(claimed.sessionId)

@@ -73,10 +73,11 @@ async function confirmAttachTelemetry(
 	owner: string,
 	command: Extract<RpcAttachmentCommand, { type: "attach_session" }>,
 ): Promise<RpcResponse | undefined> {
-	if (await declareTelemetry(host, command.sessionId, owner, command.telemetry?.consent, "attach")) return undefined;
+	const outcome = await declareTelemetry(host, command.sessionId, owner, command.telemetry?.consent, "attach");
+	if (outcome === "confirmed") return undefined;
 	releaseOwnerAttachment(host, owner, command.sessionId);
 	await releaseDisconnectAttachment(host, command.sessionId);
-	return telemetryUnconfirmed(command.id, command.type, command.sessionId);
+	return telemetryUnconfirmed(command.id, command.type, command.sessionId, outcome);
 }
 
 export function attachSession(

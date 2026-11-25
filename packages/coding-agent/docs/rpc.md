@@ -3068,7 +3068,12 @@ unanswered caller and are removed from the next request once any caller of the s
 `errorData.reason`; `set_telemetry_consent` from a connection that is not attached is refused with
 `errorCode: "session_not_attached"`. A change is reported only after the session confirmed the policy it produces (an
 in-process session takes it at once, a worker acknowledges it); otherwise nothing is kept, an attach is undone, and the
-answer is `errorCode: "telemetry_update_unconfirmed"` while the session keeps its previous policy. The SDK sends the change with `RpcClient.setTelemetryConsent(consent, sessionId?)`.
+answer is `errorCode: "telemetry_update_unconfirmed"`. A worker session collects and exports its telemetry inside its
+worker, so a stricter policy the worker does not acknowledge within 2 s (`TELEMETRY_REVOKE_ACK_MS`) ends that worker
+(its clients receive `session_error` with that code); the refusal's `errorData.workerEnded` is true only once the host
+observed the worker exit within a further 2 s (`TELEMETRY_END_CONFIRM_MS`). A looser policy it did not confirm leaves
+it on its stricter one. For a worker session the residual is what the worker exports between the answer and its
+acknowledgement or end, at most `TELEMETRY_REVOKE_ACK_MS`. The SDK sends the change with `RpcClient.setTelemetryConsent(consent, sessionId?)`.
 
 #### Fallback chain per session (`retry_fallback_profile`)
 

@@ -42,8 +42,8 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 	const paths = new Map<EventEmitter, string>();
 	const posted: Array<{ worker: EventEmitter; message: HostToSessionWorker }> = [];
 	let serial = 0;
-	/** Whether this fixture's workers refuse a telemetry verdict update (senpi#7446 fail-closed coverage). */
-	const telemetryUpdates = { refuse: false };
+	/** How this fixture's workers answer a telemetry verdict update (senpi#7446 fail-closed coverage). */
+	const telemetryUpdates: { mode: "acknowledge" | "refuse" | "silent" } = { mode: "acknowledge" };
 	const snapshotFor = (path: string, activity?: Partial<WorkerSnapshot>): WorkerSnapshot => ({
 		state: { ...baseState, sessionId: `durable-${path}`, sessionFile: path },
 		sessionPath: path,
@@ -83,10 +83,11 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "telemetry_callers":
+				if (telemetryUpdates.mode === "silent") break;
 				queueMicrotask(() =>
 					this.emit(
 						"message",
-						telemetryUpdates.refuse
+						telemetryUpdates.mode === "refuse"
 							? { type: "result", request: message.request, error: "telemetry_update_refused" }
 							: { type: "result", request: message.request },
 					),
