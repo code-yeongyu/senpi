@@ -4,86 +4,31 @@
  * when a person did (that person decides) and never when it was itself such a continuation (a crash loop stops at
  * one). A goal keeps continuing even after a long streak of continuations, which a cold reopen suppresses.
  */
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, expect, it } from "vitest";
-import type { SessionStartEvent } from "../../../src/core/extensions/types.ts";
 import goalExtension from "../../../src/core/extensions/builtin/goal/index.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/session-control-types.ts";
 import { STOP_RESUME_CUSTOM_TYPE } from "../../../src/core/stop-resume-directive.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import {
+	answer,
+	asStart,
+	cleanupKilledMidRun,
+	continuedStart,
+	engineStarted,
+	killedMidRun,
+	reopenContinued,
+} from "./7020-killed-mid-run-support.ts";
 import { firstTurnSettled, within } from "./7020-live-park-support.ts";
 
 const harnesses: Harness[] = [];
 afterEach(() => {
 	for (const h of harnesses.splice(0).reverse()) h.cleanup();
+	cleanupKilledMidRun();
 });
 
 const TURN_MS = 10_000;
-/** What a host reopening a session that was live when its predecessor ended passes to `session_start`. */
-const continuedStart = { type: "session_start", reason: "resume", continued: true } as const;
-const asStart = (event: object): SessionStartEvent => event as SessionStartEvent;
-
-function answer(text: string): AssistantMessage {
-	return fauxAssistantMessage(text);
-}
-
-/** A session file as a SIGKILL left it: the opening lifecycle record says `runActive`, then `run` wrote its start. */
-async function killedMidRun(
-	run: (saved: SessionManager) => void,
-	options: { cutTool?: boolean } = {},
-): Promise<{ base: Harness; file: string }> {
-	const base = await createHarness({ persistSession: true });
-	harnesses.push(base);
-	const saved = base.sessionManager;
-	saved.appendMessage({ role: "user", content: "Original request", timestamp: 1 });
-	saved.appendMessage(answer("Previous answer"));
-	run(saved);
-	saved.appendCustomEntry("session-lifecycle", {
-		sessionId: saved.getSessionId(),
-		state: "running",
-		seq: 2,
-		epoch: 1,
-		epochOrigin: "automatic",
-		humanInputRevision: 1,
-		selfSettleEligible: true,
-		runPaused: false,
-		since: "2026-11-19T02:40:53.619Z",
-		role: "root",
-		rootSessionId: saved.getSessionId(),
-		persisted: true,
-		runActive: true,
-		epochSealed: false,
-		runId: "killed-run",
-	});
-	if (options.cutTool !== false)
-		saved.appendMessage({
-			...answer(""),
-			content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "make deploy" } }],
-			stopReason: "toolUse",
-		});
-	const file = saved.getSessionFile();
-	if (!file) throw new Error("the killed session has no file");
-	return { base, file };
-}
-
-async function reopenContinued(base: Harness, file: string): Promise<{ h: Harness; turn: Promise<void> }> {
-	const h = await createHarness({
-		siblingOf: base,
-		sessionManager: SessionManager.open(file),
-		sessionStartEvent: asStart(continuedStart),
-	});
-	harnesses.push(h);
-	h.setResponses([fauxAssistantMessage([fauxText("continued")])]);
-	const turn = firstTurnSettled(h.session);
-	await h.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
-	return { h, turn };
-}
-
-const engineStarted = (saved: SessionManager): void => {
-	saved.appendCustomEntry("engine-turn-start", { customType: "senpi-monitor:event" });
-	saved.appendCustomMessageEntry("senpi-monitor:event", "build finished", false, {});
-};
 
 it("continues an engine-started run the restart cut, once, with no input", async () => {
 	const { base, file } = await killedMidRun(engineStarted);
