@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { LONG_CONTEXT_FALLBACK_DIAGNOSTIC, LONG_CONTEXT_FALLBACK_NOTICE } from "../../../provider-notices.ts";
 import { getSessionClaudeAccountPin } from "./account-command.ts";
+import { accountLabel } from "./account-context.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
 import { markColdSeedOverflow } from "./cold-seed-budget.ts";
 import { CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
@@ -34,6 +35,7 @@ import {
 	resumeModeSource,
 } from "./settings.ts";
 import { applyStreamEvent } from "./stream-events.ts";
+import { ClaudeSignInRequiredError } from "./sign-in-again.ts";
 import { withAuthGuidance } from "./stream-guidance.ts";
 import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
 import { toolWatch } from "./tool-watch.ts";
@@ -339,6 +341,9 @@ export function streamAnthropicSubscription(
 			const billed = sdkResultFailureUsage(error);
 			if (billed) updateUsage(model, output, billed, "query");
 			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
+			if (output.stopReason === "error" && error instanceof ClaudeSignInRequiredError) {
+				output.errorCause = { type: "sign_in_required", accountNames: error.accountNames.map(accountLabel) };
+			}
 			const diagnostic = output.stopReason === "error" ? anthropicSubscriptionDiagnostic(error) : undefined;
 			if (diagnostic !== undefined) output.providerDiagnostic = diagnostic;
 			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);

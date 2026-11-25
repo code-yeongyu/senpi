@@ -248,6 +248,59 @@ describe("MCP OAuth registers the redirect URI it authorizes with (senpi#6327)",
 		expect(provider(deps).clientInformation()?.client_id).toBe("dcr-signed-in");
 	});
 
+	it("a failed code exchange under a staged client keeps the signed-in grant refreshing (senpi#6339)", async () => {
+		// Given: a completed sign-in, then a paste flow that staged a new registration.
+		const { fixture, deps, store } = await harness();
+		expect((await interactiveAuth(deps)).authorizeStatus).toBe(302);
+		const signedIn = store.read();
+		const url = new URL(await runAuthStart(deps));
+		expect((await fixture.getLog()).registrations).toHaveLength(2);
+
+		// When: the flow's code exchange is rejected.
+		const callback = `${url.searchParams.get("redirect_uri")}?code=not-a-code&state=${url.searchParams.get("state")}`;
+		await expect(runAuthComplete(deps, callback)).rejects.toThrow();
+
+		// Then: the signed-in client and its refresh token survive, and a background refresh still works.
+		expect(store.read()?.clientInfo?.client_id).toBe(signedIn?.clientInfo?.client_id);
+		expect(store.read()?.refreshToken).toBe(signedIn?.refreshToken);
+		await store.update((current) => ({ ...current, expiresAt: 0 }));
+		const refreshed = await new McpRefreshManager(provider(deps)).refresh();
+		expect(refreshed.access_token).toMatch(/^SENTINEL_AT_/);
+	});
+
+	it("clearing everything under a staged client drops the staged client only (senpi#6339)", async () => {
+		// Given: a signed-in grant and a flow that staged a new client.
+		const { deps, store } = await harness();
+		const signedIn = { client_id: "dcr-signed-in", redirect_uris: ["http://127.0.0.1:1/callback"] };
+		await store.update(() => ({ clientInfo: signedIn, accessToken: "AT-live", refreshToken: "RT-live" }));
+		const flow = provider(deps, "http://127.0.0.1:2/callback");
+		await flow.saveClientInformation({ client_id: "dcr-staged", redirect_uris: ["http://127.0.0.1:2/callback"] });
+
+		// When: the SDK's invalid-client retry clears "all" for this flow.
+		await flow.invalidateCredentials("all");
+
+		// Then: the staged client is gone and the signed-in record is intact.
+		expect(store.read()?.pendingClientInfo).toBeUndefined();
+		expect(store.read()?.clientInfo?.client_id).toBe("dcr-signed-in");
+		expect(store.read()?.refreshToken).toBe("RT-live");
+	});
+
+	it("re-saving a known client keeps the redirect URIs it registered with (senpi#6339)", async () => {
+		// Given: a flow staged a client registered for its own redirect URI.
+		const { deps, store } = await harness();
+		const signedIn = { client_id: "dcr-signed-in", redirect_uris: ["http://127.0.0.1:1/callback"] };
+		await store.update(() => ({ clientInfo: signedIn, refreshToken: "RT-live" }));
+		const flow = provider(deps, "http://127.0.0.1:2/callback");
+		await flow.saveClientInformation({ client_id: "dcr-staged", redirect_uris: ["http://localhost:2/callback"] });
+
+		// When: the same client is saved again without the sent redirect URIs.
+		await flow.saveClientInformation({ client_id: "dcr-staged", redirect_uris: ["http://localhost:2/callback"] });
+
+		// Then: the record still names the URI the client was registered with, so the flow still selects it.
+		expect(store.read()?.pendingClientInfo?.redirectUrisSent).toEqual(["http://127.0.0.1:2/callback"]);
+		expect(flow.clientInformation()?.client_id).toBe("dcr-staged");
+	});
+
 	it("/mcp auth-start after a background connect reuses the matching port-0 registration", async () => {
 		// Given: a background connect registered the placeholder that auth-start also sends.
 		const { fixture, deps } = await harness();
