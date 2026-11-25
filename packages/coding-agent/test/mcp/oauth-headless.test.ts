@@ -444,6 +444,39 @@ describe("headless oauth flows", () => {
 		]);
 		expect(harness.store.read()).toBeUndefined();
 	});
+
+	// senpi#6538: under load a background refresh (the attach's catalog refresh) can meet the rotated refresh token
+	// first, get invalid_grant and clear the saved sign-in before the manual reconnect reads it.
+	it("surfaces auth-start guidance on manual reconnect when another refresh already cleared the rotated credentials", async () => {
+		// Given: a connected server whose refresh token was rotated away, and another holder of the same sign-in that
+		// refreshes first
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await writeMcpConfig(dir, harness.deps.config);
+		const service = new McpService();
+		cleanups.push(() => service.dispose("quit"));
+		await service.attachSession(
+			{ type: "session_start", reason: "startup" },
+			{ cwd: dir, isProjectTrusted: () => true },
+			capturingPi(),
+			{ agentDir: dir },
+		);
+		await service.whenAttachSettled();
+		expect(service.getConnection("fix")?.state).toBe("connected");
+		await poisonRefreshToken(harness);
+		const other = resolveServerAuth({ agentDir: dir, config: harness.deps.config, serverName: "fix" });
+		await expect(other.refresh?.ensureFresh()).rejects.toThrow(/invalid_grant/);
+		expect(harness.store.read()).toBeUndefined();
+
+		// When/Then: the manual reconnect still names the way back instead of resolving quietly
+		await expect(service.reconnectServer("fix")).rejects.toThrow(/\/mcp auth-start fix/);
+		expect(service.getServerSnapshots()).toMatchObject([
+			{ lastError: expect.stringMatching(/\/mcp auth-start fix/), lifecycleState: "needs_auth", name: "fix" },
+		]);
+	});
 });
 
 function lastNote(notes: readonly { message: string; type: string }[]): { message: string; type: string } | undefined {

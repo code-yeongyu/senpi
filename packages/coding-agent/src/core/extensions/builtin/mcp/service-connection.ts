@@ -1,4 +1,5 @@
 import { detectLiteralBearerWarnings, resolveServerAuth } from "./auth/context.ts";
+import { OAuthFlowError } from "./auth/oauth-errors.ts";
 import { type McpConfigGeneration, mcpConnectionIdentity, mcpGenerationRenewal } from "./config-generation.ts";
 import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
@@ -108,7 +109,18 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 			entry.counters.reconnectCount += 1;
 			entry.cacheRefreshedAfterConnect = false;
 			try {
-				await entry.authPlan?.refresh?.ensureFresh();
+				const refresh = entry.authPlan?.refresh;
+				// senpi#6538: no saved sign-in (another refresh met a rotated grant and cleared it) is needs_auth now,
+				// not a token-less connect whose outcome races the credentials re-key.
+				if (refresh !== undefined && (await refresh.ensureFresh()) === undefined) {
+					throw new OAuthFlowError(
+						"needs_auth",
+						`MCP server ${name} has no saved sign-in; re-authentication required.`,
+						{
+							serverName: name,
+						},
+					);
+				}
 			} catch (error) {
 				if (entry.connection.state === "disabled") return;
 				const authError = markMcpConnectionNeedsAuth(entry.connection, error);
