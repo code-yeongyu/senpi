@@ -118,31 +118,8 @@ export function waitForJsonLine(
 	});
 }
 
-/**
- * Exit-aware readiness wait (senpi#5340, senpi#7141): the host's own stderr line or its exit
- * settles the promise; no wall-clock budget of its own, vitest's testTimeout is the outer bound.
- */
-export function waitForStderr(child: ChildProcessWithoutNullStreams, text: string): Promise<void> {
-	let stderr = "";
-	return new Promise<void>((resolve, reject) => {
-		const onData = (chunk: Buffer) => {
-			stderr += chunk.toString("utf8");
-			if (!stderr.includes(text)) return;
-			cleanup();
-			resolve();
-		};
-		const onExit = () => {
-			cleanup();
-			reject(new Error(`RPC host exited before ${JSON.stringify(text)}: ${stderr}`));
-		};
-		const cleanup = () => {
-			child.stderr.off("data", onData);
-			child.off("exit", onExit);
-		};
-		child.stderr.on("data", onData);
-		child.once("exit", onExit);
-	});
-}
+// One readiness wait for every socket-host fixture (senpi#7141).
+export { waitForStderr } from "./helpers/rpc-socket-host-support.ts";
 
 /** One probe on its OWN connection: the second one must observe the same identity. */
 export async function probeSocket(socketPath: string, id: string): Promise<RecordValue> {
