@@ -904,7 +904,11 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 						settleH2(new CursorRetryableStreamError("Cursor HTTP/2 session closed", "transport"));
 					}
 				});
-				h2Request = attemptH2Client.request(requestHeaders);
+				const attemptRequest = attemptH2Client.request(requestHeaders);
+				h2Request = attemptRequest;
+				// Request events are this attempt's only: a closed predecessor's late
+				// `end`/`error` must not settle the retry that replaced it.
+				const isCurrentRequest = (): boolean => h2Request === attemptRequest;
 
 				if (attempt === 1) {
 					stream.push({ type: "start", partial: output });
@@ -1002,7 +1006,8 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				};
 				armStreamHealthTimer();
 
-				h2Request.on("data", (chunk: Buffer) => {
+				attemptRequest.on("data", (chunk: Buffer) => {
+					if (!isCurrentRequest()) return;
 					// Steady state drains fully per chunk; alias the fresh h2 chunk
 					// instead of copying it through Buffer.concat.
 					pendingBuffer = pendingBuffer.length === 0 ? chunk : Buffer.concat([pendingBuffer, chunk]);
@@ -1081,7 +1086,8 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 					h2Request.write(frameConnectMessage(heartbeatBytes));
 				};
 
-				h2Request.on("trailers", (trailers) => {
+				attemptRequest.on("trailers", (trailers) => {
+					if (!isCurrentRequest()) return;
 					const status = trailers["grpc-status"];
 					const msg = trailers["grpc-message"];
 					if (status && status !== "0" && !endStreamError) {
@@ -1089,7 +1095,8 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 					}
 				});
 
-				h2Request.on("end", () => {
+				attemptRequest.on("end", () => {
+					if (!isCurrentRequest()) return;
 					if (!sawTurnEnded && !endStreamError) {
 						settleH2(new CursorRetryableStreamError("Cursor stream ended before turnEnded", "clean-end"));
 						return;
@@ -1097,7 +1104,8 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 					settleH2();
 				});
 
-				h2Request.on("error", (error) => {
+				attemptRequest.on("error", (error) => {
+					if (!isCurrentRequest()) return;
 					const mapped = mapH2TransportError(error, baseUrl);
 					settleH2(
 						sawTurnEnded

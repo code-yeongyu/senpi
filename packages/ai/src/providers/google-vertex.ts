@@ -55,7 +55,9 @@ const vertexAuth: ApiKeyAuth = {
 			],
 		});
 		const project = await interaction.prompt({ type: "text", message: "Enter Google Cloud project ID" });
+		if (!project.trim()) throw new Error("Google Cloud project ID is required.");
 		const location = await interaction.prompt({ type: "text", message: "Enter Google Cloud location" });
+		if (!location.trim()) throw new Error("Google Cloud location is required.");
 		const credentialsPath =
 			method === "service-account"
 				? await interaction.prompt({ type: "text", message: "Enter service account credentials file path" })
