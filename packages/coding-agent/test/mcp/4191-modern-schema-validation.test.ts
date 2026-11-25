@@ -31,6 +31,16 @@ describe("modern schema validation", () => {
 		{ schema: { type: "number" }, value: 0 },
 		{ schema: { type: "string" }, value: "" },
 		{ schema: { type: "array", prefixItems: [{ type: "integer" }], items: false }, value: [1] },
+		{
+			schema: {
+				$schema: "http://json-schema.org/draft-07/schema#",
+				definitions: { count: { type: "integer" } },
+				$ref: "#/definitions/count",
+				type: "string",
+				maximum: 5,
+			},
+			value: 6,
+		},
 		{ schema: true, value: { any: [false, null] } },
 	])("accepts structuredContent $value against $schema", async ({ schema, value }) => {
 		const { connection } = await connect([{ content: [], structuredContent: value }], false, false);
@@ -46,6 +56,10 @@ describe("modern schema validation", () => {
 			schema: { type: "array", prefixItems: [{ type: "integer" }], items: false },
 			result: { structuredContent: [1, 2] },
 		},
+		{
+			schema: { $defs: { count: { type: "integer" } }, $ref: "#/$defs/count", maximum: 5 },
+			result: { structuredContent: 6 },
+		},
 	])("rejects missing or invalid structured output without coercion", async ({ schema, result }) => {
 		const { connection } = await connect([{ content: [], ...result }], false, false);
 		await expect(callMcpToolRequest(connection.client, { name: "fixture" }, schema)).rejects.toMatchObject({
@@ -60,8 +74,31 @@ describe("modern schema validation", () => {
 		});
 	});
 
+	it("discovers draft-07 tools and enforces draft-07 tuple constraints", async () => {
+		const { connection, script } = await connect([], false, false);
+		script.tools = [
+			{
+				name: "fixture",
+				inputSchema: {
+					$schema: "http://json-schema.org/draft-07/schema#",
+					type: "object",
+					properties: {
+						values: { type: "array", items: [{ type: "integer" }], additionalItems: false },
+					},
+					required: ["values"],
+				},
+			},
+		];
+		const entries = await collectToolCatalog("fixture", connection, normalizeServer({ command: "unused" }));
+		const tool = buildMcpToolDefinitions(entries)[0];
+		if (!tool) throw new Error("Expected the draft-07 tool to be registered");
+		const call = { type: "toolCall", id: "call", name: tool.name } as const;
+		expect(validateToolArguments(tool, { ...call, arguments: { values: [1] } })).toEqual({ values: [1] });
+		expect(() => validateToolArguments(tool, { ...call, arguments: { values: [1, 2] } })).toThrow();
+	});
+
 	it.each([
-		{ schema: { $schema: "http://json-schema.org/draft-07/schema#" }, code: "MCP_SCHEMA_UNSUPPORTED_DIALECT" },
+		{ schema: { $schema: "http://json-schema.org/draft-06/schema#" }, code: "MCP_SCHEMA_UNSUPPORTED_DIALECT" },
 		{ schema: { $schema: "https://example.invalid/dialect" }, code: "MCP_SCHEMA_UNSUPPORTED_DIALECT" },
 		{ schema: { $ref: "https://example.invalid/schema" }, code: "MCP_SCHEMA_INVALID" },
 		{ schema: { type: "bogus" }, code: "MCP_SCHEMA_INVALID" },

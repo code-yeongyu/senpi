@@ -1,4 +1,4 @@
-import type { ValidateFunction } from "ajv";
+import { Ajv, type ValidateFunction } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { McpJsonSchema, McpListedTool } from "../tool-contracts.ts";
 
@@ -20,7 +20,8 @@ export class McpToolSchemaError extends Error {
 // large catalog on each read blocked startup for seconds.
 const validators = new Map<string, ValidateFunction>();
 const MAX_CACHED_VALIDATORS = 1024;
-const dialect = "https://json-schema.org/draft/2020-12/schema";
+const draft2020 = "https://json-schema.org/draft/2020-12/schema";
+const draft07 = "http://json-schema.org/draft-07/schema";
 const ajvOptions = {
 	strict: false,
 	validateFormats: false,
@@ -28,9 +29,8 @@ const ajvOptions = {
 	inlineRefs: false,
 	addUsedSchema: false,
 } as const;
-// Checks schemas against the 2020-12 meta-schema without adding them, so it keeps no $id namespace and compiles
-// the meta-schema once instead of once per tool schema.
-let metaSchemaChecker: Ajv2020 | undefined;
+// Reuse each dialect's meta-schema checker without adding tool schemas to its $id namespace.
+const metaSchemaChecker = new Map<typeof Ajv | typeof Ajv2020, Ajv | Ajv2020>();
 
 /** No coercion/default insertion/removal, no network resolver, no shared $id namespace. */
 export function compileModernSchema(schema: McpJsonSchema): ValidateFunction {
@@ -38,22 +38,35 @@ export function compileModernSchema(schema: McpJsonSchema): ValidateFunction {
 	const key = JSON.stringify(schema);
 	const cached = validators.get(key);
 	if (cached !== undefined) return cached;
+	const declaredDialect = typeof schema === "boolean" ? undefined : schema.$schema;
+	const usesDraft07 = declaredDialect === draft07 || declaredDialect === `${draft07}#`;
 	if (
-		typeof schema !== "boolean" &&
-		schema.$schema !== undefined &&
-		schema.$schema !== dialect &&
-		schema.$schema !== `${dialect}#`
+		!usesDraft07 &&
+		declaredDialect !== undefined &&
+		declaredDialect !== draft2020 &&
+		declaredDialect !== `${draft2020}#`
 	) {
-		throw new McpToolSchemaError("MCP_SCHEMA_UNSUPPORTED_DIALECT", "Modern MCP supports JSON Schema 2020-12.");
+		throw new McpToolSchemaError(
+			"MCP_SCHEMA_UNSUPPORTED_DIALECT",
+			"Modern MCP supports JSON Schema 2020-12 and draft-07.",
+		);
 	}
 	try {
 		if (typeof schema !== "boolean" && schema.$async !== undefined)
 			throw new McpToolSchemaError("MCP_SCHEMA_INVALID", "Async schemas are unsupported.");
-		metaSchemaChecker ??= new Ajv2020(ajvOptions);
-		if (metaSchemaChecker.validateSchema(schema) !== true) {
+		const Validator = usesDraft07 ? Ajv : Ajv2020;
+		// Draft-07 ignores validation keywords beside $ref. Ajv warns when using this compatibility option.
+		const options = usesDraft07 ? { ...ajvOptions, ignoreKeywordsWithRef: true, logger: false as const } : ajvOptions;
+		let checker = metaSchemaChecker.get(Validator);
+		if (checker === undefined) {
+			checker = new Validator(options);
+			metaSchemaChecker.set(Validator, checker);
+		}
+		if (checker.validateSchema(schema) !== true) {
 			throw new McpToolSchemaError("MCP_SCHEMA_INVALID", "Invalid MCP schema or unresolved schema reference.");
 		}
-		const validate = new Ajv2020({ ...ajvOptions, validateSchema: false }).compile(schema);
+		const validationSchema = usesDraft07 && typeof schema !== "boolean" ? stripDraft07RefTypes(schema) : schema;
+		const validate = new Validator({ ...options, validateSchema: false }).compile(validationSchema);
 		if (validators.size >= MAX_CACHED_VALIDATORS) {
 			const oldest = validators.keys().next().value;
 			if (oldest !== undefined) validators.delete(oldest);
@@ -64,6 +77,43 @@ export function compileModernSchema(schema: McpJsonSchema): ValidateFunction {
 		if (error instanceof McpToolSchemaError) throw error;
 		throw new McpToolSchemaError("MCP_SCHEMA_INVALID", "Invalid MCP schema or unresolved schema reference.");
 	}
+}
+
+// Ajv checks type and nullable before applying ignoreKeywordsWithRef. Strip those
+// siblings only at schema positions, leaving literal instance values and ref targets alone.
+function stripDraft07RefTypes(schema: Record<string, unknown>): Record<string, unknown> {
+	const visit = (value: unknown) => {
+		if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+		return stripDraft07RefTypes(Object.fromEntries(Object.entries(value)));
+	};
+	const result: Record<string, unknown> = { ...schema };
+	if (typeof result.$ref === "string") {
+		delete result.type;
+		delete result.nullable;
+	}
+	for (const key of [
+		"additionalItems",
+		"additionalProperties",
+		"contains",
+		"propertyNames",
+		"not",
+		"if",
+		"then",
+		"else",
+	]) {
+		if (Object.hasOwn(result, key)) result[key] = visit(result[key]);
+	}
+	for (const key of ["items", "allOf", "anyOf", "oneOf"]) {
+		const value = result[key];
+		if (Array.isArray(value)) result[key] = value.map(visit);
+		else if (Object.hasOwn(result, key)) result[key] = visit(value);
+	}
+	for (const key of ["definitions", "$defs", "properties", "patternProperties", "dependencies"]) {
+		const value = result[key];
+		if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+		result[key] = Object.fromEntries(Object.entries(value).map(([name, child]) => [name, visit(child)]));
+	}
+	return result;
 }
 
 /** Reject one unusable definition, never its valid siblings; diagnostics contain no schema or arguments. */
