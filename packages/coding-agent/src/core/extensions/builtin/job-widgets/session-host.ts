@@ -84,15 +84,6 @@ export function openJobWidgetSession(sessionId: string, options: JobWidgetSessio
 	notifySessionChange(sessionId, true);
 }
 
-/**
- * Sends the session's current state again for a listener that just subscribed (an RPC client that
- * declared `extension_events`), when there is a job to show; an empty state tells it nothing.
- */
-export function resendJobWidgetState(sessionId: string): void {
-	const registry = sessions.get(sessionId)?.registry;
-	if (registry && registry.snapshot().jobs.length > 0) registry.republish();
-}
-
 /** Holds a session's state across a reload: jobs keep their taps, nothing is sent until re-bound. */
 export function parkJobWidgetSession(sessionId: string): void {
 	const slot = sessions.get(sessionId);

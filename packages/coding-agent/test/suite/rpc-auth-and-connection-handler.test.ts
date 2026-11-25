@@ -369,6 +369,43 @@ describe("RPC auth and connection handler contracts", () => {
 		await handler.dispose();
 	});
 
+	// sisyphuslabs/omo-desktop-app#8413: a device-code login (GitHub Copilot) must carry the user code to the
+	// client; the verification URL alone leaves the user nothing to type on the device page.
+	it("emits the device code with its user code before the verification URL", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		vi.spyOn(harness.authStorage, "login").mockImplementation(async (_providerId, callbacks) => {
+			callbacks.onDeviceCode({
+				userCode: "ABCD-EFGH",
+				verificationUri: "https://github.com/login/device",
+				intervalSeconds: 5,
+				expiresInSeconds: 900,
+			});
+		});
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const end = collected.waitFor((message) => message.type === "auth_login_end");
+
+		await handler.handleInputLine(JSON.stringify({ id: "device", type: "login_start", provider: "github-copilot" }));
+		await end;
+
+		const loginEvents = collected
+			.messages()
+			.filter((message) => message.type === "device_code" || message.type === "auth_login_url");
+		expect(loginEvents).toEqual([
+			{
+				type: "device_code",
+				provider: "github-copilot",
+				userCode: "ABCD-EFGH",
+				verificationUri: "https://github.com/login/device",
+				intervalSeconds: 5,
+				expiresInSeconds: 900,
+			},
+			{ type: "auth_login_url", provider: "github-copilot", url: "https://github.com/login/device" },
+		]);
+		await handler.dispose();
+	});
+
 	it("frames login failures as a terminal auth event", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);

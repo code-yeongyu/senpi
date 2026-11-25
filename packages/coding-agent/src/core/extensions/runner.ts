@@ -1293,8 +1293,22 @@ export class ExtensionRunner {
 		const off = this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
 			handler(data as ExtensionRpcEvent);
 		});
-		this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, undefined);
+		this.replayRpcState(handler);
 		return off;
+	}
+
+	/**
+	 * Asks extensions to send their current state to one receiver only, the way a new subscription gets it: a client
+	 * that joins a session whose subscription already exists (a second attachment on a shared host) gets it this way.
+	 */
+	replayRpcState(receiver: (event: ExtensionRpcEvent) => void): void {
+		// The replay belongs to this one call; a bus listener must not keep a live client callback.
+		let replay: typeof receiver | undefined = receiver;
+		try {
+			this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, (event: ExtensionRpcEvent) => replay?.(event));
+		} finally {
+			replay = undefined;
+		}
 	}
 
 	/**

@@ -7059,11 +7059,27 @@ Emitted when an extension calls `pi.rpc.emit(name, data)` and the client adverti
 the specific event name before applying it. In multi-session mode the record also includes the
 routing `sessionId`; delivery preserves the owning session and per-session event order.
 
-Events are not replayed: a client receives those emitted after it starts receiving extension events
-(by its handshake capabilities or a `set_client_info` that declares `extension_events`). At that
-moment Senpi emits `senpi:extension-rpc-subscribed` (no data) on the in-process `pi.events` bus, so an
-extension that keeps a state snapshot can send it once instead of waiting for its next change; other
-subscribed clients may then receive the same snapshot again.
+A client receives the events emitted after it starts receiving extension events (by its handshake
+capabilities or a `set_client_info` that declares `extension_events`). At that moment Senpi emits
+`senpi:extension-rpc-subscribed` on the in-process `pi.events` bus. Its data is a reply function,
+`(event: { name: string; data: unknown }) => void`, that delivers an event to the new client only;
+other subscribed clients receive nothing from it. The function works only during that synchronous
+emit: a listener calls it before returning, and a call after that, or from an async continuation,
+is dropped. An extension that keeps a state snapshot uses it to send that state once instead of
+waiting for its next change.
+
+On a shared host, a client that joins an already open in-process session (the default runtime of a
+`--listen` host) with `attach_session` and receives extension events gets the same replay for itself, even when the session is idle: Senpi runs
+`senpi:extension-rpc-subscribed` again with a reply function that reaches that attachment only.
+Nothing else is replayed: events extensions emitted before the attach do not reach the new client.
+The attaching client's own `extension_events` declaration decides, whatever the session's opener declared.
+A replay that has not reached the client when it releases the attachment is dropped.
+
+The terminal builtin replays its current state this way, even when nothing is running: one
+`terminal_monitor_state` event, then two `wake_source_state` events. The first has `source:
+"terminal-monitors"`, `activeCount` and a `monitors` list (`id`, `description`, `startedAtMs`); the
+second has `source: "terminal-background-sessions"`, `activeCount` and an `items` list, one entry
+per live background session.
 
 The terminal builtin emits `terminal_monitor_state` on this path whenever the active monitor set
 changes. `data` is `{ activeCount, monitors }`, where each monitor entry has `id`, `description`,
@@ -7683,6 +7699,7 @@ Logins are fire-command-then-subscribe: the command answers as soon as the flow 
 
 - `login_start` `{provider, slotId?}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt. With `slotId`, reauthorizes that immutable OAuth account through the shared runtime, preserving its registration and siblings. A selected SIWC account uses its saved client ID and identity rather than offering a legacy route switch. Omit `slotId` to add an account.
 - `auth_login_url` `{provider, url}`: the URL (or device-code verification URL) the user must open.
+- `device_code` `{provider, userCode, verificationUri, intervalSeconds?, expiresInSeconds?}`: a device-code login (GitHub Copilot, ChatGPT device sign-in) names the code the user enters at `verificationUri`. It arrives immediately before that URL's `auth_login_url`, so a client that only opens URLs keeps working; show `userCode` with it, or the user has nothing to enter. `expiresInSeconds` bounds how long the code is valid.
 - `auth_login_progress` `{provider, text}`: a status line while the login prepares or runs, for example an extension's `provider_login_start` handler reporting `Downloading Claude Code 2.1.306: 10% of 200 MB`. Zero or more per login, always before `auth_login_end`. Every provider progress and info line is forwarded as written, so `text` may name the local callback address a login listens on (for example `Listening for OpenRouter OAuth callback on http://<host>:<port>/<path>`), the same redirect address the `auth_login_url` already carries; the URL the user must open arrives only in `auth_login_url`. Built-in providers put no authorization code or token in these lines.
 - `auth_login_end` `{provider, success, error?, replaced?, backupPath?}`: exactly one per login; `error` is a non-secret message. When a successful login replaced the provider's credential of the other kind (an OAuth login over a stored API key), `replaced` names that kind (`"api_key"` or `"oauth"`) and `backupPath` is the copy of `auth.json` taken before it (absent when the credential store is not a file). A login of the same kind adds an account and carries neither field. A successful `anthropic-subscription` sign-in through the Claude CLI also carries `account` `{name}` (the account it signed in) and `check` `{model, outcome: "ok"|"failed", reason?, at}`, the one-turn connection test run right after sign-in; a failed test keeps the account.
 - `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.
@@ -7727,6 +7744,14 @@ Response `data` is `{ok: true}` or `{ok: false, reason, status?}`:
 - `unreachable`: no answer, a timeout, or a 5xx.
 - `unsupported`: the key cannot be checked this way. Either the provider's API has no probe, the list is not where it was expected (another 4xx or 3xx), or the list answers any key (OpenRouter, keyless local servers). In that last case a 200 proves nothing, so the host also asks with a made-up key and reports `ok` only when that one is refused.
 - `unknown-provider`: no model is configured for the provider.
+
+A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"global"`) takes the same `region` as `login_api_key`, and the key is checked on the host for that region — the same mapping `/login` uses — instead of the catalog host. Without a region the check probes the catalog host, as before:
+
+```json
+{"type": "verify_api_key", "provider": "kimi-coding", "key": "<key>", "region": "global"}
+```
+
+A region the provider does not offer fails the command and checks nothing.
 
 #### login_api_key
 
