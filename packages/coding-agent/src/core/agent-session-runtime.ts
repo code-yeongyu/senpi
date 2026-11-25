@@ -1,4 +1,4 @@
-import { openingCallersPermit, type TelemetryConsent } from "./telemetry-consent.ts";
+import { openingCallersVerdict, type TelemetryCallersVerdict, type TelemetryConsent } from "./telemetry-consent.ts";
 import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
@@ -170,7 +170,7 @@ export class AgentSessionRuntime {
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
 	private _launchProfile?: Readonly<AgentSessionLaunchProfile>;
-	private _telemetryCallersPermit: boolean;
+	private _telemetryCallers: TelemetryCallersVerdict;
 	// Advertises the open session file to other processes so none moves it out from under this one.
 	private _sessionHold?: SessionHold;
 	private _removedOnReplacement?: {
@@ -194,8 +194,8 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
-		this._telemetryCallersPermit = openingCallersPermit(launchProfile?.telemetryConsent);
-		_session.setTelemetryCallersPermit(this._telemetryCallersPermit);
+		this._telemetryCallers = openingCallersVerdict(launchProfile?.telemetryConsent);
+		_session.setTelemetryCallers(this._telemetryCallers);
 		markHostDefaultPresetFlag(_session, launchProfile);
 		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
 		// Taken by the async creator (the holder record needs the async boot instant); the constructor never touches it.
@@ -368,9 +368,9 @@ export class AgentSessionRuntime {
 	}
 
 	/** The callers' half of the telemetry decision, as the host recomputes it (senpi#7446); replacements keep it. */
-	setTelemetryCallersPermit(permit: boolean): void {
-		this._telemetryCallersPermit = permit;
-		this._session.setTelemetryCallersPermit(permit);
+	setTelemetryCallers(verdict: TelemetryCallersVerdict): void {
+		this._telemetryCallers = verdict;
+		this._session.setTelemetryCallers(verdict);
 	}
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
@@ -535,7 +535,7 @@ export class AgentSessionRuntime {
 		applyClientPermissionMode(this._session, clientNamedPreset(profile), { announce: false });
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
 		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
-		this._session.setTelemetryCallersPermit(this._telemetryCallersPermit);
+		this._session.setTelemetryCallers(this._telemetryCallers);
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;

@@ -1,3 +1,4 @@
+import type { TelemetryCallersVerdict } from "../../core/telemetry-consent.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
@@ -147,8 +148,8 @@ export class SessionWorkerClient {
 	}
 
 	/** The callers' half of the worker session's telemetry decision (senpi#7446), as the host recomputes it. */
-	async setTelemetryCallersPermit(permit: boolean): Promise<void> {
-		const result = await this.request({ type: "telemetry_callers", permit });
+	async setTelemetryCallers(verdict: TelemetryCallersVerdict): Promise<void> {
+		const result = await this.request({ type: "telemetry_callers", verdict });
 		if (result.type !== "result") throw new Error("Invalid worker telemetry_callers response");
 	}
 

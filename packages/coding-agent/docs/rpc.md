@@ -3061,7 +3061,8 @@ the open's answer and every `set_telemetry_consent` also become the session's st
 connection leaves (a retained session stays off after a revocation until a caller grants on purpose) and which a
 handover reopen replays; an attach's answer counts only while that connection stays attached. One session's callers never decide for
 another session of the same host. Extensions read the decision as `ctx.telemetryPermitted` at collection and again
-before delivering anything they buffered; provider attribution headers follow it per request. Probe
+before delivering anything they buffered. Provider attribution headers (app identity only) keep the host's rule for an
+unanswered caller and are removed from the next request once any caller of the session declines or revokes. Probe
 `telemetry_consent` in `get_protocol_info` before sending the field; any other value is refused with
 `invalid_launch_profile`. The SDK sends the change with `RpcClient.setTelemetryConsent(consent, sessionId?)`.
 

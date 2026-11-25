@@ -21,10 +21,23 @@ export function isTelemetryConsent(value: unknown): value is TelemetryConsent {
 	return value === "granted" || value === "declined" || value === "unanswered";
 }
 
-/** The decision itself, at collection and again at delivery. */
+/** The decision itself, at collection and again at delivery: the host's setting AND the callers' verdict for that use. */
 export function telemetryPermitted(hostPermits: boolean, callersPermit: boolean): boolean {
 	return hostPermits && callersPermit;
 }
+
+/**
+ * What a session's callers permit, per use. `events` (telemetry events) needs every caller's explicit grant: an
+ * unknown answer is never promoted. `attribution` (provider attribution headers, app identity only and no user data)
+ * keeps the host's rule for an unanswered caller and is removed by an explicit decline or revoke from any caller.
+ */
+export interface TelemetryCallersVerdict {
+	readonly events: boolean;
+	readonly attribution: boolean;
+}
+
+/** A classic launch: no caller but the host, so the host's setting alone decides both uses. */
+export const HOST_ONLY_VERDICT: TelemetryCallersVerdict = Object.freeze({ events: true, attribution: true });
 
 /**
  * Who a session's standing answer belongs to: the host process itself (a classic launch, whose own settings are
@@ -70,15 +83,17 @@ export class SessionTelemetryCallers {
 		return this.standing === "host" ? undefined : this.standing;
 	}
 
-	/** Whether every caller of this session permits caller-attributed telemetry. */
-	permit(): boolean {
-		if (this.standing !== "host" && this.standing !== "granted") return false;
-		for (const consent of this.live.values()) if (consent !== "granted") return false;
-		return true;
+	/** Both uses, from the same answers: the only place unanswered and declined are told apart. */
+	verdict(): TelemetryCallersVerdict {
+		const answers = [...this.live.values(), ...(this.standing === "host" ? [] : [this.standing])];
+		return {
+			events: answers.every((consent) => consent === "granted"),
+			attribution: answers.every((consent) => consent !== "declined"),
+		};
 	}
 }
 
-/** The callers' permit a session starts with, before any connection is attached: its opener's answer alone. */
-export function openingCallersPermit(openerConsent: TelemetryConsent | undefined): boolean {
-	return new SessionTelemetryCallers(openerConsent ?? "host").permit();
+/** The verdict a session starts with, before any connection is attached: its opener's answer alone. */
+export function openingCallersVerdict(openerConsent: TelemetryConsent | undefined): TelemetryCallersVerdict {
+	return new SessionTelemetryCallers(openerConsent ?? "host").verdict();
 }

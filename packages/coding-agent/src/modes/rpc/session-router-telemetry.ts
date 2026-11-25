@@ -21,9 +21,9 @@ async function publish(entry: RpcSessionEntry, callers: SessionTelemetryCallers)
 	const telemetryConsent = callers.standingConsent();
 	if (telemetryConsent !== undefined && telemetryConsent !== entry.profile.telemetryConsent)
 		entry.profile = Object.freeze({ ...entry.profile, telemetryConsent });
-	const permit = callers.permit();
-	entry.runtime?.setTelemetryCallersPermit(permit);
-	await entry.worker?.setTelemetryCallersPermit(permit);
+	const verdict = callers.verdict();
+	entry.runtime?.setTelemetryCallers(verdict);
+	await entry.worker?.setTelemetryCallers(verdict);
 }
 
 /** A connection became a caller of `sessionId` with this answer; silence is `unanswered`. */

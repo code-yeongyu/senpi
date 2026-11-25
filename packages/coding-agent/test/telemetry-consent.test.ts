@@ -2,7 +2,7 @@ import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { mergeProviderAttributionHeaders } from "../src/core/provider-attribution.ts";
 import {
-	openingCallersPermit,
+	openingCallersVerdict,
 	SessionTelemetryCallers,
 	TELEMETRY_CONSENTS,
 	telemetryPermitted,
@@ -24,25 +24,25 @@ describe("telemetryPermitted", () => {
 });
 
 describe("SessionTelemetryCallers", () => {
-	it("permits a wire-opened session only on an explicit grant", () => {
-		const permits = TELEMETRY_CONSENTS.map((consent) => [consent, openingCallersPermit(consent)]);
+	it("permits events only on an explicit grant, and keeps attribution unless the answer is a decline", () => {
+		const verdicts = TELEMETRY_CONSENTS.map((consent) => [consent, openingCallersVerdict(consent)]);
 
-		expect(permits).toEqual([
-			["granted", true],
-			["declined", false],
-			["unanswered", false],
+		expect(verdicts).toEqual([
+			["granted", { events: true, attribution: true }],
+			["declined", { events: false, attribution: false }],
+			["unanswered", { events: false, attribution: true }],
 		]);
-		expect(openingCallersPermit(undefined)).toBe(true);
+		expect(openingCallersVerdict(undefined)).toEqual({ events: true, attribution: true });
 	});
 
 	it("lets any attached caller that has not granted hold the session off, and releases it when that caller leaves", () => {
 		const callers = new SessionTelemetryCallers("host");
 		callers.attach("desktop", "unanswered");
-		const whileAttached = callers.permit();
+		const whileAttached = callers.verdict().events;
 
 		callers.leave("desktop");
 
-		expect([whileAttached, callers.permit(), callers.standingConsent()]).toEqual([false, true, undefined]);
+		expect([whileAttached, callers.verdict().events, callers.standingConsent()]).toEqual([false, true, undefined]);
 	});
 
 	it("keeps an opener's revocation as the session's standing answer after the opener leaves", () => {
@@ -52,7 +52,7 @@ describe("SessionTelemetryCallers", () => {
 
 		callers.leave("desktop");
 
-		expect([callers.permit(), callers.standingConsent()]).toEqual([false, "declined"]);
+		expect([callers.verdict().events, callers.standingConsent()]).toEqual([false, "declined"]);
 	});
 
 	it("leaves the standing answer alone when a caller only attaches and leaves", () => {
@@ -61,7 +61,17 @@ describe("SessionTelemetryCallers", () => {
 
 		callers.leave("desktop");
 
-		expect([callers.permit(), callers.standingConsent()]).toEqual([true, "granted"]);
+		expect([callers.verdict().events, callers.standingConsent()]).toEqual([true, "granted"]);
+	});
+
+	it("removes attribution when any one caller declines, whatever the others answered", () => {
+		const callers = new SessionTelemetryCallers("granted");
+		callers.attach("observer", "unanswered");
+		const beforeDecline = callers.verdict().attribution;
+
+		callers.attach("desktop", "declined");
+
+		expect([beforeDecline, callers.verdict().attribution]).toEqual([true, false]);
 	});
 
 	it("never lets one caller's grant override another live caller's decline", () => {
@@ -70,7 +80,7 @@ describe("SessionTelemetryCallers", () => {
 
 		callers.answer("desktop", "granted");
 
-		expect(callers.permit()).toBe(false);
+		expect(callers.verdict().events).toBe(false);
 	});
 });
 

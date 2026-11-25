@@ -517,7 +517,7 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { isInstallTelemetryEnabled } from "./telemetry.ts";
-import { telemetryPermitted } from "./telemetry-consent.ts";
+import { HOST_ONLY_VERDICT, type TelemetryCallersVerdict, telemetryPermitted } from "./telemetry-consent.ts";
 import { ToolBarrier, type ToolBarrierSpec, toolBarrierSpecError } from "./tool-barrier.ts";
 import { TurnConflictError, turnConflict } from "./turn-conflict.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
@@ -1948,8 +1948,8 @@ export class AgentSession {
 	private _promptSurface: PromptSurface | undefined;
 	private _browserEngine: BrowserEngine | undefined;
 	private readonly _sessionEnv: Readonly<Record<string, string>> | undefined;
-	/** Whether every caller of this session permits its telemetry (senpi#7446); a classic launch has no other caller. */
-	private _telemetryCallersPermit = true;
+	/** What this session's callers permit, per use (senpi#7446); a classic launch has no caller but the host. */
+	private _telemetryCallers: TelemetryCallersVerdict = HOST_ONLY_VERDICT;
 
 	constructor(config: AgentSessionConfig) {
 		this._promptSurface = config.promptSurface;
@@ -5389,13 +5389,18 @@ export class AgentSession {
 	}
 
 	/** The callers' half of this session's telemetry decision, from `SessionTelemetryCallers` (senpi#7446). */
-	setTelemetryCallersPermit(permit: boolean): void {
-		this._telemetryCallersPermit = permit;
+	setTelemetryCallers(verdict: TelemetryCallersVerdict): void {
+		this._telemetryCallers = verdict;
 	}
 
-	/** Whether this session's telemetry may be collected or delivered right now; read at each use (senpi#7446). */
+	/** Whether this session's telemetry events may be collected or delivered right now; read at each use (senpi#7446). */
 	telemetryPermitted(): boolean {
-		return telemetryPermitted(isInstallTelemetryEnabled(this.settingsManager), this._telemetryCallersPermit);
+		return telemetryPermitted(isInstallTelemetryEnabled(this.settingsManager), this._telemetryCallers.events);
+	}
+
+	/** Whether this session's next provider request may carry the provider attribution headers (senpi#7446). */
+	attributionPermitted(): boolean {
+		return telemetryPermitted(isInstallTelemetryEnabled(this.settingsManager), this._telemetryCallers.attribution);
 	}
 
 	get sessionEnv(): Readonly<Record<string, string>> | undefined {
