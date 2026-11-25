@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ModelRegistry } from "../../src/core/model-registry.ts";
 import { storedKeyHint, verifyApiKey } from "../../src/core/verify-api-key.ts";
 
-const KEY = "sk-test-0123456789abcd";
+const KEY = "not-a-real-key-abcd";
 
 const model = (provider: string, api: Api, baseUrl: string) =>
 	({ id: "m", name: "m", provider, api, baseUrl }) as unknown as Model<Api>;

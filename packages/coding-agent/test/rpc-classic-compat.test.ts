@@ -468,7 +468,7 @@ describe("Classic single-session RPC characterization pins (todo 2)", () => {
 	});
 });
 
-const KEY = "sk-test-0123456789abcd";
+const KEY = "not-a-real-key-abcd";
 const CATALOG_HOST_MODELS = "https://api.kimi.com/coding/v1/models";
 const REGIONAL_HOST_MODELS = "https://api.kimi.ai/coding/v1/models";
 
