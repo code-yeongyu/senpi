@@ -62,8 +62,10 @@ async function createHeldSwitchHarness(): Promise<Harness> {
 const isSummaryRequest = (context: Parameters<FauxResponseFactory>[0]): boolean =>
 	JSON.stringify(context.messages.at(-1)?.content ?? "").includes("[INTERNAL ");
 
-const answering = (text: string): FauxResponseFactory =>
-	async (context) => fauxAssistantMessage(isSummaryRequest(context) ? "<summary>Earlier work.</summary>" : text);
+const answering =
+	(text: string): FauxResponseFactory =>
+	async (context) =>
+		fauxAssistantMessage(isSummaryRequest(context) ? "<summary>Earlier work.</summary>" : text);
 
 function lastAnswer(harness: Harness): { readonly text: string; readonly stopReason: string } {
 	const last = harness.session.messages.findLast((message) => message.role === "assistant");
