@@ -6939,6 +6939,10 @@
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
+		"packages/coding-agent/src/core/session-entry-file.ts#loadedPages": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
+		},
 		"packages/coding-agent/src/core/session-file-identity.ts#loadedContentFingerprints": {
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
