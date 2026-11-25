@@ -1435,9 +1435,19 @@ jobs:
         shell: bash
         run: bun scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
+      # senpi#3600: a live kernel that stalls writes thread stacks (py-spy) and states to RUNNER_TEMP (test/py-kernel/stall-diagnostics.ts).
+      - name: Install py-spy for stall diagnostics
+        run: python -m pip install --disable-pip-version-check py-spy==0.4.4
       - name: Slow and hung bootstrap regressions
         working-directory: packages/senpi-codemode
         run: bun ../../scripts/run-tests.mjs vitest run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
+      - name: Upload Python kernel stall diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: py-kernel-stall-diagnostics
+          path: ${{ runner.temp }}/py-kernel-diagnostics
+          if-no-files-found: ignore
       - name: Python environments stay inside the revision on Windows
         working-directory: packages/senpi-codemode
         shell: pwsh
