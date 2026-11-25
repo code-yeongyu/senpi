@@ -18,6 +18,7 @@ function isKeyHandle(value: unknown): boolean {
 }
 
 function shapeRefusal(options: LaunchOptions): string | undefined {
+	if (typeof options !== "object" || options === null || Array.isArray(options)) return "options must be an object";
 	const { api_key: key, ...rest } = options;
 	if (key !== undefined && !isKeyHandle(key)) return "api_key must be a readable handle";
 	const first = [...Errors(LaunchOptionsSchema, rest)][0];

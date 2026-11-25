@@ -114,6 +114,9 @@ describe("refusals come before anything starts", () => {
 		["rpc with @files", () => launchRpc(ports(), { input: { files: ["a.md"] } } as never)],
 		["an unknown option field", () => launchRpc(ports(), { sesion: {} } as never)],
 		["a key that is not a readable handle", () => launchHand(ports(), { api_key: CANARY } as never)],
+		["print with no input", () => launchPrint(ports(), { mode: "json" } as never)],
+		["print with options that are not an object", () => launchPrint(ports(), null as never)],
+		["rpc with options that are not an object", () => launchRpc(ports(), [] as never)],
 	])("%s", async (_case, launch) => {
 		expect(await launch()).toMatchObject({ kind: "error", error: { code: "invalid_input" } });
 		expect(spawned).toEqual([]);

@@ -42,15 +42,18 @@ export type LaunchRpcAnswer = LaunchedEngine &
 
 export type LaunchSocketAnswer = LaunchedEngine & { readonly socket: string };
 
+type LaunchStdio = "inherit" | ["ignore" | "inherit" | "pipe", "pipe" | "ignore", "inherit"];
+
+/** Every refusal first; the stdio is chosen only from options that passed them. */
 async function started(
 	ports: LaunchPorts,
 	mode: LaunchMode,
 	options: LaunchOptions,
-	stdio: "inherit" | ["ignore" | "inherit" | "pipe", "pipe" | "ignore", "inherit"],
+	stdio: (admitted: LaunchOptions) => LaunchStdio,
 ): Promise<EngineResult<StartedEngine, LaunchCode>> {
 	const prepared = prepareLaunch(mode, options);
 	if ("kind" in prepared) return prepared;
-	const engine = await startEngine(ports, prepared.argv, stdio, {
+	const engine = await startEngine(ports, prepared.argv, stdio(options), {
 		...(options.api_key === undefined ? {} : { key: options.api_key }),
 		presenter: options.presenter !== undefined,
 	});
@@ -76,7 +79,7 @@ export async function launchInteractive(
 	ports: LaunchPorts,
 	options: LaunchInteractiveOptions,
 ): Promise<EngineResult<LaunchExit, LaunchCode>> {
-	const engine = await started(ports, "interactive", options, "inherit");
+	const engine = await started(ports, "interactive", options, () => "inherit");
 	if (engine.kind === "error") return engine;
 	const { exit_code } = await engine.value.exited;
 	const session = namedSession(options);
@@ -87,8 +90,11 @@ export async function launchPrint(
 	ports: LaunchPorts,
 	options: LaunchPrintOptions,
 ): Promise<EngineResult<LaunchPrintRun, LaunchCode>> {
-	const stdin = options.input.stdin === true ? "inherit" : "ignore";
-	const engine = await started(ports, "print", options, [stdin, "pipe", "inherit"]);
+	const engine = await started(ports, "print", options, (admitted) => [
+		admitted.input?.stdin === true ? "inherit" : "ignore",
+		"pipe",
+		"inherit",
+	]);
 	if (engine.kind === "error") return engine;
 	const named = namedSession(options);
 	return engineOk(
@@ -104,14 +110,12 @@ export async function launchRpc(
 	ports: LaunchPorts,
 	options: LaunchRpcOptions,
 ): Promise<EngineResult<LaunchRpcAnswer, LaunchCode>> {
-	const listening = options.listen !== undefined && options.listen !== "stdio://";
-	const engine = await started(
-		ports,
-		"rpc",
-		options,
-		listening ? ["ignore", "ignore", "inherit"] : ["pipe", "pipe", "inherit"],
+	const listensOn = (admitted: LaunchOptions) => admitted.listen !== undefined && admitted.listen !== "stdio://";
+	const engine = await started(ports, "rpc", options, (admitted) =>
+		listensOn(admitted) ? ["ignore", "ignore", "inherit"] : ["pipe", "pipe", "inherit"],
 	);
 	if (engine.kind === "error") return engine;
+	const listening = listensOn(options);
 	const { child } = engine.value;
 	return engineOk(
 		listening && options.listen !== undefined
@@ -124,7 +128,7 @@ export async function launchHand(
 	ports: LaunchPorts,
 	options: LaunchHandOptions,
 ): Promise<EngineResult<LaunchSocketAnswer, LaunchCode>> {
-	const engine = await started(ports, "hand", options, ["ignore", "ignore", "inherit"]);
+	const engine = await started(ports, "hand", options, () => ["ignore", "ignore", "inherit"]);
 	if (engine.kind === "error") return engine;
 	return engineOk({ ...running(engine.value), socket: handSocketPath(ports.agentDir()) });
 }
@@ -133,7 +137,7 @@ export async function launchHeadless(
 	ports: LaunchPorts,
 	options: LaunchHeadlessOptions,
 ): Promise<EngineResult<LaunchSocketAnswer, LaunchCode>> {
-	const engine = await started(ports, "headless", options, ["ignore", "ignore", "inherit"]);
+	const engine = await started(ports, "headless", options, () => ["ignore", "ignore", "inherit"]);
 	if (engine.kind === "error") return engine;
 	return engineOk({ ...running(engine.value), socket: options.listen ?? headlessSocketPath(ports.agentDir()) });
 }
