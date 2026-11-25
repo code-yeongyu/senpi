@@ -1,14 +1,15 @@
 /**
- * Edge-driven wakes for a session's inbox drain. Nothing here runs on a timer: every pass is caused
- * by an edge (idle, submission, draft cleared, a `wake` command, an inbox entry created or deleted,
- * a delivery written, a continue after a stop).
+ * Edge-driven wakes for a session's inbox drain. Nothing here runs on a timer while the inbox watch
+ * works: every pass is caused by an edge (idle, submission, draft cleared, a `wake` command, an inbox
+ * entry created or deleted, a delivery written, a continue after a stop). An inbox whose watch never
+ * confirmed is polled instead (`pollInbox`).
  *
  * One pass runs at a time. Edges that arrive while a pass runs set the dirty flag - they are merged
  * into exactly ONE more pass after it returns, never dropped and never multiplied, so the drain's own
  * marker deletions cost at most one extra empty pass and then the watcher falls silent.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createFsWatchEventSource } from "../../core/extensions/builtin/config-reload/watch-event-source.ts";
@@ -100,6 +101,8 @@ function wakeEvent(batch: WakeBatch): SessionControlWakeEvent {
 export const INBOX_ENGINE_ENTRY_PREFIX = ".senpi-";
 const INBOX_ARM_ATTEMPTS = 25;
 const INBOX_ARM_ATTEMPT_MS = 200;
+/** How often an inbox whose watch never confirmed is checked for entries created or removed. */
+const INBOX_POLL_MS = 500;
 
 /** A live inbox watch. `armed` settles once arming did: the watch confirmed, the bounded retry ran out, or it was stopped. */
 export interface InboxWatch {
@@ -113,10 +116,10 @@ export interface InboxWatch {
  *
  * The worker arms the watch asynchronously, and an entry written before it is armed produces no
  * event. Arming is confirmed by a sentinel entry's own event coming back - the sentinel is re-touched
- * until then, bounded, which is the only timer here and runs only while arming (an unconfirmed arm is
- * reported through `onError`). Nothing waits on that confirmation: the watch is returned at once and
- * `armed` settles when arming did, so the caller can request the pass that picks up anything created
- * before the watch could see it.
+ * until then, bounded, which runs only while arming. An arm that never confirms (a sandbox that refuses
+ * FSEvents, a file system with no change events) falls back to `pollInbox`. Nothing waits on that
+ * confirmation: the watch is returned at once and `armed` settles when arming did, so the caller can
+ * request the pass that picks up anything created before the watch (or the poll) could see it.
  */
 export async function watchInbox(
 	inboxDir: string,
@@ -127,6 +130,7 @@ export async function watchInbox(
 	const sentinel = `${INBOX_ENGINE_ENTRY_PREFIX}armed-${randomUUID()}`;
 	const confirmation = Promise.withResolvers<boolean>();
 	let stopped = false;
+	let stopPolling: (() => void) | undefined;
 	const unsubscribe = createFsWatchEventSource((error) => onError(error))(
 		inboxDir,
 		(_eventType, filename) => {
@@ -135,14 +139,16 @@ export async function watchInbox(
 		},
 		{ recursive: false },
 	);
-	const arming = confirmArm(join(inboxDir, sentinel), confirmation.promise, () => stopped).then(
-		(confirmed) => {
-			if (!confirmed && !stopped) onError(new Error(`inbox watch on ${inboxDir} was not confirmed`));
-		},
-		(error: unknown) => {
+	const arming = confirmArm(join(inboxDir, sentinel), confirmation.promise, () => stopped)
+		.then(async (confirmed) => {
+			if (confirmed || stopped) return;
+			const stopPoll = await pollInbox(inboxDir, onChange, onError);
+			if (stopped) stopPoll();
+			else stopPolling = stopPoll;
+		})
+		.catch((error: unknown) => {
 			if (!stopped) onError(error);
-		},
-	);
+		});
 	// Settles on the sentinel's own event, before any later event of the same watch is delivered, so a
 	// pass requested on it runs ahead of the passes those events cause; otherwise when arming ended.
 	const armed = Promise.race([confirmation.promise.then((confirmed) => (confirmed ? undefined : arming)), arming]);
@@ -150,6 +156,7 @@ export async function watchInbox(
 		armed,
 		stop: () => {
 			stopped = true;
+			stopPolling?.();
 			confirmation.resolve(false);
 			void Promise.resolve(unsubscribe()).catch(onError);
 		},
@@ -167,6 +174,42 @@ async function confirmArm(sentinelPath: string, confirmed: Promise<boolean>, sto
 		await rm(sentinelPath, { force: true });
 	}
 	return seen;
+}
+
+/**
+ * The fallback for a watch that never confirmed. A directory's mtime changes whenever an entry is
+ * created, renamed into it or removed, so each changed mtime is reported as one `onChange`. The baseline
+ * is read after the arming sentinel is gone and before `armed` settles; the pass the caller requests
+ * then covers anything older. A failed check is reported once and ends the poll.
+ */
+async function pollInbox(
+	inboxDir: string,
+	onChange: () => void,
+	onError: (error: unknown) => void,
+): Promise<() => void> {
+	let last = (await stat(inboxDir, { bigint: true })).mtimeNs;
+	let checking = false;
+	const timer = setInterval(() => {
+		if (checking) return;
+		checking = true;
+		stat(inboxDir, { bigint: true })
+			.then(
+				(stats) => {
+					if (stats.mtimeNs === last) return;
+					last = stats.mtimeNs;
+					onChange();
+				},
+				(error: unknown) => {
+					clearInterval(timer);
+					onError(error);
+				},
+			)
+			.finally(() => {
+				checking = false;
+			});
+	}, INBOX_POLL_MS);
+	timer.unref();
+	return () => clearInterval(timer);
 }
 
 /**

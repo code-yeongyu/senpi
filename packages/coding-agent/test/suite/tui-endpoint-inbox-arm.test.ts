@@ -113,6 +113,28 @@ describe.skipIf(process.platform === "win32")("tui endpoint: inbox watch arms af
 		expect(deliveries(inboxDir)).toEqual([]);
 	});
 
+	// A sandbox that refuses FSEvents (macOS Seatbelt without com.apple.FSEvents) never confirms the watch;
+	// the inbox must still report new entries without waiting for an unrelated wake edge.
+	it("polls the inbox quietly when the watch never confirms", async () => {
+		const inboxDir = await mkdtemp(join(tmpdir(), "senpi-inbox-poll-"));
+		cleanups.push(() => rm(inboxDir, { recursive: true, force: true }));
+		const errors: unknown[] = [];
+		const changed = Promise.withResolvers<void>();
+		watchSeam.deaf = true;
+		const watch = await watchInbox(
+			inboxDir,
+			() => changed.resolve(),
+			(error) => errors.push(error),
+		);
+		cleanups.push(() => watch.stop());
+		await within(watch.armed, 10_000, "arming to run out");
+
+		writeFileSync(join(inboxDir, "d-late"), "message");
+
+		await within(changed.promise, 3_000, "the poll to report the entry");
+		expect(errors).toEqual([]);
+	});
+
 	it("stops arming quietly when the watch is stopped before it was confirmed", async () => {
 		const inboxDir = await mkdtemp(join(tmpdir(), "senpi-inbox-arm-"));
 		cleanups.push(() => rm(inboxDir, { recursive: true, force: true }));
