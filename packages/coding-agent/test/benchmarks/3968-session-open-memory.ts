@@ -1,7 +1,9 @@
 // senpi#3968 session-open memory (benchmark, not a test gate). For each `--mb` size it writes a synthetic session
 // (per turn: a prompt, a tool call, a 16 KiB tool result and an answer), then opens it in a fresh process with
-// SessionManager.open and records that process's memory before the open, right after it, and after an idle
-// `--idle-s` seconds (default 60). Every reading follows a full collection.
+// SessionManager.open and records that process's memory before the open, right after it and a full read, and after an
+// idle `--idle-s` seconds (default 60). Before idling it applies the host's settle rule
+// (AgentSession.releaseSettledSessionMemory): the read views go when the store spilled strings or left them on disk.
+// Every reading follows a full collection.
 //
 //   bun packages/coding-agent/test/benchmarks/3968-session-open-memory.ts --mb 10 --mb 100 --mb 500
 //
@@ -87,6 +89,8 @@ async function child(file: string, idleSeconds: number): Promise<void> {
 	const manager = SessionManager.open(file);
 	const entries = manager.getEntries().length;
 	const afterOpen = reading();
+	const stats = manager.getResidentStoreStats();
+	if ((stats.evictedCount ?? 0) > 0 || (stats.pagedCount ?? 0) > 0) manager.dropMaterializedCaches();
 	await sleep(idleSeconds * 1000);
 	const afterIdle = reading();
 	// Keeps the session reachable through every reading, so nothing measured is collectable.

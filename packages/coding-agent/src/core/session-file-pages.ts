@@ -55,6 +55,10 @@ export class SessionFilePages implements SessionEntryPager {
 		this.currentVersion = currentVersion;
 	}
 
+	get count(): number {
+		return this.pages.length;
+	}
+
 	page(entry: FileEntry, offset: number, length: number): FileEntry {
 		if (entry.type === "session") {
 			this.paging = (entry.version ?? 1) >= this.currentVersion;

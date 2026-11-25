@@ -78,6 +78,26 @@ describe("resident store idle release", () => {
 		expect(dropMaterializedCaches).not.toHaveBeenCalled();
 	});
 
+	// senpi#3968: a reopened session's long strings stay in its file, so a view that read them holds their only copy.
+	it("idle releases the views of a reopened session whose strings stay on disk", async () => {
+		// Given: a persisted session reopened from its file, with a prompt long enough to be paged.
+		const harness = await createHarness({ persistSession: true });
+		harnesses.push(harness);
+		await promptUntilIdle(harness, "p".repeat(4 * 1024));
+		const sessionFile = harness.sessionManager.getSessionFile();
+		if (sessionFile === undefined) throw new Error("the session should have a file");
+		harness.sessionManager.setSessionFile(sessionFile);
+		expect(harness.sessionManager.getResidentStoreStats().pagedCount ?? 0).toBeGreaterThan(0);
+		const dropMaterializedCaches = vi.spyOn(harness.sessionManager, "dropMaterializedCaches");
+
+		// When: a turn runs to completion and the session settles.
+		await promptUntilIdle(harness, "hello");
+
+		// Then: the views are released although nothing was evicted.
+		expect(harness.sessionManager.getResidentStoreStats().evictedCount ?? 0).toBe(0);
+		expect(dropMaterializedCaches.mock.calls.length).toBeGreaterThan(0);
+	});
+
 	it("idle releases the views once the store has evicted", async () => {
 		// Given: a persisted session whose store has spilled past its budget.
 		const harness = await createHarness({ persistSession: true });

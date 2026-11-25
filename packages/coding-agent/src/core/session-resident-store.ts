@@ -14,6 +14,8 @@ export interface ResidentStoreStats {
 	blobBytes: number;
 	evictedCount?: number;
 	evictedBytes?: number;
+	/** Strings the opened file's load left on disk (senpi#3968); views that materialized them hold the only copies. */
+	pagedCount?: number;
 }
 
 export interface ResidentStringStoreOptions {
@@ -82,7 +84,8 @@ export class ResidentStringStore {
 	}
 
 	stats(): ResidentStoreStats {
-		return { blobCount: this.strings.size, ...this.accounting.stats() };
+		const pagedCount = this.pages?.count ?? 0;
+		return { blobCount: this.strings.size, ...this.accounting.stats(), ...(pagedCount > 0 ? { pagedCount } : {}) };
 	}
 
 	/** Strings held in memory and their summed UTF-8 length, kept as strings come and go (no serialization). */

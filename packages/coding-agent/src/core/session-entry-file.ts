@@ -41,6 +41,8 @@ export interface SessionEntryPager {
 	page(entry: FileEntry, offset: number, length: number): FileEntry;
 	/** The string a resident token id stands for, read back from the file; undefined when the file no longer holds it. */
 	read(id: string): string | undefined;
+	/** How many strings the load left on disk. */
+	readonly count: number;
 }
 
 /** The pager a load ran its entries through, keyed by the entries it returned (like the file identities). */
