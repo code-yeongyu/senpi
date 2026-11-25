@@ -1901,8 +1901,12 @@ function cannotDisableThinking(
 	model: Model<"anthropic-messages">,
 	compat: { supportsDisabledThinking: boolean },
 ): boolean {
-	if (!compat.supportsDisabledThinking) return true;
+	if (!compat.supportsDisabledThinking || isKimiK31Pro(model)) return true;
 	return matchesModelMarker(model, DISABLED_THINKING_REJECTING_MODEL_MARKERS);
+}
+
+function isKimiK31Pro(model: Model<"anthropic-messages">): boolean {
+	return /(?:^|\/)(?:kimi-)?k3\.1-pro(?:-highspeed)?$/i.test(model.id);
 }
 
 /**
@@ -2457,7 +2461,10 @@ function buildParams(
 			// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
 			// older Claude 4 models (whose API default is also "summarized").
 			const display: AnthropicThinkingDisplay = options.thinkingDisplay ?? "summarized";
-			if (supportsAdaptiveThinking(model)) {
+			if (options.effort === "low" && isKimiK31Pro(model)) {
+				// The Pro floor is effort-only, including when the agent raised a carried-over off level.
+				params.output_config = { effort: "low" };
+			} else if (supportsAdaptiveThinking(model)) {
 				// Adaptive thinking: Claude decides when and how much to think.
 				params.thinking = { type: "adaptive", display } as MessageCreateParamsStreaming["thinking"];
 				if (options.effort) {
