@@ -1,10 +1,11 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAgentDir } from "../../src/config.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { engine } from "../../src/engine/index.ts";
+import { listModelsOf } from "../../src/engine/models.ts";
 import { TIP_DEFINITIONS } from "../../src/modes/interactive/tips/registry.ts";
 
 const FIXTURE_SESSION = join(__dirname, "..", "fixtures", "before-compaction.jsonl");
@@ -95,6 +96,32 @@ describe("engine.models runs each leaf", () => {
 		expect(models.length).toBe(all.kind === "ok" ? all.value.available : -1);
 		const sorted = [...models].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
 		expect(models).toEqual(sorted);
+	});
+});
+
+describe("a model listing keeps its models.json load error (review L2)", () => {
+	it("answers the load error with the listing from the shared core", () => {
+		const model = (provider: string, id: string) => ({ provider, id }) as never;
+		const runtime = {
+			getError: () => "bad json",
+			getModels: () => [model("zeta", "b"), model("alpha", "a")],
+		} as unknown as ModelRuntime;
+
+		const listing = listModelsOf(runtime, {}).value;
+		expect(listing.loadError).toBe("bad json");
+		expect(listing.models.map((m) => `${m.provider}/${m.id}`)).toEqual(["alpha/a", "zeta/b"]);
+	});
+
+	it("answers an unreadable models.json as the listing's load error from the exported member", async () => {
+		writeFileSync(join(getAgentDir(), "models.json"), "{ not json");
+		try {
+			const listed = await engine.models.list();
+			expect(listed.kind).toBe("ok");
+			expect(listed.kind === "ok" && listed.value.loadError).toEqual(expect.stringContaining("models.json"));
+			expect(listed.kind === "ok" && listed.value.available).toBeGreaterThan(0);
+		} finally {
+			rmSync(join(getAgentDir(), "models.json"), { force: true });
+		}
 	});
 });
 
