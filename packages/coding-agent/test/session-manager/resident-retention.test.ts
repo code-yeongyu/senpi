@@ -63,6 +63,11 @@ function defined<T>(value: T | undefined, name: string): T {
 	return value;
 }
 
+// A reopen keeps its large strings as tokens in the mirror: paged from the file since senpi#3968, not in the store.
+function residentMirrorJson(session: SessionManager): string {
+	return JSON.stringify((session as unknown as { fileEntries: unknown[] }).fileEntries);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -140,7 +145,7 @@ describe("SessionManager resident retention", () => {
 		const sessionFile = defined(session.getSessionFile(), "session file");
 
 		const reloaded = SessionManager.open(sessionFile, tempDir);
-		expect(reloaded.getResidentStoreStats().blobCount).toBeGreaterThanOrEqual(2);
+		expect(residentMirrorJson(reloaded).split(SENTINEL_PREFIX).length - 1).toBeGreaterThanOrEqual(2);
 		expect(reloaded.buildSessionContext().messages[0]).toEqual({ role: "user", content: firstText, timestamp: 1 });
 
 		const branchedFile = defined(reloaded.createBranchedSession(firstAssistantId), "branched file");
@@ -170,7 +175,7 @@ describe("SessionManager resident retention", () => {
 
 		const sessionFile = defined(session.getSessionFile(), "session file");
 		const reloaded = SessionManager.open(sessionFile, tempDir);
-		expect(reloaded.getResidentStoreStats().blobCount).toBeGreaterThanOrEqual(2);
+		expect(residentMirrorJson(reloaded).split(SENTINEL_PREFIX).length - 1).toBeGreaterThanOrEqual(2);
 
 		const originalStringify = JSON.stringify;
 		const stringifySpy = vi.spyOn(JSON, "stringify").mockImplementation((value, replacer, space) => {

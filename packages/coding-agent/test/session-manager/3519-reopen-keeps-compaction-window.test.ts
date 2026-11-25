@@ -167,7 +167,8 @@ describe("reopening a compacted session keeps only the latest compaction window 
 
 		const reopened = SessionManager.open(file, dir);
 
-		expect(reopened.getResidentStore().size().approxBytes).toBeGreaterThan(0);
+		// Untrimmed: a trimming open holds the history it parsed (senpi#3968 pages large strings, so the store stays empty).
+		expect(reopened.holdsMaterializedHistory()).toBe(false);
 		expect(reopened.buildSessionContext().messages.map(textOf).at(-1)).toBe("back on the compacted branch");
 	});
 });

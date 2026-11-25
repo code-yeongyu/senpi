@@ -52,6 +52,7 @@ import {
 	sortSessionInfos,
 } from "./session-discovery.ts";
 import {
+	loadedPages,
 	loadEntriesFromFile,
 	loadEntriesFromFileAsync,
 	parseSessionEntryLine,
@@ -59,6 +60,7 @@ import {
 	terminateFinalSessionLine,
 } from "./session-entry-file.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
+import { SessionFilePages } from "./session-file-pages.ts";
 import {
 	BaseContentHash,
 	captureAndCloseFileIdentity,
@@ -1165,6 +1167,11 @@ let sessionEntryLoader = loadEntriesFromFile;
 
 const DEFERRED_FILE_LOAD = Symbol("deferred-session-file-load");
 
+/** Every load of an opened session keeps entry bodies on disk, read back by range (senpi#3968). */
+function pagerFor(sessionFile: string): SessionFilePages {
+	return new SessionFilePages(sessionFile, CURRENT_SESSION_VERSION);
+}
+
 /** Test seam for observing disk reloads without mocking ESM filesystem exports. */
 export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFile): () => void {
 	const previous = sessionEntryLoader;
@@ -1280,6 +1287,9 @@ export class SessionManager {
 		readonly result: ReturnType<typeof projectSession>;
 	} | null = null;
 	private historyView: MaterializedView | null = null;
+	// The whole history a trimming load parsed, kept paged (senpi#3968): the first full-history read materializes it
+	// into `historyView` instead of parsing the file again, and it goes at idle like that view.
+	private pagedHistory: MaterializedView | null = null;
 	/** Id -> entry of the compact view, extended with it, so the branch shares its materialized objects. */
 	private compactLookup: { entries: SessionEntry[]; length: number; map: Map<string, SessionEntry> } | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
@@ -1356,7 +1366,11 @@ export class SessionManager {
 		// A live session file can be observed between truncate and rewrite. Treat
 		// that window (and an invalid replacement) as unavailable rather than
 		// routing it through the create/recover path in _setSessionFile().
-		const fileEntries = loadEntriesFromFile(this.sessionFile, this.capturesTranscriptBase);
+		const fileEntries = loadEntriesFromFile(
+			this.sessionFile,
+			this.capturesTranscriptBase,
+			pagerFor(this.sessionFile),
+		);
 		if (fileEntries.length === 0) {
 			if (statSync(this.sessionFile).size === 0) return;
 			throw new Error(`Session file is not a valid ${APP_NAME} session: ${this.sessionFile}`);
@@ -1389,9 +1403,12 @@ export class SessionManager {
 	): void {
 		const existingFile = this._beginSessionFile(sessionFile, newSessionOptions);
 		if (existingFile === undefined) return;
-		const entries = preloadedFileEntries ?? loadEntriesFromFile(existingFile, this.capturesTranscriptBase);
+		const entries =
+			preloadedFileEntries ??
+			loadEntriesFromFile(existingFile, this.capturesTranscriptBase, pagerFor(existingFile));
 		this._captureTranscriptBase(loadedFileIdentities.get(entries), entries);
 		if (!this._adoptFileEntries(existingFile, entries, newSessionOptions)) return;
+		this.residentStore.adoptPages(loadedPages.get(entries));
 		const loadedHistory = this._retainLoadedTail();
 		this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
 		this._completeFileLoad(loadedHistory);
@@ -1410,9 +1427,11 @@ export class SessionManager {
 		const existingFile = this._beginSessionFile(sessionFile, newSessionOptions);
 		if (existingFile === undefined) return;
 		const entries =
-			preloadedFileEntries ?? (await loadEntriesFromFileAsync(existingFile, slicer, this.capturesTranscriptBase));
+			preloadedFileEntries ??
+			(await loadEntriesFromFileAsync(existingFile, slicer, this.capturesTranscriptBase, pagerFor(existingFile)));
 		this._captureTranscriptBase(loadedFileIdentities.get(entries), entries);
 		if (!this._adoptFileEntries(existingFile, entries, newSessionOptions)) return;
+		this.residentStore.adoptPages(loadedPages.get(entries));
 		const loadedHistory = this._retainLoadedTail();
 		this.fileEntries = await mapInSlices(this.fileEntries, (entry) => this.residentStore.externalize(entry), slicer);
 		this._completeFileLoad(loadedHistory);
@@ -1504,11 +1523,12 @@ export class SessionManager {
 	private _completeFileLoad(loadedHistory: SessionEntry[] | undefined): void {
 		this._buildIndex();
 		this.historyGeneration++;
-		// The entries this load already parsed answer the open-time history readers; the view goes when
+		// The entries this load already parsed answer the open-time history readers; they go when
 		// the session settles idle, like any full-history view of a trimmed mirror.
-		if (loadedHistory !== undefined) {
-			this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: loadedHistory };
-		}
+		this.pagedHistory =
+			loadedHistory === undefined
+				? null
+				: { source: this.fileEntries, length: this.fileEntries.length, entries: loadedHistory };
 		this.mutationCount++;
 		this.flushed = true;
 		this.ownedHeaderFile = undefined;
@@ -3006,9 +3026,10 @@ export class SessionManager {
 		if (this.mirrorTrimmed && this.sessionFile) {
 			// Every append reaches both the file and the mirror, so the full history is the history
 			// read at trim time plus the mirror's tail; per-turn readers no longer re-parse the file.
-			const extended = this._extendView(this.historyView);
+			const extended = this._extendView(this.historyView ?? this._materializePagedHistory());
 			if (extended !== undefined) {
 				this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: extended };
+				this.pagedHistory = null;
 				return extended;
 			}
 			const history = this._loadFullHistoryEntries()
@@ -3061,7 +3082,7 @@ export class SessionManager {
 
 	private _readWholeHistory(): readonly SessionEntry[] {
 		if (!this.mirrorTrimmed || !this.sessionFile) return this._getCompactEntries();
-		const held = this._extendView(this.historyView);
+		const held = this._extendView(this.historyView ?? this._materializePagedHistory());
 		if (held !== undefined) return held;
 		return this._loadFullHistoryEntries()
 			.filter((entry): entry is SessionEntry => entry.type !== "session")
@@ -3080,13 +3101,28 @@ export class SessionManager {
 		this.compactEntriesCache = null;
 		this.compactView = null;
 		this.historyView = null;
+		this.pagedHistory = null;
 		this.compactLookup = null;
 		this.projectionMemo = null;
 	}
 
 	/** Whether a full-history view of a trimmed mirror is held: the whole file's entries, parsed. */
 	holdsMaterializedHistory(): boolean {
-		return this.historyView !== null;
+		return this.historyView !== null || this.pagedHistory !== null;
+	}
+
+	/** `pagedHistory` with its pages read back; null when it is not this mirror's or a page is gone from the file. */
+	private _materializePagedHistory(): MaterializedView | null {
+		const paged = this.pagedHistory;
+		if (paged === null || paged.source !== this.fileEntries) return null;
+		let missing = false;
+		const entries = paged.entries.map((entry) =>
+			this.residentStore.materialize(entry, () => {
+				missing = true;
+				return undefined;
+			}),
+		);
+		return missing ? null : { ...paged, entries };
 	}
 
 	/** The view's entries extended by the mirror's new tail, or undefined when it must be rebuilt. */
@@ -3493,7 +3529,7 @@ export class SessionManager {
 		// The bounded scan is only a discovery optimization. A full load remains
 		// authoritative for legacy files with very large headers or prefixes.
 		const preloadedFileEntries = discovery.needsFullLoad
-			? loadEntriesFromFile(resolvedPath, compactUpdatesEnabled())
+			? loadEntriesFromFile(resolvedPath, compactUpdatesEnabled(), pagerFor(resolvedPath))
 			: undefined;
 		const header = discovery.header ?? headerOf(preloadedFileEntries);
 		const { cwd, dir } = openLocation(resolvedPath, sessionDir, cwdOverride, header);
@@ -3516,7 +3552,7 @@ export class SessionManager {
 		reserveSessionWrite(resolvedPath);
 		const discovery = discoverOpenHeader(resolvedPath, cwdOverride);
 		const preloadedFileEntries = discovery.needsFullLoad
-			? await loadEntriesFromFileAsync(resolvedPath, slicer, compactUpdatesEnabled())
+			? await loadEntriesFromFileAsync(resolvedPath, slicer, compactUpdatesEnabled(), pagerFor(resolvedPath))
 			: undefined;
 		const header = discovery.header ?? headerOf(preloadedFileEntries);
 		const { cwd, dir } = openLocation(resolvedPath, sessionDir, cwdOverride, header);

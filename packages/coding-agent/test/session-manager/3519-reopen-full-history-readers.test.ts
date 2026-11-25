@@ -106,7 +106,8 @@ describe("readers that need the whole history after a reopen trims the mirror (s
 
 		const reopened = SessionManager.open(file, dir);
 
-		expect(reopened.getResidentStore().size().approxBytes).toBeGreaterThan(0);
+		// Untrimmed: a trimming open holds the history it parsed (senpi#3968 pages large strings, so the store stays empty).
+		expect(reopened.holdsMaterializedHistory()).toBe(false);
 		expect(
 			messageTexts(reopened.buildSessionContext().messages.map((message) => ({ type: "message", message }))),
 		).toContain("after answer");
@@ -126,6 +127,6 @@ describe("readers that need the whole history after a reopen trims the mirror (s
 
 		const reopened = SessionManager.open(session.getSessionFile()!, dir);
 
-		expect(reopened.getResidentStore().size().approxBytes).toBeGreaterThan(0);
+		expect(reopened.holdsMaterializedHistory()).toBe(false);
 	});
 });
