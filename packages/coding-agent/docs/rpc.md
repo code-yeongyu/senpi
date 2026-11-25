@@ -7044,11 +7044,27 @@ Emitted when an extension calls `pi.rpc.emit(name, data)` and the client adverti
 the specific event name before applying it. In multi-session mode the record also includes the
 routing `sessionId`; delivery preserves the owning session and per-session event order.
 
-Events are not replayed: a client receives those emitted after it starts receiving extension events
-(by its handshake capabilities or a `set_client_info` that declares `extension_events`). At that
-moment Senpi emits `senpi:extension-rpc-subscribed` (no data) on the in-process `pi.events` bus, so an
-extension that keeps a state snapshot can send it once instead of waiting for its next change; other
-subscribed clients may then receive the same snapshot again.
+A client receives the events emitted after it starts receiving extension events (by its handshake
+capabilities or a `set_client_info` that declares `extension_events`). At that moment Senpi emits
+`senpi:extension-rpc-subscribed` on the in-process `pi.events` bus. Its data is a reply function,
+`(event: { name: string; data: unknown }) => void`, that delivers an event to the new client only;
+other subscribed clients receive nothing from it. The function works only during that synchronous
+emit: a listener calls it before returning, and a call after that, or from an async continuation,
+is dropped. An extension that keeps a state snapshot uses it to send that state once instead of
+waiting for its next change.
+
+On a shared host, a client that joins an already open in-process session (the default runtime of a
+`--listen` host) with `attach_session` and receives extension events gets the same replay for itself, even when the session is idle: Senpi runs
+`senpi:extension-rpc-subscribed` again with a reply function that reaches that attachment only.
+Nothing else is replayed: events extensions emitted before the attach do not reach the new client.
+The attaching client's own `extension_events` declaration decides, whatever the session's opener declared.
+A replay that has not reached the client when it releases the attachment is dropped.
+
+The terminal builtin replays its current state this way, even when nothing is running: one
+`terminal_monitor_state` event, then two `wake_source_state` events. The first has `source:
+"terminal-monitors"`, `activeCount` and a `monitors` list (`id`, `description`, `startedAtMs`); the
+second has `source: "terminal-background-sessions"`, `activeCount` and an `items` list, one entry
+per live background session.
 
 The terminal builtin emits `terminal_monitor_state` on this path whenever the active monitor set
 changes. `data` is `{ activeCount, monitors }`, where each monitor entry has `id`, `description`,
