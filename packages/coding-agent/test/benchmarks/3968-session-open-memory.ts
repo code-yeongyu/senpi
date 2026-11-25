@@ -16,6 +16,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { readOwnFootprint } from "../../src/core/process-footprint.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
+const runtime = (globalThis as { Bun?: { gc(force: boolean): void } }).Bun;
+if (runtime === undefined) throw new Error("run this benchmark with bun: it needs Bun.gc for a full collection");
+const fullGc = (): void => runtime.gc(true);
+
 const argv = process.argv.slice(2);
 const values = (name: string) => argv.flatMap((arg, index) => (arg === `--${name}` ? [argv[index + 1] ?? ""] : []));
 const RESULT_BYTES = 16 * 1024;
@@ -70,7 +74,7 @@ function writeToolSession(dir: string, megabytes: number): string {
 }
 
 function reading() {
-	Bun.gc(true);
+	fullGc();
 	const usage = process.memoryUsage();
 	const footprint = readOwnFootprint();
 	return {
