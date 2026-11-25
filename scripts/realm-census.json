@@ -11821,6 +11821,10 @@
 		"packages/coding-agent/src/engine/exported-launch.ts#launch": {
 			"class": "constant",
 			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/result-free-fields.ts#RESULT_FREE_FIELDS": {
+			"class": "constant",
+			"reason": "result field table data literal; never written after load"
 		}
 	}
 }
