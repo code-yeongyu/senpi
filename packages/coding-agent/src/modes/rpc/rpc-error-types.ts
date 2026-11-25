@@ -35,6 +35,12 @@ export const RPC_ERROR_RESPONSE_TOO_LARGE = "response_too_large";
 export const RPC_ERROR_RESPONSE_UNWRITABLE = "response_unwritable";
 
 /**
+ * A host-level command's handler failed unexpectedly; `errorData.detail` carries the message. Sent in place of the reply
+ * so the caller is never left waiting (senpi#6483).
+ */
+export const RPC_ERROR_INTERNAL = "internal_error";
+
+/**
  * A project write stated the folder its caller means (`expectedCwd`) and the session is in another one: nothing is
  * written. A client that names a session by a key that may since point at another session states the folder it
  * means, so a write never lands in the wrong project.
@@ -299,4 +305,5 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING
 	| typeof RPC_ERROR_RESPONSE_UNWRITABLE
+	| typeof RPC_ERROR_INTERNAL
 	| typeof RPC_ERROR_PROJECT_CWD_MISMATCH;

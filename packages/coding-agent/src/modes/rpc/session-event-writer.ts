@@ -1,3 +1,4 @@
+import { BaselineAnswer } from "./compact-admission-baseline.ts";
 import { withReceipt } from "./command-authority.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
@@ -104,6 +105,28 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		this.requestFlush();
 	}
 
+	/**
+	 * The answer a request of `peer` writes through an admission baseline. Handed to a baseline the queue holds, it is
+	 * noted as the request's answer; when that baseline ended before it handed the answer out, the answer is written the
+	 * ordinary way, for the socket the request was made on (senpi#6587).
+	 */
+	baselineAnswer(peer: string, socketEpoch = this.socketEpochOf(peer)): BaselineAnswer {
+		return new BaselineAnswer(
+			(answer) => this.answered.taken(peer, answer),
+			(answer) => {
+				// Not for a socket that replaced the request's, nor for a peer with no queue: nothing there asked.
+				if (this.socketEpochOf(peer) !== socketEpoch || this.fanout.get(peer) === undefined) return false;
+				const watch = this.answered.watch(peer, typeof answer.id === "string" ? answer.id : undefined);
+				this.enqueueControl(answer, peer).catch((cause: unknown) => {
+					process.stderr.write(`senpi rpc answer of an ended baseline not written: ${String(cause)}\n`);
+				});
+				const taken = watch.answered();
+				watch.done();
+				return taken;
+			},
+		);
+	}
+
 	/** Queue one untagged host-control response for the given connection (defaults to the current one). */
 	enqueueControl(value: object, targetOverride?: string): Promise<void> {
 		const peer = targetOverride ?? this.currentConnection();
@@ -116,6 +139,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) {
 			registered.actor.enqueue(serializeJsonLine(value), undefined, undefined, undefined, isCorrelatedReply(value));
+			this.answered.taken(targetId, value);
 			this.requestFlush();
 			return Promise.resolve();
 		}
@@ -135,6 +159,8 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		const completion = new Promise<void>((resolve, reject) => {
 			this.records.append(queue, { ...value }, undefined, resolve, reject);
 		});
+		// Told only here and above, where the value is taken: a value refused before this point was not an answer.
+		this.answered.taken(targetId, value);
 		this.markReady(queue);
 		this.requestFlush();
 		return completion;

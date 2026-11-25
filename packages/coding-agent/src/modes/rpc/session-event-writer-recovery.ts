@@ -119,10 +119,12 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 			registered.actor.remember(sessionId, this.fanout.checkpoints, registered.socketEpoch);
 		}
 	}
-	installAdmissionBaseline(peer: string, cursor: LegacyViewCursor, live: () => boolean): void {
+	/** Answers whether the peer's queue took the baseline; one it did not take is released and writes nothing. */
+	installAdmissionBaseline(peer: string, cursor: LegacyViewCursor, live: () => boolean): boolean {
 		const actor = this.fanout.get(peer)?.actor;
-		if (actor) actor.installBaseline(cursor, live);
-		else cursor.release();
+		if (actor) return actor.installBaseline(cursor, live);
+		cursor.release();
+		return false;
 	}
 	/** Internal S14 source identity; callers must establish the requesting token's scoped claim first. */
 	recoveryLane(sessionId: string) {

@@ -105,15 +105,16 @@ export class SocketEventSinkActor {
 	 * A newly attached session's baseline, frozen by the caller: it takes this FIFO position, so every record
 	 * enqueued after it follows it, and a stale attempt (`live` false) writes nothing. Never holds credit. A view
 	 * with no frame installs nothing, so the next record goes in flight exactly as before the attach; while a
-	 * recovery drops records the view is dropped too, covered by the cut read at the delivery.
+	 * recovery drops records the view is dropped too, covered by the cut read at the delivery. Answers whether the
+	 * baseline was taken into the queue; one that was not is released and writes nothing.
 	 */
-	installBaseline(cursor: LegacyViewCursor, live: () => boolean): void {
-		if (this.closed || cursor.empty || this.shed.dropsRecords) {
-			cursor.release();
-			return;
-		}
-		this.queue.push({ kind: "attach", barrier: new BaselineBarrier(cursor, live) });
-		void this.drain();
+	installBaseline(cursor: LegacyViewCursor, live: () => boolean): boolean {
+		const taken = !(this.closed || cursor.empty || this.shed.dropsRecords);
+		if (taken) {
+			this.queue.push({ kind: "attach", barrier: new BaselineBarrier(cursor, live) });
+			void this.drain();
+		} else cursor.release();
+		return taken;
 	}
 
 	/** `held`, for a record that reaches this peer because it holds a session: whether it still does. */
