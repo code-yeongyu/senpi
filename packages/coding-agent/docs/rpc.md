@@ -3718,7 +3718,7 @@ registrant opens no socket and writes no registry directory.
   - `held` (with `holds`, the hold kinds): the session is idle under a hold a peer cannot release - a person's Stop,
     an interrupted run, a parent's run hold (senpi#6490). The delivery is kept as a held notice and starts once that
     hold is released; do not send it again. An `unattended` hold alone is released by the delivery (`started`).
-  - `held` with `engine_turn_cap` (`{ reason, count }`, the `engine-paused` reason) instead of `holds`: the
+  - `held` with `engineTurnCap` (`{ reason, count }`, the `engine-paused` reason) instead of `holds`: the
     engine-turn cap stops the turn the delivery would start (senpi#7138). The delivery is recorded without a turn,
     and the turn a person's message or Resume starts answers it; do not send it again.
   - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
