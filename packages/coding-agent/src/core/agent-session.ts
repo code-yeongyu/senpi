@@ -516,6 +516,8 @@ import {
 	type ThinkingClampNotice,
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
+import { isInstallTelemetryEnabled } from "./telemetry.ts";
+import { telemetryPermitted } from "./telemetry-consent.ts";
 import { ToolBarrier, type ToolBarrierSpec, toolBarrierSpecError } from "./tool-barrier.ts";
 import { TurnConflictError, turnConflict } from "./turn-conflict.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
@@ -1946,6 +1948,8 @@ export class AgentSession {
 	private _promptSurface: PromptSurface | undefined;
 	private _browserEngine: BrowserEngine | undefined;
 	private readonly _sessionEnv: Readonly<Record<string, string>> | undefined;
+	/** Whether every caller of this session permits its telemetry (senpi#7446); a classic launch has no other caller. */
+	private _telemetryCallersPermit = true;
 
 	constructor(config: AgentSessionConfig) {
 		this._promptSurface = config.promptSurface;
@@ -5382,6 +5386,16 @@ export class AgentSession {
 
 	get browserEngine(): BrowserEngine | undefined {
 		return this._browserEngine;
+	}
+
+	/** The callers' half of this session's telemetry decision, from `SessionTelemetryCallers` (senpi#7446). */
+	setTelemetryCallersPermit(permit: boolean): void {
+		this._telemetryCallersPermit = permit;
+	}
+
+	/** Whether this session's telemetry may be collected or delivered right now; read at each use (senpi#7446). */
+	telemetryPermitted(): boolean {
+		return telemetryPermitted(isInstallTelemetryEnabled(this.settingsManager), this._telemetryCallersPermit);
 	}
 
 	get sessionEnv(): Readonly<Record<string, string>> | undefined {
@@ -12778,6 +12792,7 @@ export class AgentSession {
 				},
 				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
 				getBrowserEngine: () => this._browserEngine,
+				getTelemetryPermitted: () => this.telemetryPermitted(),
 				getSessionEnv: () => this._sessionEnv,
 				// A split session's tools run on its hand, so its device files are the hand's file channel (senpi#5839).
 				getDeviceFiles: () =>

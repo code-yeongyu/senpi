@@ -1,0 +1,84 @@
+/**
+ * The one place a session's caller-attributed telemetry is decided (senpi#7446).
+ *
+ * Effective permission = the host permits AND every caller of the session permits explicitly. A caller grant
+ * never overrides a host opt-out, an unanswered or declined caller never exports, and one session's callers
+ * never decide for another session of the same host process. Every gate (provider attribution, the extension
+ * context, a worker session) reads this module; none keeps its own copy of the rule.
+ */
+
+/** A caller's answer. `unanswered` is an answer too: it is what an older peer that sends nothing gets. */
+export type TelemetryConsent = "granted" | "declined" | "unanswered";
+
+export const TELEMETRY_CONSENTS: readonly TelemetryConsent[] = ["granted", "declined", "unanswered"];
+
+/** The wire field a caller answers with on `open_session` and `attach_session`. */
+export interface TelemetryDeclaration {
+	readonly consent: TelemetryConsent;
+}
+
+export function isTelemetryConsent(value: unknown): value is TelemetryConsent {
+	return value === "granted" || value === "declined" || value === "unanswered";
+}
+
+/** The decision itself, at collection and again at delivery. */
+export function telemetryPermitted(hostPermits: boolean, callersPermit: boolean): boolean {
+	return hostPermits && callersPermit;
+}
+
+/**
+ * Who a session's standing answer belongs to: the host process itself (a classic launch, whose own settings are
+ * the caller's), or the caller that opened the session over the wire.
+ */
+export type TelemetryStanding = "host" | TelemetryConsent;
+
+/**
+ * The callers of one session. `standing` is the answer the session keeps with no caller attached (a retained
+ * session keeps running after its opener leaves); every attached connection adds its own live answer.
+ *
+ * An attach only adds the caller's live answer, which leaves with it. On a session a caller opened, the open and
+ * every deliberate change (`set_telemetry_consent`) also become the standing answer, so a revocation outlives the
+ * connection that sent it, and a caller that merely attaches and leaves changes nothing after it is gone. A
+ * host-owned session's standing answer is always the host's own policy.
+ */
+export class SessionTelemetryCallers {
+	private standing: TelemetryStanding;
+	private readonly live = new Map<string, TelemetryConsent>();
+
+	constructor(standing: TelemetryStanding) {
+		this.standing = standing;
+	}
+
+	/** A connection attached with this answer; it counts only while the connection stays attached. */
+	attach(connection: string, consent: TelemetryConsent): void {
+		this.live.set(connection, consent);
+	}
+
+	/** A connection opened the session or changed its answer on purpose: it is live and it is what the session keeps. */
+	answer(connection: string, consent: TelemetryConsent): void {
+		this.live.set(connection, consent);
+		if (this.standing !== "host") this.standing = consent;
+	}
+
+	/** A connection stopped being attached; its live answer goes with it, the standing one stays. */
+	leave(connection: string): void {
+		this.live.delete(connection);
+	}
+
+	/** The answer a restart or a handover reopens this session with; absent for a host-owned session. */
+	standingConsent(): TelemetryConsent | undefined {
+		return this.standing === "host" ? undefined : this.standing;
+	}
+
+	/** Whether every caller of this session permits caller-attributed telemetry. */
+	permit(): boolean {
+		if (this.standing !== "host" && this.standing !== "granted") return false;
+		for (const consent of this.live.values()) if (consent !== "granted") return false;
+		return true;
+	}
+}
+
+/** The callers' permit a session starts with, before any connection is attached: its opener's answer alone. */
+export function openingCallersPermit(openerConsent: TelemetryConsent | undefined): boolean {
+	return new SessionTelemetryCallers(openerConsent ?? "host").permit();
+}

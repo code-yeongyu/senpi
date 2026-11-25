@@ -9,6 +9,7 @@ import {
 	sessionKindError,
 	sessionPromptSurfaceError,
 	sessionRetryFallbackError,
+	sessionTelemetryError,
 } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import {
@@ -90,6 +91,9 @@ export function validatedOpenProfile(
 	const retryFallbackError = sessionRetryFallbackError(command.retryFallback);
 	if (retryFallbackError)
 		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
+	const telemetryError = sessionTelemetryError(command.telemetry);
+	if (telemetryError)
+		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${telemetryError}`);
 	const envError = sessionEnvError(command.env);
 	if (envError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_ENV}: ${envError}`);
 	const sessionEnv = inheritedSessionEnv(parentSessionEnv(host, command.spawnedBy?.parentSessionId), command.env);
@@ -124,6 +128,8 @@ export function validatedOpenProfile(
 		...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
 		...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
 		...(sessionEnv !== undefined ? { sessionEnv } : {}),
+		// Every wire open has a caller, so its silence is an answer: an older peer never grants (senpi#7446).
+		telemetryConsent: command.telemetry?.consent ?? "unanswered",
 	};
 }
 

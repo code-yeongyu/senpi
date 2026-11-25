@@ -7,6 +7,7 @@ import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-reg
 import type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
 import type { ThreadSettledBy } from "../../core/session-settled.ts";
+import type { SessionTelemetryCallers } from "../../core/telemetry-consent.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
 import type { PreparableRuntimeFactory } from "./host-warm.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -60,6 +61,8 @@ export interface RpcSessionEntry {
 	cwd: string;
 	/** Live attachments (open + later attaches). The runtime is disposed only when the last one closes. */
 	attachments: number;
+	/** Each attached caller's telemetry answer and the session's standing one (senpi#7446); set by the first caller. */
+	telemetryCallers?: SessionTelemetryCallers;
 	/**
 	 * Opt-in retention: a dropped connection only DETACHES from this session. The
 	 * entry stays open at zero attachments (still listed, still running its turn,

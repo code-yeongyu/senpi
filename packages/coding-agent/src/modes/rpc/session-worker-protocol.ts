@@ -134,6 +134,7 @@ export type HostToSessionWorker =
 	| { type: "owners_retired"; owners: readonly ExtensionOwnerIdentity[] }
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
+	| { type: "telemetry_callers"; request: number; permit: boolean }
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "cancel_grant"; id: string }

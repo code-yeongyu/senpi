@@ -67,6 +67,8 @@ interface OpenFields {
 	readonly retryFallback?: { modelFallback: boolean; fallbackChains: Record<string, string[]> };
 	readonly env?: Record<string, string>;
 	readonly spawnedBy?: { parentSessionId: string; rootSessionId: string; taskId: string };
+	readonly retain_on_disconnect?: boolean;
+	readonly telemetry?: { consent: "granted" | "declined" | "unanswered" };
 }
 
 /**

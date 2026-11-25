@@ -1,6 +1,7 @@
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { withoutOpenTiming } from "../../core/open-timing.ts";
 import { outsideCommand } from "./command-authority.ts";
+import { declareTelemetry } from "./session-router-telemetry.ts";
 import { runSetThinkingLevel } from "./effect-commands.ts";
 import { runSetModel } from "./handlers-model.ts";
 import { runSetPermissionPreset } from "./permission-preset-command.ts";
@@ -154,6 +155,7 @@ async function claimReady(
 		if (host.draining || host.drainExitRequested) return miss();
 		entry.acceptance?.applyTranscript(runtime.session.sessionManager.drainTranscript());
 		ownOpen(host, claimed, owner);
+		await declareTelemetry(host, claimed.sessionId, owner, command.telemetry?.consent, "answer");
 		host.bindings
 			.get(claimed.sessionId)
 			?.setClientCapabilities?.(

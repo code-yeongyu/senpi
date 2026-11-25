@@ -1,3 +1,4 @@
+import { openingCallersPermit, type TelemetryConsent } from "./telemetry-consent.ts";
 import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
@@ -82,6 +83,11 @@ export interface AgentSessionLaunchProfile {
 	 * subprocesses see on top of the process environment. Never the host's own, never another session's.
 	 */
 	sessionEnv?: Readonly<Record<string, string>>;
+	/**
+	 * The telemetry answer of the caller that opened this session over the wire (`open_session.telemetry`,
+	 * senpi#7446); absent for a classic launch, whose own settings answer for it.
+	 */
+	telemetryConsent?: TelemetryConsent;
 }
 
 /** The fallback policy one session runs with, chosen by its opener (e.g. a task child's own chain). */
@@ -164,6 +170,7 @@ export class AgentSessionRuntime {
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
 	private _launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	private _telemetryCallersPermit: boolean;
 	// Advertises the open session file to other processes so none moves it out from under this one.
 	private _sessionHold?: SessionHold;
 	private _removedOnReplacement?: {
@@ -187,6 +194,8 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
+		this._telemetryCallersPermit = openingCallersPermit(launchProfile?.telemetryConsent);
+		_session.setTelemetryCallersPermit(this._telemetryCallersPermit);
 		markHostDefaultPresetFlag(_session, launchProfile);
 		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
 		// Taken by the async creator (the holder record needs the async boot instant); the constructor never touches it.
@@ -358,6 +367,12 @@ export class AgentSessionRuntime {
 		applyRetryFallbackProfile(this._session.settingsManager, retryFallback);
 	}
 
+	/** The callers' half of the telemetry decision, as the host recomputes it (senpi#7446); replacements keep it. */
+	setTelemetryCallersPermit(permit: boolean): void {
+		this._telemetryCallersPermit = permit;
+		this._session.setTelemetryCallersPermit(permit);
+	}
+
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
 		this.rebindSession = rebindSession;
 	}
@@ -520,6 +535,7 @@ export class AgentSessionRuntime {
 		applyClientPermissionMode(this._session, clientNamedPreset(profile), { announce: false });
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
 		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
+		this._session.setTelemetryCallersPermit(this._telemetryCallersPermit);
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;

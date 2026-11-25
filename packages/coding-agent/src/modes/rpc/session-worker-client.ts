@@ -146,6 +146,12 @@ export class SessionWorkerClient {
 		if (result.type !== "result") throw new Error("Invalid worker browser_engine response");
 	}
 
+	/** The callers' half of the worker session's telemetry decision (senpi#7446), as the host recomputes it. */
+	async setTelemetryCallersPermit(permit: boolean): Promise<void> {
+		const result = await this.request({ type: "telemetry_callers", permit });
+		if (result.type !== "result") throw new Error("Invalid worker telemetry_callers response");
+	}
+
 	/** Moves the worker's live session to another permission preset (a later `open_session.permissionPreset`). */
 	async setPermissionPreset(preset: string): Promise<void> {
 		const result = await this.request({ type: "permission_preset", preset });

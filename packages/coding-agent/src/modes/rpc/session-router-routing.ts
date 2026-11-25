@@ -39,6 +39,7 @@ import {
 	notAttachedRefusal,
 } from "./session-status-commands.ts";
 import { unloadSession } from "./session-unload.ts";
+import { setTelemetryConsent } from "./session-router-telemetry.ts";
 
 /**
  * Every routed command runs inside its session's attribution scope, so a stall the
@@ -267,6 +268,7 @@ export async function dispatch(
 			action: "unload_and_reopen",
 		});
 	if (command.type === "set_session_context") return setSessionContext(host, command);
+	if (command.type === "set_telemetry_consent") return setTelemetryConsent(host, command);
 	try {
 		const entry = host.registry.getForCommand(sessionId, command.type);
 		await dispatchSessionBinding(
