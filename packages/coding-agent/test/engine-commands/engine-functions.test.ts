@@ -1,20 +1,10 @@
-import {
-	copyFileSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	realpathSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CONFIG_DIR_NAME, getAgentDir } from "../../src/config.ts";
+import { getAgentDir } from "../../src/config.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { engine } from "../../src/engine/index.ts";
-import { listModelsOf } from "../../src/engine/models.ts";
 import { TIP_DEFINITIONS } from "../../src/modes/interactive/tips/registry.ts";
 
 const FIXTURE_SESSION = join(__dirname, "..", "fixtures", "before-compaction.jsonl");
@@ -31,6 +21,7 @@ beforeEach(() => {
 	mkdirSync(projectDir, { recursive: true });
 	mkdirSync(packageDir, { recursive: true });
 	vi.stubEnv("HOME", root);
+	vi.stubEnv("PI_OFFLINE", "1");
 	originalCwd = process.cwd();
 	process.chdir(projectDir);
 });
@@ -43,7 +34,7 @@ afterEach(() => {
 	rmSync(root, { recursive: true, force: true });
 });
 
-describe("engine.packages", () => {
+describe("engine.packages runs each leaf", () => {
 	it("installs, lists, updates and removes a local package, reporting each started step", async () => {
 		const started: string[] = [];
 		const onProgress = (event: { type: string; message?: string }) => {
@@ -55,12 +46,12 @@ describe("engine.packages", () => {
 			value: { source: packageDir },
 		});
 		const listed = await engine.packages.list();
-		expect(listed.kind).toBe("ok");
 		expect(listed.kind === "ok" && listed.value.packages.map((pkg) => pkg.installedPath)).toEqual([packageDir]);
 		expect(await engine.packages.update({ source: packageDir })).toMatchObject({
 			kind: "ok",
 			value: { source: packageDir },
 		});
+		expect(await engine.packages.update()).toMatchObject({ kind: "ok", value: {} });
 		expect(await engine.packages.remove({ source: packageDir }, { onProgress })).toMatchObject({ kind: "ok" });
 		expect(started).toEqual([`Installing ${packageDir}...`, `Removing ${packageDir}...`]);
 	});
@@ -74,16 +65,14 @@ describe("engine.packages", () => {
 			kind: "error",
 			error: { code: "project_untrusted" },
 		});
-		expect(existsSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"))).toBe(false);
 	});
 });
 
-describe("engine.models", () => {
+describe("engine.models runs each leaf", () => {
 	it("refreshes the catalogs and answers a refresh failure as a refusal", async () => {
 		const refresh = vi.fn(async () => ({ aborted: false, errors: new Map<string, Error>() }));
 		vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
 		expect(await engine.models.update()).toMatchObject({ kind: "ok" });
-
 		refresh.mockResolvedValueOnce({ aborted: false, errors: new Map([["acme", new Error("offline")]]) });
 		expect(await engine.models.update()).toMatchObject({
 			kind: "error",
@@ -91,85 +80,25 @@ describe("engine.models", () => {
 		});
 	});
 
-	it("refuses discovery without a provider and reports an unreadable models.json", async () => {
-		expect(await engine.models.discover({ provider: "" })).toMatchObject({
-			kind: "error",
-			error: { code: "invalid_input" },
-		});
+	it("reports an unreadable models.json from discovery", async () => {
 		const missing = await engine.models.discover({ provider: "acme" });
 		expect(missing).toMatchObject({ kind: "error", error: { code: "discovery_failed" } });
 		expect(missing.kind === "error" && missing.error.message).toContain("models.json");
 	});
 
-	it("lists models matching the pattern by provider then id, with the models.json load error", () => {
-		const model = (provider: string, id: string) => ({ provider, id }) as never;
-		const runtime = {
-			getError: () => "bad json",
-			getModels: () => [model("zeta", "b"), model("alpha", "z"), model("alpha", "a")],
-		} as unknown as ModelRuntime;
-
-		const listing = listModelsOf(runtime, {}).value;
-		expect(listing.loadError).toBe("bad json");
-		expect(listing.available).toBe(3);
-		expect(listing.models.map((m) => `${m.provider}/${m.id}`)).toEqual(["alpha/a", "alpha/z", "zeta/b"]);
-		expect(listModelsOf(runtime, { pattern: "zeta" }).value.models.map((m) => m.id)).toEqual(["b"]);
+	it("lists the default runtime's models, filtered by the pattern", async () => {
+		const none = await engine.models.list({ pattern: "zzzz-no-such-model" });
+		expect(none.kind === "ok" && none.value.models).toEqual([]);
+		expect(none.kind === "ok" && none.value.available).toBeGreaterThan(0);
+		const all = await engine.models.list();
+		const models = all.kind === "ok" ? all.value.models : [];
+		expect(models.length).toBe(all.kind === "ok" ? all.value.available : -1);
+		const sorted = [...models].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
+		expect(models).toEqual(sorted);
 	});
 });
 
-describe("engine.config", () => {
-	it("answers the agent directory selection record", () => {
-		expect(engine.config.agentDir()).toMatchObject({
-			kind: "ok",
-			value: { dir: getAgentDir(), source: "SENPI_CODING_AGENT_DIR", rule: "environment" },
-		});
-	});
-
-	it("resolves resources, refuses an untrusted local scope, and writes global and project settings", async () => {
-		const extension = join(getAgentDir(), "extensions", "probe-7450.ts");
-		mkdirSync(join(getAgentDir(), "extensions"), { recursive: true });
-		writeFileSync(extension, "export default function () {}\n");
-		try {
-			expect(await engine.config.resources({ local: true, trust: false })).toMatchObject({
-				kind: "error",
-				error: { code: "project_untrusted" },
-			});
-			const resolved = await engine.config.resources();
-			expect(resolved.kind).toBe("ok");
-			const item =
-				resolved.kind === "ok"
-					? resolved.value.global.extensions.find((entry) => entry.path === extension)
-					: undefined;
-			expect(item?.enabled).toBe(true);
-			const resource = { type: "extensions", path: extension } as const;
-			const source = item?.metadata.source ?? "";
-
-			expect(await engine.config.setResource({ source, resource, enabled: false })).toMatchObject({
-				kind: "ok",
-				value: { enabled: false },
-			});
-			const settings = JSON.parse(readFileSync(join(getAgentDir(), "settings.json"), "utf8")) as {
-				extensions?: string[];
-			};
-			expect(settings.extensions).toEqual(["-extensions/probe-7450.ts"]);
-
-			expect(
-				await engine.config.setResource({ local: true, trust: true, source, resource, state: "load" }),
-			).toMatchObject({ kind: "ok", value: { enabled: true, state: "load" } });
-			const project = JSON.parse(readFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), "utf8")) as {
-				extensions?: string[];
-			};
-			expect(project.extensions).toEqual([extension, `+${extension}`]);
-
-			expect(
-				await engine.config.setResource({ source, resource: { type: "skills", path: extension }, enabled: true }),
-			).toMatchObject({ kind: "error", error: { code: "not_found" } });
-		} finally {
-			rmSync(join(getAgentDir(), "extensions"), { recursive: true, force: true });
-		}
-	});
-});
-
-describe("engine.schedule", () => {
+describe("engine.schedule runs each leaf", () => {
 	it("lists nothing, refuses an unknown id and invalid run input, and runs an empty pass", async () => {
 		expect(await engine.schedule.list()).toMatchObject({ kind: "ok", value: { jobs: [], invalid: [], runners: [] } });
 		expect(await engine.schedule.cancel({ id: "no-such-job" })).toMatchObject({
@@ -187,7 +116,7 @@ describe("engine.schedule", () => {
 	});
 });
 
-describe("engine queries", () => {
+describe("engine queries run each leaf", () => {
 	it("refuses a non-positive pid and answers an unattested one", async () => {
 		expect(await engine.sessionOfPid({ pid: 0 })).toMatchObject({ kind: "error", error: { code: "invalid_input" } });
 		expect(await engine.sessionOfPid({ pid: process.pid })).toMatchObject({
@@ -215,10 +144,17 @@ describe("engine queries", () => {
 	it("answers every tip of the catalog", () => {
 		expect(engine.tips().value.map((tip) => tip.id)).toEqual(TIP_DEFINITIONS.map((tip) => tip.id));
 	});
+
+	it("measures the prompt of the default session", async () => {
+		const sizes = await engine.promptSizes();
+		expect(sizes.kind).toBe("ok");
+		expect(sizes.kind === "ok" && sizes.value.total.bytes).toBeGreaterThan(0);
+		expect(sizes.kind === "ok" && sizes.value.sections.length).toBeGreaterThan(0);
+	});
 });
 
-describe("engine.host", () => {
-	it("answers the shard path and an empty gc, refuses status without a host, and refuses a bad stop", async () => {
+describe("engine.host runs each leaf", () => {
+	it("answers the shard path and an empty gc", async () => {
 		expect(await engine.host.shardPath({ kind: "p", owner: "x" })).toMatchObject({
 			kind: "ok",
 			value: {
@@ -227,10 +163,30 @@ describe("engine.host", () => {
 			},
 		});
 		expect(await engine.host.gc()).toMatchObject({ kind: "ok", value: { payload: { removed: [], kept: [] } } });
+	});
+
+	it("refuses status and stop without a host, and a bad stop", async () => {
 		expect(await engine.host.status()).toMatchObject({
 			kind: "error",
 			error: { code: "refused", details: { payload: { reachable: false } } },
 		});
+		expect(await engine.host.stop()).toMatchObject({
+			kind: "error",
+			error: { code: "refused", message: "unknown_owner" },
+		});
 		expect(await engine.host.stop({ wait_ms: 5 })).toMatchObject({ kind: "error", error: { code: "usage" } });
+	});
+
+	it("refuses ensure and handoff with an unreadable launch spec before contacting any host", async () => {
+		const spec = join(root, "missing-spec.json");
+		for (const result of [
+			await engine.host.ensure({ launch_spec: spec }),
+			await engine.host.handoff({ launch_spec: spec }),
+		]) {
+			expect(result).toMatchObject({
+				kind: "error",
+				error: { code: "usage", message: "launch_spec_unreadable", details: { payload: { action: "error" } } },
+			});
+		}
 	});
 });

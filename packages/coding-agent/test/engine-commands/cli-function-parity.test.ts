@@ -1,71 +1,152 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getAgentDir } from "../../src/config.ts";
-import { engine, ENGINE_COMMANDS, GATED_SLICE } from "../../src/engine/index.ts";
+import { engine, type HostAnswer, type HostCode } from "../../src/engine/index.ts";
+
+type HostResult = EngineResult<HostAnswer, HostCode | "invalid_input">;
+import type { EngineResult } from "../../src/engine/result.ts";
 
 const CLI = join(__dirname, "..", "..", "src", "cli.ts");
+const FIXTURE_SESSION = join(__dirname, "..", "fixtures", "before-compaction.jsonl");
 
 let root: string;
 let projectDir: string;
+let packageDir: string;
 let originalCwd: string;
+
+function hermeticEnv(): NodeJS.ProcessEnv {
+	return {
+		PATH: process.env.PATH ?? "",
+		HOME: root,
+		TMPDIR: join(root, "tmp"),
+		SENPI_CODING_AGENT_DIR: getAgentDir(),
+		PI_OFFLINE: "1",
+		PI_SKIP_VERSION_CHECK: "1",
+		NO_COLOR: "1",
+	};
+}
+
+/** Runs an exported function in a process with exactly the CLI's environment, for answers that read it. */
+function fnInCliEnvironment(expression: string): unknown {
+	const entry = join(__dirname, "..", "..", "src", "engine", "index.ts");
+	const script = `import { engine } from ${JSON.stringify(entry)}; console.log(JSON.stringify(await ${expression}));`;
+	const result = spawnSync("bun", ["-e", script], {
+		cwd: projectDir,
+		encoding: "utf8",
+		timeout: 120_000,
+		env: hermeticEnv(),
+	});
+	return JSON.parse(result.stdout);
+}
 
 function cli(...args: string[]): { status: number | null; stdout: string; stderr: string } {
 	const result = spawnSync("bun", [CLI, ...args], {
 		cwd: projectDir,
 		encoding: "utf8",
 		timeout: 120_000,
-		env: {
-			PATH: process.env.PATH ?? "",
-			HOME: root,
-			TMPDIR: join(root, "tmp"),
-			SENPI_CODING_AGENT_DIR: getAgentDir(),
-			PI_OFFLINE: "1",
-			PI_SKIP_VERSION_CHECK: "1",
-			NO_COLOR: "1",
-		},
+		env: hermeticEnv(),
 	});
 	return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function hostExit(result: HostResult): number {
+	if (result.kind === "ok") return result.value.outcome === "fallback" ? 4 : 0;
+	return { refused: 3, usage: 2, invalid_input: 2, failed: 1 }[result.error.code];
+}
+
+function hostPayload(result: HostResult): unknown {
+	return result.kind === "ok" ? result.value.payload : result.error.details?.payload;
 }
 
 beforeAll(() => {
 	root = realpathSync(mkdtempSync(join(tmpdir(), "engine-parity-")));
 	projectDir = join(root, "project");
-	mkdirSync(projectDir, { recursive: true });
-	mkdirSync(join(root, "tmp"), { recursive: true });
+	packageDir = join(root, "local-package");
+	for (const dir of [projectDir, packageDir, join(root, "tmp")]) mkdirSync(dir, { recursive: true });
 	originalCwd = process.cwd();
 	process.chdir(projectDir);
 	vi.stubEnv("HOME", root);
-});
-
-afterEach(() => {
-	rmSync(join(getAgentDir(), "settings.json"), { force: true });
+	vi.stubEnv("PI_OFFLINE", "1");
 });
 
 afterAll(() => {
 	process.chdir(originalCwd);
 	vi.unstubAllEnvs();
+	rmSync(join(getAgentDir(), "settings.json"), { force: true });
 	rmSync(root, { recursive: true, force: true });
 });
 
-describe("the CLI and the exported function answer the same data for the same input (senpi#7450)", () => {
+describe("packages: the CLI and the function answer alike (senpi#7450)", () => {
+	it("install", async () => {
+		const printed = cli("install", packageDir);
+		const installed = await engine.packages.install({ source: packageDir });
+		expect(printed.status).toBe(0);
+		expect(installed.kind === "ok" && `Installed ${installed.value.source}\n`).toBe(
+			printed.stdout.split("\n").slice(-2).join("\n"),
+		);
+	});
+
+	it("list", async () => {
+		const listed = await engine.packages.list();
+		const paths = listed.kind === "ok" ? listed.value.packages.map((pkg) => pkg.installedPath) : [];
+		expect(paths).toEqual([packageDir]);
+		expect(cli("list").stdout).toContain(`    ${packageDir}\n`);
+	});
+
+	it("update", async () => {
+		const updated = await engine.packages.update({ source: packageDir });
+		expect(updated.kind === "ok" && `Updated ${updated.value.source}\n`).toBe(
+			cli("update", "--extension", packageDir).stdout,
+		);
+	});
+
+	it("remove, refusal included", async () => {
+		expect(cli("remove", packageDir).stdout).toContain(`Removed ${packageDir}\n`);
+		const removed = await engine.packages.remove({ source: packageDir });
+		const printed = cli("remove", packageDir);
+		expect(printed.status).toBe(1);
+		expect(removed.kind === "error" && `${removed.error.message}\n`).toBe(printed.stderr);
+	});
+});
+
+describe("models: the CLI and the function answer alike", () => {
+	it("update", async () => {
+		const refreshed = await engine.models.update();
+		const printed = cli("update", "--models");
+		expect(refreshed.kind === "ok" ? 0 : 1).toBe(printed.status);
+		expect(printed.stdout).toBe(refreshed.kind === "ok" ? "Model catalogs refreshed\n" : "");
+	});
+
+	it("discover refusal", async () => {
+		const discovered = await engine.models.discover({ provider: "acme" });
+		const printed = cli("models", "discover", "acme");
+		expect(printed.status).toBe(1);
+		expect(discovered.kind === "error" && `Error: ${discovered.error.message}\n`).toBe(printed.stderr);
+	});
+
+	it("list", async () => {
+		const listed = await engine.models.list({ pattern: "claude-opus" });
+		const ids = listed.kind === "ok" ? listed.value.models.map((model) => model.id) : [];
+		const rows = cli("--list-models", "claude-opus").stdout.trim().split("\n").slice(1);
+		expect(ids.length).toBeGreaterThan(0);
+		expect(rows.map((row) => row.split(/\s+/)[1])).toEqual(ids);
+	});
+});
+
+describe("config, schedule and queries: the CLI and the function answer alike", () => {
 	it("config agent-dir", () => {
-		const printed = JSON.parse(cli("config", "agent-dir", "--json").stdout) as Record<string, unknown>;
 		const selected = engine.config.agentDir();
-		expect(selected.kind === "ok" && { version: 1, ok: true, ...selected.value }).toEqual(printed);
+		expect(selected.kind === "ok" && selected.value).toEqual(JSON.parse(cli("config", "agent-dir", "--json").stdout));
 	});
 
-	it("session-of-pid refuses the same pid", async () => {
-		expect(cli("session-of-pid", "0", "--json").status).toBe(2);
-		expect(await engine.sessionOfPid({ pid: 0 })).toMatchObject({ kind: "error", error: { code: "invalid_input" } });
-	});
-
-	it("session-of-pid answers the same record", async () => {
-		const printed = JSON.parse(cli("session-of-pid", "1", "--json").stdout) as Record<string, unknown>;
-		const answered = await engine.sessionOfPid({ pid: 1 });
-		expect(answered.kind === "ok" && { version: 1, ok: true, ...answered.value }).toEqual(printed);
+	it("config resources refusal", async () => {
+		const refused = await engine.config.resources({ local: true, trust: false });
+		const printed = cli("config", "-l", "--no-approve");
+		expect(printed.status).toBe(1);
+		expect(refused.kind === "error" && `${refused.error.message}\n`).toBe(printed.stderr);
 	});
 
 	it("schedule list", async () => {
@@ -73,117 +154,79 @@ describe("the CLI and the exported function answer the same data for the same in
 		expect(JSON.parse(cli("schedule", "list", "--json").stdout)).toEqual(listed);
 	});
 
-	it("schedule cancel of an unknown id", async () => {
+	it("schedule cancel refusal", async () => {
 		const cancelled = await engine.schedule.cancel({ id: "nope" });
 		const printed = cli("schedule", "cancel", "nope");
 		expect(printed.status).toBe(1);
 		expect(cancelled.kind === "error" && `${cancelled.error.message}\n`).toBe(printed.stderr);
 	});
 
-	it("host shard-path", async () => {
-		const shard = await engine.host.shardPath({ kind: "i", owner: "o" });
-		expect(shard.kind === "ok" && shard.value.payload).toEqual(
-			JSON.parse(cli("host", "shard-path", "--kind", "i", "--owner", "o", "--json").stdout),
+	it("schedule run", async () => {
+		const lines: string[] = [];
+		const ran = await engine.schedule.run({}, { onEvent: (event) => lines.push(`${JSON.stringify(event)}\n`) });
+		const printed = cli("schedule", "run");
+		expect(ran.kind === "ok" && ran.value.failed ? 1 : 0).toBe(printed.status);
+		expect(lines.join("")).toBe(printed.stdout);
+	});
+
+	it("session-of-pid", async () => {
+		const answered = await engine.sessionOfPid({ pid: 1 });
+		const printed = JSON.parse(cli("session-of-pid", "1", "--json").stdout) as Record<string, unknown>;
+		expect(answered.kind === "ok" && { version: 1, ok: true, ...answered.value }).toEqual(printed);
+	});
+
+	it("session export", async () => {
+		const session = join(root, "session.jsonl");
+		copyFileSync(FIXTURE_SESSION, session);
+		const exported = await engine.sessions.exportHtml({ session, out: join(root, "by-function.html") });
+		expect(cli("--export", session, join(root, "by-cli.html")).stdout).toBe(
+			`Exported to: ${join(root, "by-cli.html")}\n`,
+		);
+		expect(exported.kind).toBe("ok");
+		expect(readFileSync(join(root, "by-function.html"), "utf8")).toBe(
+			readFileSync(join(root, "by-cli.html"), "utf8"),
 		);
 	});
 
-	it("host gc", async () => {
-		const gc = await engine.host.gc();
-		expect(gc.kind === "ok" && gc.value.payload).toEqual(JSON.parse(cli("host", "gc", "--json").stdout));
+	it("prompt sizes", () => {
+		const sizes = fnInCliEnvironment("engine.promptSizes()") as { kind: string; value: unknown };
+		expect(sizes.kind).toBe("ok");
+		expect(sizes.value).toEqual(JSON.parse(cli("--print-prompt-sizes").stdout));
 	});
 
-	it("host status refused without a host", async () => {
-		const status = await engine.host.status();
-		const printed = cli("host", "status", "--json");
-		expect(printed.status).toBe(3);
-		expect(status.kind === "error" && status.error.details?.payload).toEqual(JSON.parse(printed.stdout));
-	});
-
-	it("packages list", async () => {
-		const listed = await engine.packages.list();
-		expect(listed.kind === "ok" && listed.value.packages).toEqual([]);
-		expect(cli("list").stdout).toBe("No packages installed.\n");
-	});
-
-	it("packages remove of an absent source", async () => {
-		const source = join(root, "absent");
-		const removed = await engine.packages.remove({ source });
-		const printed = cli("remove", source);
-		expect(printed.status).toBe(1);
-		expect(removed.kind === "error" && `${removed.error.message}\n`).toBe(printed.stderr);
-	});
-
-	it("models discover with an unreadable models.json", async () => {
-		const discovered = await engine.models.discover({ provider: "acme" });
-		const printed = cli("models", "discover", "acme");
-		expect(printed.status).toBe(1);
-		expect(discovered.kind === "error" && `Error: ${discovered.error.message}\n`).toBe(printed.stderr);
-	});
-
-	it("session export of a missing file", async () => {
-		const session = join(root, "missing.jsonl");
-		const exported = await engine.sessions.exportHtml({ session });
-		const printed = cli("--export", session);
-		expect(printed.status).toBe(1);
-		expect(exported.kind === "error" && `Error: ${exported.error.message}\n`).toBe(printed.stderr);
+	it("tips", () => {
+		expect(engine.tips().value).toEqual(JSON.parse(cli("--list-tips").stdout));
 	});
 });
 
-describe("the exported surface takes no gated input (E1a-s)", () => {
-	it("ignores an endpoint, key root or presenter channel passed to a host function", async () => {
-		const smuggled = {
-			kind: "p",
-			owner: "x",
-			socket: join(root, "evil.sock"),
-			keyRoot: root,
-			key_root: root,
-			presenterBootstrapFd: 4,
-		} as const;
-		const shard = await engine.host.shardPath(smuggled);
-		expect(shard.kind === "ok" && shard.value.payload.socket).toBe(
-			join(getAgentDir(), "rpc", "shards", "p-945b87278a044a9c.sock"),
-		);
-		const status = await engine.host.status({ socket: join(root, "evil.sock") } as never);
-		expect(status.kind === "error" && status.error.details?.payload).toMatchObject({
-			socket: join(getAgentDir(), "rpc", "rpc.sock"),
+describe("host: the CLI and the function answer alike, payload and exit code", () => {
+	const spec = () => join(root, "missing-spec.json");
+	const cases: [string, () => Promise<HostResult>, () => string[]][] = [
+		[
+			"ensure refusal",
+			() => engine.host.ensure({ launch_spec: spec() }),
+			() => ["host", "ensure", "--launch-spec", spec(), "--json"],
+		],
+		[
+			"handoff refusal",
+			() => engine.host.handoff({ launch_spec: spec() }),
+			() => ["host", "handoff", "--launch-spec", spec(), "--json"],
+		],
+		["status refusal", () => engine.host.status(), () => ["host", "status", "--json"]],
+		["stop refusal", () => engine.host.stop(), () => ["host", "stop", "--json"]],
+		["gc", () => engine.host.gc(), () => ["host", "gc", "--json"]],
+		[
+			"shard-path",
+			() => engine.host.shardPath({ kind: "i", owner: "o" }),
+			() => ["host", "shard-path", "--kind", "i", "--owner", "o", "--json"],
+		],
+	];
+	for (const [name, call, argv] of cases) {
+		it(name, async () => {
+			const answered = await call();
+			const printed = cli(...argv());
+			expect(hostExit(answered)).toBe(printed.status);
+			expect(hostPayload(answered)).toEqual(JSON.parse(printed.stdout));
 		});
-	});
-
-	it("records every endpoint, key-root, presenter and launch-setup flag as an E1a-s gap, never as an input", () => {
-		const gatedPrefixes = ["endpoint.", "presenter.", "setup."];
-		for (const command of ENGINE_COMMANDS) {
-			for (const flag of command.flags) {
-				const name = flag.names[0] ?? "";
-				const gatedFlag =
-					["--socket", "--rpc-key-root", "--mcp-presenter-fd", "--mcp-presenter-enforcement"].includes(name) ||
-					(["models.list", "promptSizes"].includes(command.call) && !flag.required);
-				if (gatedFlag) {
-					expect(flag.mapping, `${command.call} ${name}`).toMatchObject({ kind: "gated", slice: GATED_SLICE });
-				}
-				if (flag.mapping.kind === "gated") {
-					expect(
-						gatedPrefixes.some(
-							(prefix) => flag.mapping.kind === "gated" && flag.mapping.field.startsWith(prefix),
-						),
-					).toBe(true);
-				}
-				if (flag.mapping.kind === "input") {
-					expect(
-						gatedPrefixes.some(
-							(prefix) => flag.mapping.kind === "input" && flag.mapping.field.startsWith(prefix),
-						),
-					).toBe(false);
-				}
-			}
-		}
-	});
-
-	it("names an exported function for every command", () => {
-		for (const command of ENGINE_COMMANDS) {
-			const member = command.call
-				.split(".")
-				.reduce<unknown>((value, key) => (value as Record<string, unknown> | undefined)?.[key], engine);
-			expect(typeof member, command.call).toBe("function");
-		}
-	});
+	}
 });

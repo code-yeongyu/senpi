@@ -35,13 +35,15 @@ export interface EngineCommandMetadata {
 	/** The leading argv words; empty for a root flag such as `--list-tips`. */
 	readonly argv: readonly string[];
 	readonly aliases?: readonly (readonly string[])[];
+	/** `tui`: not an argv leaf of its own; the command's terminal UI performs it (a space press on a resource). */
+	readonly via?: "tui";
 	readonly positionals: readonly EngineCommandPositional[];
 	readonly flags: readonly EngineCommandFlag[];
 }
 
 export const input = (field: string, value?: boolean | string): EngineFlagMapping =>
 	value === undefined ? { kind: "input", field } : { kind: "input", field, value };
-export const gated = (field: string): EngineFlagMapping => ({ kind: "gated", slice: GATED_SLICE, field });
+const gated = (field: string): EngineFlagMapping => ({ kind: "gated", slice: GATED_SLICE, field });
 export const flag = (names: readonly string[], takesValue: boolean, mapping: EngineFlagMapping): EngineCommandFlag => ({
 	names,
 	takesValue,

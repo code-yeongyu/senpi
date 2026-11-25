@@ -5,6 +5,9 @@ import { brandEnvNames } from "../core/brand.ts";
 import { type EngineResult, engineError, engineOk } from "./result.ts";
 
 export interface AgentDirectorySelection {
+	/** The record version `config agent-dir --json` prints. */
+	readonly version: 1;
+	readonly ok: true;
 	readonly dir: string;
 	/** The branded variable that chose the directory, or `default` / `project-local`. */
 	readonly source: string;
@@ -23,6 +26,8 @@ export function agentDirectory(): EngineResult<AgentDirectorySelection, "selecti
 			: join(homedir(), CONFIG_DIR_NAME, "agent");
 		const rule = explicit !== undefined ? "environment" : dir === homeDefault ? "home-default" : "project-local";
 		return engineOk({
+			version: 1,
+			ok: true,
 			dir,
 			source: explicit ?? (rule === "project-local" ? "project-local" : "default"),
 			rule,
