@@ -3056,7 +3056,8 @@ session answered `granted`. A caller's grant never overrides a host opt-out, and
 `unanswered`, so an older peer never grants. `attach_session.telemetry` adds the attaching caller's answer for as long
 as it stays attached: while any attached caller has not granted, the session's telemetry is off for everyone on it.
 `set_telemetry_consent { sessionId, consent }` changes the sending connection's answer on a live session without
-restarting anything. On a session a caller opened,
+restarting anything. A stdio host has no per-connection identity: its one client is the caller of every session, as for
+`set_session_context`. On a session a caller opened,
 the open's answer and every `set_telemetry_consent` also become the session's standing answer, which it keeps after the
 connection leaves (a retained session stays off after a revocation until a caller grants on purpose) and which a
 handover reopen replays; an attach's answer counts only while that connection stays attached. One session's callers never decide for

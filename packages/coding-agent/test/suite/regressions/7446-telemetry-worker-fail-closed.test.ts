@@ -24,6 +24,10 @@ type Host = Awaited<ReturnType<typeof retainHost>>;
 const OFF: TelemetryCallersVerdict = { events: false, attribution: false };
 const ON: TelemetryCallersVerdict = { events: true, attribution: true };
 
+function verdictsSent(host: Host): TelemetryCallersVerdict[] {
+	return host.posted.flatMap(({ message }) => (message.type === "telemetry_callers" ? [message.verdict] : []));
+}
+
 function endedBy(host: Host, sessionId: string): boolean {
 	return host.records.some(
 		(record) =>
@@ -212,6 +216,33 @@ it("exits 79 at the bound when every diagnostic fails at once: broadcast, its er
 
 	// then
 	expect([run.beforeBound, run.atBound, run.exits]).toEqual([0, 1, [TELEMETRY_CONTAINMENT_EXIT_CODE]]);
+});
+
+it("takes a stdio host's one client as the caller of every session, so its revocation reaches the worker", async () => {
+	// given
+	await using host = await retainHost();
+	await host.router.handle({
+		type: "open_session",
+		id: "stdio-open",
+		cwd: host.cwd,
+		telemetry: { consent: "granted" },
+	});
+	await host.settle();
+	const opened = host.records.find((record) => record.id === "stdio-open");
+	const sessionId = String((opened?.data as { sessionId?: string } | undefined)?.sessionId);
+
+	// when
+	const revoked = await host.router.handle({
+		type: "set_telemetry_consent",
+		id: "stdio-revoke",
+		sessionId,
+		consent: "declined",
+	});
+
+	// then
+	expect(revoked).toMatchObject({ success: true });
+	expect(verdictsSent(host).at(-1)).toEqual(OFF);
+	expect(host.registry.peek(sessionId)?.telemetry?.confirmed).toEqual(OFF);
 });
 
 it("writes one stderr reason line and exits with TELEMETRY_CONTAINMENT_EXIT_CODE by default", () => {

@@ -36,6 +36,12 @@ function diagnose(line: string, cause?: unknown): void {
 	}
 }
 
+/**
+ * The caller key of a host with no per-connection identity (stdio): its one client owns every session, as
+ * `set_session_context` already treats it, so its answers are a caller's like any connection's.
+ */
+const SOLE_CLIENT = "stdio-client";
+
 /** `answer`: the open of a new session, or a deliberate change; `attach`: a caller joining a live session. */
 export type TelemetryDeclarationKind = "answer" | "attach";
 
@@ -243,10 +249,10 @@ export async function declareTelemetry(
 	consent: TelemetryConsent | undefined,
 	kind: TelemetryDeclarationKind,
 ): Promise<TelemetryOutcome> {
-	if (connection === undefined) return "confirmed";
 	const entry = host.registry.peek(sessionId);
 	if (entry?.state !== "open") return "confirmed";
-	return transition(host, sessionId, entry, (callers) => callers[kind](connection, consent ?? "unanswered"));
+	const caller = connection ?? SOLE_CLIENT;
+	return transition(host, sessionId, entry, (callers) => callers[kind](caller, consent ?? "unanswered"));
 }
 
 /** A connection is no longer attached to `sessionId`: its live answer leaves with it. */
@@ -276,7 +282,7 @@ export function telemetryUnconfirmed(
 	});
 }
 
-/** `set_telemetry_consent`: only a connection attached to the session answers for it. */
+/** `set_telemetry_consent`: only a connection attached to the session answers for it; a stdio host's client owns every session. */
 export async function setTelemetryConsent(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "set_telemetry_consent" }>,
@@ -285,7 +291,7 @@ export async function setTelemetryConsent(
 	if (invalid !== undefined)
 		return error(command.id, command.type, RPC_ERROR_INVALID_TELEMETRY_CONSENT, { reason: invalid });
 	const connection = host.writer.currentConnection();
-	if (connection === undefined || host.sessionsByConnection.get(connection)?.has(command.sessionId) !== true)
+	if (connection !== undefined && host.sessionsByConnection.get(connection)?.has(command.sessionId) !== true)
 		return error(command.id, command.type, "session_not_attached", {
 			reason: "this connection is not attached to that session",
 			action: "attach first with attach_session or open_session, then answer",
