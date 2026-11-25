@@ -55,6 +55,14 @@ test("a keyed id with no digit is replaced where it is a whole token in a struct
 	]);
 });
 
+// The main red at 0a3cd2a687 (E12): an entry whose random leaf id had no digit stayed raw in the turn key,
+// '$.O6[0].events[64].entry.data.turnKey: golden="2:<id:13>" actual="2:dafdddbc"'.
+test("the digitless leaf id from the E12 main red is replaced inside its turn key", () => {
+	const normalize = createNormalizer();
+	const out = normalize([{ leafId: "dafdddbc" }, { entry: { data: { turnKey: "2:dafdddbc" } } }]);
+	assert.deepEqual(out, [{ leafId: "<id:1>" }, { entry: { data: { turnKey: "2:<id:1>" } } }]);
+});
+
 test("a value under an id key that is not a bare uuid is one id, owner ids with a pid prefix included", () => {
 	const normalize = createNormalizer();
 	const out = normalize([{ ownerId: `47635:${U1}` }, { ownerId: `55542:${U1}` }, { sessionId: U1 }]);
