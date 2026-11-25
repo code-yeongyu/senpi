@@ -12,6 +12,39 @@
 
 ### Removed
 
+## [2026.11.25] - 2026-11-25
+
+### Breaking Changes
+
+### Added
+
+- RPC `get_auth_providers` rows carry `loginId`, and `logout` accepts `expectedLoginId`: a sign-out confirmed for one sign-in is refused with `errorCode: "stale_login"` instead of removing a newer sign-in ([#7407](https://github.com/code-yeongyu/senpi/pull/7407))
+
+### Changed
+
+- RPC tool-image persistence (`persistToolImage`) takes an optional directory-creation step, so the symlink re-check that runs right after a call directory is created can be exercised without mocking `node:fs`; the default step and the write behaviour are unchanged ([#7378](https://github.com/code-yeongyu/senpi/pull/7378))
+
+### Fixed
+
+- A second Claude subscription account is no longer lost when an OmO session still running an older engine rewrites the Claude accounts: the next start re-links every signed-in account to its own login instead of asking it to sign in again ([#5597](https://github.com/code-yeongyu/senpi/pull/5597))
+- `verify_api_key` accepts the same optional `region` as `login_api_key`, so a Kimi Code key is checked on the host for its region instead of the catalog host ([#5649](https://github.com/code-yeongyu/senpi/issues/5649)).
+- Sign in with ChatGPT started over RPC (`login_start`) no longer fails with "requires a device ID"; it gets this installation's device ID, as the TUI does ([#7133](https://github.com/code-yeongyu/senpi/pull/7133))
+- RPC subscribers receive the current terminal monitor and wake-source snapshots even if they subscribe after startup or attach to an already open session on a shared host ([#7212](https://github.com/code-yeongyu/senpi/pull/7212)).
+- Claude re-sign-in requirements now reach clients as `sign_in_required` with the affected account labels, distinct from rejected credentials ([#7214](https://github.com/code-yeongyu/senpi/pull/7214)).
+- Accounts whose OAuth refresh grant was explicitly refused now ask for a new sign-in instead of retrying every 15 minutes ([#7221](https://github.com/code-yeongyu/senpi/pull/7221)).
+- Starting two sessions in one process preserves both sessions' fallback log events during first-start cleanup, even when one session uses a symlink to the same agent directory ([#7263](https://github.com/code-yeongyu/senpi/pull/7263)).
+- Synchronous credential writes no longer stall the event loop while a local asynchronous operation holds the same store lock ([#7279](https://github.com/code-yeongyu/senpi/pull/7279)).
+- The main-model warning no longer flags unrelated words containing `qwen` or `minimax`, including labels with decomposed accents. Actual family models on custom providers still show the warning ([#7295](https://github.com/code-yeongyu/senpi/pull/7295)).
+- An abandoned or failed MCP OAuth sign-in on a new redirect URI no longer signs the existing MCP login out ([#7333](https://github.com/code-yeongyu/senpi/pull/7333)).
+- A provider disabled in `models.json` stays disabled for every request, after any refresh, and when `models.json` later fails to load ([#7358](https://github.com/code-yeongyu/senpi/pull/7358)).
+- DeepSeek DSML leakage now triggers a bounded resample, and a manual continue gets a fresh stream-rule correction budget ([#4621](https://github.com/code-yeongyu/senpi/issues/4621)).
+- A client of the RPC host whose connection to the host process cannot be set up gets an `host_unavailable` refusal naming the cause, instead of a bare connection reset, whether or not the hop to the host carries an internal key. The host supervisor logs the cause once per outage, not once per refused client ([#7396](https://github.com/code-yeongyu/senpi/pull/7396))
+- RPC `login_start` sends a device-code login's user code: a `device_code` event (`userCode`, `verificationUri`, `intervalSeconds`, `expiresInSeconds`) now precedes the verification URL's `auth_login_url`, so a client such as the desktop's GitHub Copilot sign-in can show the code to enter (sisyphuslabs/omo-desktop-app#8413) ([#7404](https://github.com/code-yeongyu/senpi/pull/7404))
+- Switching the model from `/model` no longer clears the scrollback and replays the whole transcript, which flashed the screen (worst over a remote connection) and shifted it on a phone. The model picker now fits the screen, the startup header keeps its first value, and the switch's status line is appended instead of rewriting a row above the screen ([#7411](https://github.com/code-yeongyu/senpi/pull/7411), sisyphuslabs/doriterm#2745)
+- A client the RPC host supervisor refuses with `host_unavailable` no longer counts as an attached client, so it can no longer keep an otherwise idle host from exiting ([#7425](https://github.com/code-yeongyu/senpi/issues/7425))
+
+### Removed
+
 ## [2026.11.24] - 2026-11-24
 
 ### Breaking Changes

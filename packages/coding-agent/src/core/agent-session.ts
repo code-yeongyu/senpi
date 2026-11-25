@@ -863,6 +863,15 @@ export type AgentSessionEvent =
 	// terminal result arrive here, because an interactive browser round-trip
 	// cannot fit inside the request timeout.
 	| { type: "auth_login_url"; provider: string; url: string }
+	/** A device-code login's code for the user to enter at `verificationUri`; precedes that URL's `auth_login_url`. */
+	| {
+			type: "device_code";
+			provider: string;
+			userCode: string;
+			verificationUri: string;
+			intervalSeconds?: number;
+			expiresInSeconds?: number;
+	  }
 	/**
 	 * A login progress line, such as a `provider_login_start` handler's download status (senpi#4436). The line is
 	 * `text`, not `message`: event consumers detect chat-message events with `"message" in event`.

@@ -10,6 +10,7 @@ import {
 	isProviderStreamStallError,
 	isProviderTimeoutError,
 	isRetryableAssistantError,
+	isRetryableErrorMessage,
 	type RetryPolicy,
 	retryAssistantCall,
 	retryDelayMs,
@@ -49,6 +50,38 @@ const azurePeakLoadError =
 	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
 
 describe("provider retry classification", () => {
+	it.each([
+		["408 upstream request did not complete", true],
+		["Provider failed with status 408", true],
+		["Gateway error: 408 Request Timeout", true],
+		["Mistral API error (408): The gateway did not complete the request", true],
+		["Mistral API error (400): Expected a status other than HTTP 408 Request Timeout", false],
+		["Invalid parameter at position 408", false],
+	])("classifies legacy 408 text by its status wording: %s", (errorMessage, expected) => {
+		expect(isRetryableErrorMessage(errorMessage)).toBe(expected);
+	});
+
+	it.each([
+		{ httpStatus: 408, errorMessage: "Request rejected by the gateway", expected: true },
+		{
+			httpStatus: 400,
+			errorMessage: "Upstream provider gateway returned 408 with no response body",
+			expected: false,
+		},
+		{ httpStatus: 400, errorMessage: "HTTP 408 Request Timeout", expected: false },
+	])("prefers structured HTTP $httpStatus to the body: $errorMessage", ({ httpStatus, errorMessage, expected }) => {
+		expect(
+			isRetryableAssistantError({
+				...fauxAssistantMessage("", { stopReason: "error", errorMessage }),
+				providerDiagnostic: {
+					category: httpStatus === 400 ? "invalid_request" : "unknown",
+					evidence: "structured_status",
+					httpStatus,
+				},
+			}),
+		).toBe(expected);
+	});
+
 	it("applies bounded injectable Codex-style jitter", () => {
 		expect(retryDelayMs({ baseDelayMs: 1_000, random: () => 0 }, 1)).toBe(900);
 		expect(retryDelayMs({ baseDelayMs: 1_000, random: () => 1 }, 1)).toBe(1_100);

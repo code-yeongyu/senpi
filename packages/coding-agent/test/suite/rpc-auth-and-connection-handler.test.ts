@@ -361,7 +361,48 @@ describe("RPC auth and connection handler contracts", () => {
 		});
 		expect(await url).toMatchObject({ provider: "anthropic", url: "https://stub.example/oauth?code=FAKE" });
 		expect(await end).toMatchObject({ provider: "anthropic", success: true });
-		expect(loginSpy).toHaveBeenCalledWith("anthropic", expect.anything());
+		expect(loginSpy).toHaveBeenCalledWith(
+			"anthropic",
+			expect.anything(),
+			expect.objectContaining({ getDeviceId: expect.any(Function), appName: expect.any(String) }),
+		);
+		await handler.dispose();
+	});
+
+	// sisyphuslabs/omo-desktop-app#8413: a device-code login (GitHub Copilot) must carry the user code to the
+	// client; the verification URL alone leaves the user nothing to type on the device page.
+	it("emits the device code with its user code before the verification URL", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		vi.spyOn(harness.authStorage, "login").mockImplementation(async (_providerId, callbacks) => {
+			callbacks.onDeviceCode({
+				userCode: "ABCD-EFGH",
+				verificationUri: "https://github.com/login/device",
+				intervalSeconds: 5,
+				expiresInSeconds: 900,
+			});
+		});
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const end = collected.waitFor((message) => message.type === "auth_login_end");
+
+		await handler.handleInputLine(JSON.stringify({ id: "device", type: "login_start", provider: "github-copilot" }));
+		await end;
+
+		const loginEvents = collected
+			.messages()
+			.filter((message) => message.type === "device_code" || message.type === "auth_login_url");
+		expect(loginEvents).toEqual([
+			{
+				type: "device_code",
+				provider: "github-copilot",
+				userCode: "ABCD-EFGH",
+				verificationUri: "https://github.com/login/device",
+				intervalSeconds: 5,
+				expiresInSeconds: 900,
+			},
+			{ type: "auth_login_url", provider: "github-copilot", url: "https://github.com/login/device" },
+		]);
 		await handler.dispose();
 	});
 
@@ -428,6 +469,52 @@ describe("RPC auth and connection handler contracts", () => {
 		expect(await collected.waitFor((message) => message.id === "logout")).toMatchObject({ success: true });
 		const afterLogout = JSON.parse(readFileSync(harness.authPath, "utf-8")) as Record<string, unknown>;
 		expect(afterLogout.openai).toBeUndefined();
+		await handler.dispose();
+	});
+
+	// senpi#7406: a client signs out the sign-in it showed (`get_auth_providers` `loginId`); a newer one is kept.
+	it("signs out only the sign-in named by expectedLoginId and refuses a stale one as stale_login", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const send = async (command: Record<string, unknown>) => {
+			const id = randomUUID();
+			await handler.handleInputLine(JSON.stringify({ ...command, id }));
+			return collected.waitFor((message) => message.id === id);
+		};
+		const shownLoginId = async () => {
+			const reply = (await send({ type: "get_auth_providers" })) as {
+				data: { providers: { id: string; authType: string; loginId?: string }[] };
+			};
+			return reply.data.providers.find((row) => row.id === "openai" && row.authType === "api_key")?.loginId;
+		};
+		const storedOpenai = () =>
+			(JSON.parse(readFileSync(harness.authPath, "utf-8")) as Record<string, unknown>).openai;
+
+		expect(await send({ type: "login_api_key", provider: "openai", key: "sk-FAKEKEY-first" })).toMatchObject({
+			success: true,
+		});
+		const confirmed = await shownLoginId();
+		expect(confirmed).toEqual(expect.any(String));
+		expect(await send({ type: "login_api_key", provider: "openai", key: "sk-FAKEKEY-second" })).toMatchObject({
+			success: true,
+		});
+		const newer = await shownLoginId();
+		expect(newer).not.toBe(confirmed);
+		const newerEntry = storedOpenai();
+
+		expect(await send({ type: "logout", provider: "openai", expectedLoginId: confirmed })).toMatchObject({
+			success: false,
+			errorCode: "stale_login",
+		});
+		expect(storedOpenai()).toEqual(newerEntry);
+		expect(await shownLoginId()).toBe(newer);
+
+		expect(await send({ type: "logout", provider: "openai", expectedLoginId: newer })).toMatchObject({
+			success: true,
+		});
+		expect(storedOpenai()).toBeUndefined();
 		await handler.dispose();
 	});
 

@@ -467,3 +467,113 @@ describe("Classic single-session RPC characterization pins (todo 2)", () => {
 		});
 	});
 });
+
+const KEY = "sk-test-0123456789abcd";
+const CATALOG_HOST_MODELS = "https://api.kimi.com/coding/v1/models";
+const REGIONAL_HOST_MODELS = "https://api.kimi.ai/coding/v1/models";
+
+const REGION_ENV_VARS = ["KIMI_CODE_REGION", "KIMI_CODE_OAUTH_HOST", "KIMI_OAUTH_HOST"] as const;
+
+async function awaitResponse(id: string): Promise<ParsedOutputLine> {
+	let found: ParsedOutputLine | undefined;
+	await vi.waitFor(() => {
+		found = responseFor(id);
+		expect(found).toBeDefined();
+	});
+	if (found === undefined) throw new Error(`no response for ${id}`);
+	return found;
+}
+
+describe("verify_api_key with a region (senpi#5649)", () => {
+	const seen: Array<{ url: string }> = [];
+	let savedEnv: Array<[string, string | undefined]> = [];
+
+	const stubFetch = (async (url: string, init?: RequestInit) => {
+		const headers = (init?.headers ?? {}) as Record<string, string>;
+		const sent = headers["x-api-key"] ?? headers.authorization ?? "";
+		seen.push({ url });
+		return new Response(null, { status: sent.includes(KEY) ? 200 : 401 });
+	}) as unknown as typeof globalThis.fetch;
+
+	beforeEach(() => {
+		setMaxListeners(0, process);
+		setMaxListeners(0, process.stdin);
+		savedEnv = REGION_ENV_VARS.map((name) => [name, process.env[name]]);
+		for (const name of REGION_ENV_VARS) delete process.env[name];
+		seen.length = 0;
+		vi.stubGlobal("fetch", stubFetch);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		for (const [name, value] of savedEnv) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+		rpcIo.outputLines = [];
+		rpcIo.lineHandler = undefined;
+	});
+
+	it("probes the regional host for a region-tagged verify, key and control alike", async () => {
+		const { lineHandler, cleanup } = await startClassicRpc();
+		try {
+			const id = sendCommand(lineHandler, {
+				type: "verify_api_key",
+				provider: "kimi-coding",
+				key: KEY,
+				region: "global",
+			});
+			const response = await awaitResponse(id);
+			expect(response).toMatchObject({ success: true, data: { ok: true } });
+			expect(seen.map((entry) => entry.url)).toEqual([REGIONAL_HOST_MODELS, REGIONAL_HOST_MODELS]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("probes the catalog host without a region", async () => {
+		const { lineHandler, cleanup } = await startClassicRpc();
+		try {
+			const id = sendCommand(lineHandler, { type: "verify_api_key", provider: "kimi-coding", key: KEY });
+			const response = await awaitResponse(id);
+			expect(response).toMatchObject({ success: true, data: { ok: true } });
+			expect(seen.map((entry) => entry.url)).toEqual([CATALOG_HOST_MODELS, CATALOG_HOST_MODELS]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("probes the catalog host for the default region", async () => {
+		const { lineHandler, cleanup } = await startClassicRpc();
+		try {
+			const id = sendCommand(lineHandler, {
+				type: "verify_api_key",
+				provider: "kimi-coding",
+				key: KEY,
+				region: "mainland-cn",
+			});
+			const response = await awaitResponse(id);
+			expect(response).toMatchObject({ success: true, data: { ok: true } });
+			expect(seen.map((entry) => entry.url)).toEqual([CATALOG_HOST_MODELS, CATALOG_HOST_MODELS]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("fails the command for a region the provider does not offer", async () => {
+		const { lineHandler, cleanup } = await startClassicRpc();
+		try {
+			const id = sendCommand(lineHandler, {
+				type: "verify_api_key",
+				provider: "kimi-coding",
+				key: KEY,
+				region: "nowhere",
+			});
+			const response = await awaitResponse(id);
+			expect(response).toMatchObject({ success: false });
+			expect(seen).toEqual([]);
+		} finally {
+			await cleanup();
+		}
+	});
+});

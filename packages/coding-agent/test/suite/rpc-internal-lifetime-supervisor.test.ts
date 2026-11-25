@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { processExitEvent } from "../helpers/process-exit-event.ts";
 import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
@@ -70,9 +71,12 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 		const supervisorExit = once(supervisor, "exit");
 		try {
 			await waitForListener(socket, 60_000);
-			const [hopName] = readdirSync(tmp).filter((name) => name.startsWith("senpi-rpc-host-internal-"));
+			// The hop lives in the endpoint's daemon directory (senpi#7452), never in the caller's temp dir.
+			const daemonDir = createHostDaemonPaths({ socket, agentDir: join(root, "agent") }).dir;
+			expect(readdirSync(tmp).filter((name) => name.startsWith("senpi-rpc-host-internal-"))).toEqual([]);
+			const [hopName] = readdirSync(daemonDir).filter((name) => name.startsWith("senpi-rpc-host-internal-"));
 			expect(hopName).toBeDefined();
-			const hop = join(tmp, hopName ?? "");
+			const hop = join(daemonDir, hopName ?? "");
 			const fifo = join(hop, "lifetime.fifo");
 			expect(statSync(hop).mode & 0o777).toBe(0o700);
 			// Linux binds through the FIFO; macOS through the reopened stdin (libuv reports no FIFO EOF there).

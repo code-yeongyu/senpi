@@ -41,12 +41,28 @@ describe("risky main-model warning", () => {
 		["provider/model identifier", model({ id: "QwEn3-Coder" })],
 		["provider name", model({ provider: "MiniMax" })],
 		["displayed model label", model({ name: "Hosted MINIMAX M2" })],
+		["custom Qwen checkpoint", model({ provider: "strata", id: "qwen3.8-flash-next-coder-iq1_m" })],
+		["MiniMax publisher namespace", model({ id: "MiniMaxAI/custom-checkpoint" })],
 	])("matches %s case-insensitively", (_case, selectedModel) => {
 		expect(isRiskyMainModel(selectedModel)).toBe(true);
 	});
 
 	test("does not match a normal model", () => {
 		expect(isRiskyMainModel(model({ id: "gpt-5.6-sol", name: "GPT 5.6 Sol", provider: "openai" }))).toBe(false);
+	});
+
+	test.each([
+		model({ id: "acqwenetwork" }),
+		model({ provider: "notminimaximal" }),
+		model({ name: "Qwench Analytics" }),
+		model({ name: "Éqwen Studio" }),
+		model({ name: "Éqwen Studio".normalize("NFD") }),
+		model({ id: "qwenä-labs" }),
+		model({ id: "qwenä-labs".normalize("NFD") }),
+		model({ provider: "дminimax" }),
+		model({ name: "Qwen\u0301" }),
+	])("does not match a family name inside $provider/$id $name (#2753)", (selectedModel) => {
+		expect(isRiskyMainModel(selectedModel)).toBe(false);
 	});
 
 	test.each([model({ id: "minimax-m2", name: "MiniMax M2" }), model({ id: "QWEN3-CODER", name: "Qwen 3 Coder" })])(

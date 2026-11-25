@@ -163,7 +163,11 @@ function processToken(state: ControlLeakState, token: ControlToken): void {
 	state.whitespaceOnlySinceToken = true;
 	state.tracker.observeText(token.text);
 	const active = state.run;
-	if (active !== null && active.count >= thresholdFor(active.context)) {
+	// DSML envelopes contain ordinary payload between markers, so they need not form a contiguous token run.
+	if (
+		active !== null &&
+		((active.family === "dsml" && active.context !== "quotation") || active.count >= thresholdFor(active.context))
+	) {
 		state.latched = {
 			rule: "control-token-leak",
 			reason: `${active.count}x ${active.tokenId} run in ${active.context} context`,
@@ -223,9 +227,9 @@ export function createControlLeakDetector(): StreamDetector<ControlLeakState> {
 						processReject(state, outcome.text, outcome.startOffset);
 					} else {
 						// Tool arguments carry markup (HTML for show_html_page, XML, JSX), so an angle-bracket
-						// tag there is payload, not a leaked token. `<|...|>` and `[UPPER]` leaks still count
+						// tag there is payload, including DSML examples. `<|...|>` and `[UPPER]` leaks still count
 						// because they would be written to disk by the tool (omo#10789).
-						if (ctx.source === "tool" && outcome.token.family === "sgml") {
+						if (ctx.source === "tool" && (outcome.token.family === "sgml" || outcome.token.family === "dsml")) {
 							processReject(state, outcome.token.text, outcome.token.startOffset);
 						} else {
 							processToken(state, outcome.token);
