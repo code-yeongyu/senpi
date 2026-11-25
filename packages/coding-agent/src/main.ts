@@ -1238,11 +1238,15 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
-	const launchKey = await readLaunchKey().catch((error: unknown) =>
-		error instanceof LaunchKeyError
-			? error
-			: new LaunchKeyError("launch_key_unreadable", "the launch key could not be read"),
-	);
+	// --version and --help start no session, so they never read the private table (security design B10).
+	const launchKey =
+		parsed.version || parsed.help
+			? undefined
+			: await readLaunchKey().catch((error: unknown) =>
+					error instanceof LaunchKeyError
+						? error
+						: new LaunchKeyError("launch_key_unreadable", "the launch key could not be read"),
+				);
 	if (launchKey instanceof LaunchKeyError) {
 		console.error(chalk.red(`Error: ${launchKey.code}: ${launchKey.message}`));
 		process.exit(LAUNCH_KEY_FAILED_EXIT_CODE);

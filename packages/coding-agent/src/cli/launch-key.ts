@@ -2,13 +2,26 @@ import type { Duplex } from "node:stream";
 import {
 	privateChannelAdoptable,
 	privateChannelOffered,
-	privateFdTableUnparseable,
+	privateFdTableUnreadable,
 	takeInheritedPrivateChannel,
 } from "../private-fds.ts";
 
-/** Offered, or possibly offered: a table that was present and could not be read may have named the key. */
+/** Offered, or possibly offered: a table that was present and did not parse cannot prove the key was not named. */
 function keyMayBeOffered(name: string): boolean {
-	return privateChannelOffered(name) || privateFdTableUnparseable();
+	return privateChannelOffered(name) || privateFdTableUnreadable();
+}
+
+const UNREADABLE_TABLE = "the private descriptor table could not be read";
+
+function unusableMessage(tableUnreadable: boolean): string {
+	return tableUnreadable
+		? UNREADABLE_TABLE
+		: `channel ${LAUNCH_KEY_CHANNEL} was given a descriptor this engine could not adopt`;
+}
+
+/** Entries that start no session (`--version`, `--help`) never read the table (security design B10). */
+export function startsNoSession(args: readonly string[]): boolean {
+	return args.some((arg) => arg === "--version" || arg === "-v" || arg === "--help" || arg === "-h");
 }
 
 /** The private descriptor a launch function delivers a provider key on (security design 5.5, launch row). */
@@ -88,15 +101,13 @@ async function readAndClose(channel: Duplex): Promise<string> {
 export async function readLaunchKey(
 	takeChannel: (name: string) => Duplex | undefined = takeInheritedPrivateChannel,
 	offered: (name: string) => boolean = keyMayBeOffered,
+	tableUnreadable: () => boolean = privateFdTableUnreadable,
 ): Promise<string | undefined> {
 	const wasOffered = offered(LAUNCH_KEY_CHANNEL);
 	const channel = takeChannel(LAUNCH_KEY_CHANNEL);
 	if (channel === undefined) {
 		if (!wasOffered) return undefined;
-		throw new LaunchKeyError(
-			"launch_key_unreadable",
-			`channel ${LAUNCH_KEY_CHANNEL} was given a descriptor this engine could not adopt`,
-		);
+		throw new LaunchKeyError("launch_key_unreadable", unusableMessage(tableUnreadable()));
 	}
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<never>((_resolve, reject) => {
@@ -126,10 +137,9 @@ export function refuseUnusableLaunchKey(
 	offered: (name: string) => boolean = keyMayBeOffered,
 	adoptable: (name: string) => boolean = privateChannelAdoptable,
 	exit: (code: number) => never = process.exit,
+	tableUnreadable: () => boolean = privateFdTableUnreadable,
 ): void {
 	if (!offered(LAUNCH_KEY_CHANNEL) || adoptable(LAUNCH_KEY_CHANNEL)) return;
-	process.stderr.write(
-		`Error: launch_key_unreadable: channel ${LAUNCH_KEY_CHANNEL} cannot be adopted (its descriptor was refused or the private table could not be read)\n`,
-	);
+	process.stderr.write(`Error: launch_key_unreadable: ${unusableMessage(tableUnreadable())}\n`);
 	exit(LAUNCH_KEY_FAILED_EXIT_CODE);
 }

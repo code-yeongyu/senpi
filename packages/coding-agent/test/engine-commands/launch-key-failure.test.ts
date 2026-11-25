@@ -11,6 +11,7 @@ import type { LaunchPorts } from "../../src/engine/launch-process.ts";
 
 const FAKE_ENGINE = join(__dirname, "..", "fixtures", "engine-launch-fake.ts");
 const CLI = join(__dirname, "..", "..", "src", "cli.ts");
+const CLI_MAIN = join(__dirname, "..", "..", "src", "cli-main.ts");
 const KEY = () => Readable.from([Buffer.from("sk-canary-key-failure-7451")]);
 
 let root: string;
@@ -72,8 +73,9 @@ async function realEngine(
 	slot5: "pipe" | number,
 	write?: (sink: Writable) => void,
 	runtime: readonly string[] = [],
+	entry: string = CLI,
 ): Promise<{ readonly code: number | null; readonly output: string }> {
-	const child = spawn("bun", [...runtime, CLI, ...args], {
+	const child = spawn("bun", [...runtime, entry, ...args], {
 		cwd: root,
 		stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", slot5],
 		env: {
@@ -137,6 +139,37 @@ describe("the real engine entry (review 6064845699 M1, L5)", () => {
 		expect(run.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
 		expect(run.output).toContain("launch_key_unreadable");
 	});
+
+	it.each([
+		["a table cut short before the key's name", '{"presenter":4,'],
+		["a table over the read limit with the key named after the padding", `{"pad":"${"x".repeat(4200)}","api-key":5}`],
+	])("refuses a session start on %s (security design B10)", async (_shape, table) => {
+		const run = await realEngine(["--list-tips"], table, "pipe", (sink) =>
+			sink.end(Buffer.from("sk-canary-b10-7451")),
+		);
+		expect(run.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+		expect(run.output).toContain("launch_key_unreadable: the private descriptor table could not be read");
+		expect(run.output).not.toContain("sk-canary-b10-7451");
+		expect(run.output).not.toContain("presenter");
+	});
+
+	it("refuses a session start at cli-main handed the supervisor's forwarded unparseable marker", async () => {
+		const run = await realEngine(["--list-tips"], "unparseable", "pipe", undefined, [], CLI_MAIN);
+		expect(run.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+		expect(run.output).toContain("the private descriptor table could not be read");
+	});
+
+	it.each([
+		["cli.ts", CLI],
+		["cli-main", CLI_MAIN],
+	])(
+		"answers --version with an unreadable table at %s: it starts no session and reads no table",
+		async (_name, entry) => {
+			const run = await realEngine(["--version"], '{"presenter":4,', "pipe", undefined, [], entry);
+			expect(run.code).toBe(0);
+			expect(run.output).not.toContain("launch_key_");
+		},
+	);
 
 	it("starts normally when the key was taken by an earlier hop (declared null)", async () => {
 		const run = await realEngine(["--list-tips"], JSON.stringify({ "api-key": null }), "pipe");

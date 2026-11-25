@@ -39,6 +39,8 @@ interface PrivateFdState {
 	readonly declared: ReadonlySet<string>;
 	/** Names the table gave a descriptor (not `null`); absent in a state an older engine copy stored. */
 	readonly offered?: Set<string>;
+	/** A table was present and did not parse (cut short, over the read limit, or not a table at all). */
+	readonly unreadable?: boolean;
 	readonly unparseable: boolean;
 	readonly channels: Map<string, Exclude<PrivateFdEntry, null>>;
 	readonly forward: Map<string, PrivateFdEntry>;
@@ -239,6 +241,7 @@ function capturedState(): PrivateFdState {
 		present: Boolean(encoded),
 		declared: new Set(entries.keys()),
 		offered: new Set(offeredNames),
+		unreadable: Boolean(encoded) && !parsed,
 		unparseable,
 		channels: new Map(),
 		forward: new Map(),
@@ -266,6 +269,14 @@ export function privateChannelDeclared(name: string): boolean {
  */
 export function privateChannelOffered(name: string): boolean {
 	return state.offered?.has(name) ?? false;
+}
+
+/**
+ * True when this launch carried a private table that did not parse, whatever names it still quotes: it cannot prove
+ * which channels it declared.
+ */
+export function privateFdTableUnreadable(): boolean {
+	return state.unreadable ?? false;
 }
 
 /** True while this process holds an adoptable channel for the name, not yet taken. */
