@@ -33,8 +33,10 @@ async function attributedSession(installTelemetry: boolean) {
 	if (model === undefined) throw new Error("faux model missing");
 	modelRuntime.registerProvider("openrouter", { baseUrl: model.baseUrl, api: faux.api, models: [model] });
 	const requestHeaders: Array<Promise<ProviderHeaders> | ProviderHeaders | undefined> = [];
+	const transforms: Array<(headers: ProviderHeaders) => Promise<ProviderHeaders> | ProviderHeaders> = [];
 	const stream = modelRuntime.streamSimple.bind(modelRuntime);
 	modelRuntime.streamSimple = (requestModel, context, options) => {
+		if (options?.transformHeaders !== undefined) transforms.push(options.transformHeaders);
 		requestHeaders.push(options?.transformHeaders?.({}));
 		return stream(requestModel, context, options);
 	};
@@ -53,7 +55,7 @@ async function attributedSession(installTelemetry: boolean) {
 		sessionManager: SessionManager.inMemory(dir),
 		model,
 	});
-	return { session, attributed, requestCount: () => requestHeaders.length };
+	return { session, attributed, transforms, requestCount: () => requestHeaders.length };
 }
 
 async function attributedPrompts(
@@ -107,6 +109,24 @@ it("removes the headers from the next request after a caller revokes mid-session
 	]);
 
 	expect(perPrompt).toEqual([[true], [false]]);
+});
+
+it("decides the headers when a request is sent, so a request prepared before a revoke leaves without them", async () => {
+	// given
+	const { session, transforms } = await attributedSession(true);
+	const callers = new SessionTelemetryCallers("granted");
+	session.setTelemetryCallers(callers.verdict());
+	await session.prompt("prepared while granted");
+	const prepared = transforms.at(-1);
+	if (prepared === undefined) throw new Error("no provider request was prepared");
+
+	// when
+	callers.answer("desktop", "declined");
+	session.setTelemetryCallers(callers.verdict());
+	const sentAfterRevoke = await prepared({});
+
+	// then
+	expect("X-OpenRouter-Title" in sentAfterRevoke).toBe(false);
 });
 
 it("keeps the headers off while the host setting is off, whatever the caller answered", async () => {

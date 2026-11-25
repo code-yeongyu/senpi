@@ -112,6 +112,8 @@ export async function contextHost(
 		additionalProviders?: readonly Provider[];
 		/** Global settings written to `<agentDir>/settings.json` before the host starts. */
 		globalSettings?: Record<string, unknown>;
+		/** Observes the host's telemetry containment last resort instead of exiting (senpi#7446). */
+		onTelemetryContainmentLost?: (sessionId: string) => void;
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-context-"));
@@ -228,6 +230,9 @@ export async function contextHost(
 		{
 			now: () => clock.now,
 			idleEvictionMs: options.idleEvictionMs,
+			...(options.onTelemetryContainmentLost
+				? { onTelemetryContainmentLost: options.onTelemetryContainmentLost }
+				: {}),
 		},
 	);
 	let serial = 0;

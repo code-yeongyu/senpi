@@ -35,7 +35,13 @@ function acknowledged(signal: SharedArrayBuffer): Promise<void> {
 }
 
 /** Production host lifecycle and controlled worker transport; the caller installs the worker mock. */
-export async function retainHost(options: { idleEvictionMs?: number; onRecord?: (record: WireRecord) => void } = {}) {
+export async function retainHost(
+	options: {
+		idleEvictionMs?: number;
+		onRecord?: (record: WireRecord) => void;
+		onTelemetryContainmentLost?: (sessionId: string) => void;
+	} = {},
+) {
 	const harness = await createHarness();
 	const baseState = buildRpcSessionState(harness.session);
 	const clock = { now: 0 };
@@ -144,7 +150,13 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 		{ cwd: harness.tempDir },
 		undefined,
 		{},
-		{ now: () => clock.now, idleEvictionMs: options.idleEvictionMs },
+		{
+			now: () => clock.now,
+			idleEvictionMs: options.idleEvictionMs,
+			...(options.onTelemetryContainmentLost
+				? { onTelemetryContainmentLost: options.onTelemetryContainmentLost }
+				: {}),
+		},
 	);
 	let requests = 0;
 	const settle = () => writer.flush();

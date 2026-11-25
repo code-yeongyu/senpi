@@ -3,7 +3,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { TelemetryCallersVerdict } from "../../../src/core/telemetry-consent.ts";
 import { parkedEntryFromProfile, parkedOpenCommand } from "../../../src/modes/rpc/host-handover-parked-open.ts";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
-import { TELEMETRY_END_CONFIRM_MS, TELEMETRY_REVOKE_ACK_MS } from "../../../src/modes/rpc/session-router-telemetry.ts";
+import {
+	exitForTelemetryContainment,
+	TELEMETRY_CONTAINMENT_EXIT_CODE,
+	TELEMETRY_END_CONFIRM_MS,
+	TELEMETRY_REVOKE_ACK_MS,
+} from "../../../src/modes/rpc/session-router-telemetry.ts";
 import { retainHost } from "../rpc-retain-on-disconnect-support.ts";
 
 // senpi#7446 H1, deny-safe for worker sessions: telemetry is collected and exported inside the worker, so the host's
@@ -85,9 +90,10 @@ it("ends a silent worker exactly at TELEMETRY_REVOKE_ACK_MS after a revocation, 
 	expect(refused?.errorCode).toBe("telemetry_update_unconfirmed");
 });
 
-it("does not report off when the worker's end is not observed", async () => {
+it("ends the host exactly at TELEMETRY_END_CONFIRM_MS when a worker told to stop is not seen to stop", async () => {
 	// given
-	await using host = await retainHost();
+	const containmentLost: string[] = [];
+	await using host = await retainHost({ onTelemetryContainmentLost: (id) => containmentLost.push(id) });
 	const { sessionId } = await openAs(host, "granted");
 	host.telemetryUpdates.mode = "refuse";
 	vi.spyOn(Worker.prototype, "terminate").mockImplementation(() => new Promise<number>(() => {}));
@@ -95,13 +101,56 @@ it("does not report off when the worker's end is not observed", async () => {
 
 	// when
 	const answered = sendWithoutWaiting(host, "desktop", setConsent(sessionId, "declined"));
-	await vi.advanceTimersByTimeAsync(TELEMETRY_END_CONFIRM_MS);
+	await vi.advanceTimersByTimeAsync(TELEMETRY_END_CONFIRM_MS - 1);
+	const beforeDeadline = [...containmentLost];
+	await vi.advanceTimersByTimeAsync(1);
 	vi.useRealTimers();
 	const refused = await answered;
 
 	// then
+	expect([beforeDeadline, containmentLost]).toEqual([[], [sessionId]]);
 	expect(refused?.errorData).toMatchObject({ workerEnded: false });
 	expect(host.registry.peek(sessionId)?.telemetry?.confirmed).toEqual(ON);
+});
+
+it("contains a silent worker that does not stop within 4000 ms of the revocation, end to end", async () => {
+	// given
+	const containmentLost: string[] = [];
+	await using host = await retainHost({ onTelemetryContainmentLost: (id) => containmentLost.push(id) });
+	const { sessionId } = await openAs(host, "granted");
+	host.telemetryUpdates.mode = "silent";
+	vi.spyOn(Worker.prototype, "terminate").mockImplementation(() => new Promise<number>(() => {}));
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+	// when
+	const answered = sendWithoutWaiting(host, "desktop", setConsent(sessionId, "declined"));
+	await vi.advanceTimersByTimeAsync(3_999);
+	const beforeBound = [...containmentLost];
+	await vi.advanceTimersByTimeAsync(1);
+	vi.useRealTimers();
+	await answered;
+
+	// then
+	expect(TELEMETRY_REVOKE_ACK_MS + TELEMETRY_END_CONFIRM_MS).toBe(4_000);
+	expect([beforeBound, containmentLost]).toEqual([[], [sessionId]]);
+	expect(host.records.filter((record) => record.type === "host_telemetry_containment")).toEqual([
+		{ type: "host_telemetry_containment", sessionId, exitCode: TELEMETRY_CONTAINMENT_EXIT_CODE },
+	]);
+});
+
+it("exits the host with TELEMETRY_CONTAINMENT_EXIT_CODE and one stderr line by default", () => {
+	// given
+	const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+	const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+	// when
+	exitForTelemetryContainment("session-x");
+
+	// then
+	expect(exit).toHaveBeenCalledWith(TELEMETRY_CONTAINMENT_EXIT_CODE);
+	expect(stderr.mock.calls.map(([line]) => String(line))).toEqual([
+		`senpi rpc host exiting ${TELEMETRY_CONTAINMENT_EXIT_CODE}: worker for session session-x did not stop after a telemetry revocation\n`,
+	]);
 });
 
 it("ends a worker that did not confirm an attaching caller's decline, and undoes the attach", async () => {

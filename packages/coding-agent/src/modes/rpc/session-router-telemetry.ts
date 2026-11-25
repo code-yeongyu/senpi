@@ -65,8 +65,22 @@ function tightens(confirmed: TelemetryCallersVerdict, next: TelemetryCallersVerd
  * in which a worker can still collect or export under the use its callers withdrew.
  */
 export const TELEMETRY_REVOKE_ACK_MS = 2_000;
-/** How long the host waits to OBSERVE an ended worker's exit before it reports the end as unconfirmed. */
+/** How long the host waits to OBSERVE an ended worker's exit before it gives up on ending that worker alone. */
 export const TELEMETRY_END_CONFIRM_MS = 2_000;
+/** The host's exit code when it ends itself because a worker it ended was not seen to stop (senpi#7446). */
+export const TELEMETRY_CONTAINMENT_EXIT_CODE = 79;
+
+/**
+ * The last resort when a worker that can still export on its own (its runtime, extensions and provider requests run
+ * inside it) was told to stop and was not seen to stop: the host process ends, which ends every thread it holds. The
+ * end-to-end bound from a revocation to containment is therefore TELEMETRY_REVOKE_ACK_MS + TELEMETRY_END_CONFIRM_MS.
+ */
+export function exitForTelemetryContainment(sessionId: string): never {
+	process.stderr.write(
+		`senpi rpc host exiting ${TELEMETRY_CONTAINMENT_EXIT_CODE}: worker for session ${sessionId} did not stop after a telemetry revocation\n`,
+	);
+	process.exit(TELEMETRY_CONTAINMENT_EXIT_CODE);
+}
 
 /** `confirmed`: the session runs the verdict. `ended`: the host observed the worker gone. `unconfirmed`: neither. */
 export type TelemetryOutcome = "confirmed" | "ended" | "unconfirmed";
@@ -93,7 +107,9 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | "deadline"> {
  * A looser verdict it did not acknowledge leaves it on its stricter, confirmed one.
  */
 async function deliver(
+	host: RouterContext,
 	entry: RpcSessionEntry,
+	sessionId: string,
 	confirmed: TelemetryCallersVerdict,
 	verdict: TelemetryCallersVerdict,
 ): Promise<TelemetryOutcome> {
@@ -117,7 +133,16 @@ async function deliver(
 	if (answer === true) return "confirmed";
 	if (!withdraws) return "unconfirmed";
 	worker.failClosed(RPC_ERROR_TELEMETRY_UPDATE_UNCONFIRMED);
-	return (await within(worker.exited, TELEMETRY_END_CONFIRM_MS)) === "deadline" ? "unconfirmed" : "ended";
+	if ((await within(worker.exited, TELEMETRY_END_CONFIRM_MS)) !== "deadline") return "ended";
+	// Every client hears the typed cause before the host ends, so a person whose other sessions stop can see why.
+	host.writer.broadcastHostRecord({
+		type: "host_telemetry_containment",
+		sessionId,
+		exitCode: TELEMETRY_CONTAINMENT_EXIT_CODE,
+	});
+	await host.writer.flush();
+	host.onTelemetryContainmentLost(sessionId);
+	return "unconfirmed";
 }
 
 /**
@@ -127,6 +152,8 @@ async function deliver(
  * only adds a use is recorded only once the session confirmed it, so an unconfirmed grant stays off.
  */
 function transition(
+	host: RouterContext,
+	sessionId: string,
 	entry: RpcSessionEntry,
 	change: (callers: SessionTelemetryCallers) => void,
 ): Promise<TelemetryOutcome> {
@@ -148,7 +175,7 @@ function transition(
 		}
 		const withdraws = tightens(previous, verdict);
 		if (withdraws) keepAnswers();
-		const outcome = await deliver(entry, previous, verdict);
+		const outcome = await deliver(host, entry, sessionId, previous, verdict);
 		if (outcome === "unconfirmed") return outcome;
 		if (!withdraws) keepAnswers();
 		state.confirmed = verdict;
@@ -170,7 +197,7 @@ export async function declareTelemetry(
 	if (connection === undefined) return "confirmed";
 	const entry = host.registry.peek(sessionId);
 	if (entry?.state !== "open") return "confirmed";
-	return transition(entry, (callers) => callers[kind](connection, consent ?? "unanswered"));
+	return transition(host, sessionId, entry, (callers) => callers[kind](connection, consent ?? "unanswered"));
 }
 
 /** A connection is no longer attached to `sessionId`: its live answer leaves with it. */
@@ -178,7 +205,7 @@ export function telemetryCallerLeft(host: RouterContext, sessionId: string, conn
 	const entry = host.registry.peek(sessionId);
 	if (entry?.state !== "open" || entry.telemetry === undefined) return;
 	// Leaving only removes an answer, so an unconfirmed result leaves the session on its stricter, confirmed verdict.
-	void transition(entry, (callers) => callers.leave(connection));
+	void transition(host, sessionId, entry, (callers) => callers.leave(connection));
 }
 
 /**

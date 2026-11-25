@@ -35,13 +35,14 @@ const TELEMETRY_PROBE = `export default function (pi) {
 const probeSchema = z.object({ now: z.boolean(), collected: z.array(z.boolean()) });
 const flushSchema = z.object({ held: z.number(), sink: z.array(z.string()) });
 
-async function hostWith(installTelemetry: boolean) {
+async function hostWith(installTelemetry: boolean, onTelemetryContainmentLost?: (sessionId: string) => void) {
 	const faux = fauxProvider({ api: "faux-telemetry", provider: "faux-telemetry" });
 	faux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage("done")));
 	return contextHost({
 		faux,
 		extension: TELEMETRY_PROBE,
 		globalSettings: { enableInstallTelemetry: installTelemetry },
+		...(onTelemetryContainmentLost ? { onTelemetryContainmentLost } : {}),
 	});
 }
 
@@ -283,4 +284,18 @@ it("reopens a parked session through a handover with the standing answer it park
 	// then
 	expect(reopenCommand.telemetry).toEqual({ consent: "declined" });
 	expect((await permitted(host, "successor", reopened)).now).toBe(false);
+});
+
+it("never reaches the containment last resort on an in-process host: the session takes a revocation at once", async () => {
+	// given
+	const containmentLost: string[] = [];
+	await using host = await hostWith(true, (id) => containmentLost.push(id));
+	const sessionId = String((await host.open("desktop", { telemetry: { consent: "granted" } })).sessionId);
+
+	// when
+	const revoked = await host.send("desktop", setConsent(sessionId, "declined"));
+	const afterRevoke = (await permitted(host, "desktop", sessionId)).now;
+
+	// then
+	expect([revoked?.success, afterRevoke, containmentLost]).toEqual([true, false, []]);
 });
