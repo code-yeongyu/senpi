@@ -143,11 +143,12 @@ const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP
  * `persistSeen` (a run a person reads) it is also recorded as seen, so later runs stay quiet until
  * the problem changes (senpi#3486).
  */
-export function collectAuthDiagnostics(
+export async function collectAuthDiagnostics(
 	authStorage: AuthStorage,
 	context: string,
 	options: { persistSeen: boolean },
-): AgentSessionRuntimeDiagnostic[] {
+): Promise<AgentSessionRuntimeDiagnostic[]> {
+	await authStorage.settleLoad();
 	return [
 		...authStorage.drainErrors().map((error) => error.message),
 		...authStorage.takePendingNotices(options).map((notice) => notice.message),
@@ -155,7 +156,10 @@ export function collectAuthDiagnostics(
 }
 
 /** The TUI shows auth problems at startup; credential notices are marked seen once shown (senpi#3486). */
-export function interactiveAuthNotices(authStorage: AuthStorage): { messages: string[]; markSeen: () => void } {
+export async function interactiveAuthNotices(
+	authStorage: AuthStorage,
+): Promise<{ messages: string[]; markSeen: () => void }> {
+	await authStorage.settleLoad();
 	const pending = authStorage.takePendingNotices({ persistSeen: false });
 	return {
 		messages: [
@@ -1450,7 +1454,7 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([
 			...services.diagnostics,
 			...collectSettingsDiagnosticsWithContext(services.settingsManager, "model listing"),
-			...collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true }),
+			...(await collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true })),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
@@ -1706,7 +1710,7 @@ export async function main(args: string[], options?: MainOptions) {
 				})),
 		);
 		reportDiagnostics(
-			collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
+			await collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
 		);
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
@@ -1765,7 +1769,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const interactiveMode = new InteractiveMode(runtime, {
 			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
 			migratedProviders,
-			authNotices: interactiveAuthNotices(services.authStorage),
+			authNotices: await interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
@@ -1808,7 +1812,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessage,
 			initialImages,
 		});
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
+		reportDiagnostics(await collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
 		stopChildReaper();
 		stopThemeWatcher();
 		restoreStdout();
