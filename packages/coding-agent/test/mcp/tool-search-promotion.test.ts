@@ -1,7 +1,13 @@
 // MCP model-visible activation semantics through the shared tool-search engine:
 // tool_search only lists catalog tools; the model's by-name call activates one.
 
-import { fauxAssistantMessage, fauxToolCall, getCurrentTools, type TranscriptContext } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentTools,
+	type JsonObject,
+	type TranscriptContext,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolSearchDocument } from "../../src/core/extensions/builtin/tool-search/engine/document.ts";
@@ -143,13 +149,48 @@ describe("shared tool_search: MCP catalog listing + by-name activation of zero-t
 		expect(searchText).not.toContain("mcp_fs_read-file");
 	});
 
-	it("nonexistent capability activates nothing; next turn payload unchanged", async () => {
+	it("declares an explicitly loaded tool before the model calls it", async () => {
+		const harness = await makeHarness();
+		const selected = "mcp_docs_get-library-docs";
+		harness.setResponses([
+			(context) => {
+				expect(mcpNames(context)).toEqual(["tool_search"]);
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "library documentation" }), {
+					stopReason: "toolUse",
+				});
+			},
+			(context) => {
+				expect(mcpNames(context)).toEqual(["tool_search"]);
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: selected, load: true }), {
+					stopReason: "toolUse",
+				});
+			},
+			(context) => {
+				expect(mcpNames(context)).toEqual([selected, "tool_search"]);
+				return fauxAssistantMessage(fauxToolCall(selected, { topic: "hono" }), { stopReason: "toolUse" });
+			},
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("find and load a docs tool");
+
+		const messages = harness.sessionManager
+			.getEntries()
+			.flatMap((entry) => (entry.type === "message" ? [entry.message] : []));
+		expect(messages.some((message) => message.role === "toolResult" && message.toolName === selected)).toBe(true);
+	});
+
+	it.each<JsonObject>([
+		{ query: "teleportation quantum xyzzy" },
+		{ query: "library docs", load: true },
+		{ query: "mcp_docs_get-library-docs", load: true, group: "fs" },
+	])("does not activate tools for $query when no exact load is allowed", async (args) => {
 		const harness = await makeHarness();
 		const providerToolNames: string[][] = [];
 		harness.setResponses([
 			(context) => {
 				providerToolNames.push(mcpNames(context));
-				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "teleportation quantum xyzzy" }), {
+				return fauxAssistantMessage(fauxToolCall("tool_search", args), {
 					stopReason: "toolUse",
 				});
 			},

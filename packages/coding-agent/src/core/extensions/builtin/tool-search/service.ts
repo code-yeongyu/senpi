@@ -198,6 +198,8 @@ export class ToolSearchService {
 	activateTool(name: string): boolean {
 		const doc = this.getCatalog().find((candidate) => candidate.name === name);
 		if (doc === undefined) return false;
+		const tool = this.#runtime.getAllTools().find((candidate) => candidate.name === name);
+		if (!tool || tool.evalOnly || tool.allowLazyActivation === false) return false;
 		this.#feeds.get(doc.source)?.hooks.activate([name]);
 		return this.#runtime.getActiveTools().includes(name);
 	}
