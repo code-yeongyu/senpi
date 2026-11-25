@@ -1,3 +1,17 @@
+## 2026-11-22 - Scope snapshot delivery to the subscribing client (senpi#4669)
+
+### What changed
+- `packages/coding-agent/src/core/extensions/runner.ts` supplies a reply function valid only during the subscription notification, and `replayRpcState` runs that same notification for one receiver without a new subscription.
+
+### Why
+- Broadcasting a snapshot would send existing clients a duplicate initial event.
+
+### Why an extension could not handle it
+- Only the runner knows which RPC listener just subscribed.
+
+### Expected merge conflict zones
+- `onRpcEvent` listener registration.
+
 ## 2026-11-19 - tool_result handlers still run for a tool an abort cut (senpi#7073)
 
 ### What changed

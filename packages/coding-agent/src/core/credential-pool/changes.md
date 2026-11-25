@@ -1,3 +1,17 @@
+## 2026-11-22 - Stop re-probing a refused refresh grant (senpi#5351)
+
+### What changed
+- Generic pool rotation keeps a token-endpoint refusal with an explicit refused-grant code out of timed probes. Other auth failures retain their existing timer.
+
+### Why
+- Waiting cannot renew a grant the endpoint has declared invalid. The block belongs to that slot's material, not its siblings.
+
+### Why an extension could not handle it
+- The generic pool owns classification, persisted slot health and probe selection.
+
+### Expected merge conflict zones
+- `credential-pool/classify.ts` and the rotation health writer.
+
 ## 2026-11-13 - A ChatGPT sign-in without Responses access fails the request instead of blocking the slot (senpi#6643)
 
 ### What changed

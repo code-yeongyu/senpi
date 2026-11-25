@@ -104,6 +104,28 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		this.requestFlush();
 	}
 
+	/**
+	 * Queue one session record for a single attached connection, outside the session's stream: it is neither retained
+	 * for later attachments nor delivered to the session's other connections. It is written only while that same
+	 * attachment still holds the session, checked again when the record leaves the queue.
+	 */
+	enqueueForAttachment(sessionId: string, connection: string, value: object): void {
+		if (this.sealedSessions.has(sessionId)) return;
+		const held = this.fanout.attachmentOf(connection, sessionId, false, undefined);
+		const target = this.fanout.get(connection);
+		if (held === undefined || target === undefined) return;
+		target.actor.enqueue(
+			serializeJsonLine({ ...value, sessionId }),
+			undefined,
+			undefined,
+			undefined,
+			false,
+			held,
+			held,
+		);
+		this.requestFlush();
+	}
+
 	/** Queue one untagged host-control response for the given connection (defaults to the current one). */
 	enqueueControl(value: object, targetOverride?: string): Promise<void> {
 		const peer = targetOverride ?? this.currentConnection();

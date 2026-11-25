@@ -1,3 +1,18 @@
+## 2026-11-23 - Job widget state goes to the new subscriber only (senpi#4669)
+
+### What changed
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/extension.ts` answers a new RPC subscriber through the subscription's reply with the current `job_widget_state`, instead of republishing to every subscriber.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/session-host.ts` drops `resendJobWidgetState`, which only that republish used.
+
+### Why
+- A republish reached clients that already had the state and every in-process listener; a client that just attached needs it for itself.
+
+### Why an extension could not handle it
+- This is the builtin's own resend path.
+
+### Expected merge conflict zones
+- The job-widgets `session_start` subscription wiring.
+
 ## 2026-11-22 - A text-only model is told about look_at, and tool-result images are described for it (senpi#7260)
 
 ### What changed

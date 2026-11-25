@@ -1,3 +1,22 @@
+## 2026-11-24 - Logout can compare the confirmed sign-in before removing it (senpi#7406)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `LogoutOptions.expectedLoginId`; optional `CredentialStore.deleteLogin(providerId, loginId)` removes the entry only while its `loginId` matches, under the same exclusion as `modify`/`delete`.
+- `packages/ai/src/auth/credential-store.ts`: `InMemoryCredentialStore.deleteLogin`; `assertExpectedLogin` and `deleteStored` throw `ModelsError` `stale_login` on any difference; `revokeStoredOAuth` compares inside its `modify` callback before clearing or revoking anything.
+
+### Why
+
+- A sign-out the user confirmed for one sign-in removed whatever was stored, including a newer sign-in that replaced it between the read and the request (sisyphuslabs/dori-bot#253).
+
+### Why an extension could not handle it
+
+- The comparison must happen inside the credential store's write lock, which only the store and `Models.logout` own.
+
+### Expected merge conflict zones
+
+- LOW: `CredentialStore` interface tail and `revokeStoredOAuth`'s `modify` callback head.
+
 ## 2026-11-05 - Reauthorizing a signed-out ChatGPT account restores it in place (part of #5003)
 
 ### What changed
