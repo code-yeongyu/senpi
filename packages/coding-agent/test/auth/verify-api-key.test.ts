@@ -97,6 +97,36 @@ describe("verifyApiKey (desktop #2510)", () => {
 		expect(provider.seen[0]?.headers["x-api-key"]).toBe(KEY);
 	});
 
+	// senpi#5649: the RPC layer resolves a region to its host and passes it here, so a
+	// kimi.ai key is checked on kimi.ai instead of the catalog's kimi.com host.
+	it("probes a caller-resolved regional base URL instead of the catalog host", async () => {
+		const provider = answering(200);
+		expect(
+			await verifyApiKey({
+				models: MODELS,
+				provider: "openai",
+				key: KEY,
+				baseUrl: "https://regional.example.test/v1",
+				signal: AbortSignal.timeout(5_000),
+				fetch: provider.fetch,
+			}),
+		).toEqual({ ok: true });
+		expect(provider.seen[0]?.url).toBe("https://regional.example.test/v1/models");
+	});
+
+	it("keeps the /v1 join under a regional base URL", async () => {
+		const provider = answering(200);
+		await verifyApiKey({
+			models: MODELS,
+			provider: "anthropic",
+			key: KEY,
+			baseUrl: "https://regional.example.test/v1",
+			signal: AbortSignal.timeout(5_000),
+			fetch: provider.fetch,
+		});
+		expect(provider.seen[0]?.url).toBe("https://regional.example.test/v1/models");
+	});
+
 	it("tells a rejected key from an unreachable provider and an unchecked one", async () => {
 		expect(await verify("openai", answering(401).fetch)).toEqual({ ok: false, reason: "rejected", status: 401 });
 		expect(await verify("openai", answering(403).fetch)).toEqual({ ok: false, reason: "rejected", status: 403 });

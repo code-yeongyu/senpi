@@ -27,8 +27,8 @@ const UNCHECKABLE_CONTROL_KEY = "senpi-verify-control-not-a-real-key";
 
 const AUTH_HEADERS = new Set(["authorization", "x-api-key", "x-goog-api-key"]);
 
-function probeFor(model: Model<Api>, key: string): Probe | undefined {
-	const base = trimSlash(model.baseUrl);
+function probeFor(model: Model<Api>, key: string, baseUrl?: string): Probe | undefined {
+	const base = trimSlash(baseUrl ?? model.baseUrl);
 	// Configured auth headers would be merged with (or replace) the probe's, whatever their case.
 	const extra = Object.fromEntries(
 		Object.entries(model.headers ?? {}).filter(([name]) => !AUTH_HEADERS.has(name.toLowerCase())),
@@ -59,14 +59,16 @@ export async function verifyApiKey(input: {
 	readonly models: readonly Model<Api>[];
 	readonly provider: string;
 	readonly key: string;
+	/** A caller-resolved regional base URL (senpi#5649); the catalog baseUrl otherwise. */
+	readonly baseUrl?: string;
 	readonly signal: AbortSignal;
 	readonly fetch?: typeof globalThis.fetch;
 }): Promise<ApiKeyVerification> {
 	const model = input.models.find((candidate) => candidate.provider === input.provider);
 	if (model === undefined) return { ok: false, reason: "unknown-provider" };
-	if (probeFor(model, input.key) === undefined) return { ok: false, reason: "unsupported" };
+	if (probeFor(model, input.key, input.baseUrl) === undefined) return { ok: false, reason: "unsupported" };
 	const ask = async (candidate: string): Promise<number | "no-answer"> => {
-		const target = probeFor(model, candidate);
+		const target = probeFor(model, candidate, input.baseUrl);
 		if (target === undefined) return "no-answer";
 		try {
 			const response = await (input.fetch ?? globalThis.fetch)(target.url, {

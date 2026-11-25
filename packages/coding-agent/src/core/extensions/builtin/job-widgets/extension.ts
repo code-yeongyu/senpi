@@ -4,9 +4,10 @@
  * in-process listeners and to RPC clients that advertise `extension_events`. Default on, no setup;
  * `jobWidgets.enabled: false` opens nothing, so hosts tap nothing and no author is ever called.
  * In the interactive TUI the same in-process event drives the widget area above the editor. An RPC
- * client that starts receiving extension events gets the current state once (when a job shows).
+ * client that starts receiving extension events gets the current state once (when a job shows), sent to that
+ * client alone.
  */
-import { EXTENSION_RPC_SUBSCRIBED_CHANNEL } from "../../../event-bus.ts";
+import { EXTENSION_RPC_SUBSCRIBED_CHANNEL, type ExtensionRpcEvent } from "../../../event-bus.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isStaleExtensionContextError } from "../goal/stale-context.ts";
@@ -15,9 +16,9 @@ import { secretOutputObfuscator } from "./author-redact.ts";
 import { createSessionJobWidgetAuthor } from "./session-author.ts";
 import {
 	closeJobWidgetSession,
+	getJobWidgetState,
 	openJobWidgetSession,
 	parkJobWidgetSession,
-	resendJobWidgetState,
 } from "./session-host.ts";
 import { JobWidgetArea } from "./tui-widget.ts";
 import type { JobWidgetState } from "./view-types.ts";
@@ -66,7 +67,11 @@ export default function jobWidgetsExtension(pi: ExtensionAPI): void {
 		showInTui(startCtx, sessionId);
 		const id = sessionId;
 		stopResend?.();
-		stopResend = pi.events?.on(EXTENSION_RPC_SUBSCRIBED_CHANNEL, () => resendJobWidgetState(id));
+		stopResend = pi.events?.on(EXTENSION_RPC_SUBSCRIBED_CHANNEL, (reply) => {
+			const state = getJobWidgetState(id);
+			if (typeof reply === "function" && state !== undefined && state.jobs.length > 0)
+				reply({ name: JOB_WIDGET_STATE_EVENT, data: state } satisfies ExtensionRpcEvent);
+		});
 		openJobWidgetSession(sessionId, {
 			authorAfterMs: settings.authorAfterMs,
 			author: createSessionJobWidgetAuthor(() => ctx, settings.model),

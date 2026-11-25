@@ -11,6 +11,7 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { createEventBus } from "../../src/core/event-bus.ts";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
 import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
 import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
@@ -87,8 +88,10 @@ function generation(dir: string): Generation {
 		exec: async () => ({ stdout: "", stderr: "", code: 0 }),
 		getActiveTools: () => [],
 		setActiveTools: () => {},
-		events: { emit: () => {} },
+		// The real bus: the extension subscribes through `events.on` (state replay) as well as emitting.
+		events: createEventBus(),
 		rpc: { emit: () => {} },
+		isLoopRemote: () => false,
 	} as unknown as ExtensionAPI;
 	registerTerminalExtension(api);
 	const context = {

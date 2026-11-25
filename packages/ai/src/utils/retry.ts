@@ -155,6 +155,11 @@ const NON_QUOTA_NON_RETRYABLE_PATTERNS = [
 	"tools\\.[^ ]*function\\.parameters",
 	"tools\\.\\d+\\.function\\.parameters",
 	"invalid tool schema",
+	// A thinking mode the model does not offer (omo#12316: Kimi K3.1 Pro answers `K3.1 Pro does not support
+	// disabled thinking mode`; Anthropic answers `"thinking.type.disabled" is not supported for this model`).
+	// The same payload fails every time, whatever status a gateway wraps it in.
+	"does not support disabled thinking",
+	"thinking\\.type\\.disabled\\W{0,3}is not supported",
 
 	// Legacy text-only SIWC failures. Structured diagnostics take precedence below;
 	// this code alone proves no reset time.

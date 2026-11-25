@@ -1,3 +1,21 @@
+## 2026-11-03 - Startup credential notices wait for the async load (senpi#5594)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics` and `interactiveAuthNotices` are async and await `authStorage.settleLoad()` before taking notices; every call site (model listing, runtime creation, interactive start, print mode) awaits them.
+
+### Why
+
+- The first auth.json load is synchronous and cannot re-link Claude CLI account dirs after a stale pre-#4436 write; without the settle, a fresh start told the user to sign in again for accounts its own async load re-linked a moment later (senpi#5594).
+
+### Why an extension could not handle it
+
+- The startup notices are collected by the CLI entry point before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `collectAuthDiagnostics` / `interactiveAuthNotices` signatures and their four call sites in `main()`.
+
 ## 2026-11-23 - A labelled open records its approvals refusal durably before the session exists (senpi#7270)
 
 ### What changed

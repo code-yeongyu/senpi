@@ -1,3 +1,21 @@
+## 2026-11-24 - The startup header is set once (senpi#7411)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/index.ts`: the "Optimized system prompt applied: <preset>" header is set at `session_start` only; `model_select` still swaps the system prompt and returns `systemPromptName`, but no longer rewrites or clears the header.
+
+### Why
+
+- The header is the transcript's first row. Rewriting it on a model switch changed a row far above the screen, which the renderer can only show by clearing the scrollback and replaying the whole transcript (sisyphuslabs/doriterm#2745). The "Model: ..." status row already reports the switch and its preset.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own header handling.
+
+### Expected merge conflict zones
+
+- LOW: `refreshHeader` (now `setStartupHeader`) and the `model_select` handler in `index.ts`.
+
 ## 2026-11-22 - The eval routing rule names the session's own tool for source edits (#7275, senpi#7232)
 
 ### What changed

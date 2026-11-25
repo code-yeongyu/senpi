@@ -8175,10 +8175,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts#RISKY_MODEL_FAMILIES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
 		"packages/coding-agent/src/modes/interactive/session-control-commands.ts#TUI_CONTROL_COMMANDS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
