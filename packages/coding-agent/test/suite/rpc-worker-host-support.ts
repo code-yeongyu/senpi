@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 
 import { SESSION_WORKER_LIMITS } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { STARTUP_PHASE_ALLOWANCE_MS } from "../../src/modes/rpc/host-startup-policy.ts";
+import { CHILD_STOP_TIMEOUT_MS } from "../../src/modes/rpc/host-stop-intent.ts";
 import { endpoint, RPC_RESPONSE_TIMEOUT_MS, type WorkerHostRecord } from "./rpc-host-endpoint.ts";
 
 export type { WorkerHostRecord };
@@ -118,7 +119,7 @@ export async function startWorkerHost(
 			stdio: ["pipe", "pipe", "pipe"],
 		},
 	);
-	const exited = once(child, "close");
+	const exited = once(child, "exit");
 	if (options.preload) {
 		child.once("exit", (code, signal) =>
 			process.stderr.write(`PRESSURE_CHILD_EXIT ${JSON.stringify({ pid: child.pid, code, signal })}\n`),
@@ -143,10 +144,16 @@ export async function startWorkerHost(
 				`PRESSURE_DISPOSE ${JSON.stringify({ pid: child.pid, exitCode: child.exitCode, stdout: child.stdout.readableFlowing, stderr: child.stderr.readableFlowing })}\n`,
 			);
 		for (const connection of connections) connection.dispose();
+		// The supervisor's own stop window (senpi#6319): a host gets CHILD_STOP_TIMEOUT_MS from SIGTERM to SIGKILL, as in
+		// production, so a slow exit ends as this reported kill well inside vitest's 10 s hook budget, not as a hook timeout.
 		child.kill("SIGTERM");
-		const deadline = setTimeout(() => child.kill("SIGKILL"), 10_000);
-		await exited;
-		clearTimeout(deadline);
+		if (!(await settlesWithin(exited, CHILD_STOP_TIMEOUT_MS))) {
+			process.stderr.write(
+				`test host ${child.pid} did not exit within ${CHILD_STOP_TIMEOUT_MS} ms of SIGTERM; sending SIGKILL. Host stderr tail:\n${stderr.slice(-2_000)}\n`,
+			);
+			child.kill("SIGKILL");
+			await exited;
+		}
 		stdio.dispose();
 		if (options.preload) process.stderr.write(`PRESSURE_REMOVE ${scratch}\n`);
 		await rm(scratch, { recursive: true, force: true });
@@ -199,6 +206,19 @@ export async function startWorkerHost(
 			return wire;
 		},
 	};
+}
+
+/** Whether `work` settles within `ms`; the timer never outlives the wait. */
+async function settlesWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<false>((resolveExpired) => {
+		timer = setTimeout(() => resolveExpired(false), ms);
+	});
+	try {
+		return await Promise.race([work.then(() => true as const), expired]);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 /**
