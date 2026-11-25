@@ -281,6 +281,14 @@ const rows: readonly Row[] = [
 		},
 	},
 	{
+		// senpi#7040: a desktop runtime on engine 2026.11.18 handed a compiled omo 5.1.78 host ([5,1,78,0,0]) down.
+		name: "a CalVer client never supersedes a host whose ordinal is an omo version -> reuse",
+		client: client({ identity: identity("2026.11.18") }),
+		host: host({ engineVersion: "5.1.78", engineOrdinal: identity("5.1.78").ordinal }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true },
+	},
+	{
 		name: "a host that reports no ordinal is uncomparable -> reuse",
 		client: client({ identity: identity("2026.9.18") }),
 		host: host({ engineOrdinal: undefined, engineVersion: undefined, launch_profile: undefined }),

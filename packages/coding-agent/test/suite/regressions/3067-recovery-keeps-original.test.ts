@@ -1,4 +1,4 @@
-import { ChildProcess, spawn } from "node:child_process";
+import { ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -33,24 +33,15 @@ vi.mock("../../../src/modes/rpc/host-supervisor-log.ts", async (importOriginal) 
 	};
 });
 
-/** A pid that belonged to a reaped child: the child never exits. Signalling it is stubbed out below. */
-async function deadPid(): Promise<number> {
-	const probe = spawn(process.execPath, ["-e", ""]);
-	const pid = probe.pid;
-	if (pid === undefined) throw new Error("probe child has no pid");
-	await new Promise<void>((resolve) => {
-		probe.once("exit", () => resolve());
-	});
-	return pid;
-}
-
 // #3067 L4: when the recovery after a pre-signal failure throws, only the recovery error
 // is logged and the original error is lost. The recovery must log both — the recovery error
 // in stopChild, the original once in performShutdown — and the original must still be the
 // error shutdown reports.
 it("keeps the pre-signal error when the shutdown recovery itself throws", async () => {
 	const root = await mkdtemp(join(tmpdir(), "shutdown-recovery-"));
-	const pid = await deadPid();
+	// #6216: this is a synthetic child; all signals are stubbed. Deliberately use a
+	// live pid to prove recovery does not depend on an OS pid remaining unused.
+	const pid = process.pid;
 	const paths = createHostDaemonPaths({ socket: join(root, "rpc.sock"), agentDir: root });
 	const generation = generationPaths(paths, "shutdown-recovery");
 	await createDaemonDirectories(paths);
@@ -63,6 +54,10 @@ it("keeps the pre-signal error when the shutdown recovery itself throws", async 
 	});
 	const child = new ChildProcess();
 	(child as { pid: number | undefined }).pid = pid;
+	const recoveryWaiting = Promise.withResolvers<void>();
+	child.on("newListener", (event) => {
+		if (event === "exit") recoveryWaiting.resolve();
+	});
 	const state: SupervisorState = {
 		shuttingDown: false,
 		shutdownReason: undefined,
@@ -82,11 +77,15 @@ it("keeps the pre-signal error when the shutdown recovery itself throws", async 
 	const exitProcess = vi.spyOn(process, "exit").mockImplementation(() => {
 		throw exit;
 	});
-	// The child is already reaped, so the recovery's SIGTERM/SIGKILL would go to a pid
-	// the OS may have reused: stub process.kill so no real signal is ever sent, while
-	// the recovery still walks its signal-then-wait path (#6144 review).
+	// No real signal is sent, while recovery still walks its signal-then-wait path.
 	const killProcess = vi.spyOn(process, "kill").mockImplementation(() => {
 		throw new Error("kill ESRCH: no such process");
+	});
+	// Install the real deadline before faking time: stalled I/O or a missing recovery
+	// event must fail promptly, including during cleanup.
+	let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<never>((_resolve, reject) => {
+		deadlineTimer = setTimeout(() => reject(new Error("shutdown recovery did not finish within 10 s")), 10_000);
 	});
 	vi.useFakeTimers();
 	// Same injection as the supervisor fixture's "inject-stop-error": stopChild reads the
@@ -123,30 +122,15 @@ it("keeps the pre-signal error when the shutdown recovery itself throws", async 
 		return "exited" as const;
 	});
 	try {
-		// The recovery reaps the never-exiting child: 5 s after SIGTERM, 30 s after SIGKILL.
-		// The waits are created lazily as the recovery reaches them, so advance in slices
-		// until shutdown settles instead of assuming both timers exist up front. Keep
-		// advancing until it settles, with a time bound, rather than a fixed turn
-		// count: the real fs read before the injection can consume turns before those
-		// timers exist, which a fixed 40-turn loop cannot absorb (#6144 review).
-		// Track settlement with a flag, not a Promise.race against an already-resolved
-		// promise: the resolved side always wins the race, so that form can never
-		// observe the shutdown settling (verified: it returns false even for an
-		// already-resolved promise).
-		let settled = false;
-		stopped.then(
-			() => {
-				settled = true;
-			},
-			() => {
-				settled = true;
-			},
-		);
-		for (let advancedMs = 0; advancedMs < 120_000 && !settled; advancedMs += 1_000) {
-			await vi.advanceTimersByTimeAsync(1_000);
-		}
-		expect(settled, "shutdown did not settle within 120 s of fake time").toBe(true);
-		await expect(stopped).resolves.toBe("exited");
+		// #6216: the real stop-intent read runs before the recovery and may take any number of
+		// event-loop turns on a loaded host, so wait for the exit-wait registration itself.
+		// newListener observes the exact wait registration, after the real fs read.
+		// Its callback runs synchronously; by the time this await resumes, the
+		// SIGTERM exit timer exists. Advancing it creates the SIGKILL exit timer.
+		await Promise.race([recoveryWaiting.promise, deadline]);
+		await vi.advanceTimersByTimeAsync(5_000);
+		await vi.advanceTimersByTimeAsync(30_000);
+		await expect(Promise.race([stopped, deadline])).resolves.toBe("exited");
 		expect(exitProcess).toHaveBeenCalledWith(1);
 		expect(killProcess).toHaveBeenCalledWith(pid, "SIGTERM");
 		expect(killProcess).toHaveBeenCalledWith(pid, "SIGKILL");
@@ -161,11 +145,15 @@ it("keeps the pre-signal error when the shutdown recovery itself throws", async 
 			"the recovery error is logged in stopChild, before performShutdown logs the original",
 		).toBeLessThan(logged.findIndex((line) => line.includes("injected before child SIGTERM")));
 	} finally {
-		await stopped.catch(() => {});
+		Object.defineProperty(child, "exitCode", { value: 0 });
+		child.emit("exit", 0, null);
+		await Promise.race([stopped, deadline]).catch(() => {});
 		vi.useRealTimers();
+		clearTimeout(deadlineTimer);
 		clock.mockRestore();
 		exitProcess.mockRestore();
 		killProcess.mockRestore();
+		child.removeAllListeners();
 		activity.stopObserver();
 		await rm(root, { recursive: true, force: true });
 	}

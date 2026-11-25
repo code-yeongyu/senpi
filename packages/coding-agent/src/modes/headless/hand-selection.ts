@@ -13,6 +13,8 @@ import {
 	type ToolHost,
 	type Transport,
 } from "@earendil-works/pi-agent-core";
+import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
+import { withHandPageBudget } from "../../extensions/html-render/hand-page-budget.ts";
 import type { SessionManager } from "../../core/session-manager.ts";
 
 export interface HandRow {
@@ -39,10 +41,12 @@ export const HAND_SELECTION_ENTRY = "hand_selection";
 export type HandRefusal = "hand_not_listed" | "hand_unreachable" | "session_busy";
 
 export interface HandSession {
-	readonly agent: Pick<Agent, "toolHost">;
+	readonly agent: Pick<Agent, "toolHost" | "subscribe">;
 	/** A run copies its ToolHost when it starts, so the choice changes only between runs. */
 	readonly isStreaming: boolean;
 	readonly sessionManager: Pick<SessionManager, "appendCustomEntry" | "getEntries">;
+	/** Sent with each call to the hand, so a tool there reports what this session's host does (senpi#6921). */
+	readonly promptSurface: PromptSurface;
 }
 
 export interface HandSelection {
@@ -126,15 +130,21 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 	) => {
 		const state = stateOf(durableSessionId, session);
 		state.remote?.close();
-		sessions.set(durableSessionId, { own: state.own, device, remote: remote?.host, linked: remote?.linked ?? false });
-		session.agent.toolHost = remote === undefined ? state.own : gate(durableSessionId, remote.host);
+		// The hand cannot see this session's transcript, so the session's page budget is applied here (senpi#6921). The
+		// budget is what the session keeps and closes, so it stops listening for the session's runs with the link (senpi#6932).
+		const host = remote === undefined ? undefined : withHandPageBudget(remote.host, session);
+		sessions.set(durableSessionId, { own: state.own, device, remote: host, linked: remote?.linked ?? false });
+		session.agent.toolHost = host === undefined ? state.own : gate(durableSessionId, host);
 		options.onChange?.(durableSessionId, device);
 	};
 
 	const unreachable = (): Remote => ({ host: unreachableHost(), linked: false });
-	const linkTo = (device: string): Remote => {
+	const linkTo = (device: string, session: HandSession): Remote => {
 		try {
-			return { host: createRemoteToolHost(directory.link(device)), linked: true };
+			return {
+				host: createRemoteToolHost({ ...directory.link(device), promptSurface: () => session.promptSurface }),
+				linked: true,
+			};
 		} catch {
 			return unreachable();
 		}
@@ -154,7 +164,7 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 				const row = directory.list().find((hand) => hand.device === device);
 				if (row === undefined) return { ok: false, refusal: "hand_not_listed" };
 				if (!row.reachable) return { ok: false, refusal: "hand_unreachable" };
-				remote = linkTo(device);
+				remote = linkTo(device, session);
 				if (!remote.linked) {
 					remote.host.close();
 					return { ok: false, refusal: "hand_unreachable" };
@@ -177,7 +187,7 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 			const device = recordedDevice(session);
 			if (device === null) return;
 			const row = directory.list().find((hand) => hand.device === device);
-			install(durableSessionId, session, device, row?.reachable === true ? linkTo(device) : unreachable());
+			install(durableSessionId, session, device, row?.reachable === true ? linkTo(device, session) : unreachable());
 		},
 		release: (durableSessionId) => {
 			sessions.get(durableSessionId)?.remote?.close();

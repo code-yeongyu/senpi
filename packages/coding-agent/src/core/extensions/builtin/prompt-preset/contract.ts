@@ -16,6 +16,7 @@ import {
 	isGlm52Model,
 	isGlm53Model,
 	isGpt6FamilyModel,
+	isGpt62Model,
 	isGrok45Model,
 	isGrok46Model,
 	isGrok47Model,
@@ -28,6 +29,7 @@ import {
 	type ModelWithPromptPresetMetadata,
 } from "./matchers.ts";
 import type { SharedSections } from "../../../dynamic-prompt/types.ts";
+import type { TodoFirstTurnPlan } from "../../../settings-shapes.ts";
 import type { PromptPresetName } from "./settings.ts";
 
 export type ResolvedPresetName = Exclude<PromptPresetName, "auto">;
@@ -38,6 +40,10 @@ export function resolvePresetName(input: {
 	name?: string;
 }): ResolvedPresetName | undefined {
 	const model: ModelWithPromptPresetMetadata = { id: input.modelID, provider: input.providerID, name: input.name };
+	// The point release must resolve before the GPT-6 family signal, which accepts any point release.
+	if (isGpt62Model(model)) {
+		return "gpt-6.2";
+	}
 	if (isGpt6FamilyModel(model)) {
 		return "gpt-6-astra";
 	}
@@ -143,6 +149,61 @@ export function presetSharedSections(name: ResolvedPresetName | undefined): Shar
 	return name !== undefined && FULL_SHARED_SECTION_PRESETS.has(name) ? "full" : "diet";
 }
 
+/**
+ * The handoff block a preset's prompt defines, so the todo tool's cue can name that block in the
+ * prompt's own words instead of the default core's (senpi#6977): the GPT block presets render the
+ * outcome-first block, the gpt-6.2 and deepseek-v4-1-flash cores render no handoff block on any
+ * surface (senpi#6979, senpi#7100), so a cue there would name a block those prompts do not define, and
+ * every other preset (and the default dynamic prompt) renders the Ask / For you / Now / Next block.
+ */
+export type HandoffCueKind = "default" | "gpt-block" | "none";
+
+const GPT_BLOCK_HANDOFF_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-5.5", "gpt-5.6", "gpt-6-astra"]);
+const NO_HANDOFF_BLOCK_PRESETS: ReadonlySet<ResolvedPresetName> = new Set(["gpt-6.2", "deepseek-v4-1-flash"]);
+
+export function presetHandoffCueKind(name: ResolvedPresetName | undefined): HandoffCueKind {
+	if (name === undefined) return "default";
+	if (GPT_BLOCK_HANDOFF_PRESETS.has(name)) return "gpt-block";
+	if (NO_HANDOFF_BLOCK_PRESETS.has(name)) return "none";
+	return "default";
+}
+
+/**
+ * Presets whose model plans after it has read. The first-turn plan opener (a hidden reminder and,
+ * under `force`, a named `todo` tool_choice) made GPT sessions write a list before they had read
+ * what the request points at (senpi#7101), and every measured DeepSeek V4.1 Flash session opened with
+ * that list as a text-less call (senpi#7100), so an unset `todo.firstTurnPlan` means `off` under these
+ * presets and `force` under every other preset and the default prompt. A value the user set wins.
+ */
+const PLAN_AFTER_READING_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"gpt-6.2",
+	"gpt-6-astra",
+	"gpt-5.6",
+	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.3-codex",
+	"gpt-5.2",
+	"gpt-5",
+	"deepseek-v4-1-flash",
+]);
+
+export function presetFirstTurnPlanDefault(name: ResolvedPresetName | undefined): TodoFirstTurnPlan {
+	return name !== undefined && PLAN_AFTER_READING_PRESETS.has(name) ? "off" : "force";
+}
+
+/**
+ * Presets whose core states the todo rules itself, so the todotools extension does not append the
+ * shared `Task_Management` block after them: one home per rule (senpi#7101, senpi#7100).
+ */
+const TODO_RULE_OWNER_PRESETS: ReadonlySet<ResolvedPresetName> = new Set<ResolvedPresetName>([
+	"gpt-6.2",
+	"deepseek-v4-1-flash",
+]);
+
+export function presetOwnsTodoRules(name: ResolvedPresetName | undefined): boolean {
+	return name !== undefined && TODO_RULE_OWNER_PRESETS.has(name);
+}
+
 export type PromptPresetModelCase = {
 	readonly providerID: string;
 	readonly modelID: string;
@@ -150,6 +211,7 @@ export type PromptPresetModelCase = {
 };
 
 export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
+	{ providerID: "openai", modelID: "gpt-6.2-sol", preset: "gpt-6.2" },
 	{ providerID: "openai", modelID: "gpt-6-astra", preset: "gpt-6-astra" },
 	{ providerID: "openai", modelID: "gpt-5.6", preset: "gpt-5.6" },
 	{ providerID: "openai", modelID: "gpt-5.5", preset: "gpt-5.5" },
@@ -188,6 +250,7 @@ export const PROMPT_PRESET_MODEL_CASES: readonly PromptPresetModelCase[] = [
 // buildPreset, no model matcher), so it is intentionally absent here: a model-driven parity check
 // can only cover ids that resolve to a preset, and no real id auto-resolves to bare gpt-5.
 export const AUTO_RESOLVED_PRESET_NAMES: readonly ResolvedPresetName[] = [
+	"gpt-6.2",
 	"gpt-6-astra",
 	"gpt-5.6",
 	"gpt-5.5",

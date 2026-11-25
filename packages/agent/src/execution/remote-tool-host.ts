@@ -41,13 +41,18 @@ export interface RemoteToolHostOptions {
 	 * Without it, nothing about epochs is sent (a session that never moves).
 	 */
 	readonly epoch?: number;
+	/** The session's prompt surface, read for each batch and sent with every call of it (senpi#6921). */
+	readonly promptSurface?: () => string | undefined;
 }
 
 function errorResult(text: string): RemoteToolResult {
 	return { content: [{ type: "text", text }], details: {}, isError: true };
 }
 
-function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): RemoteToolResult {
+function terminalResult(
+	placement: HandPlacement,
+	terminal: Pick<RemoteTerminal, "reason" | "uncertain" | "hooksRan">,
+): RemoteToolResult {
 	if (placement === "split-local")
 		return { content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }], details: {}, isError: false };
 	const { reason, uncertain, hooksRan } = terminal;
@@ -87,7 +92,14 @@ export function createRemoteToolHost(
 			case "unreachable":
 				return errorResult(`The hand is unreachable: ${reply.reason}`);
 			case "closed":
-				return errorResult("The hand link was closed before the call settled");
+				// The hand died or was replaced while the call was in flight (omo-service#997). A call it may have received
+				// ends as a hand restart with its outcome unknown; one it never received had no effect. Neither runs again.
+				return terminalResult(
+					options.placement,
+					reply.sent
+						? { reason: "hand_restarted", uncertain: true, hooksRan: true }
+						: { reason: "cancelled", uncertain: false, hooksRan: false },
+				);
 			case "epoch_refused":
 				return errorResult(`The hand refused this session's epoch: ${reply.reason}`);
 		}
@@ -103,6 +115,7 @@ export function createRemoteToolHost(
 		async execute(call: ToolHostCall, hostOptions: ToolHostOptions): Promise<ToolHostResult> {
 			const { emit, signal } = hostOptions;
 			const batchId = mintId();
+			const promptSurface = options.promptSurface?.();
 			const invokeOf = (raw: AgentToolCall, index: number): RemoteInvoke => ({
 				kind: "invoke",
 				executionId: mintId(),
@@ -113,6 +126,7 @@ export function createRemoteToolHost(
 				name: raw.name,
 				arguments: raw.arguments,
 				...(options.sessionRef === undefined ? {} : { sessionRef: options.sessionRef }),
+				...(promptSurface === undefined ? {} : { promptSurface }),
 			});
 			const finish = async (raw: AgentToolCall, result: RemoteToolResult): Promise<RemoteToolResult> => {
 				await emit({

@@ -42,3 +42,11 @@ export function isLockError(error: unknown): boolean {
 		typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ELOCKED"
 	);
 }
+
+export class LocalCredentialStoreBusyError extends CredentialStoreBusyError {
+	constructor(path: string, cause: unknown) {
+		super(path, 0, cause);
+		this.name = "LocalCredentialStoreBusyError";
+		this.message = "A local asynchronous credential operation holds the store lock. Retry after it completes.";
+	}
+}

@@ -14,6 +14,10 @@ import {
 	supportsNamedToolChoice,
 } from "../../src/core/extensions/builtin/todotools/first-turn.ts";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
+import {
+	FULL_TASK_MANAGEMENT_SECTION,
+	TASK_MANAGEMENT_SECTION,
+} from "../../src/core/extensions/builtin/todotools/prompt.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { fauxTodotoolsPi, model, TODO_PAYLOAD } from "./todo-first-turn-harness.ts";
@@ -223,6 +227,59 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 		// then
 		expect(start.message?.customType).toBe(FIRST_TURN_CUSTOM_TYPE);
 		expect(payload?.tool_choice).toBeUndefined();
+	});
+});
+
+// senpi#7101, senpi#7100: a GPT preset and deepseek-v4-1-flash plan after they have read, so the opener is off
+// there unless the user sets it, and a preset whose core owns the todo rules gets no Task_Management block.
+// The older DeepSeek presets keep both.
+describe("first turn under the active prompt preset", () => {
+	it.each<[string, Api, "force" | "remind" | undefined, boolean, unknown]>([
+		["gpt-6.2-astra-ultrafast", "openai-responses", undefined, false, undefined],
+		["gpt-6.2-sol", "openai-responses", undefined, false, undefined],
+		["gpt-6-astra", "openai-responses", undefined, false, undefined],
+		["gpt-5.6", "openai-responses", undefined, false, undefined],
+		["gpt-6.2-astra", "openai-responses", "force", true, { type: "function", name: "todo" }],
+		["gpt-6.2-astra", "openai-responses", "remind", true, undefined],
+		["deepseek-flash", "openai-completions", undefined, false, undefined],
+		["deepseek/deepseek-v4.1-flash-ultrafast", "openai-completions", undefined, false, undefined],
+		["deepseek-flash", "openai-completions", "force", true, { type: "function", function: { name: "todo" } }],
+		[
+			"deepseek-v4-flash-0731",
+			"openai-completions",
+			undefined,
+			true,
+			{ type: "function", function: { name: "todo" } },
+		],
+	])("%s over %s with todo.firstTurnPlan %s", async (id, api, setting, armed, toolChoice) => {
+		// given
+		const target = model(id, api);
+		const faux = fauxTodotoolsPi(tempDirs, setting === undefined ? { model: target } : { model: target, setting });
+
+		// when
+		const start = await faux.startTurn();
+		const payload = await faux.providerRequest(TODO_PAYLOAD, target);
+
+		// then
+		expect(start.message?.customType).toBe(armed ? FIRST_TURN_CUSTOM_TYPE : undefined);
+		expect(payload?.tool_choice).toEqual(toolChoice);
+	});
+
+	it.each<[string, Api, string]>([
+		["gpt-6.2-astra", "openai-responses", "base"],
+		["gpt-6-astra", "openai-responses", `base\n${TASK_MANAGEMENT_SECTION}`],
+		["claude-opus-5", "anthropic-messages", `base\n${FULL_TASK_MANAGEMENT_SECTION}`],
+		["deepseek-flash", "openai-completions", "base"],
+		["deepseek-v4-flash-0731", "openai-completions", `base\n${TASK_MANAGEMENT_SECTION}`],
+	])("the system prompt after %s", async (id, api, expected) => {
+		// given
+		const faux = fauxTodotoolsPi(tempDirs, { model: model(id, api) });
+
+		// when
+		const start = await faux.startTurn();
+
+		// then
+		expect(start.systemPrompt).toBe(expected);
 	});
 });
 

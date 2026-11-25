@@ -1,5 +1,130 @@
 # core/tools changes
 
+## 2026-11-22 - edit and write warn when a JS, TS or JSON file stops parsing (senpi#7256)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/syntax-check.ts` (new, worker-safe): `createSyntaxChecker({ parseScript? })` checks `.json` with `JSON.parse` and `.js .jsx .mjs .cjs .ts .tsx .mts .cts` with an injected `ScriptParser`; files over 1 MiB of text, unknown extensions, a missing parser and any parser failure that is not a syntax error give no verdict. Loaders: `.mjs` and `.cjs` parse as plain JS and `.mts`/`.cts` as TS, all without JSX; `.js` keeps JSX because React toolchains and Bun accept JSX in `.js` files, so JSX added to a `.js` file meant for plain Node gets no warning (a stated limitation). A leading BOM is not content: it is skipped before checking, and positions are counted after it. `parseBreakWarning` builds the one advisory block: it fires only when the content after the call does not parse and the content before it did (a newly created file counts as having parsed), and names the first syntax error's `line:column` when one is known. It is the single advisory boundary of both tools and returns a plain string or `undefined` for any input: every call into the checker or locator and every read of their result fields happens inside it, a failure there gives no warning and leaves the tool's success result as it is, and a position that is not a positive integer line and column is left out. For JSON, the message is always the `JSON.parse` message; `SyntaxChecker.locate` adds a position only when it is confirmed: the offset where strict parsing stops, and where V8 appends `at position N` to the message (only that trailing suffix is read, never input quoted earlier in the message, and never an offset past the content), the same offset.
+- `packages/coding-agent/src/core/tools/strict-json-offset.ts` (new, worker-safe): `strictJsonErrorOffset` scans the ECMA-404 grammar that `JSON.parse` implements and returns the first offset at which no valid JSON text can continue (the text length when it ends early). It is linear and keeps nesting in an array: about 25 ms for a 1 MiB file on Bun 1.4.5, about 130 ms for 1 MiB of nested `[`.
+- `packages/coding-agent/src/core/tools/text-position.ts` (new, worker-safe): `lineAndColumn` turns an offset into a 1-based line and UTF-16 column, counting a lone LF, a lone CR and a CRLF pair as one line break each (scripts also break at U+2028/U+2029, JSON does not), matching V8's JSON positions and Bun's script lines; `utf16IndexOfUtf8Offset` maps Bun's UTF-8 byte offsets to string indices.
+- `packages/coding-agent/src/core/tools/bun-syntax-check.ts` (new, local only): `createLocalSyntaxChecker(bun?)` uses `Bun.Transpiler#scan` for JS/TS when the `Bun` global is present (tests pass a stand-in). A `BuildMessage` is a syntax error and an `AggregateError` of them (several errors at once) reports its first; a `BuildMessage` for an exhausted parser stack, and anything else thrown, is no verdict. The position is recomputed from Bun's byte offset with `lineAndColumn` (Bun's own column is one short after a lone CR) and used where its line agrees with Bun's; otherwise Bun's own line and column stand (Bun puts an end-of-file error at the end of the last line). JSON needs nothing from the host; on Node only JSON is checked.
+- `packages/coding-agent/src/core/tools/edit-core.ts`: new `CoreEditToolOptions.checkSyntax` (default: JSON only). After the write, the BOM-stripped, LF-normalized content before and after the edit is checked and the warning, if any, is appended to the success text after a blank line. No extra file read; the written bytes, `isError` and `details` are unchanged.
+- `packages/coding-agent/src/core/tools/write-core.ts`: new `CoreWriteToolOptions.checkSyntax` (default: JSON only). The existing write baseline supplies the before content: `present` compares, `missing` treats the call as a new file (new-file warning text), `unavailable` (custom operations, unreadable file) gives no warning.
+- `packages/coding-agent/src/core/tools/edit.ts`, `packages/coding-agent/src/core/tools/write.ts`: the local tools pass `checkSyntax: createLocalSyntaxChecker()`.
+
+### Why
+
+- In a multi-harness build comparison, a model wrote garbled JavaScript three times and found out each time from a later runtime error. The result now tells the model at once, the way the reference harness's advisory parse warning does, without rejecting the edit (senpi#7234).
+- Review findings: a throwing checker made `write` reject after the file was on disk; a more lenient JSON parser could replace the strict error with a later one (`{"a": 0x1, "b": 2,}` was reported as a trailing comma); and a position could be read from input that V8 quotes in its message. Hence one advisory boundary, the strict message with a confirmed position only, and the anchored suffix.
+- Second review findings: formatting read the checker's result fields outside the boundary, so a throwing field still failed the call; a lone CR was not counted as a line break; and `.mjs` was parsed with JSX. An adversarial pass over the whole path also found that a BOM made valid JSON warn, that Bun's several-error `AggregateError` gave no verdict, and that Bun's parser-stack overflow on deeply nested valid code was reported as a syntax error.
+
+### Why an extension could not handle it
+
+- The edit and write result text is built inside the built-in tools, which are the only place holding both the before and after contents without a second read; an extension wrapping the tool would have to re-read the file before and after every call.
+
+### Expected merge conflict zones
+
+- LOW: the options interfaces and the returned `content` in the `execute` bodies of `edit-core.ts` and `write-core.ts`; the `createCore*ToolDefinition` option lists in `edit.ts` and `write.ts`.
+
+## 2026-11-18 - The local shell attests its spawned shell to the calling session (#6978)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/shell-operations.ts`: `BashOperations.exec` options take an optional `sessionId`, and `ShellExecHost` an optional `attestSessionSpawn(sessionId, pid)`. When both are present, the spawned shell's pid is attested on spawn and released on exit, alongside the host's own `onSpawn`/`onExit`.
+- `packages/coding-agent/src/core/tools/bash-core.ts` passes the session id whenever it exposes the session environment.
+- `packages/coding-agent/src/core/tools/bash.ts` (`createLocalShellOperations`) supplies `attestSessionSpawn` from `core/session-spawn-attestation.ts`; the worker-safe core imports nothing new.
+
+### Why
+
+- senpi#6972: a process a tool call started must be provable as that session's, not as whichever session its environment names.
+
+### Why an extension could not handle it
+
+- The pid exists only inside the core shell path's spawn callback.
+
+### Expected merge conflict zones
+
+- LOW: the `exec` option list in `shell-operations.ts` and the `createLocalShellOperations` host object in `bash.ts`.
+
+## 2026-11-15 - The tool cores show the fs code a wrapped machine error keeps (senpi#6745)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/fs-error-code.ts`: the fs code on the error itself or on its `cause` wins; the operation layer's `not_found`/`permission_denied`/`aborted` map back to ENOENT/EACCES/ABORT_ERR only when no fs code is carried.
+- `packages/coding-agent/src/tools-core.ts`: exports the `CoreCodingTools` type.
+
+### Why
+
+- Review LOWs on #6740 (senpi#6744): a machine that wraps EISDIR as `io_error` made the core edit tool show `io_error` where the local tool shows EISDIR; consumers of the tools-core entry could not name the tuple `createCoreCodingTools` returns.
+
+### Why an extension could not handle it
+
+- Both live in the built-in tools' worker-safe cores and their package entry.
+
+### Expected merge conflict zones
+
+- LOW: `fs-error-code.ts` (fork-only) and the coding-tools export in `tools-core.ts`.
+
+## 2026-11-15 - The bash, read, write and edit tools split into worker-safe cores and local extras (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/write.ts`, `packages/coding-agent/src/core/tools/edit.ts`: each factory now composes a worker-safe core (new `bash-core.ts`/`bash-schema.ts`/`shell-operations.ts`/`shell-output.ts`, `read-core.ts`/`read-text.ts`, `write-core.ts`, `edit-core.ts`) with its local extras: renderers, the temp-file spill, photon image processing, the local shell config and detached-group tracking, `resolveToCwd` and variant probing, realpath canonicalization and the machine-ops mutation queue. Exported names, option types and results are unchanged; `ReadOperations.readFile` and `EditOperations.readFile` now return `Uint8Array` (a `Buffer` still satisfies them).
+- `packages/coding-agent/src/core/tools/output-accumulator.ts`: the accumulator logic moves to `output-accumulator-core.ts` behind an `OutputSpill`; this module keeps `OutputAccumulator` with the same temp-file spill as its default (`createTempFileSpill`).
+- `packages/coding-agent/src/core/tools/truncate.ts`: `Buffer` byte work is replaced by `encoding.ts` (TextEncoder/TextDecoder) with identical results; `tail-window.ts` and `secret-output-redactor.ts` likewise.
+- `packages/coding-agent/src/core/tools/edit-diff.ts`: `computeEditsDiff` (the fs-reading preview) moves to `edit-preview.ts`; the module keeps only pure helpers.
+- `packages/coding-agent/src/core/tools/path-utils.ts`: `resolveReadPathAsync` delegates to the shared `resolveReadPathVariants` (`file-tool-host.ts`); the variant helpers move there unchanged.
+- New worker-side helpers: `fs-error-code.ts` maps the operation layer's error codes (`not_found`, `permission_denied`) back to fs codes, so the write baseline and edit error text match the local tools on a machine that reports its own codes; `posix-signals.ts` numbers signals per machine OS for the 128 + n exit code (Linux, Darwin and the BSDs, win32 as Node numbers it, and the common POSIX table for any other OS); the machine spill skips cleanup when nothing reached the machine.
+- `machine.ts` builds on the new `tool-machine.ts`; the tool-path `OpContext.limits` now derive from `ops.limits` (the local machine's are `DEFAULT_LIMITS`).
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The tool definitions and their default operations are built inside these core modules; an extension can replace a tool but cannot make the built-in one bundle for another host.
+
+### Expected merge conflict zones
+
+- MEDIUM: the import blocks and factory bodies of `bash.ts`, `read.ts`, `write.ts`, `edit.ts` and `output-accumulator.ts` (their execute bodies now live in the `*-core.ts` modules); the `Buffer` lines in `truncate.ts`; the tail of `edit-diff.ts`; the variant probe in `path-utils.ts`.
+
+## 2026-11-15 - bash reads the session's device machine when a command runs (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `deviceMachine` may be a resolver, read when the command runs, so a machine an extension registers after the tools are built is used. With `OMO_TOOLS_VIA_DAEMON=bash` and no machine, the existing `DeviceUnavailableError`.
+
+### Why
+
+- The device machine now comes from `registerDeviceMachine`, which an extension may call after the bash tool exists.
+
+### Why an extension could not handle it
+
+- The bash tool resolves its executor inside the built-in tool.
+
+### Expected merge conflict zones
+
+- LOW: the operations choice in `createShellToolDefinition`.
+
+## 2026-11-15 - bash gets an executor seam for the session's device, off by default (senpi#6713)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `BashToolOptions.deviceMachine` and the `OMO_TOOLS_VIA_DAEMON` flag (default off). With `bash` named, the tool runs on the injected device machine; with no device the bash tool fails with `DeviceUnavailableError` and never runs locally. Only the bash tool is covered: powershell keeps its own operations, and user `!` commands still run locally (slice 1b, senpi#6717). Slice 1a only: nothing supplies a device machine yet, so no call goes through the device daemon; the relay transport is slice 1b.
+
+### Why
+
+- Q's order that every tool call on a remote device go through that device's hands daemon. A probe showed remote sessions run their tools in-process on the device, so the tool executor needs a seam a relay transport can plug into.
+
+### Why an extension could not handle it
+
+- The executor is chosen inside the built-in tool's construction; an extension cannot swap the operation layer the built-in bash tool uses without this option.
+
+### Expected merge conflict zones
+
+- LOW: `BashToolOptions` and the operations choice in `createBashToolDefinition`.
+
 ## 2026-11-11 - The grep description no longer says "inside eval" to agents that get grep as a direct tool (senpi#6426)
 
 ### What changed

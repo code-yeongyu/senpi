@@ -26,6 +26,9 @@ const daemonDir = (): string => {
 	const root = mkdtempSync(join(tmpdir(), "senpi-crash-record-"));
 	directories.push(root);
 	const paths = createHostDaemonPaths({ socket: join(root, "rpc.sock"), agentDir: root });
+	// The launch creates the endpoint dir before any writer runs (senpi#5090: the record writer
+	// annotates existing storage, it never creates it).
+	mkdirSync(paths.dir, { recursive: true });
 	endpoints.set(paths.dir, paths);
 	return paths.dir;
 };

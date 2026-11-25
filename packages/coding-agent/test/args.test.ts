@@ -2,6 +2,18 @@ import { describe, expect, test, vi } from "vitest";
 import { normalizeSessionName, parseArgs, printHelp } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
+	test("registered boolean extension flags preserve positional messages in order", () => {
+		const parsed = parseArgs(
+			["first", "--quiet-addon", "second", "--format-addon", "short", "--quiet-addon", "third"],
+			{
+				booleanExtensionFlags: new Set(["quiet-addon"]),
+			},
+		);
+		expect(parsed.messages).toEqual(["first", "second", "third"]);
+		expect(parsed.unknownFlags.get("quiet-addon")).toBe(true);
+		expect(parsed.unknownFlags.get("format-addon")).toBe("short");
+	});
+
 	describe("removed flags", () => {
 		test("--neo is an unknown extension flag and never appears in help", () => {
 			const parsed = parseArgs(["--neo"]);

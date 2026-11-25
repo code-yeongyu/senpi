@@ -23,6 +23,8 @@ export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
 /** Host protocol support; a session without codemode returns `eval_cells_unavailable`. */
 export const EVAL_CELLS_CAPABILITY = "eval_cells";
 export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
+/** `unload_session { graceful, waitMs }` on a host and on a terminal's control endpoint (oh-my-openagent#14313). */
+export const UNLOAD_GRACEFUL_CAPABILITY = "unload_graceful";
 /** Host capability: the `continue_from_leaf` command starts a turn with no new prompt (#1930). */
 export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 /** HOST capability: the shared router guards foreign holders at every writing RPC admission. */
@@ -170,6 +172,14 @@ export const PROMPT_SURFACE_CAPABILITY = "prompt_surface";
 export const BROWSER_ENGINE_CAPABILITY = "browser_engine";
 
 /**
+ * HOST capability: every session on this host registers its host tools (show_html_page) through
+ * `attachHostTools`, so a host bridge can route their calls to an app that serves them, and the
+ * public SDK exports the writer such an app calls back (`writeHtmlPage`). A client offers a host
+ * tool attachment only to a host that names this (senpi#5045).
+ */
+export const HOST_TOOLS_CAPABILITY = "host_tools";
+
+/**
  * HOST capability: this host honors `open_session.env` (senpi#4381), the per-spawn caller env channel.
  * The entries are that session's own: its tool subprocesses see them, they are never merged into the host
  * process environment or carried to a successor generation through it, and only a task child opened with
@@ -203,8 +213,9 @@ export const PROMPT_SURFACE_CHAT_CAPABILITY = "prompt_surface_chat";
  * Env var carrying client capabilities to a single-connection stdio RPC host
  * (comma-separated). A launcher may set it from a client handshake; a plain
  * stdio client leaves it unset and sees byte-identical default behavior.
+ * Owned by the host hand-off list, which keeps it out of agent children (senpi#7034).
  */
-export const RPC_CLIENT_CAPABILITIES_ENV = "SENPI_RPC_CLIENT_CAPABILITIES";
+export { RPC_CLIENT_CAPABILITIES_ENV } from "./host-identity-env.ts";
 
 /** Parse the comma-separated capabilities env value into a trimmed list. */
 export function parseClientCapabilities(value: string | undefined): string[] {

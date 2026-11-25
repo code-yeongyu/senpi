@@ -21,7 +21,7 @@ export function relayExecRefusal(record: unknown): DelegationResponse {
 
 export async function answerDelegation(
 	writer: SessionEventWriter,
-	verdict: Exclude<DelegationVerdict, { readonly kind: "pass" }>,
+	verdict: Exclude<DelegationVerdict, { readonly kind: "pass" | "machine_op" }>,
 	record: unknown,
 ): Promise<void> {
 	switch (verdict.kind) {

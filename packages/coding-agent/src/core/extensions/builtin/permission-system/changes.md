@@ -1,5 +1,59 @@
 # Permission System Builtin Extension
 
+## 2026-11-21 - Case recovery lists a directory only when the spelling can differ (senpi#7150)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/external-pattern.ts`: `canonicalPathCase` `lstat`s each component before anything else. A missing component ends the walk without listing its parent, and an existing one is listed only when its case-swapped spelling is the same entry. Results are unchanged.
+
+### Why
+
+- The walk listed every component's parent first, synchronously on the engine's main thread. A path below a mount whose directory open never returns, such as the macOS `/home` autofs trigger, froze the whole engine. That regressed the no-`open(2)` invariant from senpi#1416.
+
+### Why an extension could not handle it
+
+- The walk runs inside the builtin permission decision.
+
+### Expected merge conflict zones
+
+- LOW: the head of `canonicalPathCase`.
+
+## 2026-11-14 - The permission check reads ctx.signal unguarded again (senpi#6679)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `authorizeToolCall` reads `ctx.signal` directly; the `sessionManager` guard from #6676 is gone.
+
+### Why
+
+- A context without a session now serves `signal` (as `undefined`, or a signal its host bound), so the read no longer throws there, and the guard would have ignored a host-bound signal (#6676 review LOW).
+
+### Why an extension could not handle it
+
+- The read is inside the permission system's own `tool_call` handler.
+
+### Expected merge conflict zones
+
+- LOW: the head of `authorizeToolCall`.
+
+## 2026-11-14 - An unanswered permission prompt ends when its turn is aborted (senpi#6670)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `authorizeToolCall` falls back to `ctx.signal`, the turn's abort signal, when no dispatch signal is passed. The `tool_call` hook path now hands the permission prompt that signal, so `ctx.ui.select` receives it.
+
+### Why
+
+- The runner calls a `tool_call` handler with `(event, ctx)` only, so the prompt got no signal. A prompt nobody answers could then never end. Examples are a child's dialog forwarded to a host that does not render it, and a viewer on another device. The turn waited at its first gated call, and an abort could not release it (senpi#6670, oh-my-openagent#13441).
+
+### Why an extension could not handle it
+
+- The prompt is raised inside the permission system's own `tool_call` handler; no other extension can attach a signal to it.
+
+### Expected merge conflict zones
+
+- LOW: the head of `authorizeToolCall` in `permission-system/index.ts`.
+
 ## 2026-11-10 - A tool-owned permission request keeps autoApproveAsk (senpi#6305)
 
 ### What changed

@@ -53,7 +53,7 @@ export function resolveFileMutationRouting(toolNames: readonly string[]): FileMu
 	return { mode: "none", tools: [] };
 }
 
-function formatToolList(tools: readonly string[]): string {
+export function formatToolList(tools: readonly string[]): string {
 	const quoted = tools.map((name) => `\`${name}\``);
 	if (quoted.length <= 1) {
 		return quoted[0] ?? "";

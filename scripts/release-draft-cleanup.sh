@@ -15,6 +15,8 @@
 #   PUBLISH_RUN_ID      id of the dispatched publish-npm.yml run, when the publish-npm job found it
 #   PUBLISH_JOB_RESULT  result of the publish-npm job; "skipped" means nothing was dispatched
 #   STAGE_JOB_RESULT    result of the stage-github-release job; anything but "success" means the draft may lack assets
+#   PUBLISH_RELEASE_RESULT  "success" or "failure" once the publish run's release job (its only publisher) finished;
+#                       set by scripts/release-finalize.mjs, whose own job keeps that run in progress (senpi#6851)
 #   NPM_PACKAGE         package that marks the npm side as published (default @code-yeongyu/senpi)
 #   GH_BIN              gh executable (default gh)
 #   NPM_BIN             npm executable (default npm)
@@ -25,6 +27,7 @@ set -euo pipefail
 PUBLISH_RUN_ID="${PUBLISH_RUN_ID:-}"
 PUBLISH_JOB_RESULT="${PUBLISH_JOB_RESULT:-}"
 STAGE_JOB_RESULT="${STAGE_JOB_RESULT:-}"
+PUBLISH_RELEASE_RESULT="${PUBLISH_RELEASE_RESULT:-}"
 NPM_PACKAGE="${NPM_PACKAGE:-@code-yeongyu/senpi}"
 GH_BIN="${GH_BIN:-gh}"
 NPM_BIN="${NPM_BIN:-npm}"
@@ -94,6 +97,10 @@ keep_for_publish_run() {
 
 if [[ "${PUBLISH_JOB_RESULT}" == "skipped" ]]; then
 	echo "No publish-npm.yml run was dispatched."
+elif [[ -n "${PUBLISH_RUN_ID}" && "${PUBLISH_RELEASE_RESULT}" == "success" ]]; then
+	keep_for_publish_run "the release job of publish-npm.yml run ${PUBLISH_RUN_ID} succeeded (the registry may lag)" "gh run view ${PUBLISH_RUN_ID}"
+elif [[ -n "${PUBLISH_RUN_ID}" && -n "${PUBLISH_RELEASE_RESULT}" ]]; then
+	echo "The release job of publish-npm.yml run ${PUBLISH_RUN_ID} finished without publishing; it can no longer publish."
 elif [[ -n "${PUBLISH_RUN_ID}" ]]; then
 	run_cmd="gh run view ${PUBLISH_RUN_ID}"
 	if ! state="$("${GH_BIN}" run view "${PUBLISH_RUN_ID}" --json status,conclusion --jq '.status + " " + (.conclusion // "")' 2>/dev/null)"; then
