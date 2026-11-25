@@ -10,7 +10,7 @@ import { runtimeExecArgv } from "../utils/runtime-exec-argv.ts";
 import type { LaunchKeyHandle } from "./launch-options.ts";
 
 /** The descriptor the launched engine reads its key from: inside the range it adopts (`ADOPTABLE_MAX`). */
-export const LAUNCH_KEY_FD = 5;
+const LAUNCH_KEY_FD = 5;
 const PRESENTER_FD = 4;
 
 /** Every external dependency of a launch, replaced by tests. */
@@ -43,7 +43,7 @@ export interface EngineExit {
 }
 
 /** Exit 78 names a refused key only on a launch that handed a key over; any other launch reads it as a plain code. */
-export function engineExit(code: number | null, keyed: boolean): EngineExit {
+function engineExit(code: number | null, keyed: boolean): EngineExit {
 	return keyed && code === LAUNCH_KEY_FAILED_EXIT_CODE
 		? { exit_code: code, failure: "launch_key_failed" }
 		: { exit_code: code };

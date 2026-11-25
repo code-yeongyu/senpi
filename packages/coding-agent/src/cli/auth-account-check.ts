@@ -43,7 +43,7 @@ function isCode(reason: string): reason is AuthAccountCheckCode {
 	return AUTH_ACCOUNT_CHECK_CODES.some((code) => code === reason && code !== "unrecognized");
 }
 
-export function splitAccountCheck(check: CredentialAccountCheck): AuthAccountCheck {
+function splitAccountCheck(check: CredentialAccountCheck): AuthAccountCheck {
 	const code = check.reason === undefined ? undefined : isCode(check.reason) ? check.reason : "unrecognized";
 	const providerReason = code === "unrecognized" ? check.reason : undefined;
 	const providerText = {
