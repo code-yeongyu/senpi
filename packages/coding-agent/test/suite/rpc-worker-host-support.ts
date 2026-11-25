@@ -155,6 +155,10 @@ export async function startWorkerHost(
 			await exited;
 		}
 		stdio.dispose();
+		// `exit` does not wait for the pipes: a grandchild may still hold them, so close this end before the scratch goes.
+		child.stdin.destroy();
+		child.stdout.destroy();
+		child.stderr.destroy();
 		if (options.preload) process.stderr.write(`PRESSURE_REMOVE ${scratch}\n`);
 		await rm(scratch, { recursive: true, force: true });
 		if (options.preload) process.stderr.write(`PRESSURE_REMOVED ${scratch}\n`);
