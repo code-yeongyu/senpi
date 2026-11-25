@@ -16,7 +16,7 @@ import type {
 } from "./launch-options.ts";
 import { type LaunchCode, prepareLaunch } from "./launch-prepare.ts";
 import { type LaunchPrintRun, printRun } from "./launch-print-stream.ts";
-import { type LaunchPorts, type StartedEngine, startEngine } from "./launch-process.ts";
+import { type EngineExit, type LaunchPorts, type StartedEngine, startEngine } from "./launch-process.ts";
 import { type EngineResult, engineError, engineOk } from "./result.ts";
 
 export type { LaunchCode } from "./launch-prepare.ts";
@@ -30,8 +30,8 @@ export interface LaunchExit {
 /** A launched engine that keeps running: its pid, its exit, and a stop that ends it. */
 export interface LaunchedEngine {
 	readonly pid: number | undefined;
-	readonly exited: Promise<{ readonly exit_code: number | null }>;
-	stop(): Promise<{ readonly exit_code: number | null }>;
+	readonly exited: Promise<EngineExit>;
+	stop(): Promise<EngineExit>;
 }
 
 export type LaunchRpcAnswer = LaunchedEngine &
@@ -81,7 +81,10 @@ export async function launchInteractive(
 ): Promise<EngineResult<LaunchExit, LaunchCode>> {
 	const engine = await started(ports, "interactive", options, () => "inherit");
 	if (engine.kind === "error") return engine;
-	const { exit_code } = await engine.value.exited;
+	const { exit_code, failure } = await engine.value.exited;
+	if (failure === "launch_key_failed") {
+		return engineError("launch_key_failed", "the engine refused its launch key and did not start");
+	}
 	const session = namedSession(options);
 	return engineOk({ exit_code, ...(session === undefined ? {} : { session }) });
 }

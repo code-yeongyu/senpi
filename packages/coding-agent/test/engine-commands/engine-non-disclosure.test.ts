@@ -7,8 +7,9 @@ import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from "node:chi
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { LAUNCH_KEY_FAILED_EXIT_CODE } from "../../src/cli/launch-key.ts";
 import { getAgentDir } from "../../src/config.ts";
 import { engine } from "../../src/engine/index.ts";
 import { launchHand, launchHeadless, launchInteractive, launchPrint, launchRpc } from "../../src/engine/launch.ts";
@@ -168,6 +169,37 @@ describe("no canary reaches a prohibited output (security design 6, senpi#7451)"
 	it("no child process started by any outcome carries a canary in its argv or environment", () => {
 		expect(childRecords.length).toBeGreaterThan(0);
 		expect(leaked(serialized(childRecords))).toEqual([]);
+	});
+
+	it("the engine's launch-key failure line carries no canary, and the launch answers the failure", async () => {
+		const child = spawn("bun", [CLI, "--list-tips"], {
+			cwd: root,
+			stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe"],
+			env: {
+				PATH: process.env.PATH ?? "",
+				HOME: root,
+				SENPI_CODING_AGENT_DIR: getAgentDir(),
+				PI_OFFLINE: "1",
+				NO_COLOR: "1",
+				SENPI_PRIVATE_FDS: JSON.stringify({ "api-key": 5 }),
+			},
+		});
+		const sink: unknown = Reflect.get(child.stdio, 5);
+		if (!(sink instanceof Writable)) throw new Error("no key pipe on descriptor 5");
+		sink.on("error", () => {});
+		sink.end(Buffer.from(CANARIES.launch_key.repeat(4096)));
+		let output = "";
+		for (const stream of [child.stdout, child.stderr])
+			stream?.on("data", (chunk: Buffer) => (output += String(chunk)));
+		const code = await new Promise<number | null>((done) => child.once("close", done));
+		expect(code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+		expect(output).toContain("launch_key_too_large");
+		expect(leaked(output)).toEqual([]);
+		const refused = await launchInteractive(ports({ FAKE_ENGINE_EXIT: String(LAUNCH_KEY_FAILED_EXIT_CODE) }), {
+			api_key: launchKey(),
+		});
+		expect(refused).toMatchObject({ kind: "error", error: { code: "launch_key_failed" } });
+		expect(leaked(serialized(refused))).toEqual([]);
 	});
 
 	it("the CLI adapter's output of `auth check --json` carries no canary", () => {

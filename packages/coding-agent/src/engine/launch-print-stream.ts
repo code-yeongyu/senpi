@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
+import type { EngineExit } from "./launch-process.ts";
 
 /**
  * One event of a print run. `event`: a JSON record the engine printed (json mode). `output`: printed text (text
@@ -8,7 +9,12 @@ import { createInterface } from "node:readline";
 export type LaunchPrintEvent =
 	| { readonly type: "event"; readonly event: unknown }
 	| { readonly type: "output"; readonly text: string }
-	| { readonly type: "exit"; readonly exit_code: number | null; readonly session?: string }
+	| {
+			readonly type: "exit";
+			readonly exit_code: number | null;
+			readonly failure?: "launch_key_failed";
+			readonly session?: string;
+	  }
 	| { readonly type: "cancelled" };
 
 export interface LaunchPrintRun {
@@ -39,7 +45,7 @@ function parseRecord(line: string): unknown {
  */
 export function printRun(
 	child: ChildProcess,
-	exited: Promise<{ readonly exit_code: number | null }>,
+	exited: Promise<EngineExit>,
 	options: { readonly json: boolean; readonly named?: string; readonly ephemeral: boolean },
 ): LaunchPrintRun {
 	const queue: LaunchPrintEvent[] = [];
@@ -69,11 +75,11 @@ export function printRun(
 				: (async () => {
 						for await (const chunk of stdout) push({ type: "output", text: String(chunk) });
 					})();
-	void Promise.all([lines.catch(() => undefined), exited]).then(([, { exit_code }]) => {
+	void Promise.all([lines.catch(() => undefined), exited]).then(([, exit]) => {
 		push(
 			cancelled
 				? { type: "cancelled" }
-				: { type: "exit", exit_code, ...(session === undefined || options.ephemeral ? {} : { session }) },
+				: { type: "exit", ...exit, ...(session === undefined || options.ephemeral ? {} : { session }) },
 		);
 		ended = true;
 	});

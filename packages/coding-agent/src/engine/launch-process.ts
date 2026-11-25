@@ -1,7 +1,7 @@
 import { type ChildProcess, type SpawnOptions, spawn, type StdioOptions } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { LAUNCH_KEY_CHANNEL } from "../cli/launch-key.ts";
+import { LAUNCH_KEY_CHANNEL, LAUNCH_KEY_FAILED_EXIT_CODE } from "../cli/launch-key.ts";
 import { isBunBinary } from "../config.ts";
 import { resolveCliMainPath } from "../modes/rpc/host-cli-entry.ts";
 import { PRIVATE_FDS_FINAL_ENV } from "../private-fds.ts";
@@ -34,9 +34,21 @@ export function defaultLaunchPorts(agentDir: () => string): LaunchPorts {
 	};
 }
 
+/** How a launched engine ended. `failure` names an exit the engine reports by its code: it refused its launch key. */
+export interface EngineExit {
+	readonly exit_code: number | null;
+	readonly failure?: "launch_key_failed";
+}
+
+export function engineExit(code: number | null): EngineExit {
+	return code === LAUNCH_KEY_FAILED_EXIT_CODE
+		? { exit_code: code, failure: "launch_key_failed" }
+		: { exit_code: code };
+}
+
 export interface StartedEngine {
 	readonly child: ChildProcess;
-	readonly exited: Promise<{ readonly exit_code: number | null }>;
+	readonly exited: Promise<EngineExit>;
 }
 
 function slots(base: StdioOptions, extra: Readonly<Record<number, "pipe" | number>>): StdioOptions {
@@ -97,8 +109,8 @@ export function startEngine(
 			resolve(error instanceof Error ? error : new Error(String(error)));
 			return;
 		}
-		const exited = new Promise<{ readonly exit_code: number | null }>((done) => {
-			child.once("close", (code) => done({ exit_code: code }));
+		const exited = new Promise<EngineExit>((done) => {
+			child.once("close", (code) => done(engineExit(code)));
 		});
 		child.once("error", (error) => resolve(error));
 		child.once("spawn", () => {

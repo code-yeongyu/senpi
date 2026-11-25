@@ -1,6 +1,10 @@
 import { Duplex } from "node:stream";
-import { describe, expect, it } from "vitest";
-import { LAUNCH_KEY_CHANNEL, readLaunchKey } from "../../src/cli/launch-key.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { LAUNCH_KEY_CHANNEL, LAUNCH_KEY_DEADLINE_MS, LaunchKeyError, readLaunchKey } from "../../src/cli/launch-key.ts";
+
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 /** A channel that yields one key and holds its close until the test releases it, like a descriptor closed by a thread. */
 function heldChannel(key: string) {
@@ -68,6 +72,27 @@ describe("readLaunchKey answers only after its descriptor is closed (security de
 		};
 		expect(await readLaunchKey(() => channel)).toBe("sk-abort-on-destroy-7451");
 		expect(channel.closed).toBe(true);
+	});
+
+	it("fails closed with launch_key_timeout when the channel never closes, at the bound and not before", async () => {
+		vi.useFakeTimers();
+		const { channel } = heldChannel("sk-never-closes-7451");
+		let outcome: unknown = "pending";
+		const reading = readLaunchKey(() => channel).then(
+			(key) => {
+				outcome = { key };
+			},
+			(error: unknown) => {
+				outcome = error;
+			},
+		);
+		await vi.advanceTimersByTimeAsync(LAUNCH_KEY_DEADLINE_MS - 1);
+		expect(outcome).toBe("pending");
+		await vi.advanceTimersByTimeAsync(1);
+		await reading;
+		expect(outcome).toBeInstanceOf(LaunchKeyError);
+		expect(outcome).toMatchObject({ code: "launch_key_timeout" });
+		expect(String((outcome as Error).message)).not.toContain("sk-never-closes-7451");
 	});
 
 	it("answers undefined and opens nothing when no launch delivered a key", async () => {

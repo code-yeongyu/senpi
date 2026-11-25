@@ -3,9 +3,24 @@ import { takeInheritedPrivateChannel } from "../private-fds.ts";
 
 /** The private descriptor a launch function delivers a provider key on (security design 5.5, launch row). */
 export const LAUNCH_KEY_CHANNEL = "api-key";
+/** The whole key step, read and close, must end within this; otherwise the engine fails closed before it starts. */
+export const LAUNCH_KEY_DEADLINE_MS = 10_000;
+/** The exit code of an engine that refused its launch key; a launch reads it as `launch_key_failed`. */
+export const LAUNCH_KEY_FAILED_EXIT_CODE = 78;
 const MAX_KEY_BYTES = 64 * 1024;
 
-export class LaunchKeyError extends Error {}
+/** The closed set an engine names a refused launch key by, in its `Error: <code>: ...` line. */
+export const LAUNCH_KEY_FAILURES = ["launch_key_unreadable", "launch_key_too_large", "launch_key_timeout"] as const;
+export type LaunchKeyFailure = (typeof LAUNCH_KEY_FAILURES)[number];
+
+export class LaunchKeyError extends Error {
+	readonly code: LaunchKeyFailure;
+
+	constructor(code: LaunchKeyFailure, message: string) {
+		super(message);
+		this.code = code;
+	}
+}
 
 /**
  * Destroys the channel and waits for its `close`, which follows the descriptor's own close. Under Bun the destroy
@@ -20,28 +35,21 @@ function closeChannel(channel: Duplex): Promise<void> {
 	});
 }
 
-/**
- * Reads the launch key once and closes its descriptor before answering: `destroy()` only schedules the close, so
- * it waits for the channel's `close` event, and nothing this engine starts after the call can inherit it. Answers
- * undefined when no launch delivered one. A failure names the channel, never the bytes read.
- */
-export async function readLaunchKey(
-	takeChannel: (name: string) => Duplex | undefined = takeInheritedPrivateChannel,
-): Promise<string | undefined> {
-	const channel = takeChannel(LAUNCH_KEY_CHANNEL);
-	if (channel === undefined) return undefined;
+async function readAndClose(channel: Duplex): Promise<string | undefined> {
 	const chunks: Buffer[] = [];
 	let size = 0;
 	try {
 		for await (const chunk of channel) {
 			const bytes: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
 			size += bytes.length;
-			if (size > MAX_KEY_BYTES) throw new LaunchKeyError("the launch key is larger than a provider key can be");
+			if (size > MAX_KEY_BYTES) {
+				throw new LaunchKeyError("launch_key_too_large", "the launch key is larger than a provider key can be");
+			}
 			chunks.push(bytes);
 		}
 	} catch (error: unknown) {
 		if (error instanceof LaunchKeyError) throw error;
-		throw new LaunchKeyError("the launch key could not be read");
+		throw new LaunchKeyError("launch_key_unreadable", "the launch key could not be read");
 	} finally {
 		await closeChannel(channel);
 	}
@@ -49,4 +57,35 @@ export async function readLaunchKey(
 		.toString("utf8")
 		.replace(/\r?\n$/u, "");
 	return key.length > 0 ? key : undefined;
+}
+
+/**
+ * Reads the launch key once and closes its descriptor before answering: `destroy()` only schedules the close, so
+ * it waits for the channel's `close` event, and nothing this engine starts after the call can inherit it. The read
+ * and the close together are bounded by `LAUNCH_KEY_DEADLINE_MS`: past it the step fails closed with
+ * `launch_key_timeout` and the key is never used. Answers undefined when no launch delivered one. A failure names
+ * the channel, never the bytes read.
+ */
+export async function readLaunchKey(
+	takeChannel: (name: string) => Duplex | undefined = takeInheritedPrivateChannel,
+): Promise<string | undefined> {
+	const channel = takeChannel(LAUNCH_KEY_CHANNEL);
+	if (channel === undefined) return undefined;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => {
+			channel.destroy();
+			reject(
+				new LaunchKeyError(
+					"launch_key_timeout",
+					`the launch key was not read and closed within ${LAUNCH_KEY_DEADLINE_MS / 1000} s`,
+				),
+			);
+		}, LAUNCH_KEY_DEADLINE_MS);
+	});
+	try {
+		return await Promise.race([readAndClose(channel), deadline]);
+	} finally {
+		clearTimeout(timer);
+	}
 }

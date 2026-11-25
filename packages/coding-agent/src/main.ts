@@ -25,7 +25,7 @@ import {
 } from "./cli/auth-command.ts";
 import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
-import { LaunchKeyError, readLaunchKey } from "./cli/launch-key.ts";
+import { LAUNCH_KEY_FAILED_EXIT_CODE, LaunchKeyError, readLaunchKey } from "./cli/launch-key.ts";
 import { createModelListingServices, resolveCliPaths } from "./cli/model-listing.ts";
 import { sessionFlagRefusal } from "./cli/session-flag-refusal.ts";
 import { chooseCrossProjectAction, confirmSameRepositoryRebind } from "./cli/cross-project-session.ts";
@@ -1239,12 +1239,16 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	const launchKey = await readLaunchKey().catch((error: unknown) =>
-		error instanceof LaunchKeyError ? error : new LaunchKeyError("the launch key could not be read"),
+		error instanceof LaunchKeyError
+			? error
+			: new LaunchKeyError("launch_key_unreadable", "the launch key could not be read"),
 	);
-	if (launchKey instanceof LaunchKeyError || (launchKey !== undefined && parsed.apiKey !== undefined)) {
-		const message =
-			launchKey instanceof LaunchKeyError ? launchKey.message : "--api-key and a launch key cannot be combined";
-		console.error(chalk.red(`Error: ${message}`));
+	if (launchKey instanceof LaunchKeyError) {
+		console.error(chalk.red(`Error: ${launchKey.code}: ${launchKey.message}`));
+		process.exit(LAUNCH_KEY_FAILED_EXIT_CODE);
+	}
+	if (launchKey !== undefined && parsed.apiKey !== undefined) {
+		console.error(chalk.red("Error: --api-key and a launch key cannot be combined"));
 		process.exit(1);
 	}
 	if (launchKey !== undefined) parsed.apiKey = launchKey;
