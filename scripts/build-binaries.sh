@@ -199,6 +199,25 @@ for platform in "${PLATFORMS[@]}"; do
     cp -R "../tui/$native_path/$native_platform" "$OUTPUT_DIR/$platform/$native_path/"
 done
 
+# Zip the current directory's contents into $1 (call it in a subshell). Info-ZIP zip where installed (the release runners);
+# otherwise the bsdtar every Windows ships as System32\tar.exe, which writes the same entries, so a
+# Windows runner needs no package feed (senpi#7473).
+zip_current_dir() {
+    if command -v zip >/dev/null 2>&1; then
+        zip -r "$1" .
+        return
+    fi
+    local bsdtar="${SYSTEMROOT:-}/System32/tar.exe"
+    if [[ -z "${SYSTEMROOT:-}" || ! -x "$bsdtar" ]]; then
+        echo "Error: neither zip nor the Windows bsdtar (System32/tar.exe) is available to create $1" >&2
+        exit 1
+    fi
+    # Name the entries instead of "." so they carry no "./" prefix, as Info-ZIP's do.
+    shopt -s dotglob nullglob
+    local -a entries=(*)
+    "$bsdtar" -a -c -f "$1" "${entries[@]}"
+}
+
 # Create archives
 cd "$OUTPUT_DIR"
 
@@ -206,7 +225,7 @@ for platform in "${PLATFORMS[@]}"; do
     if [[ "$platform" == windows-* ]]; then
         # Windows (zip)
         echo "Creating pi-$platform.zip..."
-        (cd "$platform" && zip -r ../pi-$platform.zip .)
+        (cd "$platform" && zip_current_dir ../pi-$platform.zip)
     else
         # Unix platforms (tar.gz) - use wrapper directory for mise compatibility
         echo "Creating pi-$platform.tar.gz..."
