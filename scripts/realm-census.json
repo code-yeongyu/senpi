@@ -7347,6 +7347,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/telemetry-consent.ts#TELEMETRY_CONSENTS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/subscription-limits/usage-poller.ts#running": {
 			"class": "per-copy-safe",
 			"reason": "install-once guard or handle for a hook this copy installs; holds no A1-A3 asset"
@@ -9179,6 +9183,14 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#RetryFallback": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#TelemetryConsent": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#TelemetryDeclaration": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
