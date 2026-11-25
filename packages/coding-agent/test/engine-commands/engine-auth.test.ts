@@ -33,11 +33,9 @@ function cli(...args: string[]): { status: number | null; stdout: string; stderr
 beforeAll(() => {
 	root = realpathSync(mkdtempSync(join(tmpdir(), "engine-auth-")));
 	mkdirSync(getAgentDir(), { recursive: true });
-	writeFileSync(
-		join(getAgentDir(), "auth.json"),
-		JSON.stringify({ openai: { type: "api_key", key: CANARY } }),
-		{ mode: 0o600 },
-	);
+	writeFileSync(join(getAgentDir(), "auth.json"), JSON.stringify({ openai: { type: "api_key", key: CANARY } }), {
+		mode: 0o600,
+	});
 });
 
 afterEach(() => vi.restoreAllMocks());

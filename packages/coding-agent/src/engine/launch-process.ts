@@ -52,7 +52,8 @@ function deliverKey(child: ChildProcess, key: LaunchKeyHandle): void {
 	const sink: unknown = Reflect.get(child.stdio, LAUNCH_KEY_FD);
 	if (!(sink instanceof Writable)) return;
 	const source = key instanceof Readable ? key : webChunks(key);
-	pipeline(source, sink).catch(() => sink.destroy());
+	const close = () => sink.destroy();
+	pipeline(source, sink).then(close, close);
 }
 
 async function* webChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
