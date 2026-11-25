@@ -64,7 +64,7 @@ describe("external message admission", () => {
 		const idle = nextEvent(target, "agent_idle");
 		expect(admission.admit({ delivery_id: "d-idle", text: "hello from A", deliverAs: "followUp" })).toEqual({
 			kind: "started",
-			turn_epoch: 0,
+			turn_epoch: 1,
 		});
 		expect(admission.list().pending).toEqual(["d-idle"]);
 		expect(admission.admit({ delivery_id: "d-idle", text: "hello from A", deliverAs: "followUp" }).kind).toBe(
