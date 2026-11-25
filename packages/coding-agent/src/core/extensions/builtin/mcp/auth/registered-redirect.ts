@@ -39,7 +39,8 @@ export function registrationForFlow(
 	);
 }
 
-function usesStagedRegistration(record: McpStoredAuth | undefined, flow: RegistrationFlow): boolean {
+/** The flow runs on a staged client: the signed-in client and its grant belong to another flow (senpi#6339). */
+export function usesStagedRegistration(record: McpStoredAuth | undefined, flow: RegistrationFlow): boolean {
 	const registration = registrationForFlow(record, flow);
 	return registration !== undefined && registration === record?.pendingClientInfo;
 }
@@ -61,20 +62,42 @@ export function withRegistration(
 	clientInfo: McpClientRegistration,
 	flow: RegistrationFlow,
 ): McpStoredAuth {
-	const known = [current?.clientInfo, current?.pendingClientInfo].some(
+	const known = [current?.clientInfo, current?.pendingClientInfo].find(
 		(registration) => registration?.client_id === clientInfo.client_id,
 	);
-	// The SDK registers with `clientMetadata.redirect_uris`, which is exactly the flow's redirect URL.
+	// The SDK registers with `clientMetadata.redirect_uris`, which is exactly the flow's redirect URL. A re-save of a
+	// known client keeps the URIs it was registered with unless the caller supplies them (senpi#6339).
+	const sent = clientInfo.redirectUrisSent ?? known?.redirectUrisSent;
 	const registration =
-		known || flow.redirectUrl === undefined
-			? clientInfo
-			: { ...clientInfo, redirectUrisSent: [String(flow.redirectUrl)] };
+		known !== undefined
+			? sent === undefined
+				? clientInfo
+				: { ...clientInfo, redirectUrisSent: sent }
+			: flow.redirectUrl === undefined
+				? clientInfo
+				: { ...clientInfo, redirectUrisSent: [String(flow.redirectUrl)] };
 	const replaced = current?.clientInfo?.client_id;
 	if (replaced === undefined || replaced === registration.client_id)
 		return { ...(current ?? {}), clientInfo: registration };
 	if (flow.requireRegisteredRedirect === true) return { ...current, pendingClientInfo: registration };
 	const next: McpStoredAuth = { ...current, clientInfo: registration };
 	delete next.refreshToken;
+	return next;
+}
+
+/**
+ * What a failed flow on a staged client may discard (senpi#6339): never the signed-in client or its grant, which that
+ * flow never presented. Its tokens are the signed-in client's, so "tokens" keeps them; "client" and "all" drop the
+ * staged client, and "all" its verifier too.
+ */
+export function withoutStagedFlowCredentials(
+	current: McpStoredAuth | undefined,
+	scope: "all" | "client" | "tokens",
+): McpStoredAuth | undefined {
+	if (current === undefined || scope === "tokens") return current;
+	const next: McpStoredAuth = { ...current };
+	delete next.pendingClientInfo;
+	if (scope === "all") next.codeVerifier = undefined;
 	return next;
 }
 
