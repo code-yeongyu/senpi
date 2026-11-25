@@ -35,10 +35,6 @@ describe.skipIf(process.platform === "win32")("issue #7452: the internal hop dir
 		async () => {
 			const hop = mkdtempSync(join("/tmp", "senpi-rpc-host-internal-7452"));
 			created.push(hop);
-			writeFileSync(
-				join(hop, ".owner"),
-				JSON.stringify({ pid: 2_147_483_000, processStartTime: "2000-01-01T00:00:00Z", createdAt: Date.now() - 120_000 }),
-			);
 			const socketPath = join(hop, "host.sock");
 			const server = createServer((socket) => socket.end());
 			servers.push(server);
@@ -47,6 +43,15 @@ describe.skipIf(process.platform === "win32")("issue #7452: the internal hop dir
 				server.listen(socketPath, () => resolve());
 			});
 			unlinkSync(socketPath);
+			// Written last: until then the directory is never an ownerless, listener-free hop another run's reaper could take.
+			writeFileSync(
+				join(hop, ".owner"),
+				JSON.stringify({
+					pid: 2_147_483_000,
+					processStartTime: "2000-01-01T00:00:00Z",
+					createdAt: Date.now() - 120_000,
+				}),
+			);
 
 			await reapOrphanedInternalHostDirs();
 
