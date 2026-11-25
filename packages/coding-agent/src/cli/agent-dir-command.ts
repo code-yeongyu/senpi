@@ -1,7 +1,5 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { APP_NAME, CONFIG_DIR_NAME, CONFIG_FLAT_LAYOUT, ENV_PREFIX, getAgentDir } from "../config.ts";
-import { brandEnvNames } from "../core/brand.ts";
+import { APP_NAME } from "../config.ts";
+import { agentDirectory } from "../engine/agent-directory.ts";
 import { exitAfterOutput } from "./print-then-exit.ts";
 
 /**
@@ -22,34 +20,13 @@ export async function dispatchAgentDirectoryCommand(args: readonly string[]): Pr
 			2,
 		);
 	}
-	try {
-		const dir = getAgentDir();
-		const selector = brandEnvNames("CODING_AGENT_DIR").find((name) => process.env[name] !== undefined);
-		const explicit = selector !== undefined && process.env[selector] ? selector : undefined;
-		const homeDefault = CONFIG_FLAT_LAYOUT
-			? join(homedir(), CONFIG_DIR_NAME)
-			: join(homedir(), CONFIG_DIR_NAME, "agent");
-		const rule = explicit !== undefined ? "environment" : dir === homeDefault ? "home-default" : "project-local";
+	const result = agentDirectory();
+	if (result.kind === "error") {
 		await exitAfterOutput(
-			`${JSON.stringify({
-				version: 1,
-				ok: true,
-				dir,
-				source: explicit ?? (rule === "project-local" ? "project-local" : "default"),
-				rule,
-				brandedPrefix: ENV_PREFIX,
-			})}\n`,
-			0,
-		);
-	} catch (error) {
-		await exitAfterOutput(
-			`${JSON.stringify({
-				version: 1,
-				ok: false,
-				code: "selection_failed",
-				message: error instanceof Error ? error.message : "Unable to resolve the agent directory.",
-			})}\n`,
+			`${JSON.stringify({ version: 1, ok: false, code: result.error.code, message: result.error.message })}\n`,
 			1,
 		);
+		return;
 	}
+	await exitAfterOutput(`${JSON.stringify({ version: 1, ok: true, ...result.value })}\n`, 0);
 }

@@ -11665,6 +11665,50 @@
 		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#PREDECESSOR_REQUEST_TIMEOUT_MS": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_POLL_SECONDS": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_TIMEOUT_SECONDS": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_CONCURRENCY": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#TRUST_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#LOCAL_FLAG": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#SETUP_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata derived from a literal at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#ENDPOINT_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#PRESENTER_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#HOST_JSON": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#HOST_SHARED": {
+			"class": "constant",
+			"reason": "command metadata lookup literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata.ts#ENGINE_COMMANDS": {
+			"class": "constant",
+			"reason": "exported command metadata literal; never written after load"
 		}
 	}
 }
