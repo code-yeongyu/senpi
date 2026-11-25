@@ -1,11 +1,10 @@
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { AuthStorage, ReadOnlyAuthStorage } from "../core/auth-storage.ts";
-import { summarizeCredentialAccounts } from "../core/credential-accounts.ts";
+import { type CredentialAccountSummary, summarizeCredentialAccounts } from "../core/credential-accounts.ts";
 import { resolveCliModel } from "../core/model-resolver.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { InMemoryCodingAgentModelsStore } from "../core/models-store.ts";
 import type { Args } from "./args.ts";
-import { type AuthAccount, splitAccount } from "./auth-account-check.ts";
 import { AuthCommandError, getAuthCredential, validateAuthCommandArgs } from "./auth-command.ts";
 
 export type AuthCheckStatus = "ready" | "not_ready" | "invalid";
@@ -57,8 +56,8 @@ export async function checkProviderAuth(
 
 export interface AuthCheckOutcome {
 	readonly result: AuthCheckResult;
-	/** Present only under `json`; each connection test split into its closed code and the provider's text. */
-	readonly accounts?: AuthAccount[];
+	/** Present only under `json`. */
+	readonly accounts?: CredentialAccountSummary[];
 	/** Present only when `credential` was asked and the provider is ready; never leaves the CLI's own print. */
 	readonly credential?: string;
 }
@@ -89,12 +88,11 @@ export async function runAuthCheck(
 	} catch {
 		result = { status: "invalid", provider: requested.provider ?? requested.model ?? "", reason: "invalid_state" };
 	}
-	let accounts: AuthAccount[] = [];
+	let accounts: CredentialAccountSummary[] = [];
 	if (options.json && result.status !== "invalid") {
 		try {
 			const credentials = options.refresh ? AuthStorage.create() : new ReadOnlyAuthStorage();
-			const summaries = await summarizeCredentialAccounts(result.provider, await credentials.read(result.provider));
-			accounts = summaries.map(splitAccount);
+			accounts = await summarizeCredentialAccounts(result.provider, await credentials.read(result.provider));
 		} catch {
 			// Account enrichment must never turn a readable auth state into a failure.
 		}

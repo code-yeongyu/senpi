@@ -12,7 +12,7 @@ import {
 	parseAuthCommand,
 	validateAuthCommandArgs,
 } from "../cli/auth-command.ts";
-import type { AuthAccount } from "../cli/auth-account-check.ts";
+import { type AuthAccount, splitAccount } from "../cli/auth-account-check.ts";
 import { commandArgv } from "./launch-argv.ts";
 import { AUTH_COMMANDS } from "./metadata-auth.ts";
 import { type EngineError, type EngineResult, engineError, engineOk } from "./result.ts";
@@ -36,9 +36,9 @@ export interface AuthBearerTokenInput extends AuthTargetInput {
 }
 
 /**
- * The check's status, and each account with its last connection test split: a closed `code` and a message built
- * from it, apart from `provider_text`, the only field that may carry text the provider returned (security owner
- * ruling, senpi#7451). The command prints both parts joined, as before.
+ * The check's status, and each account as `splitAccount` answers it: the connection test as a closed `code` and a
+ * message built from it, `email` and `orgName` bounded, and every other provider-returned text in `provider_text`
+ * only (security owner rulings, senpi#7451). The command prints the stored accounts as before.
  */
 export type AuthStatus = Readonly<AuthCheckResult> & { readonly accounts: readonly AuthAccount[] };
 
@@ -79,7 +79,7 @@ export async function checkAuth(input: AuthCheckInput): Promise<EngineResult<Aut
 			json: true,
 			credential: false,
 		});
-		return engineOk({ ...result, accounts });
+		return engineOk({ ...result, accounts: accounts.map(splitAccount) });
 	} catch (error: unknown) {
 		return engineError("invalid_input", error instanceof Error ? error.message : String(error));
 	}

@@ -23,6 +23,8 @@ export type {
 	AuthTargetInput,
 } from "./auth.ts";
 export type { AuthAccount, AuthAccountCheck, AuthAccountCheckCode } from "../cli/auth-account-check.ts";
+export type { SessionAuthAccount, SessionAuthStatus } from "./auth-session.ts";
+export { toSessionAuthStatus } from "./auth-session.ts";
 export { AUTH_ACCOUNT_CHECK_CODES } from "../cli/auth-account-check.ts";
 export type { PromptSizesInput } from "./default-runtime.ts";
 export type { HostAnswer, HostCode, HostEndpointSelector, HostPresenterInput } from "./host.ts";

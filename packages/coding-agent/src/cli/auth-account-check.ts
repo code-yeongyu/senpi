@@ -24,7 +24,7 @@ export type AuthAccountCheckCode = (typeof AUTH_ACCOUNT_CHECK_CODES)[number];
 /**
  * One account's last connection test as two parts: what the engine says from a closed code (`code`, `message`),
  * and what the provider returned (`provider_text`), which can echo a credential fragment and is the only field
- * that may carry it. A session is given the first part only.
+ * of the check that may carry it.
  */
 export interface AuthAccountCheck {
 	readonly model: string;
@@ -36,6 +36,7 @@ export interface AuthAccountCheck {
 	readonly provider_text?: { readonly reason?: string; readonly message?: string };
 }
 
+/** An account as the person and script answer carries it: the stored account with its connection test split. */
 export type AuthAccount = Omit<CredentialAccountSummary, "check"> & { readonly check?: AuthAccountCheck };
 
 function isCode(reason: string): reason is AuthAccountCheckCode {
@@ -60,26 +61,7 @@ export function splitAccountCheck(check: CredentialAccountCheck): AuthAccountChe
 	};
 }
 
-/** The stored check as the command prints it today, rebuilt from both parts in its own field order. */
-export function joinAccountCheck(check: AuthAccountCheck): CredentialAccountCheck {
-	const reason = check.code === "unrecognized" ? check.provider_text?.reason : check.code;
-	return {
-		model: check.model,
-		outcome: check.outcome,
-		...(reason === undefined ? {} : { reason }),
-		...(check.provider_text?.message === undefined ? {} : { message: check.provider_text.message }),
-		...(check.status === undefined ? {} : { status: check.status }),
-		at: check.at,
-	};
-}
-
-/** Overriding a key the spread already set keeps that key's place, so the printed field order does not move. */
 export function splitAccount(account: CredentialAccountSummary): AuthAccount {
 	const { check, ...rest } = account;
 	return check === undefined ? rest : { ...account, check: splitAccountCheck(check) };
-}
-
-export function joinAccount(account: AuthAccount): CredentialAccountSummary {
-	const { check, ...rest } = account;
-	return check === undefined ? rest : { ...account, check: joinAccountCheck(check) };
 }

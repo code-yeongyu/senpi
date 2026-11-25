@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { joinAccount, splitAccount } from "../../src/cli/auth-account-check.ts";
+import { splitAccount } from "../../src/cli/auth-account-check.ts";
 import { getAgentDir } from "../../src/config.ts";
 import type { CredentialAccountSummary } from "../../src/core/credential-accounts.ts";
 import { engine } from "../../src/engine/index.ts";
@@ -92,20 +92,19 @@ describe("engine.auth.check keeps provider text apart from its closed codes (sec
 		expect(JSON.stringify(record.accounts[0]?.check)).toBe(JSON.stringify(STORED_CHECK));
 	});
 
-	it("joins a split account back byte for byte, a known code included", () => {
+	it("keeps a known reason as its code, with no provider_text", () => {
 		const known: CredentialAccountSummary = {
 			name: "work",
 			source: "login",
 			blocked: false,
 			pinned: false,
-			email: "person@example.test",
-			orgName: "Example Org",
 			check: { model: "claude-model", outcome: "failed", reason: "rate_limit", status: 429, at: 2 },
-			signIn: "signed_in",
 		};
-		expect(splitAccount(known).check).toMatchObject({ code: "rate_limit" });
+		expect(splitAccount(known).check).toMatchObject({
+			code: "rate_limit",
+			message: "connection test failed: rate_limit",
+		});
 		expect(splitAccount(known).check).not.toHaveProperty("provider_text");
-		expect(splitAccount(known)).toMatchObject({ email: "person@example.test", orgName: "Example Org" });
-		expect(JSON.stringify(joinAccount(splitAccount(known)))).toBe(JSON.stringify(known));
+		expect(splitAccount(known)).not.toHaveProperty("provider_text");
 	});
 });

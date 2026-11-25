@@ -13,7 +13,6 @@ import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp, resolveSessionRuntime } from "./cli/args.ts";
-import { joinAccount } from "./cli/auth-account-check.ts";
 import { runAuthCheck } from "./cli/auth-check.ts";
 import {
 	type AuthCommand,
@@ -291,11 +290,7 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 			credential: command.credentials,
 		});
 		const output = command.json
-			? JSON.stringify({
-					...result,
-					accounts: accounts.map(joinAccount),
-					...(credential ? { credentials: credential } : {}),
-				})
+			? JSON.stringify({ ...result, accounts, ...(credential ? { credentials: credential } : {}) })
 			: (credential ?? result.status);
 		process.stdout.write(`${output}\n`);
 		process.exitCode = result.status === "ready" ? 0 : result.status === "not_ready" ? 1 : 2;
