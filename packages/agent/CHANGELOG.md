@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.25] - 2026-11-25
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- A request at thinking-off to a model that has no thinking-off is sent at the model's lowest supported level ([#5721](https://github.com/code-yeongyu/senpi/pull/5721))
 
 ### Removed
 
