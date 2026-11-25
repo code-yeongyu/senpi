@@ -98,6 +98,8 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 					);
 				}
 				if (client.destroyed || !client.writable) return detach();
+				// Refused, not attached: this connection can never reach the host, so it does not hold its idle exit (senpi#7425).
+				clients.refuse(client);
 				proxyWithAdmission(client, undefined, options.admission, auth, false, detail);
 				if (!auth) client.resume();
 			}

@@ -3062,6 +3062,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/auth-storage.ts#localAsyncAuthLocks": {
+			"class": "realm-registry",
+			"reason": "local-async-auth-locks/v1: the async auth-store lock holders of every copy are registered here, so a synchronous writer in any copy sees that its own realm holds the lock and fails fast instead of spinning on a lock only its blocked event loop can release (design 3.2, 3.3)"
+		},
 		"packages/coding-agent/src/core/auth-storage.ts#sharedAuthFileReadState": {
 			"class": "per-copy-safe",
 			"reason": "parsed-credential read cache; must not sit behind a documented key, and file reads re-validate (design 3.2)"
@@ -6914,6 +6918,10 @@
 		"packages/coding-agent/src/core/retry-fallback/log.ts#SENSITIVE_TEXT": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/retry-fallback/log.ts#retirements": {
+			"class": "realm-registry",
+			"reason": "fallback-log-retirements/v1: two copies starting on one agent dir share one first-start removal per log path, so the later one cannot delete lines the earlier one wrote (senpi#6351)"
 		},
 		"packages/coding-agent/src/core/retry-fallback/log.ts#unsettledLoggers": {
 			"class": "per-copy-safe",
