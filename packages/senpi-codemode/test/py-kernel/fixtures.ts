@@ -6,7 +6,9 @@ import {
 	type KernelToHostMessage,
 } from "../../src/bridge/protocol.ts";
 import { createInterpreterDetector } from "../../src/interpreters/detect.ts";
+import { expect } from "vitest";
 import { type KernelChild, PythonKernel, type PythonKernelStartOptions } from "../../src/kernels/py/kernel.ts";
+import { type StallWatch, watchLiveKernel } from "./stall-diagnostics.ts";
 
 export interface FakeChildOptions {
 	readonly autoReady?: boolean;
@@ -188,19 +190,29 @@ export async function liveKernel(
 	const detector = createInterpreterDetector();
 	const detected = await detector.detect("py");
 	if (!detected.ok) throw new Error("python unavailable");
-	return await PythonKernel.start({
+	const watch = watchLiveKernel(expect.getState().currentTestName ?? "live-kernel");
+	const kernel = await PythonKernel.start({
 		interpreterPath: detected.path,
 		sessionId: "live-session",
 		cwd: process.cwd(),
 		connection: { port: 1, token: "unused" },
+		...(watch === undefined ? {} : { spawnProcess: watch.spawnProcess, onStartupProgress: watch.onStartupProgress }),
 		...options,
 	});
+	if (watch !== undefined) stallWatches.set(kernel, watch);
+	return kernel;
 }
+
+const stallWatches = new WeakMap<PythonKernel, StallWatch>();
 
 // The cell's result event is what a test waits for; its budget only bounds a hang, inside the 30 s test
 // timeout. A 3 s budget failed live cells on a contended Windows runner (senpi#2718).
 const LIVE_CELL_HANG_BOUND_MS = 25_000;
 
 export async function runCell(kernel: PythonKernel, code: string): Promise<ResultMessage> {
-	return await kernel.run({ cellId: `cell-${crypto.randomUUID()}`, code, timeoutMs: LIVE_CELL_HANG_BOUND_MS });
+	const watch = stallWatches.get(kernel);
+	watch?.note(`cell start: ${code.split("\n")[0]?.slice(0, 60)}`);
+	const result = await kernel.run({ cellId: `cell-${crypto.randomUUID()}`, code, timeoutMs: LIVE_CELL_HANG_BOUND_MS });
+	watch?.note(`cell settled ok=${result.ok}`);
+	return result;
 }
