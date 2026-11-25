@@ -96,7 +96,8 @@ export function agyChildEnvironment(
 		if (parent.GEMINI_API_KEY !== undefined) environment.GEMINI_API_KEY = parent.GEMINI_API_KEY;
 	} else if (options.authMethod === "agent-platform") {
 		for (const key of ["GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"] as const) {
-			if (parent[key] !== undefined) environment[key] = parent[key]!;
+			const value = parent[key];
+			if (value !== undefined) environment[key] = value;
 		}
 	}
 

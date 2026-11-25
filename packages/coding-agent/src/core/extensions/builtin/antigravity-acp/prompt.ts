@@ -123,7 +123,8 @@ function renderCompactHistoryText(history: readonly Message[], reservedChars: nu
 	let used = 0;
 	let omitted = 0;
 	for (let index = renderedHistory.length - 1; index >= 0; index -= 1) {
-		const block = renderedHistory[index]!;
+		const block = renderedHistory[index];
+		if (block === undefined) continue;
 		const cost = block.length + (keptReversed.length > 0 ? 1 : 0);
 		if (used + cost > historyBudget) {
 			omitted = index + 1;

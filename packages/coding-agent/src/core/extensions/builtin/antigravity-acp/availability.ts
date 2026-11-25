@@ -257,14 +257,10 @@ export async function probeAgyAuthStatus(options: ProbeAgyAuthStatusOptions = {}
 	if (!hasEnvAuth(authMethod, parentEnv)) return false;
 
 	const now = (options.now ?? Date.now)();
-	const canUseDiskCache = options.cachePath !== undefined && options.spawnProbe === undefined;
-	const mtimeMs = canUseDiskCache ? statMtimeMs(executable) : undefined;
-	if (canUseDiskCache && options.force !== true && mtimeMs !== undefined) {
-		const cached = readAvailabilityCacheSync(
-			options.cachePath!,
-			{ executable, executableMtimeMs: mtimeMs, authMethod },
-			now,
-		);
+	const cachePath = options.spawnProbe === undefined ? options.cachePath : undefined;
+	const mtimeMs = cachePath !== undefined ? statMtimeMs(executable) : undefined;
+	if (cachePath !== undefined && options.force !== true && mtimeMs !== undefined) {
+		const cached = readAvailabilityCacheSync(cachePath, { executable, executableMtimeMs: mtimeMs, authMethod }, now);
 		if (cached?.ok === true && cached.fresh) return true;
 	}
 
@@ -273,14 +269,14 @@ export async function probeAgyAuthStatus(options: ProbeAgyAuthStatusOptions = {}
 		executable,
 		env: childEnv,
 		timeoutMs: options.timeoutMs,
-		force: options.force === true || canUseDiskCache,
+		force: options.force === true || cachePath !== undefined,
 		spawnProbe: options.spawnProbe,
 	});
 
 	if (!acpOk) return false;
 
-	if (canUseDiskCache && mtimeMs !== undefined) {
-		await writeAvailabilityCache(options.cachePath!, {
+	if (cachePath !== undefined && mtimeMs !== undefined) {
+		await writeAvailabilityCache(cachePath, {
 			schemaVersion: 1,
 			executable,
 			executableMtimeMs: mtimeMs,

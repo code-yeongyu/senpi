@@ -243,7 +243,10 @@ async function runStream(
 			session.lastUsedAt = Date.now();
 			session.turnActive = true;
 
-			const resolution = resolvePendingTools(session, extracted.messages.slice(pendingToolResultStart!));
+			if (pendingToolResultStart === undefined) {
+				throw new Error("Antigravity continuity selected parked resolution without a pending tool result.");
+			}
+			const resolution = resolvePendingTools(session, extracted.messages.slice(pendingToolResultStart));
 			if (resolution.mode === "parked") {
 				expectedPromptSeq = session.promptSeq;
 				stream.push({ type: "start", partial: output });
@@ -962,16 +965,21 @@ function abortError(signal: AbortSignal): Error {
 }
 
 function waitCoalesceWindow(ms: number, signal: AbortSignal | undefined): Promise<void> {
-	if (signal?.aborted) return Promise.reject(abortError(signal));
+	if (signal === undefined) {
+		return new Promise<void>((resolve) => {
+			setTimeout(resolve, ms);
+		});
+	}
+	if (signal.aborted) return Promise.reject(abortError(signal));
 	return new Promise<void>((resolve, reject) => {
 		const timer = setTimeout(() => {
-			signal?.removeEventListener("abort", onAbort);
+			signal.removeEventListener("abort", onAbort);
 			resolve();
 		}, ms);
 		const onAbort = () => {
 			clearTimeout(timer);
-			reject(abortError(signal!));
+			reject(abortError(signal));
 		};
-		signal?.addEventListener("abort", onAbort, { once: true });
+		signal.addEventListener("abort", onAbort, { once: true });
 	});
 }

@@ -20,7 +20,7 @@ import type {
 	Tool,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { decidePermissionOutcome } from "../../src/core/extensions/builtin/antigravity-acp/acp-client.ts";
 import { createAntigravityAuthConfig } from "../../src/core/extensions/builtin/antigravity-acp/auth.ts";
 import {
@@ -48,7 +48,11 @@ import {
 	renderMessagesAsText,
 	renderUserTurnBlocks,
 } from "../../src/core/extensions/builtin/antigravity-acp/prompt.ts";
-import { closeAllSessions, messagePrefixDigest } from "../../src/core/extensions/builtin/antigravity-acp/session.ts";
+import {
+	closeAllSessions,
+	getSession,
+	messagePrefixDigest,
+} from "../../src/core/extensions/builtin/antigravity-acp/session.ts";
 import {
 	loadAntigravityAcpSettingsFromDisk,
 	parseAntigravityAcpSettings,
@@ -1056,7 +1060,9 @@ describe("antigravity-acp ACP end-to-end stream", () => {
 		const call = turn1.final.content.find((b) => b.type === "toolCall");
 		if (call?.type !== "toolCall") throw new Error("missing toolCall");
 
-		await new Promise((r) => setTimeout(r, 220));
+		await vi.waitFor(() => {
+			expect(getSession("s-hold")?.queue.hasDetached()).toBe(true);
+		});
 
 		const toolResult: ToolResultMessage = {
 			role: "toolResult",

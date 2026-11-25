@@ -436,7 +436,8 @@ export class AcpClient {
 	#pushText(text: string): void {
 		const parts = text.split("\n");
 		for (let i = 0; i < parts.length; i += 1) {
-			const part = parts[i]!;
+			const part = parts[i];
+			if (part === undefined) continue;
 			if (this.#discarding) {
 				if (i < parts.length - 1) this.#discarding = false;
 				continue;

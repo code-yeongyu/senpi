@@ -58,11 +58,12 @@ export function parseAgyModels(stdout: string): AgyModelEntry[] {
 	const seen = new Set<string>();
 	for (const line of stdout.replace(ANSI_ESCAPE_SEQUENCE, "").split(/\r?\n/)) {
 		const match = MODEL_LINE.exec(line.trim());
-		if (!match) continue;
-		const id = match[1]!;
+		const id = match?.[1];
+		const label = match?.[2];
+		if (id === undefined || label === undefined) continue;
 		if (seen.has(id)) continue;
 		seen.add(id);
-		entries.push({ id, label: match[2]!.trim() });
+		entries.push({ id, label: label.trim() });
 	}
 	return entries;
 }
@@ -119,9 +120,9 @@ function familyInfo(entries: readonly AgyModelEntry[]): Map<string, { label: str
 	const families = new Map<string, { label: string; tiers: Set<AgyThinkingTier> }>();
 	for (const entry of entries) {
 		const match = TIER_SUFFIX.exec(entry.id);
-		if (!match) continue;
-		const baseId = match[1]!;
-		const tier = match[2] as AgyThinkingTier;
+		const baseId = match?.[1];
+		if (baseId === undefined) continue;
+		const tier = match?.[2] as AgyThinkingTier;
 		if (rawIds.has(baseId)) continue;
 		let family = families.get(baseId);
 		if (!family) {
@@ -241,9 +242,9 @@ export function resolveAgyModelTarget(
 	const exact = catalog.find((e) => e.id === modelId);
 	if (exact !== undefined) {
 		const suffix = TIER_SUFFIX.exec(exact.id);
-		if (suffix) {
-			const baseId = suffix[1]!;
-			const tier = suffix[2] as AgyThinkingTier;
+		const baseId = suffix?.[1];
+		if (baseId !== undefined) {
+			const tier = suffix?.[2] as AgyThinkingTier;
 			const families = familyInfo(catalog);
 			const family = families.get(baseId);
 			if (advertisedModels?.includes(baseId)) {
