@@ -63,7 +63,9 @@ import {
 	PROVIDER_RETRY_BASE_MS,
 	providerRetryAt,
 	providerRetryDelayMs,
+	restartProviderRetryDelayMs,
 } from "./provider-retry.ts";
+import type { TrailingProviderFailure } from "./session-start-continuation.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { resetContinuationStreak } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
@@ -376,6 +378,26 @@ export class MonitorAwareGoalContinuation {
 		// No failure named a reset: re-check on the provider backoff (15 s doubling to 30 min) rather than wait for input.
 		this.#armLimitWait(goal, resumeAt === undefined ? 0 : exhaustedLadderResumeDelayMs(resumeAt, Date.now()));
 		return goal;
+	}
+
+	/**
+	 * A restart reopened a goal whose newest run ended on a provider error (senpi#7449): re-arm that run's retry wait
+	 * instead of asking the provider again during start.
+	 */
+	resumeProviderRetryAfterRestart(ctx: ExtensionContext, goal: Goal, failure: TrailingProviderFailure): void {
+		this.#cancelTimer();
+		this.#ctx = ctx;
+		this.#goal = goal;
+		this.#lastAgentEndMessages = [failure.failure];
+		this.#providerRetryAttempts = failure.attempts;
+		this.#limitWait = isLimitRefusal([failure.failure]);
+		this.#providerRetryDelayMs = restartProviderRetryDelayMs(
+			failure.failure,
+			failure.attempts,
+			ctx.sessionManager.getSessionId(),
+			Date.now(),
+		);
+		this.#schedule(goal, "providerRetry");
 	}
 
 	syncGoal(goal: Goal | null): void {

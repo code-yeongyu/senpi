@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GOAL_CONTINUATION_CAP } from "../../../src/core/extensions/builtin/goal/continuation.ts";
 import { readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../../src/core/extensions/builtin/goal/store-ref.ts";
@@ -10,12 +10,16 @@ import {
 	createGoalHarness,
 	makeGoalContext,
 	runGoalHandlers,
+	waitForSentCount,
 } from "../goal-monitor-test-harness.ts";
 
 // senpi#4085: a goal that waits a limit out leaves one refused continuation in its session per wake. When that
 // session was reopened, or a config reload retired its timer, the load-time flood guard counted those refused
 // wakes as an unattended loop and left the goal waiting for a message.
 const REFUSED_WAKES = GOAL_CONTINUATION_CAP + 4;
+// senpi#7449: a startup or resume re-arms the refused wake's retry instead of asking again during start. These refusals
+// are long past, so the wake comes after the restart floor plus the per-session spread (1 s + under 15 s).
+const RESTART_WAKE_MS = 16_000;
 
 type Answer = "rate limit" | "status-only 429" | "outage" | "served";
 type Reopen = "startup" | "resume" | "reload";
@@ -98,27 +102,50 @@ async function reopenGoalSession(
 
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason }, reopened);
 
-	const goal = await readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd));
-	return { sent: harness.sent.map((sent) => sent.message.customType), notices, heldWakes, goal };
+	const sent = () => harness.sent.map((message) => message.message.customType);
+	const readReopenedGoal = () => readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd));
+	const wakeAfterRestart = async () => {
+		await vi.advanceTimersByTimeAsync(RESTART_WAKE_MS);
+		await waitForSentCount(harness, 1, { timeoutMs: 5_000 });
+	};
+	return {
+		sent: sent(),
+		sentNow: sent,
+		wakeAfterRestart,
+		notices,
+		heldWakes,
+		goal: await readReopenedGoal(),
+		readReopenedGoal,
+	};
 }
 
 describe("a goal waiting out a limit resumes when its session is reopened (senpi#4085)", () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ now: Date.UTC(2026, 10, 25, 12, 0, 0) });
+	});
+
 	afterEach(async () => {
 		for (const shutdown of openSessions.splice(0)) await shutdown();
+		vi.useRealTimers();
 		await cleanupGoalMonitorTempDirs();
 	});
 
 	it.each(["startup", "resume", "reload"] as const)(
 		"re-checks the limit on %s after more refused wakes than the continuation cap",
 		async (reason) => {
-			const { sent, notices, goal } = await reopenGoalSession(
+			const reopened = await reopenGoalSession(
 				`thread-4085-reopen-${reason}`,
 				wakes(REFUSED_WAKES, "rate limit"),
 				reason,
 			);
+			if (reason !== "reload") {
+				expect(reopened.sentNow()).toEqual([]);
+				await reopened.wakeAfterRestart();
+			}
 
-			expect(sent).toEqual([GOAL_CONTINUATION_MESSAGE_TYPE]);
-			expect(notices).toEqual([]);
+			expect(reopened.sentNow()).toEqual([GOAL_CONTINUATION_MESSAGE_TYPE]);
+			expect(reopened.notices).toEqual([]);
+			const goal = await reopened.readReopenedGoal();
 			expect(goal?.status).toBe("active");
 			expect(goal?.consecutiveContinuations ?? 0).toBe(0);
 		},
@@ -128,13 +155,14 @@ describe("a goal waiting out a limit resumes when its session is reopened (senpi
 		["a status-only 429", ["status-only 429"]],
 		["a ladder whose rungs failed for an outage and then a limit", ["outage", "rate limit"]],
 	] as const)("does not count wakes refused by %s", async (_shape, answers) => {
-		const { sent, notices } = await reopenGoalSession(
+		const reopened = await reopenGoalSession(
 			`thread-4085-reopen-${answers.join("-")}`,
 			wakes(REFUSED_WAKES, ...answers),
 		);
+		await reopened.wakeAfterRestart();
 
-		expect(sent).toEqual([GOAL_CONTINUATION_MESSAGE_TYPE]);
-		expect(notices).toEqual([]);
+		expect(reopened.sentNow()).toEqual([GOAL_CONTINUATION_MESSAGE_TYPE]);
+		expect(reopened.notices).toEqual([]);
 	});
 
 	// senpi#3853: a session reopened with no client attached runs no goal turn; the wake waits for the client.

@@ -75,6 +75,36 @@ export function exhaustedLadderResumeDelayMs(resumeAt: number, now: number): num
 	return Math.min(MAX_TIMER_DELAY_MS, Math.max(0, resumeAt - now) + WAKE_MARGIN_MS);
 }
 
+/**
+ * A stable per-session offset in [0, PROVIDER_RETRY_BASE_MS): FNV-1a over the session id, so sessions that failed
+ * together do not wake together after a restart.
+ */
+function restartRetrySpreadMs(sessionId: string): number {
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < sessionId.length; index++) {
+		hash ^= sessionId.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+	return hash % PROVIDER_RETRY_BASE_MS;
+}
+
+/**
+ * The wait a restart re-arms for a run that ended on a provider error (senpi#7449): the backoff the failed run had
+ * earned, measured from the failed answer, so the remainder is honoured rather than restarted. A backoff that already
+ * ran out waits the wake margin, so the wake never runs during start, and every wait gains a per-session offset.
+ */
+export function restartProviderRetryDelayMs(
+	failure: Extract<AgentMessage, { role: "assistant" }>,
+	attempts: number,
+	sessionId: string,
+	now: number,
+): number {
+	const failedAt = failure.timestamp;
+	const backoff = providerRetryDelayMs(attempts, providerRetryAt([failure], failedAt), failedAt);
+	const sinceFailure = isLimitRefusal([failure]) ? Math.max(backoff, limitWaitFloorMs(attempts)) : backoff;
+	return Math.max(WAKE_MARGIN_MS, failedAt + sinceFailure - now) + restartRetrySpreadMs(sessionId);
+}
+
 export function providerRetryDelayMs(attempt: number, retryAt: number | undefined, now: number): number {
 	if (retryAt !== undefined) return Math.min(PROVIDER_RETRY_WAKE_CAP_MS, retryAt - now + WAKE_MARGIN_MS);
 	if (attempt <= 1) return 0;
