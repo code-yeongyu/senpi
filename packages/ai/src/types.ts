@@ -796,10 +796,13 @@ export interface AssistantMessage {
 	deferred?: DeferredHandle;
 	errorMessage?: string;
 	/**
-	 * Redaction-safe cause: a provider limit projected as user-facing advice, or a model id its route does not
-	 * serve (`model_config`, never retried or fallen back).
+	 * Redaction-safe cause: a provider limit, a model id its route does not serve (`model_config`,
+	 * never retried or fallen back), or local account labels requiring sign-in.
 	 */
-	errorCause?: { type: "usage_limit"; scope: "account" | "model" } | { type: "model_config"; model: string };
+	errorCause?:
+		| { type: "usage_limit"; scope: "account" | "model" }
+		| { type: "model_config"; model: string }
+		| { type: "sign_in_required"; accountNames: readonly string[] };
 	/** Structured provider failure family, minted only by a provider adapter from structured error metadata. */
 	providerDiagnostic?: ProviderDiagnostic;
 	/** Explicit owner for an abort initiated by the provider retry watchdog. */
