@@ -1,7 +1,7 @@
 import { fauxToolCall } from "@earendil-works/pi-ai";
 import { expect, it, vi } from "vitest";
 import type { OutstandingCall } from "../../../src/modes/rpc/compact-call-model.ts";
-import { CompactCallTable, creationOf } from "../../../src/modes/rpc/compact-call-table.ts";
+import { CompactCallTable } from "../../../src/modes/rpc/compact-call-table.ts";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import { CompactValues } from "../../../src/modes/rpc/compact-values.ts";
 import { memoryIo, spoolRoot } from "../compact-storage-support.ts";
@@ -55,7 +55,7 @@ it("a call header the engine cannot serialize leaves the table and the store unc
 			result: null,
 			outcome: null,
 		};
-		expect(() => table.put(call, creationOf(call))).toThrowError(TypeError);
+		expect(() => table.put(call, { sequence: 1, k: 0 })).toThrowError(TypeError);
 		expect(table.root.header === undefined && table.root.ref === undefined, "the root is unchanged").toBe(true);
 		expect(table.snapshot().live).toBe(0);
 	});

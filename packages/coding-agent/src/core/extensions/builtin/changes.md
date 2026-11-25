@@ -1,3 +1,593 @@
+## 2026-11-22 - A text-only model is told about look_at, and tool-result images are described for it (senpi#7260)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/look-at/index.ts`: two handlers. Both act only while `look_at` is an active tool, the model has no image input and `images.blockImages` is off. The `tool_result` handler is registered only while `look_at` is active and the model has no image input, re-checked at `session_start`, `model_select` and after `/look-at`: every registered `tool_result` handler adds a PostToolUse `tool_hook_status` start and end to each tool call's event stream, even when it returns at once, so a session that cannot use the description keeps the event stream it had before.
+  - `context_with_system`, registered with `mutatesMessages: false`: replaces the images in user and tool-result messages with placeholders that name `look_at`, through `downgradeUnsupportedImages` in `packages/ai`. Only the request changes; the transcript keeps the images.
+  - `tool_result`: describes up to three images of a tool result through `runLookAt` (the same model chain, credentials, 10 MiB per-image limit, resize, 4096-token output cap and 120 s request deadline as the tool, aborted with the turn) and returns the content with each described image replaced by one text block, `[Image described by <provider/model> because this model cannot see images. For another question about it, call look_at with the file path.]` followed by the description. A call another tool made (`parentToolCallId`) is left alone. A failed description leaves its image in place, shows one warning, and never changes `isError`.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/image-placeholder.ts` (new): the per-message replacement. A replaced message keeps its session entry identity (`inheritSessionContextEntryId`), like the compaction stages that derive messages.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/tool-result-images.ts` (new): the per-result description and its three-image bound.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/prompts.ts`: the goal sent to the vision model for such an image and the label of the description block.
+- `packages/coding-agent/test/suite/regressions/7233-non-vision-image-description.test.ts` (new), `packages/coding-agent/test/suite/look-at-image-placeholder.test.ts` (new).
+
+### Why
+
+- senpi#7233. In a multi-harness build comparison two runs on a text-only model read a screenshot of their own product and got only the placeholder. One guessed `look_at` and used it 12 times. The other never found it, checked the screenshot by pixel statistics and shipped a broken render.
+- The description replaces the image in the stored tool result, so it is requested once and the bytes are not kept in the transcript. After a switch to a model with image input, an earlier described result stays a description; reading the file again shows the pixels. An image that was not described stays in the transcript and such a model sees it.
+- With no image-capable model available `look_at` is not active (unchanged), so nothing is described and the placeholder names no tool.
+
+### Why an extension could not handle it
+
+- It is one. Both handlers use existing extension events, and nothing under `core/` outside this builtin changed.
+
+### Expected merge conflict zones
+
+- NONE upstream: look-at is fork-only. The placeholder handler depends on `downgradeUnsupportedImages` staying exported from `packages/ai/src/api/transform-messages.ts` (tracked in `packages/ai/src/api/changes.md`).
+
+## 2026-11-12 - The schedule runner awaits the boot instant (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/schedule/runner-lease.ts`: the runner lease, the delivery lock and the orphaned-delivery check await `processBootAtMs()`, which is async now; the lease resolves it before its write.
+
+### Why
+
+- The boot instant is read asynchronously (senpi#3152).
+
+### Why an extension could not handle it
+
+- The builtin schedule extension owns these leases.
+
+### Expected merge conflict zones
+
+- LOW: `runner-lease.ts`.
+
+## 2026-11-19 - A regression test pins the over-budget sentence first for an older hand's result with no text part (senpi#7062)
+
+### What changed
+
+- `packages/coding-agent/test/headless/hand-page-budget.test.ts`: a new case where an older hand (no `details.resultText`) leaves its show_html_page result with only an image part. The over-budget page must come back as `[text, image]` with the over-budget sentence first and `imagesInlined: false`. Test only; no source change.
+
+### Why
+
+- senpi#6939 asked for this test. The behaviour itself already landed on main with senpi#6938 (`applied` in `html-render/hand-page-budget.ts`), so senpi#6943's code change was superseded; this keeps its test.
+
+### Why an extension could not handle it
+
+- It tests the brain-side page budget, which is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: the end of the senpi#6921 describe block in `test/headless/hand-page-budget.test.ts`.
+
+## 2026-11-18 - An older hand's page text is still replaced when its page goes over budget (senpi#6938)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: when a hand's show_html_page result carries no `details.resultText` (a hand on a release from before senpi#6934), the over-budget downgrade replaces the first text part that names the page's saved copy, else the first text part. The `resultText` rule still decides when the marker is present.
+
+### Why
+
+- senpi#6937. Without the marker nothing was replaced, so the tool's own "Local images were inlined." stayed next to `imagesInlined: false` for every older hand.
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `applied` and the new `olderHandOwnText` in `html-render/hand-page-budget.ts`.
+
+## 2026-11-19 - A hand page's own text is found by the resultText show_html_page emits (senpi#6936)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/tool.ts`: `ShowHtmlPageDetails.resultText` carries the exact text part of the result. `writeHtmlPage` always sets it. The session's over-budget rewrite (`handHtmlPage`) rewrites it the same way as the text part, so it stays equal to that part. A routed host result may omit it, but a non-string value is not accepted as page details.
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: the brain-side over-budget downgrade replaces only the text part equal to `details.resultText` and leaves every other part. When no part equals it, nothing is replaced and the over-budget sentence is appended as its own part. A hand result with no `resultText` (a hand on an older version) keeps the first-text-part rule, so its "Local images were inlined." text is still replaced. The downgraded details carry the sentence as their `resultText`.
+
+### Why
+
+- senpi#6934. Matching by position (senpi#6933's first text part) replaced a note that a hand-side `tool_result` handler put in front of the page text. Matching by path (senpi#6931) missed a page text that a handler had rewritten. Either way, a stale "Local images were inlined." could stay next to `imagesInlined: false`.
+
+### Why an extension could not handle it
+
+- show_html_page and the brain-side page budget are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `ShowHtmlPageDetails`, the end of `writeHtmlPage`, the over-budget `details` in `handHtmlPage` and `isShowHtmlPageDetails` in `html-render/tool.ts`; `applied` and `overBudget` in `html-render/hand-page-budget.ts`.
+
+## 2026-11-19 - The hand link's page ledger empties when a run ends; the page text is found structurally (senpi#6933)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`:
+  - `withHandPageBudget` takes the brain session's agent and empties its ledger of pages it let through on `agent_end`, as the extension's own ledger is emptied. Its new `close()` unsubscribes and closes the wrapped hand link; the hand selection keeps and closes the wrapper, so no listener outlives its link.
+  - An over-budget page replaces the result's first text part, the one text part show_html_page emits, instead of the part that names the saved copy.
+
+### Why
+
+- senpi#6932. Pages an aborted run reserved kept using the budget for the rest of the hand link's life. A page text that a hand-side handler rewrote stayed next to the over-budget sentence and could still claim "Local images were inlined.".
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `withHandPageBudget` and `applied` in `html-render/hand-page-budget.ts`; `install` in `modes/headless/hand-selection.ts`.
+
+## 2026-11-18 - show_html_page on a hand: an over-budget page keeps the hand's additions (senpi#6931)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts`: `withHandPageBudget` no longer replaces the whole content of an over-budget page's result. Only the page's own text part (the one naming its saved copy, `details.path`) becomes the over-budget sentence; every part a hand-side `tool_result` handler added stays in place, and a result whose page text is gone gets the sentence first. The downgrade is still decided once per call and is now applied to each copy's own content (`tool_execution_end`, the message events, the returned message).
+
+### Why
+
+- senpi#6928 L1. The brain-side downgrade dropped what a hand's `tool_result` handlers added, while a session running the tool itself keeps that output. (L2, the pending-page ledger owned by its session instead of the host, already landed with senpi#6925.)
+
+### Why an extension could not handle it
+
+- The brain-side page budget is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/hand-page-budget.ts` (`budgeted`, `overBudget`).
+
+## 2026-11-18 - show_html_page on a hand: the brain's page budget and prompt surface (senpi#6925)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/html-render/handed-pages.ts` (new): the session page-budget accounting (`reserveHandedPage` over a `PendingHandedPages` ledger) and the result text (`handedPageText`, `overSessionBudgetText`) move here from `tool.ts`, together with the per-page and per-session limits.
+- `packages/coding-agent/src/extensions/html-render/hand-page-budget.ts` (new): `withHandPageBudget` wraps a brain's ToolHost for a hand, with its own pending-page ledger. It applies the brain session's page budget to each page the hand hands back, and hands an over-budget page as written, consistently in its `tool_execution_end`, its message events and the returned message.
+- `packages/coding-agent/src/extensions/html-render/tool.ts`: reads the prompt surface from `ctx.promptSurface` (on a hand, the brain session's), and uses `handed-pages.ts` for the limits, the budget reservation and the result text.
+- `packages/coding-agent/src/extensions/html-render/index.ts`: imports `PendingHandedPages` from `handed-pages.ts`.
+
+### Why
+
+- senpi#6921. A hand cannot see the brain's transcript, so its pages skipped the session budget. Its result text came from the hand's own environment, so a desktop session heard "not displayed" for a page it rendered.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own code, and builtins are never forwarded between brain and hand.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/tool.ts` (`hostRendersPage`, the end of `execute`); the two new files.
+
+## 2026-11-17 - show_html_page runs on a hand (senpi#6920)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: on a runtime without a session (a hand in a brain/hand split), `show_html_page` no longer reads loop-side context members. The page is held to `MAX_HANDED_PAGE_CHARACTERS` alone, because the transcript it joins is the brain's, and the prompt surface comes from the environment.
+
+### Why
+
+- senpi#6919. Every `show_html_page` call on a real `--hand` failed with "getSystemPromptOptions is loop-side and not bound". Once a hand reported its calls as model-issued, the call would also have failed on the missing `ctx.sessionManager`.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `hostRendersPage` and the `inTranscript` line of `execute` in `html-render/tool.ts`.
+
+## 2026-11-17 - show_html_page: images are read only from loading contexts, and only model-issued calls hold page budget (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/image-references.ts` (new): `findLocalImages` moved here from `images.ts` and now tokenizes the page the way HTML does. `<!-->` and `<!--->` end a comment at once. A quote starts an attribute value only right after `=`. A tag the page never closes is dropped. A path counts as loaded only in `src`, `srcset`, `poster`, `href`/`xlink:href`, `data` and `background` attributes, in `url()` inside a `style` attribute or a `<style>` body, and as a quoted path in a `<script>` body or an `on*` handler. Other attributes, `<xmp>`/`<noscript>`/`<iframe>`/`<noembed>`/`<noframes>` bodies and CDATA sections only show a path.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: imports `findLocalImages` and `IMAGE_MIME_TYPES` from `image-references.ts` and keeps the reading and inlining.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the session's page budget is reserved and counted only when `ctx.issuedByModel` is true. That covers agent-loop calls and Cursor exec-frame calls. Calls from `ctx.executeTool()` and `pi.executeTool()` (`codemode-<uuid>`) no longer keep a reservation.
+- `image-references.ts` also reads only the first of a tag's repeated attribute names, as a browser does.
+
+### Why
+
+- senpi#6915 (review LOWs L4-L7 of senpi#6912), and the queue review of senpi#6917 (M1, L1, L2). A Cursor exec-frame call runs while its issuing message is still streaming, so a lookup in saved messages missed it, and the page skipped the session budget although its result joins the transcript. An empty comment hid the next image. An apostrophe in an unquoted value swallowed the rest of the page. A path only shown in `alt`, `title`, `<xmp>`, `<noscript>` or CDATA refused the whole page. Calls from `pi.executeTool()` held budget until the session shut down.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `html-render/image-references.ts` (new), the imports of `html-render/images.ts`, and `issuedByModel`/`execute` in `html-render/tool.ts`.
+
+## 2026-10-30 - Remove unconditional host HTML registration (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` no longer imports or registers `html-render`.
+- Its file-producing implementation now belongs to the standalone host's `src/extensions/html-render/`; the single-tool registration wrapper was removed.
+
+### Why
+
+- Host tools attach through the SDK rather than being unconditional engine builtins.
+
+### Why an extension could not handle it
+
+- Removing the unconditional catalog entry requires changing the builtin composition root.
+
+### Expected merge conflict zones
+
+- Import and registration entries in `packages/coding-agent/src/core/extensions/builtin/index.ts`.
+
+## 2026-11-17 - createShowHtmlPageTool requires its pending ledger (senpi#6930)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: `createShowHtmlPageTool(pending)` no longer defaults `pending` to a new map; every caller passes its ledger.
+
+### Why
+
+- The default was used only by tests. A caller that omitted it would get a ledger nothing clears on `agent_end` or `session_shutdown` (senpi#6927).
+
+### Why an extension could not handle it
+
+- This is the builtin's own tool factory.
+
+### Expected merge conflict zones
+
+- LOW: the `createShowHtmlPageTool` signature in `html-render/tool.ts`.
+
+## 2026-11-17 - show_html_page keeps its pending handed-page ledger per session and clears it when a run ends (senpi#6926)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the module-level `handedNotYetRecorded` map is gone. `createShowHtmlPageTool(pending)` replaces the module-level `showHtmlPageTool` and takes the ledger of handed but not yet recorded pages, keyed by tool call id. `forgetHandedPages` (senpi#6912) is removed with the map; calls another tool makes through `ctx.executeTool()` still neither spend nor hold the budget.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/index.ts`: each extension load creates its own ledger, registers the tool with it, and clears it on `agent_end` and `session_shutdown`.
+
+### Why
+
+- The module-level map never dropped a session's key, and a pending entry was pruned only by that session's next `show_html_page` call, so a long-lived multi-session host kept one small map per session until exit (senpi#6924).
+
+### Why an extension could not handle it
+
+- This is the builtin's own tool and its own lifecycle handlers.
+
+### Expected merge conflict zones
+
+- LOW: `inlinedPageCharacters` and the `createShowHtmlPageTool` wrapper in `html-render/tool.ts`; `html-render/index.ts`.
+
+## 2026-11-17 - show_html_page: nested calls hold no page budget, and images a script loads are inlined again (senpi#6912)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: a call made through `ctx.executeTool()` (id `<parent>/<n>`) is held to `MAX_HANDED_PAGE_CHARACTERS` only. It neither reads nor reserves the session's `MAX_HANDED_PAGES_CHARACTERS` budget, because nested results never enter the transcript. A session's reservation map is dropped once its last reservation is recorded, and `forgetHandedPages` drops it on shutdown. The comment now states that only image-inlined pages count toward the session budget.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/index.ts`: calls `forgetHandedPages` on `session_shutdown`.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `findLocalImages` takes a quoted path or `url()` as loaded when it sits inside a tag or a `<script>`/`<style>` body (`loadingSpans`). This replaces the attribute-name rule, so script data such as `{ src: "/abs/x.png" }` or a path array is inlined again. Text, `<code>`/`<pre>` samples, escaped tags, `<title>`/`<textarea>` bodies and comments are never read.
+
+### Why
+
+- senpi#6910. Nested calls kept a reservation for the rest of the process and starved the session's later pages. The rule from senpi#6908 left images a script loads uninlined and unreported, so they broke silently for a viewer on another machine.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: `execute` and the reservation helpers in `html-render/tool.ts`; `findLocalImages` in `html-render/images.ts`.
+
+## 2026-11-17 - show_html_page bounds a session's handed pages and inlines only loaded images (senpi#6908)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: a page's images are inlined into `details.html` only while the session's inlined pages together, counted from `ctx.sessionManager.getEntries()` plus concurrent calls not yet recorded, stay within `MAX_HANDED_PAGES_CHARACTERS` (6 Mi), besides the per-page `MAX_HANDED_PAGE_CHARACTERS`. Past it the page is handed as written with `imagesInlined: false`, and the result says so.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `inlineLocalImages` only finds paths the page loads (an unquoted `url()`, or a quoted value after `src=`, `srcset=`, `poster=`, `href=` or `url(`); a path only mentioned in text or code is never read and stays as written.
+
+### Why
+
+- `get_messages`, `get_tree` and `agent_end` carry every handed page in one RPC record, so about eight image-heavy pages could pass `MAX_RPC_LINE_CHARACTERS` and drop the attach connection (senpi#6907). A mentioned-only path was replaced with a base64 blob, and a mentioned file over 10 MiB refused the whole page.
+
+### Why an extension could not handle it
+
+- `show_html_page` and its image inliner are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: the handed-page constants and `execute` in `html-render/tool.ts`; `findLocalImages` and the end of `inlineLocalImages` in `html-render/images.ts`.
+
+## 2026-11-17 - show_html_page hands the host a page with its local images inlined (senpi#6899)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: `details.html` is the page with its absolute-path local images (`<img src>` and CSS `url()`) inlined as `data:` URIs by `inlineLocalImages`, not the page as written, while that page fits `MAX_HANDED_PAGE_CHARACTERS` (2 Mi characters, well under the 16 Mi RPC line limit with room for JSON escaping and the other fields). A larger page is handed as written, `details.imagesInlined` is false, and the result says a viewer on another machine will not see its images. A page loading a local image that cannot be read is refused with `HtmlRenderImagesNotFoundError` and nothing is written; the `missingImages` details field is removed.
+- `packages/coding-agent/src/core/extensions/builtin/html-render/images.ts`: `missing` lists only paths the page loads as images (an unquoted `url()`, or a quoted value after `src=`, `srcset=`, `poster=`, `href=` or `url(`); a path only named in text or code stays as written and is no error. The doc comment now says unreadable paths are returned, not thrown.
+
+### Why
+
+- A host publishes `details.html`. For a session on another machine the viewer got raw paths on the producing machine, which it cannot read and the page sandbox blocks, so those images stayed blank. A page with a broken image was also reported as shown although the desktop refuses to publish it.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result details are defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `execute` body and `ShowHtmlPageDetails` in `html-render/tool.ts`; `findLocalImages` and the end of `inlineLocalImages` in `html-render/images.ts`.
+
+## 2026-11-16 - `credential-proxy` builtin (senpi#6828)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/credential-proxy/index.ts`: activates the proxy at `session_start` from the global `credentialProxy` setting, reports problems as warnings and a start failure as an error (credentials stay withheld), and releases it at `session_shutdown`.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers it right after `kill-guard`, before any tool-registering builtin.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/command-runner.ts`: hook commands take their passthrough values from `withCredentialProxy(process.env)`, so a hook that passes a declared variable through gets the placeholder and can use its `baseUrlEnv` route (review L2). A hook that exits without reading its JSON input no longer raises an unhandled `EPIPE` from the stdin write; any other stdin write error is appended to the hook's stderr.
+
+### Why
+
+- senpi#6820.
+
+### Why an extension could not handle it
+
+- It is an extension; the registration line is the only edit to a shared file.
+
+### Expected merge conflict zones
+
+- LOW: one import and one array entry next to `kill-guard`.
+
+## 2026-11-15 - A held Stop with no leaf keys its stop state by the session captured at turn end (senpi#6794)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-adapter.ts`: `createStopTurnTracker().turnKey(ctx, sessionId)` falls back to the given session id when there is no leaf; `StopTurn`'s doc says when each part is read.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: `dispatchStop` passes the session id the Stop captured at `agent_end`.
+
+### Why
+
+- #6795 review L1: on a hand the no-leaf fallback read the session id after the loop-hook call ended, where it throws, so the stop state was lost.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `createStopTurnTracker` and the `applyStopHookResult` call in `dispatchStop`.
+
+## 2026-11-15 - A held Stop reads its turn key when it dispatches again (senpi#6794)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: `dispatchStop` reads the turn key (`turnTracker.turnKey(ctx)`) after the hook ran, as before #6751; a held Stop keeps only the session id it read at `agent_end` (`PendingStop.sessionId`, which replaces `turn`).
+
+### Why
+
+- senpi#6794: #6751 read the key at `agent_end`, so a Stop held for background work in a local session keyed its stop state and reentry count to the turn's end instead of the leaf when it dispatched. On a hand the held Stop dispatches in its call's own async context, where the carried leaf stays readable, so it still works there.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `PendingStop`, `dispatchStop` and the `agent_end` handler in `stop-lifecycle.ts`.
+
+## 2026-11-15 - A Stop held for background work reports its own turn, from its own context (senpi#5898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts`: an `agent_end` reads the ended turn (`StopTurn`: session id and turn key) and an `AsyncLocalStorage.snapshot()` when it builds the Stop. A held Stop runs inside that snapshot, so its writes go where the turn's own would, and with no signal: the drain dispatches only when the session is quiet, where a local session's `ctx.signal` is undefined.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-adapter.ts`: `applyStopHookResult` takes the `StopTurn` instead of a turn key, so it no longer reads the session id when the result arrives. The output-record and unsupported-field diagnostics moved unchanged to `packages/coding-agent/src/core/extensions/builtin/hooks/stop-output.ts` (the file was over the size ceiling).
+
+### Why
+
+- On a hand (senpi#5898) a held Stop runs after the loop-hook call that held it has ended: the drain fires from whatever work cleared the wake source, and the call's identity and signal are gone by then. Locally nothing changes: the turn key and session id are the same values read earlier, and an idle session's signal is undefined.
+
+### Why an extension could not handle it
+
+- The Stop lifecycle is the hooks builtin's own state.
+
+### Expected merge conflict zones
+
+- LOW: `PendingStop`, `dispatchStop` and the `agent_end` handler in `stop-lifecycle.ts`; the `applyStopHookResult` signature.
+
+## 2026-11-10 - show_html_page says what the host did with the page (senpi#6273)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the result text depends on the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `SENPI_PROMPT_SURFACE`). On `app`, the surface the OmO desktop opens every session it renders with, it says the page was shown to the reader inline above the reply and where the copy is saved. On every other surface (terminal, chat, none named) it says the page was written to the path and not displayed in this interface. The "Open it in the desktop to see it rendered with your theme" sentence is gone. The description says the same: inline in the OmO desktop thread, elsewhere only saved to a file, and the result says which.
+
+### Why
+
+- In a desktop thread the page renders inline, but the result told the model to open the file in the desktop, so the model reported that the page was not shown. The result stays in the thread, so later turns sometimes refused to call the tool at all (senpi#6273).
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result text is defined here. The host signal is the existing `promptSurface`, no new capability.
+
+### Expected merge conflict zones
+
+- LOW: the result `text` and the end of the description in `html-render/tool.ts`.
+
+## 2026-11-10 - Recommended Fable slot is Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable slot of `RECOMMENDED_DEFAULT_MODELS` is `claude-fable-5-2` at `xhigh` on the same Claude lanes. The launch-flag lookup is removed.
+
+### Why
+
+- Fable 5.2 is the released Fable model.
+
+### Why an extension could not handle it
+
+- This is the builtin's own shipped list.
+
+### Expected merge conflict zones
+
+- LOW: the Fable row of `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-11-09 - vertex-garden per-model thinking toggles (senpi#6270)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/models.ts`: each garden model declares `thinkingFormat: "chat-template"` with its own flag (GLM 5.2 `enable_thinking`, DeepSeek V4.1 Flash `thinking`), a two-level `thinkingLevelMap` (off, medium), and its live-verified Vertex default (GLM `medium`, DeepSeek `off`).
+
+### Why
+
+- Live probes against the global OpenAPI endpoint (2026-11-09) showed the endpoint toggles thinking per model through `chat_template_kwargs` and silently ignores a wrong flag name, so the previous "accepts no thinking parameters" registration hid a control both models support and risked sending one model's flag to the other.
+
+### Why an extension could not handle it
+
+- It is the extension's own model registration; only the default-level declaration needed the `types.ts` companion entry above.
+
+### Expected merge conflict zones
+
+- LOW: the `garden()` helper and the two model entries; the `NO_THINKING_CONTROLS` block is replaced outright.
+
+## 2026-11-08 - terminal_background_age event (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `TERMINAL_BACKGROUND_AGE_EVENT` (`terminal_background_age`) and its payload `TerminalBackgroundAgeEvent` (`kind` running|reaped|reap_failed, `id`, `description`, `command?`, `startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes`, `reason?`, `stop`).
+
+### Why
+
+- RPC drivers need a typed event they can act on when a background session runs long (senpi#6201).
+
+### Why an extension could not handle it
+
+- The event name and payload are the shared cross-extension seam, like the other terminal events in this file.
+
+### Expected merge conflict zones
+
+- LOW: the constant block at the top of `monitor-state-event.ts`.
+
+## 2026-11-08 - ask-user refuses escape residue in question text once (oh-my-openagent#12797)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/escape-residue.ts` (new): `findEscapeResidue` finds `\uXXXX` escapes left in question, header and option text, both literal ones and ones whose backslash was dropped (`ub0b4`), with guards against hex-like ids and quoted code (fenced blocks, double-backtick and single-backtick spans are blanked before the check); `AskUserEscapeResidueError` is the typed tool error. `EscapeResidueRetry` with `refuseEscapeResidue` and `endEscapeResidueTurn` scopes the one refusal to assistant turns.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: before a card opens, a call whose text holds escape residue is refused with `AskUserEscapeResidueError`, which asks the model to re-call with raw UTF-8 text. Every residue call in one turn is refused, since parallel calls of one assistant message run in that turn; residue calls in a later turn open as written and the user gets a warning notice. Any call made while the retry is open uses it up, so after a clean re-call the next residue set is refused once again. `AskUserState.escapeResidue` carries the bound.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts`, `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: the new state starts fresh and resets on `session_start` and `agent_end`; `turn_end` closes a refusal turn and opens the retry.
+
+### Why
+
+- Models sometimes write non-ASCII tool-call text as `\uXXXX` escapes and drop the backslash, so a Korean card showed `ub0b4 Tailscale 쓰기` for `내 Tailscale 쓰기` (oh-my-openagent#12797). The JSON is valid, so parsing cannot catch it; only the text can.
+- A per-call flag let one of two parallel residue calls open unrefused and then refused its re-call; a turn-scoped bound refuses each set once and never refuses a re-call.
+
+### Why an extension could not handle it
+
+- The check belongs to the ask-user builtin's own argument handling; it is a fork-only builtin, not an upstream path.
+
+### Expected merge conflict zones
+
+- LOW: `AskUserState` and the `execute` path just before `startQuestion` in `tool.ts`; the `turn_end` and `agent_end` handlers in `extension.ts`.
+
+## 2026-10-30 - ChatGPT account route and plan states (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: renders registration route, disabled plan permission and signed-out states, with a ChatGPT Settings > Usage link.
+
+### Why
+
+- The account command must explain when ChatGPT plan usage is unavailable.
+
+### Why an extension could not handle it
+
+- This is the existing account extension.
+
+### Expected merge conflict zones
+
+- The account-list renderer.
+
+## 2026-11-03 - Dangling ask-user questions restore on startup opens (senpi#5700, fixes #4764)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: `resumeDanglingQuestion` now also runs when the `session_start` reason is `startup`. A restarted CLI opening an existing session file arrives with that reason (the initial runtime passes no explicit event), so the dangling question is restored exactly like on the `switch_session` resume path. Diagnostic sizes-only startup still restores nothing.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a `startup` restore runs only when `ctx.hasUI` is true. A headless startup (print mode, `-p` / `--mode json`) has no question UI, so restoring there would settle the question as `orphaned-after-restart`, start an unasked model turn, and write the `ask-user:resumed` marker so a later interactive open could never re-ask it; headless startup now restores nothing and writes no marker. The sizes-only early return also holds on `resume`. CLI `--fork <file>` also arrives as `startup` with copied branch entries, so a fork re-presents the source's dangling question, unlike runtime `/fork` (reason `fork`, excluded); the event carries no signal telling a forked startup from a plain restart, so this divergence is documented, not filtered.
+- `packages/coding-agent/test/suite/ask-user-resume.test.ts` (new cases): a dangling question is re-presented once on `startup` (and not twice on a second start); sizes-only startup and sizes-only resume restore nothing; headless (no-UI) startup restores nothing and writes no marker.
+
+### Why
+
+- After a crash, the path a user most often takes is a restarted CLI with `--session <file>`, but only the running-client `switch_session` path restored the dangling question; the restarted CLI left the call unanswered until the next request gave it the interrupted-call placeholder. A fresh session has no branch entries, so including `startup` restores nothing there.
+
+### Why an extension could not handle it
+
+- The reason filter lives in the builtin ask-user extension itself; an external extension cannot change which `session_start` reasons the builtin restores on.
+
+### Expected merge conflict zones
+
+- LOW: the reason and `hasUI` guards in `resumeDanglingQuestion` and the ask-user resume test cases.
+
+## 2026-10-30 - Keep SIWC ID-token hints out of account notices (senpi#5046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` removes ID-token hints from printable authorization URLs while sending the original hinted URL to the TUI browser launcher.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` sends notices to terminal and RPC consumers that may retain their text.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` is the shared account-login relay used by those extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`: auth_url relay.
+
+## 2026-11-02 - Shell tool hooks refuse calls on a runtime without a session (senpi#5483)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: on a runtime without a session, the `tool_call` handler refuses the call when any PreToolUse or PostToolUse hook is configured and passes it through when none is; the `tool_result` handler does nothing there. Sessions are unchanged.
+
+### Why
+
+- Tool hooks get the session's ID in their input, which a hand does not have; running the tool past configured hooks would skip them. Forwarding them to the session's process is the two-sided forwarding change.
+
+### Why an extension could not handle it
+
+- This is the builtin hooks extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `tool_call` and `tool_result` handlers.
+
+## 2026-10-27 - look_at authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/look-at/runner.ts`: `getApiKeyAndHeaders` receives the session id.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call.
+
+## 2026-11-01 - service-tier shares the -fast pairing rule with the fallback controller (senpi#5312)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: `findBaseModel` / `findFastModel` and the compatibility check move to `core/fast-model-pair.ts` and are imported; behavior is unchanged.
+
+### Why
+
+- The fallback controller needs the same pairing to let a `-fast`-keyed chain govern the base model the extension swapped in; one definition keeps the two from drifting.
+
+### Why an extension could not handle it
+
+- The controller is core; the rule had to live in a module both sides import.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the removed helper block near the top of `service-tier.ts`.
+
 ## 2026-10-30 - Fallback display comment follows first-party bare expansion (senpi#5050)
 
 ### What changed

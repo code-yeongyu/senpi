@@ -1,0 +1,185 @@
+// senpi#5482 (S27a): a hand with a durable record writes nothing for a call it refuses, reports a failed recovery to
+// onFault, and never resumes a frozen call with other arguments than the ones it froze.
+import { describe, expect, it } from "vitest";
+import { createAdmissionLine } from "../../src/durable/store-admission.ts";
+import type { DurableStore, StoreWritePoint } from "../../src/durable/store.ts";
+import { createMemoryStoreMedium, type MemoryStoreMedium, openMemoryStore } from "../../src/durable/store-memory.ts";
+import { createExecutionLedger } from "../../src/execution/ledger.ts";
+import { createRemoteExecutor, type HandScope, type OpenHandScope } from "../../src/execution/remote-executor.ts";
+import { createHandLedger, type HandLedger } from "../../src/execution/remote-hand-ledger.ts";
+import type { RemoteInvoke } from "../../src/execution/remote-protocol.ts";
+import { fakeHandLink } from "./fake-hand-link.ts";
+
+const DISPATCH_COMMIT = 5;
+
+const invoke = (args: unknown): RemoteInvoke => ({
+	kind: "invoke",
+	executionId: "e1",
+	batchId: "b1",
+	index: 0,
+	scope: { id: "s", root: "/work/s" },
+	toolCallId: "c1",
+	name: "probe",
+	arguments: args,
+});
+
+const handLedger = (store: DurableStore): HandLedger =>
+	createHandLedger({
+		ledger: createExecutionLedger({ store, epoch: 1, admission: createAdmissionLine() }),
+		executor: "hand",
+		issuer: "session",
+		workspace: "workspace",
+		now: () => 1_000,
+		leaseMs: 3_600_000,
+	});
+
+async function claimed(medium: MemoryStoreMedium, onWritePoint?: (point: StoreWritePoint) => void) {
+	const store = openMemoryStore(medium, onWritePoint === undefined ? {} : { onWritePoint });
+	await store.claim(0, 1);
+	return store;
+}
+
+const rows = (medium: MemoryStoreMedium) =>
+	createExecutionLedger({ store: openMemoryStore(medium), epoch: 1, admission: createAdmissionLine() }).scan();
+
+function startHand(store: DurableStore, openScope: OpenHandScope, ledger = handLedger(store)) {
+	const link = fakeHandLink();
+	const faults: unknown[] = [];
+	const executor = createRemoteExecutor({
+		authority: { kind: "self" },
+		transport: link.transport,
+		openScope,
+		ledger,
+		onFault: (error) => faults.push(error),
+	});
+	return { ...link, faults, executor };
+}
+
+const recording =
+	(bodies: unknown[]): OpenHandScope =>
+	async () =>
+		({
+			run: async (call) => {
+				bodies.push(call.arguments);
+				return { content: [{ type: "text", text: "ran" }], details: {} };
+			},
+			isSequential: () => false,
+			dispose: async () => {},
+		}) satisfies HandScope;
+
+const unopenable: OpenHandScope = async () => {
+	throw new Error("root is gone");
+};
+
+describe("remote executor with a durable record", () => {
+	it("writes no record for a call whose scope cannot open", async () => {
+		const medium = createMemoryStoreMedium();
+		const hand = startHand(await claimed(medium), unopenable);
+		await hand.executor.ready;
+		await hand.deliver(invoke({ id: 1 }));
+		expect(await rows(medium)).toEqual([]);
+	});
+
+	it("refuses a re-delivered call whose scope still cannot open", async () => {
+		const hand = startHand(await claimed(createMemoryStoreMedium()), unopenable);
+		await hand.executor.ready;
+		await hand.deliver(invoke({ id: 1 }));
+		await hand.deliver(invoke({ id: 1 }));
+		expect(hand.sent.filter((message) => message.kind === "refused")).toEqual([
+			{ kind: "refused", executionId: "e1", reason: "scope_unavailable: root is gone" },
+			{ kind: "refused", executionId: "e1", reason: "scope_unavailable: root is gone" },
+		]);
+	});
+
+	it("reports a failed recovery to onFault and answers no frame after it", async () => {
+		const store = await claimed(createMemoryStoreMedium());
+		const failure = new Error("record unreadable");
+		const ledger: HandLedger = { ...handLedger(store), recover: async () => Promise.reject(failure) };
+		const hand = startHand(store, recording([]), ledger);
+		await hand.deliver(invoke({ id: 1 }));
+		expect([hand.faults, hand.sent]).toEqual([[failure], []]);
+	});
+
+	it("refuses, never runs or reports as settled, a record holding the brain executor's blocked outcome", async () => {
+		const store = await claimed(createMemoryStoreMedium());
+		const ledger = createExecutionLedger({ store, epoch: 1, admission: createAdmissionLine() });
+		const key = { issuer: "session", commandId: "e1" };
+		const digest = JSON.stringify(["probe", { id: 1 }]);
+		const at = { key, generation: 1, actor: { id: "hand" }, now: 1_000 };
+		await ledger.admit({
+			issuer: "session",
+			commandId: "e1",
+			executor: "hand",
+			workspace: "workspace",
+			scope: "s",
+			generation: 1,
+			requestDigest: digest,
+			admittedAt: 1_000,
+			leaseUntil: 3_601_000,
+			reconcilable: false,
+		});
+		await ledger.apply({ ...at, event: { kind: "prepare" } });
+		await ledger.apply({ ...at, event: { kind: "block", value: { reply: "blocked" } } });
+		const ran: unknown[] = [];
+		const hand = startHand(store, recording(ran));
+		await hand.executor.ready;
+		await hand.deliver(invoke({ id: 1 }));
+		await hand.sentCount(3);
+		const refusal = { kind: "refused", executionId: "e1", reason: "foreign_outcome" };
+		expect([ran, hand.sent]).toEqual([
+			[],
+			[refusal, { kind: "hello", instance: expect.any(String), durable: true, ops: [] }, refusal],
+		]);
+	});
+
+	// senpi#5729: a moved session reaches the live hand over a second link; that link's executor must not run the
+	// restart recovery that ends the first link's running calls as hand_restarted.
+	it("lets a second link's executor join a live hand without ending the calls the first link runs", async () => {
+		const store = await claimed(createMemoryStoreMedium());
+		const ledger = handLedger(store);
+		const gate = Promise.withResolvers<void>();
+		const ran: unknown[] = [];
+		const gated: OpenHandScope = async () => ({
+			run: async (call) => {
+				ran.push(call.arguments);
+				await gate.promise;
+				return { content: [{ type: "text", text: "ran" }], details: {} };
+			},
+			isSequential: () => false,
+			dispose: async () => {},
+		});
+		const first = startHand(store, gated, ledger);
+		await first.executor.ready;
+		await first.deliver(invoke({ id: 1 }));
+		const second = startHand(store, gated, ledger);
+		await second.executor.ready;
+		gate.resolve();
+		await first.sentCount(2);
+		expect([first.sent.map(({ kind }) => kind), second.sent.map(({ kind }) => kind), ran]).toEqual([
+			["hello", "settled"],
+			["hello"],
+			[{ id: 1 }],
+		]);
+	});
+
+	it.each([
+		{ resent: { id: 1 }, outcome: "runs the frozen call once", sent: "settled", bodies: [{ id: 1 }] },
+		{ resent: { id: 2 }, outcome: "refuses other arguments", sent: "refused", bodies: [] },
+	])("a call frozen before a kill at dispatch $outcome after the restart", async ({ resent, sent, bodies }) => {
+		const medium = createMemoryStoreMedium();
+		let commit = -1;
+		const killed = await claimed(medium, (point) => {
+			if (point.op === "commit" && point.at === "before" && ++commit === DISPATCH_COMMIT)
+				throw new Error("hand killed before dispatch");
+		});
+		const first = startHand(killed, recording([]));
+		await first.executor.ready;
+		await first.deliver(invoke({ id: 1 }));
+		const ran: unknown[] = [];
+		const restarted = startHand(openMemoryStore(medium), recording(ran));
+		await restarted.executor.ready;
+		await restarted.deliver(invoke(resent));
+		await restarted.sentCount(2);
+		expect([first.faults.length, restarted.sent.map(({ kind }) => kind), ran]).toEqual([1, ["hello", sent], bodies]);
+	});
+});

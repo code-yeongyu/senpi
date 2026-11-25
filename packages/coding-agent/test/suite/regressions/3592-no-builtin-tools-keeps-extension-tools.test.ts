@@ -93,7 +93,6 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				.sort(),
 		).toEqual(["bash", "dynamic_tool", "edit", "find", "glob", "grep", "ls", "powershell", "read", "write"]);
 		expect(session.getActiveToolNames()).toEqual(["dynamic_tool"]);
-		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).not.toContain("- read:");
 		expect(session.systemPrompt).not.toContain("- bash:");
 		session.dispose();
@@ -104,7 +103,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 
 		expect(session.getAllTools()).toEqual([]);
 		expect(session.getActiveToolNames()).toEqual([]);
-		expect(session.systemPrompt).toContain("## Available Tools\n\n(none)");
+		expect(session.systemPrompt).not.toContain("## Available Tools");
 		session.dispose();
 	});
 
@@ -126,7 +125,8 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 
 		expect(session.getActiveToolNames()).toEqual([
 			"apply_patch",
-			// generate_image is search-exposed: a by-name call activates it (senpi#1682).
+			// generate_image is eval-exposed (senpi#6269): this session registers no eval tool, so it is direct.
+			"generate_image",
 			"todo",
 			"web_search",
 			"webfetch",
@@ -137,7 +137,6 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			// get_goal and show_html_page are search-exposed: a by-name call activates them (senpi#4446).
 			// schedule_wakeup is search-exposed: the loop extension activates it only for a live dynamic loop.
 		]);
-		expect(session.systemPrompt).toContain("- todo:");
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
 	});

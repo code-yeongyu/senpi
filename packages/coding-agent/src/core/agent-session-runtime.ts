@@ -15,6 +15,13 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { recordOpenerRefusal, refusesApprovals, replacementLaunchProfile } from "./opener-approvals.ts";
+import {
+	applyClientPermissionMode,
+	clientNamedPreset,
+	markHostDefaultPresetFlag,
+	withClientPreset,
+} from "./permission-mode.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
@@ -43,6 +50,8 @@ export interface AgentSessionLaunchProfile {
 	/** Host-owned public endpoint evidence; never sourced from client session context. */
 	holderEndpoint?: SessionHolderEndpoint;
 	permissionPreset?: string;
+	/** `host_default`: `permissionPreset` is the host's own default (an embedder's host option), not a client's choice. */
+	permissionPresetSource?: "host_default";
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
 	/**
@@ -170,6 +179,7 @@ export class AgentSessionRuntime {
 		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
 		_modelFallbackMessage?: string,
 		launchProfile?: Readonly<AgentSessionLaunchProfile>,
+		sessionHold?: SessionHold,
 	) {
 		this._session = _session;
 		this._services = _services;
@@ -177,17 +187,28 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
-		this._sessionHold = holdActiveSession(
-			_session.sessionManager,
-			wasFlushed(_session.sessionManager),
-			launchProfile?.holderEndpoint,
-		);
+		markHostDefaultPresetFlag(_session, launchProfile);
+		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
+		// Taken by the async creator (the holder record needs the async boot instant); the constructor never touches it.
+		this._sessionHold = sessionHold;
 	}
 
 	/** Stops advertising the open session to other processes; a runtime that replaces this one holds its own. */
 	releaseSessionHold(): void {
 		this._sessionHold?.release();
 		this._sessionHold = undefined;
+	}
+
+	/** A speculative host session becomes durable only when a caller claims its already-built runtime. */
+	async persistSession(): Promise<void> {
+		await this.session.sessionManager.enablePersistence();
+		// A labelled session built before it had a file holds its refusal in memory; the claim waits until it is on disk.
+		if (refusesApprovals(this._launchProfile?.sessionContext)) await recordOpenerRefusal(this.session.sessionManager);
+		this._sessionHold ??= await holdActiveSession(
+			this.session.sessionManager,
+			false,
+			this._launchProfile?.holderEndpoint,
+		);
 	}
 
 	get services(): AgentSessionServices {
@@ -234,12 +255,15 @@ export class AgentSessionRuntime {
 	 * fork) keep it.
 	 */
 	setPermissionPreset(preset: string): void {
-		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
+		this._launchProfile = withClientPreset(this._launchProfile ?? { cwd: this.cwd }, preset);
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
 		// While a replacement is in flight (or after one failed) the live session is the disposed one:
 		// nothing may rebuild it. The preset is recorded above, and apply() syncs the next replacement to
 		// it before that one goes live. There is no flag to clear: the check is the session itself.
-		if (this._session !== this._disposedSession) this.syncFullAccessTrust(this._session, preset);
+		if (this._session !== this._disposedSession) {
+			this.syncFullAccessTrust(this._session, preset);
+			applyClientPermissionMode(this._session, preset, { announce: true });
+		}
 	}
 
 	/** The session teardownCurrent disposed; it stays the live session only until apply() installs a replacement. */
@@ -297,6 +321,19 @@ export class AgentSessionRuntime {
 	/** Settles when the rebuild that followed a Full-access trust change has finished. */
 	get projectTrustChange(): Promise<void> {
 		return this._projectTrustChange;
+	}
+
+	/**
+	 * Runs `task` after every trust change already started here and before any started later (senpi#6176), so an
+	 * explicit trust decision and a Full access sync never read each other's saved value mid-change.
+	 */
+	runInProjectTrustChangeOrder<T>(task: () => Promise<T>): Promise<T> {
+		const run = this._projectTrustChange.then(task);
+		this._projectTrustChange = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
 	}
 
 	private _projectTrustChange: Promise<void> = Promise.resolve();
@@ -457,8 +494,10 @@ export class AgentSessionRuntime {
 	}
 
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
+		// Every apply installs a replacement: from here the runtime's profile no longer carries the opener's label.
+		this._launchProfile = replacementLaunchProfile(this._launchProfile);
 		this._sessionHold =
-			hold ?? holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint);
+			hold ?? (await holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint));
 		// The replacement was built from the profile read before its runtime was created; an attach
 		// that moved a setting while it was being built reached only the retired session (senpi#2842).
 		// Its project trust follows the CURRENT preset before it goes live: a replacement built while the
@@ -477,6 +516,8 @@ export class AgentSessionRuntime {
 		this._session = result.session;
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
+		markHostDefaultPresetFlag(this._session, profile);
+		applyClientPermissionMode(this._session, clientNamedPreset(profile), { announce: false });
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
 		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
 		this._services = result.services;
@@ -511,9 +552,14 @@ export class AgentSessionRuntime {
 
 		const previousSessionFile = this.session.sessionFile;
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
-		assertSessionCwdExists(sessionManager, this.cwd);
+		await sessionManager.adoptHomeSessionDir();
+		await assertSessionCwdExists(sessionManager, this.cwd);
 		// Held before the current session is torn down: a session being moved fails the switch here.
-		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager), this._launchProfile?.holderEndpoint);
+		const hold = await holdActiveSession(
+			sessionManager,
+			wasFlushed(sessionManager),
+			this._launchProfile?.holderEndpoint,
+		);
 		time("open", "switch");
 		try {
 			await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
@@ -524,7 +570,7 @@ export class AgentSessionRuntime {
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
 					projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
-					launchProfile: this._launchProfile,
+					launchProfile: replacementLaunchProfile(this._launchProfile),
 				}),
 				hold,
 			);
@@ -549,7 +595,7 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		const sessionDir = this.session.sessionManager.getSessionDir();
+		const sessionDir = this.session.sessionManager.getHomeSessionDir();
 		const sessionManager = this.session.sessionManager.isPersisted()
 			? SessionManager.create(this.cwd, sessionDir)
 			: SessionManager.inMemory(this.cwd);
@@ -564,7 +610,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		if (options?.setup) {
@@ -608,7 +654,7 @@ export class AgentSessionRuntime {
 			if (!currentSessionFile) {
 				throw new Error("Persisted session is missing a session file");
 			}
-			const sessionDir = this.session.sessionManager.getSessionDir();
+			const sessionDir = this.session.sessionManager.getHomeSessionDir();
 			if (!targetLeafId) {
 				const sessionManager = SessionManager.create(this.cwd, sessionDir);
 				sessionManager.newSession({ parentSession: currentSessionFile });
@@ -619,7 +665,7 @@ export class AgentSessionRuntime {
 						agentDir: this.services.agentDir,
 						sessionManager,
 						sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-						launchProfile: this._launchProfile,
+						launchProfile: replacementLaunchProfile(this._launchProfile),
 					}),
 				);
 				await this.finishSessionReplacement(options?.withSession);
@@ -641,7 +687,7 @@ export class AgentSessionRuntime {
 					agentDir: this.services.agentDir,
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-					launchProfile: this._launchProfile,
+					launchProfile: replacementLaunchProfile(this._launchProfile),
 				}),
 			);
 			await this.finishSessionReplacement(options?.withSession);
@@ -663,7 +709,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		await this.finishSessionReplacement(options?.withSession);
@@ -683,7 +729,7 @@ export class AgentSessionRuntime {
 			throw new SessionImportFileNotFoundError(resolvedPath);
 		}
 
-		const sessionDir = this.session.sessionManager.getSessionDir();
+		const sessionDir = this.session.sessionManager.getHomeSessionDir();
 		if (!existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -709,7 +755,7 @@ export class AgentSessionRuntime {
 		}
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
-		assertSessionCwdExists(sessionManager, this.cwd);
+		await assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
 		await this.apply(
 			await this.createRuntime({
@@ -717,7 +763,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		await this.finishSessionReplacement();
@@ -725,13 +771,42 @@ export class AgentSessionRuntime {
 	}
 
 	/**
+	 * Abort the active run, waiting at most the #3711 quit budget. Arming the budget first makes this wait count
+	 * against the same total the `session_shutdown` handlers share, so a turn held by an extension cannot delay quit
+	 * past it.
+	 */
+	private async endActiveRunWithinQuitBudget(processExit: boolean): Promise<void> {
+		if (processExit) this.session.extensionRunner.armProcessExitBudget();
+		const budgetMs = this.services.settingsManager.getSessionShutdownQuitBudgetMs();
+		if (budgetMs === 0) {
+			await this.session.abort();
+			return;
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				this.session.abort(),
+				new Promise<void>((resolve) => {
+					timer = setTimeout(resolve, budgetMs);
+				}),
+			]);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+		}
+	}
+
+	/**
 	 * `processExit`: the caller exits the process right after, so quit-time handlers share the total quit budget
 	 * (senpi#3711). An RPC host closing one session leaves it unset and keeps only the per-handler limits.
 	 */
-	async dispose(options: { readonly processExit?: boolean } = {}): Promise<void> {
+	async dispose(options: { readonly processExit?: boolean; readonly endActiveRun?: boolean } = {}): Promise<void> {
+		// A person quitting ends the active run first, as teardownCurrent() does (senpi#5753). Otherwise
+		// `session_shutdown` tears extension resources down under a running tool and the loop sends that failure
+		// to the model in one more request. Host closes keep their own bounded abort handling.
+		if (options.endActiveRun === true) await this.endActiveRunWithinQuitBudget(options.processExit === true);
 		await emitSessionShutdownEvent(
 			this.session.extensionRunner,
-			{ type: "session_shutdown", reason: "quit" },
+			{ type: "session_shutdown", reason: "quit", ...(this.session.closedOnRequest ? { closed: true } : {}) },
 			options,
 		);
 		this.beforeSessionInvalidate?.();
@@ -747,11 +822,11 @@ function wasFlushed(sessionManager: SessionManager): boolean {
 	return sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "assistant");
 }
 
-function holdActiveSession(
+async function holdActiveSession(
 	sessionManager: SessionManager,
 	expectExisting: boolean,
 	holderEndpoint?: SessionHolderEndpoint,
-): SessionHold | undefined {
+): Promise<SessionHold | undefined> {
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionManager.isPersisted() || sessionFile === undefined) return undefined;
 	return holdSessionFile(sessionFile, sessionManager.getSessionId(), {
@@ -777,16 +852,35 @@ export async function createAgentSessionRuntime(
 		launchProfile?: Readonly<AgentSessionLaunchProfile>;
 	},
 ): Promise<AgentSessionRuntime> {
-	assertSessionCwdExists(options.sessionManager, options.cwd);
+	await assertSessionCwdExists(options.sessionManager, options.cwd);
 	const result = await createRuntime(options);
-	return new AgentSessionRuntime(
-		result.session,
-		result.services,
-		createRuntime,
-		result.diagnostics,
-		result.modelFallbackMessage,
-		options.launchProfile,
-	);
+	const hold = await holdRuntimeSession(result.session.sessionManager, options.launchProfile?.holderEndpoint);
+	try {
+		return new AgentSessionRuntime(
+			result.session,
+			result.services,
+			createRuntime,
+			result.diagnostics,
+			result.modelFallbackMessage,
+			options.launchProfile,
+			hold,
+		);
+	} catch (error) {
+		// A runtime that never came to exist cannot release the hold taken for it.
+		hold?.release();
+		throw error;
+	}
+}
+
+/**
+ * Takes the hold a new runtime for `sessionManager`'s session carries. The caller passes it to the constructor and
+ * releases it itself if the runtime is never handed over.
+ */
+export function holdRuntimeSession(
+	sessionManager: SessionManager,
+	holderEndpoint?: SessionHolderEndpoint,
+): Promise<SessionHold | undefined> {
+	return holdActiveSession(sessionManager, wasFlushed(sessionManager), holderEndpoint);
 }
 
 export {

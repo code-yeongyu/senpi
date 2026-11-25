@@ -50,7 +50,7 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 	if (!Array.isArray(data.capabilities) || !data.capabilities.every((entry) => typeof entry === "string")) {
 		return undefined;
 	}
-	const ordinal = parseOrdinal(data.engineOrdinal);
+	const ordinal = parseEngineOrdinal(data.engineOrdinal);
 	const launchProfile = parseLaunchProfile(data.launch_profile);
 	const runtimeBuildId = parseRuntimeBuildId(data.runtimeBuildId);
 	const pathIdentityResolver = parsePathIdentityResolverStatus(data.path_identity_resolver);
@@ -74,7 +74,8 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 	};
 }
 
-function parseOrdinal(value: unknown): EngineOrdinal | undefined {
+/** An engine ordinal on the wire: exactly five numbers, else `undefined` (never a guessed ordinal). */
+export function parseEngineOrdinal(value: unknown): EngineOrdinal | undefined {
 	if (!Array.isArray(value) || value.length !== 5 || !value.every((part) => typeof part === "number"))
 		return undefined;
 	return [value[0], value[1], value[2], value[3], value[4]];

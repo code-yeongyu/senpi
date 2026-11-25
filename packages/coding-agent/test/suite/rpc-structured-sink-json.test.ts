@@ -201,22 +201,30 @@ it("snapshots getters once before later getters can mutate earlier properties", 
 
 // Part of #4272: deep nesting must succeed or fail exactly where native JSON.stringify does. A fresh
 // process keeps the walk cold: warmed-up code uses smaller frames and hides the earlier overflow.
-// RULING-68: under the engine limit the normalizer equals the JSON round trip exactly; past it (where the round trip
-// throws the engine's RangeError) it refuses with the typed LegacyRecordDepthError. The boundary is searched with the
+// RULING-68: under the engine limit the normalizer equals the JSON round trip exactly. senpi#5702 (LEAD ruling,
+// superseding RULING-68's typed LegacyRecordDepthError there): past it (where the round trip throws the engine's
+// RangeError) the normalizer still answers, with the value whose JSON is the text an unbounded JSON.stringify writes. The boundary is searched with the
 // same input shape and call chain the samples use, but where (and whether) nested arrays hit a limit depends on the
 // engine: some serialize arrays without recursion and have no array limit at all. So no array sample assumes which
 // side it lands on; each is held to the invariant. The bisection stops at its cap (200,000): on an engine with no array
 // limit (Node 26) `low` is that cap, not an engine limit, and each result says which it is. The deciding sample is the
-// toJSON object chain, which must refuse: V8 14.x and Bun 1.4 serialize toJSON results by recursion (measured, not
+// toJSON object chain, which must be past the native limit: V8 14.x and Bun 1.4 serialize toJSON results by recursion (measured, not
 // guaranteed), so its round trip throws RangeError there. The chain is capped at a depth far past any stack, so an
 // engine that serializes it without recursion ends the chain and fails that assertion instead of running to OOM.
 it("normalizes deep nesting like the JSON round trip: nested arrays to the bisection cap and a toJSON object chain past every engine limit", async () => {
 	const source = new URL("../../src/modes/rpc/json-normal-value.ts", import.meta.url).href;
+	const jsonl = new URL("../../src/modes/rpc/jsonl.ts", import.meta.url).href;
 	const script = `
 		const { normalizeJsonValue } = await import(${JSON.stringify(source)});
+		const { legacyJsonText } = await import(${JSON.stringify(jsonl)});
 		const deep = (depth) => { let nested = []; for (let level = 0; level < depth; level++) nested = [nested]; return nested; };
 		const record = (depth) => ({ type: "tool_execution_end", result: { content: [], details: deep(depth) } });
 		const outcome = (run) => { try { return JSON.stringify(run()); } catch (error) { return error.name; } };
+		const written = (run) => { try { return legacyJsonText(run()); } catch (error) { return error.name; } };
+		const head = '{"type":"tool_execution_end","result":{"content":[],"details":';
+		const unbounded = (depth) => depth < 0
+			? head + '{"inner":'.repeat(1000000) + "{}" + "}".repeat(1000000) + "}}"
+			: head + "[".repeat(depth + 1) + "]".repeat(depth + 1) + "}}";
 		const roundTrip = (input) => outcome(() => JSON.parse(JSON.stringify(input)));
 		const cap = 200000;
 		let low = 1;
@@ -232,8 +240,9 @@ it("normalizes deep nesting like the JSON round trip: nested arrays to the bisec
 		const results = [low - 16, low, low + 1, 20000, -1].map((depth) => {
 			const input = depth < 0 ? endless : record(depth);
 			const reference = roundTrip(input);
-			const normalized = outcome(() => normalizeJsonValue(input).value);
-			return { depth, low, bound, same: normalized === reference, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
+			const normalized = written(() => normalizeJsonValue(input).value);
+			const expected = reference === "RangeError" ? unbounded(depth) : reference;
+			return { depth, low, bound, same: normalized === expected, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
 		});
 		process.stdout.write(JSON.stringify(results));`;
 	const args = process.versions.bun ? ["-e", script] : ["--input-type=module", "-e", script];
@@ -255,16 +264,13 @@ it("normalizes deep nesting like the JSON round trip: nested arrays to the bisec
 		"a 1,000,000-level toJSON chain overflows the engine (recursive toJSON serialization: measured on V8 14.x and Bun 1.4); an engine that serializes it without recursion fails here",
 	).toBe("RangeError");
 	for (const { depth, low, bound, same, reference, normalized } of results) {
-		if (reference === "RangeError")
-			expect({ depth, low, bound, normalized }).toEqual({ depth, low, bound, normalized: "LegacyRecordDepthError" });
-		else
-			expect({ depth, low, bound, same, normalized }).toEqual({
-				depth,
-				low,
-				bound,
-				same: true,
-				normalized: reference,
-			});
+		expect({ depth, low, bound, same, normalized }).toEqual({
+			depth,
+			low,
+			bound,
+			same: true,
+			normalized: reference === "RangeError" ? normalized : reference,
+		});
 	}
 }, 90_000);
 

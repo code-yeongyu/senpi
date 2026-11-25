@@ -163,6 +163,8 @@ export function runJsInstall(input: {
 		const child = spawn(input.command, argv, {
 			cwd: input.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
+			// senpi#3965: npm/pnpm is a console-subsystem exe on Windows.
+			windowsHide: true,
 			// npm reads `global`/`location` from any .npmrc and the env; a global install would land where the import never looks.
 			env: {
 				...input.env,

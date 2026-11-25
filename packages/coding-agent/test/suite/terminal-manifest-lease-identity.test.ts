@@ -56,7 +56,7 @@ describe("terminal lease identity (v2)", () => {
 		const dir = await tempDir();
 		const path = join(dir, "s.lease");
 		const stale = JSON.stringify(v2Record({ pid: 2_147_000_002, token: "dead-holder" }));
-		const reclaimer = { pid: 3_100_001, bootAtMs: processBootAtMs(), processStartedAtMs: NOW - 60_000 };
+		const reclaimer = { pid: 3_100_001, bootAtMs: await processBootAtMs(), processStartedAtMs: NOW - 60_000 };
 		let reclaimerStart = reclaimer.processStartedAtMs;
 		let reclaimerAlive = true;
 		const acquire = () =>
@@ -96,7 +96,7 @@ describe("terminal lease identity (v2)", () => {
 			`${path}.lock`,
 			JSON.stringify({
 				pid: process.pid,
-				bootAtMs: processBootAtMs(),
+				bootAtMs: await processBootAtMs(),
 				processStartedAtMs: ownProcessStartedAtMs() - 3_600_000,
 			}),
 			"utf8",

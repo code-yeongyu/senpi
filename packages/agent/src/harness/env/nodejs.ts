@@ -959,6 +959,9 @@ export class NodeExecutionEnv implements ExecutionEnv {
 					const info = fileInfoFromStats(entryPath, await lstat(entryPath));
 					if (info.ok) infos.push(info.value);
 				} catch (error) {
+					// Another process can remove an entry after readdir listed it (a released lock
+					// directory, a renamed staging file); the listing omits it as if readdir had run later.
+					if (isNodeError(error) && error.code === "ENOENT") continue;
 					return err(toFileError(error, entryPath));
 				}
 			}

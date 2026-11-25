@@ -19,6 +19,7 @@ import { parseArgs, resolveSessionRuntime } from "../../cli/args.ts";
 import { getAgentDir } from "../../config.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { describeRpcMethodClasses } from "./method-classes.ts";
 import type { RpcLaunchProfile, RpcLaunchProfileCore, RpcProtocolIdentity } from "./rpc-types.ts";
 
 export { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV };
@@ -79,5 +80,6 @@ export function protocolIdentity(agentDir: string = resolve(getAgentDir())): Rpc
 		engineOrdinal: build.ordinal,
 		launch_profile: cachedProfile,
 		agentDir,
+		method_classes: describeRpcMethodClasses(),
 	};
 }

@@ -4,6 +4,7 @@
  * `command_started{breakaway:true}`, waits, and exits with the command's exit code. The shim itself stays in the job.
  */
 import { writeSync } from "node:fs";
+import { optOutChildPowerThrottling } from "../../../core/windows-power-throttling.ts";
 import { LAUNCH_SHIM_COMMAND_LINE_ENV } from "./launch-env-names.ts";
 import { loadKernel32Process, startBreakaway } from "./windows-breakaway.ts";
 
@@ -20,6 +21,8 @@ export function runLaunchShimRole(env: NodeJS.ProcessEnv = process.env): never {
 	}
 	// startBreakaway hands the command an environment without the shim's own role and command line.
 	const command = startBreakaway(kernel, commandLine, env);
+	// CreateProcessW is not a wrapped launcher, and the command leaves the job, so it needs its own EcoQoS opt-out (senpi#6125).
+	optOutChildPowerThrottling(command.pid);
 	writeSync(PID_FD, `${JSON.stringify({ pid: command.pid })}\n`);
 	process.exit(command.wait());
 }

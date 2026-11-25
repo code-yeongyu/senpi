@@ -1,7 +1,19 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
-import { InMemoryCredentialStore, revokeStoredOAuth } from "./auth/credential-store.ts";
-import { appendLoginSlot, assertLoginKeyPresent, removeSlot, withoutBlankKey } from "./auth/pool/slots.ts";
+import {
+	assertExpectedLogin,
+	deleteStored,
+	InMemoryCredentialStore,
+	revokeStoredOAuth,
+} from "./auth/credential-store.ts";
+import { stampLogin } from "./auth/pool/login-id.ts";
+import {
+	appendLoginSlot,
+	assertLoginKeyPresent,
+	ReauthorizeAccountMismatchError,
+	removeSlot,
+	withoutBlankKey,
+} from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
 	type AuthResolutionOverrides,
@@ -809,14 +821,16 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(
-					current,
-					credential,
-					(name, origin) => {
-						committedName = name;
-						committedOrigin = origin;
-					},
-					{ accountIdentity: provider.auth.oauth?.accountIdentity },
+				return stampLogin(
+					appendLoginSlot(
+						current,
+						credential,
+						(name, origin) => {
+							committedName = name;
+							committedOrigin = origin;
+						},
+						{ accountIdentity: provider.auth.oauth?.accountIdentity, reauthorizeSlot: options?.reauthorizeSlot },
+					),
 				);
 			},
 			{ signal },
@@ -843,6 +857,8 @@ class ModelsImpl implements MutableModels {
 			await mutation;
 		} catch (error) {
 			signal.throwIfAborted();
+			// The user must see why a reauthorization changed nothing, not a storage failure.
+			if (error instanceof ReauthorizeAccountMismatchError) throw error;
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
 		}
 		if (committedName !== undefined && committedOrigin !== undefined) {
@@ -855,6 +871,7 @@ class ModelsImpl implements MutableModels {
 		const signal = operationSignal(options?.signal);
 		signal.throwIfAborted();
 		const oauth = this.providers.get(providerId)?.auth.oauth;
+		const expectedLoginId = options?.expectedLoginId;
 		try {
 			if (oauth?.revoke) {
 				this.signingOut.set(providerId, (this.signingOut.get(providerId) ?? 0) + 1);
@@ -866,15 +883,23 @@ class ModelsImpl implements MutableModels {
 				const current = await this.credentials.read(providerId, { signal });
 				const next = removeSlot(current, options.slotId);
 				if (next === undefined) {
-					await this.credentials.delete(providerId, { signal });
+					await deleteStored(this.credentials, providerId, expectedLoginId, { signal });
 					return;
 				}
-				await this.credentials.modify(providerId, async () => next, { signal });
+				await this.credentials.modify(
+					providerId,
+					async (stored) => {
+						assertExpectedLogin(providerId, stored, expectedLoginId);
+						return next;
+					},
+					{ signal },
+				);
 				return;
 			}
-			await this.credentials.delete(providerId, { signal });
+			await deleteStored(this.credentials, providerId, expectedLoginId, { signal });
 		} catch (error) {
 			signal.throwIfAborted();
+			if (error instanceof ModelsError && error.code === "stale_login") throw error;
 			throw new ModelsError("auth", `Credential store delete failed for ${providerId}`, { cause: error });
 		} finally {
 			if (oauth?.revoke) {
@@ -939,7 +964,15 @@ class ModelsImpl implements MutableModels {
 		let headers = mergeHeaders(auth.headers, options?.headers);
 		if (options?.transformHeaders) headers = await options.transformHeaders(headers ?? {});
 		const env = resolution.env || options?.env ? { ...(resolution.env ?? {}), ...(options?.env ?? {}) } : undefined;
-		const requestModel: TModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+		const requestModel: TModel =
+			auth.baseUrl || ((auth.api || auth.compat) && isModelType(model, "chat"))
+				? {
+						...model,
+						...(auth.baseUrl ? { baseUrl: auth.baseUrl } : {}),
+						...(auth.api && isModelType(model, "chat") ? { api: auth.api } : {}),
+						...(auth.compat && isModelType(model, "chat") ? { compat: { ...model.compat, ...auth.compat } } : {}),
+					}
+				: model;
 		const { transformHeaders: _transformHeaders, ...providerOptions } = options ?? {};
 		const requestOptions = { ...providerOptions, apiKey, headers, env } as Omit<TOptions, "transformHeaders"> &
 			ProviderRequestOptions<TModel>;
@@ -1339,7 +1372,7 @@ const GPT_6_ASTRA_THINKING_LEVEL_MAP: ThinkingLevelMap = {
 };
 
 /** GPT-6 tiers that document no `none` effort, so a map-less row must not offer `off`. */
-const GPT_6_NO_NONE_EFFORT_MODEL_IDS = ["gpt-6-astra", "gpt-6.1-sol"];
+const GPT_6_NO_NONE_EFFORT_MODEL_IDS = ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"];
 
 /** Infer documented OpenAI reasoning controls only when generated metadata is absent. */
 export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
@@ -1416,6 +1449,8 @@ const XHIGH_MODEL_IDS = [
 	"gpt-5.6-terra",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-sol",
 	"gpt-6-luna",
 	"deepseek-v4-pro",
@@ -1488,7 +1523,15 @@ const OPENAI_MAX_APIS: Api[] = [
 ];
 
 /** Model families that accept native `max` effort on OpenAI-compatible APIs. */
-const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"];
+const OPENAI_MAX_MODEL_IDS = [
+	"gpt-5.6-sol",
+	"gpt-6-astra",
+	"gpt-6.1-sol",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
+	"gpt-6-sol",
+	"gpt-6-luna",
+];
 
 const MAX_MODEL_IDS = [
 	"opus-4-6",
