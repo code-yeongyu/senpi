@@ -1,5 +1,6 @@
 import type { ExtensionFactory } from "../types.ts";
 import accountExtension from "./account/index.ts";
+import antigravityAcpExtension from "./antigravity-acp/index.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
 import anthropicSubscriptionExtension from "./anthropic-subscription/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
@@ -140,6 +141,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
 	// Provider-only lane beside the other provider registrations; no hooks, so order is not load-bearing.
 	{ id: "vertex-model-garden", factory: vertexModelGardenExtension },
+	// Opt-in local ACP stdio provider driving official `agy acp`; sits beside the other provider lanes.
+	{ id: "antigravity-acp", factory: antigravityAcpExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.
