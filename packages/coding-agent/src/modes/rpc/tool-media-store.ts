@@ -120,13 +120,12 @@ const unavailable = (reason: "image_too_large" | "session_limit" | "storage_erro
 
 /** How a call directory is created; a caller may observe or replace the step that the recheck below guards. */
 export type MakeCallDirectory = (directory: string) => void;
-const makeCallDirectory: MakeCallDirectory = (directory) => {
-	mkdirSync(directory, { recursive: true, mode: 0o700 });
-};
 
-function writeImage(root: string, path: string, bytes: Buffer, makeDirectory: MakeCallDirectory): void {
+function writeImage(root: string, path: string, bytes: Buffer, makeDirectory: MakeCallDirectory | undefined): void {
 	const callDirectory = dirname(path);
-	makeDirectory(callDirectory);
+	// The real mkdirSync stays here, where the session-path sync audit sees it; a test replaces only this step.
+	if (makeDirectory === undefined) mkdirSync(callDirectory, { recursive: true, mode: 0o700 });
+	else makeDirectory(callDirectory);
 	assertRealDirectoryChain(root, callDirectory);
 	const staging = `${path}.${randomBytes(6).toString("hex")}.tmp`;
 	try {
@@ -151,7 +150,7 @@ export function persistToolImage(
 	ref: { readonly toolCallId: string; readonly contentIndex: number },
 	block: { readonly data: string; readonly mimeType?: string },
 	limits: ToolMediaLimits = DEFAULT_LIMITS,
-	makeDirectory: MakeCallDirectory = makeCallDirectory,
+	makeDirectory?: MakeCallDirectory,
 ): PersistedMedia {
 	const known = outcomes.get(block);
 	if (known !== undefined) return known;
@@ -165,7 +164,7 @@ function store(
 	ref: { readonly toolCallId: string; readonly contentIndex: number },
 	block: { readonly data: string; readonly mimeType?: string },
 	limits: ToolMediaLimits,
-	makeDirectory: MakeCallDirectory,
+	makeDirectory: MakeCallDirectory | undefined,
 ): PersistedMedia {
 	const extension = EXTENSIONS[(block.mimeType ?? "").toLowerCase()];
 	if (extension === undefined) return unavailable("storage_error");
