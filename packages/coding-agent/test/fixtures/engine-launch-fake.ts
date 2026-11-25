@@ -22,7 +22,7 @@ function descriptorOpen(fd: number): boolean {
 	}
 }
 const openBeforeRead = descriptorOpen(5);
-const key = await readLaunchKey();
+const key = process.env.FAKE_ENGINE_SKIP_KEY === "1" ? undefined : await readLaunchKey();
 const closedOnReturn = openBeforeRead && !descriptorOpen(5);
 const keySocket = hasProc ? keySocketBefore : descriptorOpen(5) ? "open" : "closed";
 const keyOut = process.env.FAKE_ENGINE_KEY_OUT;

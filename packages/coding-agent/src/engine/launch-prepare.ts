@@ -7,7 +7,7 @@ import { launchArgv, parseLaunchArgv } from "./launch-argv.ts";
 import { type LaunchMode, type LaunchOptions, LaunchOptionsSchema } from "./launch-options.ts";
 import { type EngineError, engineError } from "./result.ts";
 
-export type LaunchCode = "invalid_input" | "launch_failed" | "launch_key_failed";
+export type LaunchCode = "invalid_input" | "launch_failed" | "launch_key_failed" | "launch_key_unsupported";
 
 export interface PreparedLaunch {
 	readonly argv: readonly string[];

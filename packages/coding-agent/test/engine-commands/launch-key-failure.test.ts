@@ -1,5 +1,5 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -55,6 +55,67 @@ describe("a launch answers launch_key_failed on every mode (security design 5.5,
 		const run = await launch();
 		if (run.kind !== "ok") throw new Error("launch refused");
 		expect(await run.value.exited).toEqual({ exit_code: LAUNCH_KEY_FAILED_EXIT_CODE, failure: "launch_key_failed" });
+	});
+});
+
+/** Starts the real CLI entry with a private table and descriptor 5 as given, and collects its exit and output. */
+async function realEngine(
+	args: readonly string[],
+	table: string,
+	slot5: "pipe" | number,
+	write?: (sink: Writable) => void,
+): Promise<{ readonly code: number | null; readonly output: string }> {
+	const child = spawn("bun", [CLI, ...args], {
+		cwd: root,
+		stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", slot5],
+		env: {
+			PATH: process.env.PATH ?? "",
+			HOME: root,
+			SENPI_CODING_AGENT_DIR: join(root, "agent"),
+			PI_OFFLINE: "1",
+			NO_COLOR: "1",
+			SENPI_PRIVATE_FDS: table,
+		},
+	});
+	const sink: unknown = Reflect.get(child.stdio, 5);
+	if (sink instanceof Writable) {
+		sink.on("error", () => {});
+		write?.(sink);
+	}
+	let output = "";
+	for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk: Buffer) => (output += String(chunk)));
+	const code = await new Promise<number | null>((done) => child.once("close", done));
+	return { code, output };
+}
+
+describe("the real engine entry (review 6064845699 M1, L5)", () => {
+	it("fails closed when the key channel names a descriptor that is not a channel", async () => {
+		const file = openSync(join(root, "not-a-channel"), "w");
+		try {
+			const run = await realEngine(["--list-tips"], JSON.stringify({ "api-key": 5 }), file);
+			expect(run.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+			expect(run.output).toContain("launch_key_unreadable");
+		} finally {
+			closeSync(file);
+		}
+	});
+
+	it("starts normally when the key was taken by an earlier hop (declared null)", async () => {
+		const run = await realEngine(["--list-tips"], JSON.stringify({ "api-key": null }), "pipe");
+		expect(run.code).toBe(0);
+		expect(run.output).not.toContain("launch_key_");
+	});
+
+	it("carries a key through the entry's own hops to main(), which refuses it beside --api-key", async () => {
+		const run = await realEngine(
+			["--api-key", "x", "--list-tips"],
+			JSON.stringify({ "api-key": 5 }),
+			"pipe",
+			(sink) => sink.end(Buffer.from("sk-canary-real-entry-7451")),
+		);
+		expect(run.code).toBe(1);
+		expect(run.output).toContain("--api-key and a launch key cannot be combined");
+		expect(run.output).not.toContain("sk-canary-real-entry-7451");
 	});
 });
 

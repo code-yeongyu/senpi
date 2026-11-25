@@ -1,5 +1,5 @@
 import type { Duplex } from "node:stream";
-import { takeInheritedPrivateChannel } from "../private-fds.ts";
+import { privateChannelAdoptable, privateChannelOffered, takeInheritedPrivateChannel } from "../private-fds.ts";
 
 /** The private descriptor a launch function delivers a provider key on (security design 5.5, launch row). */
 export const LAUNCH_KEY_CHANNEL = "api-key";
@@ -35,7 +35,7 @@ function closeChannel(channel: Duplex): Promise<void> {
 	});
 }
 
-async function readAndClose(channel: Duplex): Promise<string | undefined> {
+async function readAndClose(channel: Duplex): Promise<string> {
 	const chunks: Buffer[] = [];
 	let size = 0;
 	try {
@@ -43,34 +43,51 @@ async function readAndClose(channel: Duplex): Promise<string | undefined> {
 			const bytes: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
 			size += bytes.length;
 			if (size > MAX_KEY_BYTES) {
-				throw new LaunchKeyError("launch_key_too_large", "the launch key is larger than a provider key can be");
+				throw new LaunchKeyError(
+					"launch_key_too_large",
+					`the key on channel ${LAUNCH_KEY_CHANNEL} is larger than a provider key can be`,
+				);
 			}
 			chunks.push(bytes);
 		}
 	} catch (error: unknown) {
 		if (error instanceof LaunchKeyError) throw error;
-		throw new LaunchKeyError("launch_key_unreadable", "the launch key could not be read");
+		throw new LaunchKeyError("launch_key_unreadable", `the key on channel ${LAUNCH_KEY_CHANNEL} could not be read`);
 	} finally {
 		await closeChannel(channel);
 	}
 	const key = Buffer.concat(chunks)
 		.toString("utf8")
 		.replace(/\r?\n$/u, "");
-	return key.length > 0 ? key : undefined;
+	if (key.length === 0) {
+		throw new LaunchKeyError("launch_key_unreadable", `channel ${LAUNCH_KEY_CHANNEL} delivered an empty key`);
+	}
+	return key;
 }
 
 /**
  * Reads the launch key once and closes its descriptor before answering: `destroy()` only schedules the close, so
  * it waits for the channel's `close` event, and nothing this engine starts after the call can inherit it. The read
  * and the close together are bounded by `LAUNCH_KEY_DEADLINE_MS`: past it the step fails closed with
- * `launch_key_timeout` and the key is never used. Answers undefined when no launch delivered one. A failure names
- * the channel, never the bytes read.
+ * `launch_key_timeout` and the key is never used. Answers undefined when no launch delivered one, when an earlier
+ * hop took it (declared `null`), and on every call after the first. A channel that was offered a descriptor but
+ * cannot be adopted, read or delivers an empty key fails with `launch_key_unreadable` before any credential is
+ * chosen, so the engine never falls back to another credential in silence. A failure names the channel, never the
+ * bytes read.
  */
 export async function readLaunchKey(
 	takeChannel: (name: string) => Duplex | undefined = takeInheritedPrivateChannel,
+	offered: (name: string) => boolean = privateChannelOffered,
 ): Promise<string | undefined> {
+	const wasOffered = offered(LAUNCH_KEY_CHANNEL);
 	const channel = takeChannel(LAUNCH_KEY_CHANNEL);
-	if (channel === undefined) return undefined;
+	if (channel === undefined) {
+		if (!wasOffered) return undefined;
+		throw new LaunchKeyError(
+			"launch_key_unreadable",
+			`channel ${LAUNCH_KEY_CHANNEL} was given a descriptor this engine could not adopt`,
+		);
+	}
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<never>((_resolve, reject) => {
 		timer = setTimeout(() => {
@@ -78,7 +95,7 @@ export async function readLaunchKey(
 			reject(
 				new LaunchKeyError(
 					"launch_key_timeout",
-					`the launch key was not read and closed within ${LAUNCH_KEY_DEADLINE_MS / 1000} s`,
+					`the key on channel ${LAUNCH_KEY_CHANNEL} was not read and closed within ${LAUNCH_KEY_DEADLINE_MS / 1000} s`,
 				),
 			);
 		}, LAUNCH_KEY_DEADLINE_MS);
@@ -88,4 +105,21 @@ export async function readLaunchKey(
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/**
+ * The entry's guard before any hop. Forwarding a refused descriptor writes `null`, which the next process reads as
+ * "taken upstream, no key here": only the process that refused it can tell the two apart, so it fails closed here,
+ * before the re-exec under Bun or the isolated child, with the same code and exit `main()` uses.
+ */
+export function refuseUnusableLaunchKey(
+	offered: (name: string) => boolean = privateChannelOffered,
+	adoptable: (name: string) => boolean = privateChannelAdoptable,
+	exit: (code: number) => never = process.exit,
+): void {
+	if (!offered(LAUNCH_KEY_CHANNEL) || adoptable(LAUNCH_KEY_CHANNEL)) return;
+	process.stderr.write(
+		`Error: launch_key_unreadable: channel ${LAUNCH_KEY_CHANNEL} was given a descriptor this engine could not adopt\n`,
+	);
+	exit(LAUNCH_KEY_FAILED_EXIT_CODE);
 }

@@ -1,8 +1,9 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchHand, launchHeadless, launchInteractive, launchPrint, launchRpc } from "../../src/engine/launch.ts";
 import type { LaunchPrintEvent, LaunchPrintRun } from "../../src/engine/launch-print-stream.ts";
@@ -181,12 +182,79 @@ describe("the launch key travels on its own descriptor (security design 5.5)", (
 	});
 
 	it("never forwards the caller's own private table to the launched engine", async () => {
-		await launchHand(ports({ SENPI_PRIVATE_FDS: '{"presenter":7}', SENPI_PRIVATE_FDS_FINAL: "1" }), {});
-		expect(spawned[0]?.env.SENPI_PRIVATE_FDS).toBeUndefined();
-		expect(spawned[0]?.env.SENPI_PRIVATE_FDS_FINAL).toBeUndefined();
+		const hand = await launchHand(ports({ SENPI_PRIVATE_FDS: '{"presenter":7}', SENPI_PRIVATE_FDS_FINAL: "1" }), {});
+		try {
+			expect(spawned).toHaveLength(1);
+			expect(spawned[0]?.env).not.toHaveProperty("SENPI_PRIVATE_FDS");
+			expect(spawned[0]?.env).not.toHaveProperty("SENPI_PRIVATE_FDS_FINAL");
+		} finally {
+			if (hand.kind === "ok") await hand.value.stop();
+		}
 	});
 
-	it("is not inherited by a process the engine starts: the name stays declared, with no descriptor", async () => {
+	it("closes the launcher's end of the key channel once the key is written, even when the engine never reads it", async () => {
+		const children: ChildProcess[] = [];
+		const base = ports({ FAKE_ENGINE_SKIP_KEY: "1", FAKE_ENGINE_HOLD: "1" });
+		const unhandled: unknown[] = [];
+		const record = (error: unknown) => unhandled.push(error);
+		process.on("uncaughtException", record);
+		try {
+			const recording: LaunchPorts = {
+				...base,
+				spawn: (cmd, args, options) => {
+					const child = base.spawn(cmd, args, options);
+					children.push(child);
+					return child;
+				},
+			};
+			const run = await launchRpc(recording, { api_key: Readable.from([Buffer.from(CANARY)]) });
+			if (run.kind !== "ok") throw new Error("launch refused");
+			try {
+				const sink: unknown = Reflect.get(children[0]?.stdio ?? [], 5);
+				if (!(sink instanceof Writable)) throw new Error("no key channel");
+				const closed =
+					sink.destroyed ||
+					(await once(sink, "close", { signal: AbortSignal.timeout(5_000) }).then(
+						() => true,
+						() => false,
+					));
+				expect(closed).toBe(true);
+			} finally {
+				await run.value.stop();
+			}
+			await new Promise<void>((done) => setImmediate(done));
+			expect(unhandled).toEqual([]);
+		} finally {
+			process.off("uncaughtException", record);
+		}
+	});
+
+	it("refuses a launch key on Windows before anything starts", async () => {
+		const answer = await launchRpc(
+			{ ...ports(), platform: () => "win32" },
+			{ api_key: Readable.from([Buffer.from(CANARY)]) },
+		);
+		expect(answer).toMatchObject({ kind: "error", error: { code: "launch_key_unsupported" } });
+		expect(spawned).toEqual([]);
+	});
+
+	it("answers launch_failed when the launched engine has no key channel to write to", async () => {
+		const base = ports({ FAKE_ENGINE_HOLD: "1" });
+		const noKeySlot: LaunchPorts = {
+			...base,
+			spawn: (cmd, args, options) => {
+				const stdio = Array.isArray(options.stdio) ? [...options.stdio] : [];
+				stdio[5] = "ignore";
+				return base.spawn(cmd, args, { ...options, stdio });
+			},
+		};
+		expect(await launchRpc(noKeySlot, { api_key: Readable.from([Buffer.from(CANARY)]) })).toMatchObject({
+			kind: "error",
+			error: { code: "launch_failed" },
+		});
+	});
+
+	it("declares the key to a process the engine starts by name only, with no descriptor", async () => {
 		const childOut = join(root, "child-table");
 		const run = await launchPrint(ports({ FAKE_ENGINE_CHILD_OUT: childOut }), {
 			input: { messages: ["hi"] },

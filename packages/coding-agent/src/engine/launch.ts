@@ -53,6 +53,9 @@ async function started(
 ): Promise<EngineResult<StartedEngine, LaunchCode>> {
 	const prepared = prepareLaunch(mode, options);
 	if ("kind" in prepared) return prepared;
+	if (options.api_key !== undefined && (ports.platform?.() ?? process.platform) === "win32") {
+		return engineError("launch_key_unsupported", "a launch key cannot be delivered to an engine on Windows");
+	}
 	const engine = await startEngine(ports, prepared.argv, stdio(options), {
 		...(options.api_key === undefined ? {} : { key: options.api_key }),
 		presenter: options.presenter !== undefined,

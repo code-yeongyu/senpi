@@ -20,6 +20,8 @@ export interface LaunchPorts {
 	readonly engine: () => { readonly command: string; readonly args: readonly string[] };
 	readonly env: () => NodeJS.ProcessEnv;
 	readonly agentDir: () => string;
+	/** The platform the key must cross; a Windows engine refuses a single private descriptor. */
+	readonly platform?: () => NodeJS.Platform;
 }
 
 export function defaultLaunchPorts(agentDir: () => string): LaunchPorts {
@@ -60,12 +62,13 @@ function slots(base: StdioOptions, extra: Readonly<Record<number, "pipe" | numbe
 	return stdio;
 }
 
-function deliverKey(child: ChildProcess, key: LaunchKeyHandle): void {
+function deliverKey(child: ChildProcess, key: LaunchKeyHandle): boolean {
 	const sink: unknown = Reflect.get(child.stdio, LAUNCH_KEY_FD);
-	if (!(sink instanceof Writable)) return;
+	if (!(sink instanceof Writable)) return false;
 	const source = key instanceof Readable ? key : webChunks(key);
 	const close = () => sink.destroy();
 	pipeline(source, sink).then(close, close);
+	return true;
 }
 
 async function* webChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
@@ -114,7 +117,11 @@ export function startEngine(
 		});
 		child.once("error", (error) => resolve(error));
 		child.once("spawn", () => {
-			if (extras.key !== undefined) deliverKey(child, extras.key);
+			if (extras.key !== undefined && !deliverKey(child, extras.key)) {
+				child.kill("SIGKILL");
+				resolve(new Error(`the launched engine has no key channel on descriptor ${LAUNCH_KEY_FD}`));
+				return;
+			}
 			resolve({ child, exited });
 		});
 	});

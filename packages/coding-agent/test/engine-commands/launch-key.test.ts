@@ -1,6 +1,14 @@
 import { Duplex } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LAUNCH_KEY_CHANNEL, LAUNCH_KEY_DEADLINE_MS, LaunchKeyError, readLaunchKey } from "../../src/cli/launch-key.ts";
+import {
+	LAUNCH_KEY_CHANNEL,
+	LAUNCH_KEY_DEADLINE_MS,
+	LAUNCH_KEY_FAILED_EXIT_CODE,
+	LaunchKeyError,
+	readLaunchKey,
+	refuseUnusableLaunchKey,
+} from "../../src/cli/launch-key.ts";
+import { parseTable } from "../../src/private-fds.ts";
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -93,6 +101,85 @@ describe("readLaunchKey answers only after its descriptor is closed (security de
 		expect(outcome).toBeInstanceOf(LaunchKeyError);
 		expect(outcome).toMatchObject({ code: "launch_key_timeout" });
 		expect(String((outcome as Error).message)).not.toContain("sk-never-closes-7451");
+	});
+
+	it("fails closed with launch_key_unreadable when the channel was given a descriptor it cannot adopt", async () => {
+		await expect(
+			readLaunchKey(
+				() => undefined,
+				() => true,
+			),
+		).rejects.toMatchObject({
+			code: "launch_key_unreadable",
+			message: expect.stringContaining(LAUNCH_KEY_CHANNEL),
+		});
+	});
+
+	it("answers undefined when an earlier hop took the key (declared null): no fallback error for a child engine", async () => {
+		expect(
+			await readLaunchKey(
+				() => undefined,
+				() => false,
+			),
+		).toBeUndefined();
+	});
+
+	it("strips one trailing newline, and fails closed on an empty key", async () => {
+		const once = (text: string) => {
+			const { channel, release } = heldChannel(text);
+			release();
+			return channel;
+		};
+		expect(await readLaunchKey(() => once("sk-newline-7451\n"))).toBe("sk-newline-7451");
+		await expect(readLaunchKey(() => once("\n"))).rejects.toMatchObject({ code: "launch_key_unreadable" });
+	});
+
+	it("maps a read error to launch_key_unreadable, naming the channel and never the bytes", async () => {
+		const channel = new Duplex({
+			read() {
+				this.push(Buffer.from("sk-partial-7451"));
+				this.destroy(new Error("EIO sk-partial-7451"));
+			},
+			write(_chunk, _encoding, done) {
+				done();
+			},
+		});
+		const failure = await readLaunchKey(() => channel).catch((error: unknown) => error);
+		expect(failure).toMatchObject({ code: "launch_key_unreadable" });
+		expect(String((failure as Error).message)).toContain(LAUNCH_KEY_CHANNEL);
+		expect(String((failure as Error).message)).not.toContain("sk-partial");
+	});
+
+	it("records which names a table offered a descriptor: a null name is declared, not offered", () => {
+		expect([...parseTable('{"api-key":5,"presenter":null}', { platform: "linux" }).offered]).toEqual(["api-key"]);
+		expect([...parseTable('{"api-key":', { platform: "linux" }).offered]).toEqual(["api-key"]);
+	});
+
+	it("the entry refuses before any hop when a descriptor was offered and cannot be adopted", () => {
+		const exits: number[] = [];
+		const exit = (code: number): never => {
+			exits.push(code);
+			throw new Error("exited");
+		};
+		expect(() =>
+			refuseUnusableLaunchKey(
+				() => true,
+				() => false,
+				exit,
+			),
+		).toThrow("exited");
+		expect(exits).toEqual([LAUNCH_KEY_FAILED_EXIT_CODE]);
+		refuseUnusableLaunchKey(
+			() => true,
+			() => true,
+			exit,
+		);
+		refuseUnusableLaunchKey(
+			() => false,
+			() => false,
+			exit,
+		);
+		expect(exits).toEqual([LAUNCH_KEY_FAILED_EXIT_CODE]);
 	});
 
 	it("answers undefined and opens nothing when no launch delivered a key", async () => {
