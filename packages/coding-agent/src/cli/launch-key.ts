@@ -1,5 +1,15 @@
 import type { Duplex } from "node:stream";
-import { privateChannelAdoptable, privateChannelOffered, takeInheritedPrivateChannel } from "../private-fds.ts";
+import {
+	privateChannelAdoptable,
+	privateChannelOffered,
+	privateFdTableUnparseable,
+	takeInheritedPrivateChannel,
+} from "../private-fds.ts";
+
+/** Offered, or possibly offered: a table that was present and could not be read may have named the key. */
+function keyMayBeOffered(name: string): boolean {
+	return privateChannelOffered(name) || privateFdTableUnparseable();
+}
 
 /** The private descriptor a launch function delivers a provider key on (security design 5.5, launch row). */
 export const LAUNCH_KEY_CHANNEL = "api-key";
@@ -77,7 +87,7 @@ async function readAndClose(channel: Duplex): Promise<string> {
  */
 export async function readLaunchKey(
 	takeChannel: (name: string) => Duplex | undefined = takeInheritedPrivateChannel,
-	offered: (name: string) => boolean = privateChannelOffered,
+	offered: (name: string) => boolean = keyMayBeOffered,
 ): Promise<string | undefined> {
 	const wasOffered = offered(LAUNCH_KEY_CHANNEL);
 	const channel = takeChannel(LAUNCH_KEY_CHANNEL);
@@ -113,13 +123,13 @@ export async function readLaunchKey(
  * before the re-exec under Bun or the isolated child, with the same code and exit `main()` uses.
  */
 export function refuseUnusableLaunchKey(
-	offered: (name: string) => boolean = privateChannelOffered,
+	offered: (name: string) => boolean = keyMayBeOffered,
 	adoptable: (name: string) => boolean = privateChannelAdoptable,
 	exit: (code: number) => never = process.exit,
 ): void {
 	if (!offered(LAUNCH_KEY_CHANNEL) || adoptable(LAUNCH_KEY_CHANNEL)) return;
 	process.stderr.write(
-		`Error: launch_key_unreadable: channel ${LAUNCH_KEY_CHANNEL} was given a descriptor this engine could not adopt\n`,
+		`Error: launch_key_unreadable: channel ${LAUNCH_KEY_CHANNEL} cannot be adopted (its descriptor was refused or the private table could not be read)\n`,
 	);
 	exit(LAUNCH_KEY_FAILED_EXIT_CODE);
 }

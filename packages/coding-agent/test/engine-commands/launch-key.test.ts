@@ -97,6 +97,7 @@ describe("readLaunchKey answers only after its descriptor is closed (security de
 		await vi.advanceTimersByTimeAsync(LAUNCH_KEY_DEADLINE_MS - 1);
 		expect(outcome).toBe("pending");
 		await vi.advanceTimersByTimeAsync(1);
+		expect(outcome).not.toBe("pending");
 		await reading;
 		expect(outcome).toBeInstanceOf(LaunchKeyError);
 		expect(outcome).toMatchObject({ code: "launch_key_timeout" });

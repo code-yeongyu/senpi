@@ -42,8 +42,9 @@ export interface EngineExit {
 	readonly failure?: "launch_key_failed";
 }
 
-export function engineExit(code: number | null): EngineExit {
-	return code === LAUNCH_KEY_FAILED_EXIT_CODE
+/** Exit 78 names a refused key only on a launch that handed a key over; any other launch reads it as a plain code. */
+export function engineExit(code: number | null, keyed: boolean): EngineExit {
+	return keyed && code === LAUNCH_KEY_FAILED_EXIT_CODE
 		? { exit_code: code, failure: "launch_key_failed" }
 		: { exit_code: code };
 }
@@ -113,7 +114,7 @@ export function startEngine(
 			return;
 		}
 		const exited = new Promise<EngineExit>((done) => {
-			child.once("close", (code) => done(engineExit(code)));
+			child.once("close", (code) => done(engineExit(code, extras.key !== undefined)));
 		});
 		child.once("error", (error) => resolve(error));
 		child.once("spawn", () => {

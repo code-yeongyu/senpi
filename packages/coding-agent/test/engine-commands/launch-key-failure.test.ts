@@ -39,6 +39,13 @@ describe("a launch answers launch_key_failed on every mode (security design 5.5,
 		});
 	});
 
+	it("reads exit 78 as a plain code on a launch that handed no key over", async () => {
+		expect(await launchInteractive(refusingEngine(), {})).toMatchObject({
+			kind: "ok",
+			value: { exit_code: LAUNCH_KEY_FAILED_EXIT_CODE },
+		});
+	});
+
 	it("print ends its stream with an exit that names the failure", async () => {
 		const run = await launchPrint(refusingEngine(), { input: { messages: ["x"] }, mode: "json", api_key: KEY() });
 		if (run.kind !== "ok") throw new Error("launch refused");
@@ -64,8 +71,9 @@ async function realEngine(
 	table: string,
 	slot5: "pipe" | number,
 	write?: (sink: Writable) => void,
+	runtime: readonly string[] = [],
 ): Promise<{ readonly code: number | null; readonly output: string }> {
-	const child = spawn("bun", [CLI, ...args], {
+	const child = spawn("bun", [...runtime, CLI, ...args], {
 		cwd: root,
 		stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", slot5],
 		env: {
@@ -98,6 +106,36 @@ describe("the real engine entry (review 6064845699 M1, L5)", () => {
 		} finally {
 			closeSync(file);
 		}
+	});
+
+	it("fails closed across the entry's isolated-child hop (bun --smol), where only the entry's guard sees the refusal", async () => {
+		const file = openSync(join(root, "not-a-channel-hop"), "w");
+		try {
+			const run = await realEngine(["--list-tips"], JSON.stringify({ "api-key": 5 }), file, undefined, ["--smol"]);
+			expect(run.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+			expect(run.output).toContain("launch_key_unreadable");
+		} finally {
+			closeSync(file);
+		}
+	});
+
+	it("carries a usable key across the isolated-child hop to main(), which refuses it beside --api-key", async () => {
+		const run = await realEngine(
+			["--api-key", "x", "--list-tips"],
+			JSON.stringify({ "api-key": 5 }),
+			"pipe",
+			(sink) => sink.end(Buffer.from("sk-canary-real-hop-7451")),
+			["--smol"],
+		);
+		expect(run.code).toBe(1);
+		expect(run.output).toContain("--api-key and a launch key cannot be combined");
+		expect(run.output).not.toContain("sk-canary-real-hop-7451");
+	});
+
+	it("fails closed on a private table that does not parse, since it may have named the key", async () => {
+		const run = await realEngine(["--list-tips"], "garbage", "pipe");
+		expect(run.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+		expect(run.output).toContain("launch_key_unreadable");
 	});
 
 	it("starts normally when the key was taken by an earlier hop (declared null)", async () => {
