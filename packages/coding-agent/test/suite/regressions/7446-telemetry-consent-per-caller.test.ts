@@ -56,7 +56,7 @@ it("goes from unanswered to granted to revoked in one live session without resta
 	expect([granted?.success, revoked?.success]).toEqual([true, true]);
 	expect([unanswered, afterGrant, afterRevoke.now]).toEqual([false, true, false]);
 	expect(afterRevoke.collected).toEqual([true]);
-}, 120_000);
+});
 
 it("keeps a host opt-out when the caller grants", async () => {
 	// given
@@ -68,7 +68,7 @@ it("keeps a host opt-out when the caller grants", async () => {
 
 	// then
 	expect(await permitted(host, "desktop", sessionId)).toEqual({ now: false, collected: [false] });
-}, 120_000);
+});
 
 it("never promotes an older peer's silence to a grant", async () => {
 	// given
@@ -80,7 +80,7 @@ it("never promotes an older peer's silence to a grant", async () => {
 
 	// then
 	expect(probe.now).toBe(false);
-}, 120_000);
+});
 
 it("lets two callers on one host process answer only for their own sessions", async () => {
 	// given
@@ -96,7 +96,7 @@ it("lets two callers on one host process answer only for their own sessions", as
 	expect(foreign?.success).toBe(false);
 	expect((await permitted(host, "cli", cli)).now).toBe(true);
 	expect((await permitted(host, "desktop", desktop)).now).toBe(false);
-}, 120_000);
+});
 
 it("lets an attached caller's decline hold a shared session off until it leaves", async () => {
 	// given
@@ -119,7 +119,7 @@ it("lets an attached caller's decline hold a shared session off until it leaves"
 	// then
 	expect(attached?.success).toBe(true);
 	expect([whileAttached, afterLeaving]).toEqual([false, true]);
-}, 120_000);
+});
 
 it("keeps a deliberate revocation after the revoking opener leaves, until a caller grants on purpose", async () => {
 	// given
@@ -143,7 +143,7 @@ it("keeps a deliberate revocation after the revoking opener leaves, until a call
 
 	// then
 	expect([attachedOnly, grantedOnPurpose]).toEqual([false, true]);
-}, 120_000);
+});
 
 it("advertises telemetry_consent, the capability a caller waits for before sending its answer", async () => {
 	await using host = await contextHost();
@@ -151,7 +151,7 @@ it("advertises telemetry_consent, the capability a caller waits for before sendi
 	const info = responseData(await host.send("conn-a", { type: "get_protocol_info" }));
 
 	expect(z.array(z.string()).parse(info.capabilities)).toContain("telemetry_consent");
-}, 120_000);
+});
 
 it("refuses an answer outside granted, declined and unanswered", async () => {
 	await using host = await contextHost();
@@ -160,4 +160,4 @@ it("refuses an answer outside granted, declined and unanswered", async () => {
 
 	expect(refused).toContain("telemetry");
 	expect(await host.list("conn-a")).toEqual([]);
-}, 120_000);
+});
