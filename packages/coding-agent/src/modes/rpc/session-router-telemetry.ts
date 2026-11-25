@@ -24,6 +24,18 @@ export const RPC_ERROR_INVALID_TELEMETRY_CONSENT = "invalid_telemetry_consent";
 /** The session did not confirm the verdict a telemetry change produces; the change was not kept. */
 export const RPC_ERROR_TELEMETRY_UPDATE_UNCONFIRMED = "telemetry_update_unconfirmed";
 
+/**
+ * One diagnostic line, best effort: describing `cause` and writing to stderr both happen inside the guard, so neither a
+ * failing stderr nor a cause whose description throws can escape a containment path.
+ */
+function diagnose(line: string, cause?: unknown): void {
+	try {
+		process.stderr.write(`${line}${cause === undefined ? "" : `: ${String(cause)}`}\n`);
+	} catch {
+		// Nowhere left to report to; the caller's own outcome must not depend on this write.
+	}
+}
+
 /** `answer`: the open of a new session, or a deliberate change; `attach`: a caller joining a live session. */
 export type TelemetryDeclarationKind = "answer" | "attach";
 
@@ -76,13 +88,9 @@ export const TELEMETRY_CONTAINMENT_EXIT_CODE = 79;
  * end-to-end bound from a revocation to containment is therefore TELEMETRY_REVOKE_ACK_MS + TELEMETRY_END_CONFIRM_MS.
  */
 export function exitForTelemetryContainment(sessionId: string): never {
-	try {
-		process.stderr.write(
-			`senpi rpc host exiting ${TELEMETRY_CONTAINMENT_EXIT_CODE}: worker for session ${sessionId} did not stop after a telemetry revocation\n`,
-		);
-	} catch {
-		// The reason line is best effort: a failing stderr has nowhere left to report to and must never keep the host alive.
-	}
+	diagnose(
+		`senpi rpc host exiting ${TELEMETRY_CONTAINMENT_EXIT_CODE}: worker for session ${sessionId} did not stop after a telemetry revocation`,
+	);
 	process.exit(TELEMETRY_CONTAINMENT_EXIT_CODE);
 }
 
@@ -129,7 +137,7 @@ function armContainment(host: RouterContext, sessionId: string): { readonly cont
 			});
 			void host.writer.flush().catch(() => undefined);
 		} catch (cause) {
-			process.stderr.write(`senpi rpc telemetry containment notice not sent: ${String(cause)}\n`);
+			diagnose("senpi rpc telemetry containment notice not sent", cause);
 		}
 	}, bound - TELEMETRY_CONTAINMENT_NOTIFY_MS);
 	const exit = setTimeout(() => {
@@ -169,7 +177,7 @@ async function deliver(
 	const acknowledged = worker.setTelemetryCallers(verdict).then(
 		() => true,
 		(cause: unknown) => {
-			process.stderr.write(`senpi rpc telemetry verdict refused by its worker: ${String(cause)}\n`);
+			diagnose("senpi rpc telemetry verdict refused by its worker", cause);
 			return false;
 		},
 	);

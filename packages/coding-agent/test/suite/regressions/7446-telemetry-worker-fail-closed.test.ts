@@ -188,6 +188,32 @@ it("runs the production exit at the bound: process.exit(79), even when stderr fa
 	expect([run.beforeBound, run.atBound, run.exits]).toEqual([0, 1, [TELEMETRY_CONTAINMENT_EXIT_CODE]]);
 });
 
+it("exits 79 at the bound when every diagnostic fails at once: broadcast, its error's description, stderr", async () => {
+	// given
+	const undescribable = {
+		toString(): string {
+			throw new Error("cannot describe");
+		},
+	};
+	vi.spyOn(process.stderr, "write").mockImplementation(() => {
+		throw new Error("stderr closed");
+	});
+
+	// when
+	const run = await containmentRun({
+		mode: "silent",
+		exitPort: false,
+		breakNotification: (host) =>
+			vi.spyOn(host.writer, "broadcastHostRecord").mockImplementation(() => {
+				throw undescribable;
+			}),
+	});
+	await using _ = run.host;
+
+	// then
+	expect([run.beforeBound, run.atBound, run.exits]).toEqual([0, 1, [TELEMETRY_CONTAINMENT_EXIT_CODE]]);
+});
+
 it("writes one stderr reason line and exits with TELEMETRY_CONTAINMENT_EXIT_CODE by default", () => {
 	// given
 	const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);

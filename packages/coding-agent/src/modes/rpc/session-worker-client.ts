@@ -584,7 +584,11 @@ export class SessionWorkerClient {
 	private fail(error: string): void {
 		if (this.stopped) return;
 		this.acceptance?.retire("worker_failed");
-		this.callbacks.failure(error);
+		try {
+			this.callbacks.failure(error);
+		} catch {
+			// A failure report that itself fails (a closed stderr) must never keep this worker running (senpi#7446).
+		}
 		this.terminalFailure = error;
 		if (this.writer && this.sessionId) {
 			this.writer.enqueue(this.sessionId, { type: "session_error", error });
