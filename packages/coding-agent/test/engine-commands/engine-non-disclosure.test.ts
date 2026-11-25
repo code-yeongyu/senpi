@@ -63,7 +63,13 @@ function launchKey(): Readable {
 	return Readable.from([Buffer.from(CANARIES.launch_key)]);
 }
 
-beforeAll(() => {
+/**
+ * The first models.list over a launch setup binds the built-in extensions and loads their modules once per
+ * worker: measured 3.8 s cold against 0.17 s warm in a plain process, and 17.8 s for the case alone under vitest
+ * at load 75 (first-use transforms). That one-time setup runs here, where its answer is scanned too, so the case
+ * below measures the call itself.
+ */
+beforeAll(async () => {
 	root = realpathSync(mkdtempSync(join(tmpdir(), "engine-nd-")));
 	mkdirSync(getAgentDir(), { recursive: true });
 	writeFileSync(
@@ -95,7 +101,9 @@ beforeAll(() => {
 			original(...args);
 		});
 	}
-});
+	const warm = await engine.models.list({ setup: { extensions: { none: true } } });
+	expect(leaked(serialized(warm))).toEqual([]);
+}, 120_000);
 
 afterAll(() => {
 	vi.restoreAllMocks();

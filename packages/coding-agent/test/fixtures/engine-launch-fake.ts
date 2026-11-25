@@ -13,7 +13,6 @@ import { spawnWithPrivateFds } from "../../src/private-fd-spawn.ts";
 
 const hasProc = existsSync("/proc/self/fd");
 const keySocketBefore = hasProc && existsSync("/proc/self/fd/5") ? readlinkSync("/proc/self/fd/5") : undefined;
-const key = await readLaunchKey();
 function descriptorOpen(fd: number): boolean {
 	try {
 		fstatSync(fd);
@@ -22,6 +21,9 @@ function descriptorOpen(fd: number): boolean {
 		return false;
 	}
 }
+const openBeforeRead = descriptorOpen(5);
+const key = await readLaunchKey();
+const closedOnReturn = openBeforeRead && !descriptorOpen(5);
 const keySocket = hasProc ? keySocketBefore : descriptorOpen(5) ? "open" : "closed";
 const keyOut = process.env.FAKE_ENGINE_KEY_OUT;
 if (keyOut !== undefined) writeFileSync(keyOut, key ?? "", { mode: 0o600 });
@@ -40,7 +42,7 @@ if (childOut !== undefined) {
 const session = process.env.FAKE_ENGINE_SESSION;
 if (session !== undefined) process.stdout.write(`${JSON.stringify({ type: "session", id: session })}\n`);
 process.stdout.write(
-	`${JSON.stringify({ type: "fake_engine", argv: process.argv.slice(2), pid: process.pid, keySocket })}\n`,
+	`${JSON.stringify({ type: "fake_engine", argv: process.argv.slice(2), pid: process.pid, keySocket, closedOnReturn })}\n`,
 );
 
 if (process.env.FAKE_ENGINE_HOLD === "1") {

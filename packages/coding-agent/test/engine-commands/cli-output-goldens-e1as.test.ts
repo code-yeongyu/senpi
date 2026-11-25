@@ -74,12 +74,18 @@ const STORED_CLI_ACCOUNT = withAuth({
 	},
 });
 
+/**
+ * The CLI's compile cache lives under the child's TMPDIR, which is new for this file, so the first spawn compiles
+ * the whole CLI: measured 24.2 s, then 10.9 s and 3.8 s, at load 127. One spawn here fills the cache and its output
+ * is checked like a case, so each case below times its own command.
+ */
 beforeAll(() => {
 	root = mkdtempSync(join(tmpdir(), "engine-cli-goldens-e1as-"));
 	agentDir = join(root, "agent");
 	projectDir = join(root, "project");
 	for (const dir of [agentDir, projectDir, join(root, "tmp")]) mkdirSync(dir, { recursive: true });
-});
+	expect(cli("auth", "check").status).toBe(2);
+}, 120_000);
 
 afterAll(() => {
 	rmSync(root, { recursive: true, force: true });

@@ -209,26 +209,40 @@ describe("the launch key travels on its own descriptor (security design 5.5)", (
 				api_key: Readable.from([Buffer.from(CANARY)]),
 			});
 			if (run.kind !== "ok") throw new Error("launch refused");
-			for await (const event of run.value.events) {
-				if (event.type !== "event") continue;
-				const pid = run.value.pid ?? 0;
-				const record = event.event as { readonly type?: string; readonly keySocket?: string };
-				expect(record.type).toBe("fake_engine");
-				if (proc) {
-					const links = readdirSync(`/proc/${pid}/fd`).map((fd) => {
-						try {
-							return readlinkSync(`/proc/${pid}/fd/${fd}`);
-						} catch {
-							return "";
-						}
-					});
-					expect(record.keySocket).toMatch(/^socket:\[\d+\]$/u);
-					expect(links).not.toContain(record.keySocket);
-				} else {
-					expect(record.keySocket).toBe("closed");
-				}
-				run.value.stop();
+			try {
+				await expectKeyClosed(run.value);
+			} finally {
+				await run.value.stop();
 			}
 		},
 	);
+
+	async function expectKeyClosed(launched: LaunchPrintRun): Promise<void> {
+		for await (const event of launched.events) {
+			if (event.type !== "event") continue;
+			const pid = launched.pid ?? 0;
+			const record = event.event as {
+				readonly type?: string;
+				readonly keySocket?: string;
+				readonly closedOnReturn?: boolean;
+			};
+			expect(record.type).toBe("fake_engine");
+			expect(record.closedOnReturn).toBe(true);
+			if (proc) {
+				const links = readdirSync(`/proc/${pid}/fd`).map((fd) => {
+					try {
+						return readlinkSync(`/proc/${pid}/fd/${fd}`);
+					} catch {
+						return "";
+					}
+				});
+				expect(record.keySocket).toMatch(/^socket:\[\d+\]$/u);
+				expect(links).not.toContain(record.keySocket);
+			} else {
+				expect(record.keySocket).toBe("closed");
+			}
+			return;
+		}
+		throw new Error("the launched engine printed no record");
+	}
 });
