@@ -41,6 +41,14 @@ describe("modern schema validation", () => {
 			},
 			value: 6,
 		},
+		{
+			schema: {
+				$schema: "http://json-schema.org/draft-07/schema#",
+				type: "object",
+				properties: { child: { $ref: "#" } },
+			},
+			value: { child: {} },
+		},
 		{ schema: true, value: { any: [false, null] } },
 	])("accepts structuredContent $value against $schema", async ({ schema, value }) => {
 		const { connection } = await connect([{ content: [], structuredContent: value }], false, false);
@@ -74,16 +82,20 @@ describe("modern schema validation", () => {
 		});
 	});
 
-	it("discovers draft-07 tools and enforces draft-07 tuple constraints", async () => {
+	it("discovers draft-07 tools and enforces referenced tuple constraints in the document scope", async () => {
 		const { connection, script } = await connect([], false, false);
 		script.tools = [
 			{
 				name: "fixture",
 				inputSchema: {
 					$schema: "http://json-schema.org/draft-07/schema#",
+					$id: "https://example.test/root.json",
 					type: "object",
-					properties: {
+					definitions: {
 						values: { type: "array", items: [{ type: "integer" }], additionalItems: false },
+					},
+					properties: {
+						values: { $id: "nested.json", $ref: "#/definitions/values" },
 					},
 					required: ["values"],
 				},

@@ -65,8 +65,11 @@ export function compileModernSchema(schema: McpJsonSchema): ValidateFunction {
 		if (checker.validateSchema(schema) !== true) {
 			throw new McpToolSchemaError("MCP_SCHEMA_INVALID", "Invalid MCP schema or unresolved schema reference.");
 		}
-		const validationSchema = usesDraft07 && typeof schema !== "boolean" ? stripDraft07RefTypes(schema) : schema;
-		const validate = new Validator({ ...options, validateSchema: false }).compile(validationSchema);
+		const validationSchema = usesDraft07 && typeof schema !== "boolean" ? prepareDraft07Refs(schema) : schema;
+		// Draft-07 root self-references need this registration. The compiler is per schema, so IDs stay isolated.
+		const validate = new Validator({ ...options, addUsedSchema: usesDraft07, validateSchema: false }).compile(
+			validationSchema,
+		);
 		if (validators.size >= MAX_CACHED_VALIDATORS) {
 			const oldest = validators.keys().next().value;
 			if (oldest !== undefined) validators.delete(oldest);
@@ -79,15 +82,16 @@ export function compileModernSchema(schema: McpJsonSchema): ValidateFunction {
 	}
 }
 
-// Ajv checks type and nullable before applying ignoreKeywordsWithRef. Strip those
-// siblings only at schema positions, leaving literal instance values and ref targets alone.
-function stripDraft07RefTypes(schema: Record<string, unknown>): Record<string, unknown> {
+// Ajv handles $id, type, and nullable before applying ignoreKeywordsWithRef.
+// Ignore those siblings on reference objects without changing the raw schema or literal values.
+function prepareDraft07Refs(schema: object): Record<string, unknown> {
 	const visit = (value: unknown) => {
 		if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
-		return stripDraft07RefTypes(Object.fromEntries(Object.entries(value)));
+		return prepareDraft07Refs(value);
 	};
 	const result: Record<string, unknown> = { ...schema };
 	if (typeof result.$ref === "string") {
+		delete result.$id;
 		delete result.type;
 		delete result.nullable;
 	}
