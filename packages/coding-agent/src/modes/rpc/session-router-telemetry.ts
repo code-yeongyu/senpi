@@ -22,7 +22,7 @@ import { code, detail, error } from "./session-router-errors.ts";
 /** A malformed telemetry answer on `open_session`, `attach_session` or `set_telemetry_consent`. */
 export const RPC_ERROR_INVALID_TELEMETRY_CONSENT = "invalid_telemetry_consent";
 /** The session did not confirm the verdict a telemetry change produces; the change was not kept. */
-export const RPC_ERROR_TELEMETRY_UPDATE_UNCONFIRMED = "telemetry_update_unconfirmed";
+const RPC_ERROR_TELEMETRY_UPDATE_UNCONFIRMED = "telemetry_update_unconfirmed";
 
 /**
  * One diagnostic line, best effort: describing `cause` and writing to stderr both happen inside the guard, so neither a
@@ -120,7 +120,7 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | "deadline"> {
 }
 
 /** How long before the containment deadline the host tells its clients why it is about to end. */
-export const TELEMETRY_CONTAINMENT_NOTIFY_MS = 250;
+const TELEMETRY_CONTAINMENT_NOTIFY_MS = 250;
 
 /**
  * The containment guarantee for one stricter verdict pushed to a worker, independent of the rest of the delivery: two

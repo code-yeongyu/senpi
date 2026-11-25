@@ -114,8 +114,8 @@ export function attachSession(
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
 	if (command.takeover === true)
-		return takeOver(host, command, owner, () => attachWithState(host, owner, command.sessionId)).then(async (reply) =>
-			reply.success ? ((await confirmAttachTelemetry(host, owner, command)) ?? reply) : reply,
+		return takeOver(host, command, owner, () => attachWithState(host, owner, command.sessionId)).then(
+			async (reply) => (reply.success ? ((await confirmAttachTelemetry(host, owner, command)) ?? reply) : reply),
 		);
 	if (command.admissionId !== undefined && host.admissions) {
 		let admitted = false;
