@@ -13,7 +13,7 @@ import { readKernelCpuTime } from "../src/kernels/shared/process-cpu.ts";
 const STALL_MS = Number(process.env.PROBE_STALL_MS ?? 6_000);
 const PHASE_CAP_MS = 45_000;
 const plan = new Map(
-	(process.env.PROBE_PLAN ?? "cold=8,warm=30,child=10,vitest=4")
+	(process.env.PROBE_PLAN ?? "cold=8,warm=30,child=10,fd3=3,vitest=4")
 		.split(",")
 		.map((part) => part.split("="))
 		.map(([key, value]) => [key ?? "", Number(value ?? 0)] as const),
@@ -209,6 +209,39 @@ async function childExperiment(count: number, interpreterPath: string): Promise<
 	return failed;
 }
 
+const FD3_READER = [
+	"import os, sys",
+	"line = os.fdopen(3, 'r', encoding='utf-8').readline()",
+	"sys.stdout.write(f'got {line.strip()} stdin={sys.stdin.read()!r}')",
+].join("\n");
+
+async function fd3Experiment(count: number, interpreterPath: string): Promise<number> {
+	let failed = 0;
+	for (let iteration = 0; iteration < count; iteration += 1) {
+		const outcome = await new Promise<string>((resolve) => {
+			const child = spawn(interpreterPath, ["-c", FD3_READER], {
+				stdio: ["ignore", "pipe", "pipe", "pipe"],
+				windowsHide: true,
+			});
+			let out = "";
+			child.stdout?.on("data", (chunk) => (out += String(chunk)));
+			child.stderr?.on("data", (chunk) => (out += String(chunk)));
+			const control = child.stdio[3];
+			if (control && "write" in control) control.write(`frame-${iteration}\n`);
+			else out += "no fd 3 stream";
+			const timer = setTimeout(() => child.kill(), 10_000);
+			child.on("close", () => {
+				clearTimeout(timer);
+				resolve(out.trim());
+			});
+		});
+		const ok = outcome === `got frame-${iteration} stdin=''`;
+		if (!ok) failed += 1;
+		log({ experiment: "fd3", iteration, ok, outcome: outcome.slice(0, 400) });
+	}
+	return failed;
+}
+
 async function vitestExperiment(count: number): Promise<number> {
 	let failed = 0;
 	for (let iteration = 0; iteration < count; iteration += 1) {
@@ -254,6 +287,8 @@ const warm = plan.get("warm") ?? 0;
 if (warm > 0) summary.warm = { runs: warm, failed: await pairs(warm, (i) => persistsSequence("warm", i, detected.path)) };
 const child = plan.get("child") ?? 0;
 if (child > 0) summary.child2980 = { runs: child, failed: await childExperiment(child, detected.path) };
+const fd3 = plan.get("fd3") ?? 0;
+if (fd3 > 0) summary.fd3 = { runs: fd3, failed: await fd3Experiment(fd3, detected.path) };
 const vitest = plan.get("vitest") ?? 0;
 if (vitest > 0) summary.vitest = { runs: vitest, failed: await vitestExperiment(vitest) };
 console.log(`PROBE-SUMMARY ${JSON.stringify(summary)}`);
