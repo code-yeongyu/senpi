@@ -86,41 +86,25 @@ describe("prompt preset startup header", () => {
 		expect(getHeaderText()).toContain("Optimized system prompt applied: gpt-5.5");
 	});
 
-	it("refreshes header text on model_select", async () => {
+	// sisyphuslabs/doriterm#2745: the header is the transcript's first row, far above the screen once the
+	// session has history. Rewriting it on a model switch made the renderer clear the scrollback and replay
+	// the whole transcript, so a switch leaves it alone; the switch result still names the new preset.
+	it.each([
+		{ modelId: "claude-opus-4-7", systemPromptName: "claude-opus-4-7" },
+		{ modelId: "claude-sonnet-4-5", systemPromptName: undefined },
+	])("keeps the startup header when model_select switches to $modelId", async ({ modelId, systemPromptName }) => {
 		// given
 		const { api, handlers } = makeApiMock();
 		const { context, getHeaderText } = createHeaderContext("gpt-5.5");
 		promptPresetExtension(api as never);
 		await handlers.session_start[0]({ type: "session_start", reason: "startup" }, context);
-
-		// when
-		await handlers.model_select[0](
-			{
-				type: "model_select",
-				model: { id: "claude-opus-4-7", provider: "anthropic", api: "anthropic-messages" },
-				previousModel: context.model,
-				source: "set",
-			},
-			context,
-		);
-
-		// then
-		expect(getHeaderText()).toContain("Optimized system prompt applied: claude-opus-4-7");
-	});
-
-	it("clears the header when no preset matches the active model", async () => {
-		// given
-		const { api, handlers } = makeApiMock();
-		const { context, getHeaderText } = createHeaderContext("gpt-5.5");
-		promptPresetExtension(api as never);
-		await handlers.session_start[0]({ type: "session_start", reason: "startup" }, context);
-		expect(getHeaderText()).toContain("Optimized system prompt applied: gpt-5.5");
+		const startupHeader = getHeaderText();
 
 		// when
 		const result = (await handlers.model_select[0](
 			{
 				type: "model_select",
-				model: { id: "claude-sonnet-4-5", provider: "anthropic", api: "anthropic-messages" },
+				model: { id: modelId, provider: "anthropic", api: "anthropic-messages" },
 				previousModel: context.model,
 				source: "set",
 			},
@@ -128,8 +112,8 @@ describe("prompt preset startup header", () => {
 		)) as { systemPromptName?: string };
 
 		// then
-		expect(getHeaderText()).toBe("");
-		expect(result.systemPromptName).toBeUndefined();
+		expect(getHeaderText()).toBe(startupHeader);
+		expect(result.systemPromptName).toBe(systemPromptName);
 	});
 
 	it("shows no startup header for a model without a matching preset", async () => {

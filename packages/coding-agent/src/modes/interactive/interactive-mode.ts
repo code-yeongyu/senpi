@@ -7986,6 +7986,12 @@ export class InteractiveMode {
 		const created = create(done);
 		dispose = created.dispose;
 		this.disposeActiveSelector();
+		// A selector is usually taller than the editor and can push the last status row above the screen. The
+		// status its choice reports ("Model: ...") must then append a row: rewriting that row in place changes a
+		// row above the screen, which the renderer can only show by replaying the whole transcript
+		// (sisyphuslabs/doriterm#2745).
+		this.lastStatusSpacer = undefined;
+		this.lastStatusText = undefined;
 		this.activeSelectorToken = token;
 		this.activeSelectorDispose = dispose;
 		this.editorContainer.clear();
@@ -8634,6 +8640,10 @@ export class InteractiveMode {
 					onFavoriteChange: async (favoriteIds, allModels) => {
 						await this.applyFavoriteSelection(favoriteIds, allModels, true, await favoritePatternSnapshot);
 					},
+				},
+				{
+					rowsBelow: (width) =>
+						this.widgetContainerBelow.render(width).length + this.footerContainer.render(width).length,
 				},
 			);
 			return {
