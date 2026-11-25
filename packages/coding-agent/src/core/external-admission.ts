@@ -63,6 +63,8 @@ type PendingLane = ExternalDeliverAs | "start" | (() => boolean);
 
 export class ExternalAdmission {
 	private turnEpochValue = 0;
+	/** The epoch a delivery start was issued at; while no run has begun since, later deliveries join that start. */
+	private startIssuedAt: number | undefined;
 	private readonly pending = new Map<string, PendingLane>();
 	private readonly emitted = new Set<string>();
 	private readonly failed = new Map<string, string>();
@@ -177,6 +179,7 @@ export class ExternalAdmission {
 		if (!this.isBusy() && input.whenIdle !== "queue") {
 			const holds = this.port.heldBy();
 			this.pending.set(id, "start");
+			this.startIssuedAt = turn_epoch;
 			// A start that settles without writing the entry left it queued for later (the runtime's
 			// admission-retention path): from then on it is held like any queued delivery.
 			void this.port.start(message).finally(() => {
@@ -184,6 +187,13 @@ export class ExternalAdmission {
 			});
 			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
 			return holds.length > 0 ? { kind: "held", holds: [...holds], turn_epoch } : { kind: "started", turn_epoch };
+		}
+		// Input meant to start a turn that finds a delivery start whose run has not begun joins that start, as a prompt
+		// joins a pending prompt start: the run takes the steering queue before its first provider request (omo#14972).
+		if (input.whenIdle !== "queue" && this.startPending()) {
+			this.pending.set(id, "steer");
+			this.port.enqueue(message, "steer");
+			return { kind: "steered", turn_epoch };
 		}
 		if (input.deliverAs === "steer" && this.isBusy()) {
 			if (input.expected_turn_id === undefined) return { kind: "turn_conflict", turn_epoch };
@@ -253,6 +263,12 @@ export class ExternalAdmission {
 	private endHold(state: InputHoldState): void {
 		if (!this.inputHolds.delete(state)) return;
 		if (this.inputHolds.size === 0) for (const listener of this.settledListeners) listener();
+	}
+
+	private startPending(): boolean {
+		if (this.startIssuedAt !== this.turnEpochValue) return false;
+		for (const lane of this.pending.values()) if (lane === "start") return true;
+		return false;
 	}
 
 	private isBusy(): boolean {
