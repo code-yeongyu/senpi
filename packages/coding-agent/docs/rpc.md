@@ -3072,8 +3072,8 @@ answer is `errorCode: "telemetry_update_unconfirmed"`. A worker session collects
 worker, so a stricter policy the worker does not acknowledge within 2 s (`TELEMETRY_REVOKE_ACK_MS`) ends that worker
 (its clients receive `session_error` with that code); the refusal's `errorData.workerEnded` is true only once the host
 observed the worker exit within a further 2 s (`TELEMETRY_END_CONFIRM_MS`). A looser policy it did not confirm leaves
-it on its stricter one. If an ended worker is not seen to exit within that further 2 s, the host itself ends: it sends
-every connection `{"type": "host_telemetry_containment", "sessionId", "exitCode": 79}`, writes one stderr line, and exits
+it on its stricter one. If an ended worker is not seen to exit by 4000 ms after the stricter answer, the host itself ends,
+unconditionally at that bound: 250 ms before it, best effort and never awaited, it sends every connection `{"type": "host_telemetry_containment", "sessionId", "exitCode": 79}`, writes one stderr line, and exits
 with code 79 (`TELEMETRY_CONTAINMENT_EXIT_CODE`), ending every session it holds. For a worker session the residual is
 what the worker exports between the answer and its acknowledgement or end, at most 4000 ms end to end. An in-process
 session (every socket host) takes the answer at once and never reaches this path. The SDK sends the change with `RpcClient.setTelemetryConsent(consent, sessionId?)`.

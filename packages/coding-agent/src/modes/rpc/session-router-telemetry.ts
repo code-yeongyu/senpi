@@ -76,9 +76,13 @@ export const TELEMETRY_CONTAINMENT_EXIT_CODE = 79;
  * end-to-end bound from a revocation to containment is therefore TELEMETRY_REVOKE_ACK_MS + TELEMETRY_END_CONFIRM_MS.
  */
 export function exitForTelemetryContainment(sessionId: string): never {
-	process.stderr.write(
-		`senpi rpc host exiting ${TELEMETRY_CONTAINMENT_EXIT_CODE}: worker for session ${sessionId} did not stop after a telemetry revocation\n`,
-	);
+	try {
+		process.stderr.write(
+			`senpi rpc host exiting ${TELEMETRY_CONTAINMENT_EXIT_CODE}: worker for session ${sessionId} did not stop after a telemetry revocation\n`,
+		);
+	} catch {
+		// The reason line is best effort: a failing stderr has nowhere left to report to and must never keep the host alive.
+	}
 	process.exit(TELEMETRY_CONTAINMENT_EXIT_CODE);
 }
 
@@ -101,10 +105,51 @@ function within<T>(promise: Promise<T>, ms: number): Promise<T | "deadline"> {
 	});
 }
 
+/** How long before the containment deadline the host tells its clients why it is about to end. */
+export const TELEMETRY_CONTAINMENT_NOTIFY_MS = 250;
+
 /**
- * Hands the session `verdict`. An in-process runtime takes it synchronously. A worker must acknowledge it; one that
- * refuses, fails or misses the deadline on a STRICTER verdict is ended, and the end counts only once its exit is seen.
- * A looser verdict it did not acknowledge leaves it on its stricter, confirmed one.
+ * The containment guarantee for one stricter verdict pushed to a worker, independent of the rest of the delivery: two
+ * timers armed when the push starts. At TELEMETRY_REVOKE_ACK_MS + TELEMETRY_END_CONFIRM_MS - TELEMETRY_CONTAINMENT_NOTIFY_MS
+ * every client is told why (best effort, never awaited); at TELEMETRY_REVOKE_ACK_MS + TELEMETRY_END_CONFIRM_MS the
+ * last resort runs, whatever the notification did. An acknowledgement or an observed exit cancels both.
+ */
+function armContainment(host: RouterContext, sessionId: string): { readonly contained: Promise<void>; cancel(): void } {
+	const bound = TELEMETRY_REVOKE_ACK_MS + TELEMETRY_END_CONFIRM_MS;
+	let reached: () => void = () => {};
+	const contained = new Promise<void>((resolve) => {
+		reached = resolve;
+	});
+	const notify = setTimeout(() => {
+		try {
+			host.writer.broadcastHostRecord({
+				type: "host_telemetry_containment",
+				sessionId,
+				exitCode: TELEMETRY_CONTAINMENT_EXIT_CODE,
+			});
+			void host.writer.flush().catch(() => undefined);
+		} catch (cause) {
+			process.stderr.write(`senpi rpc telemetry containment notice not sent: ${String(cause)}\n`);
+		}
+	}, bound - TELEMETRY_CONTAINMENT_NOTIFY_MS);
+	const exit = setTimeout(() => {
+		reached();
+		host.onTelemetryContainmentLost(sessionId);
+	}, bound);
+	return {
+		contained,
+		cancel() {
+			clearTimeout(notify);
+			clearTimeout(exit);
+		},
+	};
+}
+
+/**
+ * Hands the session `verdict`. An in-process runtime takes it synchronously. A worker must acknowledge it. For a
+ * STRICTER verdict the containment timers run from the push: a worker that refuses, fails or misses
+ * TELEMETRY_REVOKE_ACK_MS is ended, and unless its exit is observed first, the last resort runs at the bound. A looser
+ * verdict it did not acknowledge leaves it on its stricter, confirmed one.
  */
 async function deliver(
 	host: RouterContext,
@@ -121,7 +166,6 @@ async function deliver(
 	}
 	const worker = entry.worker;
 	if (!worker) return "confirmed";
-	const withdraws = tightens(confirmed, verdict);
 	const acknowledged = worker.setTelemetryCallers(verdict).then(
 		() => true,
 		(cause: unknown) => {
@@ -129,20 +173,17 @@ async function deliver(
 			return false;
 		},
 	);
-	const answer = withdraws ? await within(acknowledged, TELEMETRY_REVOKE_ACK_MS) : await acknowledged;
-	if (answer === true) return "confirmed";
-	if (!withdraws) return "unconfirmed";
+	if (!tightens(confirmed, verdict)) return (await acknowledged) ? "confirmed" : "unconfirmed";
+	const containment = armContainment(host, sessionId);
+	if ((await within(acknowledged, TELEMETRY_REVOKE_ACK_MS)) === true) {
+		containment.cancel();
+		return "confirmed";
+	}
 	worker.failClosed(RPC_ERROR_TELEMETRY_UPDATE_UNCONFIRMED);
-	if ((await within(worker.exited, TELEMETRY_END_CONFIRM_MS)) !== "deadline") return "ended";
-	// Every client hears the typed cause before the host ends, so a person whose other sessions stop can see why.
-	host.writer.broadcastHostRecord({
-		type: "host_telemetry_containment",
-		sessionId,
-		exitCode: TELEMETRY_CONTAINMENT_EXIT_CODE,
-	});
-	await host.writer.flush();
-	host.onTelemetryContainmentLost(sessionId);
-	return "unconfirmed";
+	const ended = await Promise.race([worker.exited.then(() => true), containment.contained.then(() => false)]);
+	if (!ended) return "unconfirmed";
+	containment.cancel();
+	return "ended";
 }
 
 /**
