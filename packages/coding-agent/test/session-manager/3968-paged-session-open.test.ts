@@ -134,4 +134,47 @@ describe("senpi#3968 opening a large session keeps entry bodies on disk", () => 
 			manager.dispose();
 		}
 	});
+
+	// A full read must not build a second copy of every body: each paged string is decoded from its own bytes, never by
+	// re-parsing its whole line (which held the entry and the escaped text beside the string). Bodies carry escapes, so
+	// this is not a property of an escape-free fixture.
+	it("a full read decodes every paged body from its own bytes, escapes included", () => {
+		const escaped = (turn: number) =>
+			`${turn}\tconst label = "tool \\"out\\"";\n// C:\\work\\f-${turn}.ts — ü 한\n`.repeat(400);
+		const lines = [
+			JSON.stringify({ type: "session", version: 3, id: "s3968e", timestamp: "2026-01-01T00:00:00.000Z", cwd: dir }),
+		];
+		let parentId: string | null = null;
+		for (let turn = 0; turn < 50; turn++) {
+			const id = (turn + 1).toString(16).padStart(8, "0");
+			const message = {
+				role: "toolResult",
+				toolCallId: `call-${turn}`,
+				toolName: "read",
+				content: [{ type: "text", text: escaped(turn) }],
+				isError: false,
+				timestamp: 1,
+			};
+			lines.push(JSON.stringify({ type: "message", id, parentId, timestamp: "2026-01-01T00:00:00.000Z", message }));
+			parentId = id;
+		}
+		const file = join(dir, "2026-01-01T00-00-00-000Z_s3968e.jsonl");
+		writeFileSync(file, `${lines.join("\n")}\n`);
+
+		const manager = SessionManager.open(file);
+		try {
+			const texts = manager
+				.getEntries()
+				.flatMap((entry) =>
+					entry.type === "message" && entry.message.role === "toolResult" ? entry.message.content : [],
+				)
+				.flatMap((part) => (part.type === "text" ? [part.text] : []));
+			expect(texts).toEqual(Array.from({ length: 50 }, (_, turn) => escaped(turn)));
+			const stats = manager.getResidentStoreStats();
+			expect(stats.pagedCount).toBe(50);
+			expect(stats.pageWholeLineReads ?? 0).toBe(0);
+		} finally {
+			manager.dispose();
+		}
+	});
 });

@@ -38,11 +38,14 @@ export function parseSessionEntryLine(line: string): FileEntry | null {
  * (senpi#3968). A load hands it every parsed line in file order.
  */
 export interface SessionEntryPager {
-	page(entry: FileEntry, offset: number, length: number): FileEntry;
+	/** `text` is the entry's line as read, so a paged string's own byte range inside it can be recorded. */
+	page(entry: FileEntry, offset: number, length: number, text?: string): FileEntry;
 	/** The string a resident token id stands for, read back from the file; undefined when the file no longer holds it. */
 	read(id: string): string | undefined;
 	/** How many strings the load left on disk. */
 	readonly count: number;
+	/** Reads that had to parse a page's whole line instead of decoding the string's own bytes (senpi#3968). */
+	readonly wholeLineReads: number;
 }
 
 /** The pager a load ran its entries through, keyed by the entries it returned (like the file identities). */
@@ -108,7 +111,7 @@ function countEntry(
 ): void {
 	const entry = parseSessionEntryLine(line);
 	if (!entry) return;
-	entries.push(pager ? pager.page(entry, offset, length) : entry);
+	entries.push(pager ? pager.page(entry, offset, length, line) : entry);
 	content?.line(line);
 }
 

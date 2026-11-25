@@ -16,6 +16,8 @@ export interface ResidentStoreStats {
 	evictedBytes?: number;
 	/** Strings the opened file's load left on disk (senpi#3968); views that materialized them hold the only copies. */
 	pagedCount?: number;
+	/** Page reads that re-parsed a whole line: each builds a transient copy of the entry beside the string it returns. */
+	pageWholeLineReads?: number;
 }
 
 export interface ResidentStringStoreOptions {
@@ -85,7 +87,13 @@ export class ResidentStringStore {
 
 	stats(): ResidentStoreStats {
 		const pagedCount = this.pages?.count ?? 0;
-		return { blobCount: this.strings.size, ...this.accounting.stats(), ...(pagedCount > 0 ? { pagedCount } : {}) };
+		const pageWholeLineReads = this.pages?.wholeLineReads ?? 0;
+		return {
+			blobCount: this.strings.size,
+			...this.accounting.stats(),
+			...(pagedCount > 0 ? { pagedCount } : {}),
+			...(pageWholeLineReads > 0 ? { pageWholeLineReads } : {}),
+		};
 	}
 
 	/** Strings held in memory and their summed UTF-8 length, kept as strings come and go (no serialization). */
