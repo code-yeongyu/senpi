@@ -78,13 +78,19 @@ describe("thinking-off on a thinking-only model (omo#12316)", () => {
 		},
 	);
 
-	it.each(["k3", "k3-256k"] as const)("%s still accepts an explicit disabled wire request", async (id) => {
-		const model = getModel("kimi-coding", id);
-		expect(clampThinkingLevel(model, "off")).toBe("off");
-		const payload = await thinkingOffPayload(model);
-		expect(payload.thinking).toEqual({ type: "disabled" });
-		expect(payload.output_config).toBeUndefined();
-	});
+	// K3 and K3-256k keep the catalog's verified picker (low, high, max; no off): a carried-over off is sent at low, like
+	// every thinking-only row. A caller that builds the request itself, with no level, still gets the wire's disabled block
+	// as on main; this PR changes only rows that declare supportsDisabledThinking: false.
+	it.each(["k3", "k3-256k"] as const)(
+		"%s clamps a carried-over off to low and keeps main's wire request",
+		async (id) => {
+			const model = getModel("kimi-coding", id);
+			expect(clampThinkingLevel(model, "off")).toBe("low");
+			const payload = await thinkingOffPayload(model);
+			expect(payload.thinking).toEqual({ type: "disabled" });
+			expect(payload.output_config).toBeUndefined();
+		},
+	);
 });
 
 describe("a disabled-thinking rejection is terminal (omo#12316)", () => {
