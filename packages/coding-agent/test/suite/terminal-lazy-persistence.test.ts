@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createEventBus } from "../../src/core/event-bus.ts";
 import { TERMINAL_MONITOR_ENDED_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
@@ -63,17 +64,13 @@ interface Generation {
 function createGeneration(cwd: string, sessionId: string, sessionDir: string): Generation {
 	const handlers = new Map<string, Handler[]>();
 	const tools = new Map<string, ToolLike>();
-	const endedListeners = new Set<(event: { id: string; reason: string }) => void>();
+	// The real bus: the extension both emits on it and subscribes through `events.on` (state replay).
+	const events = createEventBus();
 	let activeTools: string[] = [];
 	const pi = {
 		registerTool: (tool: ToolLike) => tools.set(tool.name, tool),
 		registerMessageRenderer: () => {},
-		events: {
-			emit: (type: string, event: { id: string; reason: string }) => {
-				if (type !== TERMINAL_MONITOR_ENDED_EVENT) return;
-				for (const listener of endedListeners) listener(event);
-			},
-		},
+		events,
 		on: (eventType: string, handler: Handler) => {
 			handlers.set(eventType, [...(handlers.get(eventType) ?? []), handler]);
 		},
@@ -102,8 +99,7 @@ function createGeneration(cwd: string, sessionId: string, sessionDir: string): G
 			for (const handler of handlers.get(eventType) ?? []) await handler(payload, ctx);
 		},
 		onMonitorEnded(listener) {
-			endedListeners.add(listener);
-			return () => endedListeners.delete(listener);
+			return events.on(TERMINAL_MONITOR_ENDED_EVENT, (event) => listener(event as { id: string; reason: string }));
 		},
 	};
 }
