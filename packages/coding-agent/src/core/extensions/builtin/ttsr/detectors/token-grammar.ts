@@ -1,4 +1,4 @@
-export type TokenFamily = "ctrl" | "sgml" | "bracket";
+export type TokenFamily = "ctrl" | "sgml" | "bracket" | "dsml";
 
 export interface ControlToken {
 	readonly family: TokenFamily;
@@ -20,6 +20,7 @@ type ParserMode =
 	| "ctrlFirst"
 	| "ctrlName"
 	| "ctrlClose"
+	| "dsmlPrefix"
 	| "sgmlFirst"
 	| "sgmlName"
 	| "bracketFirst"
@@ -33,6 +34,7 @@ const MIN_BRACKET_NAME = 2;
 const LESS_THAN = "<";
 const GREATER_THAN = ">";
 const PIPE = "|";
+const DSML_MARKER = "｜DSML｜";
 const SLASH = "/";
 const LEFT_BRACKET = "[";
 const RIGHT_BRACKET = "]";
@@ -133,6 +135,24 @@ export class CandidateParser {
 
 	#advance(value: string, offset: number): CandidateOutcome[] {
 		const mode = this.#mode;
+		if ((mode === "angleOpen" || mode === "sgmlFirst") && value === DSML_MARKER[0]) {
+			this.#buffer += value;
+			this.#nameLength = 1;
+			this.#mode = "dsmlPrefix";
+			return [];
+		}
+		if (mode === "dsmlPrefix") {
+			if (value !== DSML_MARKER[this.#nameLength]) {
+				return this.#rejectWith(value, offset);
+			}
+			this.#nameLength += 1;
+			// The marker ends before the tag name and attributes, not at the closing angle bracket.
+			if (this.#nameLength === DSML_MARKER.length) {
+				return [this.#emit("dsml", this.#buffer.startsWith("</") ? 3 : 2, 0, value, offset)];
+			}
+			this.#buffer += value;
+			return [];
+		}
 		if (mode === "angleOpen") {
 			if (value === PIPE) {
 				this.#buffer += value;

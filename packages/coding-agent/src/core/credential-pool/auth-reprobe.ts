@@ -6,3 +6,8 @@
  * one fast 401 and re-blocks for the same interval.
  */
 export const AUTH_BLOCK_REPROBE_MS = 15 * 60_000;
+
+/** Older writers preserve unknown fields. Only a deadline-free auth verdict owns this marker. */
+export function hasRefusedGrant(slot: { blockReason?: string; refusedGrant?: true; blockedUntil?: number }): boolean {
+	return slot.blockReason === "auth_error" && slot.refusedGrant === true && slot.blockedUntil === undefined;
+}

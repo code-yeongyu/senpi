@@ -33,7 +33,7 @@ import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
 import { type ImageContent, ModelsError, type OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
-import { VERSION } from "../../config.ts";
+import { APP_NAME, VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
@@ -1280,6 +1280,9 @@ export function createRpcConnectionHandler(
 				},
 				signal: controller.signal,
 			};
+			// Sign in with ChatGPT names the host it signs in: both logins carry this installation's device id,
+			// as the TUI's does (senpi#7127).
+			const getDeviceId = () => session.settingsManager.getOrCreateDeviceId();
 			if (slotId !== undefined) {
 				const reauthorize = selectedOAuthAccount(authStorage, provider, slotId);
 				await session.modelRuntime.login(
@@ -1314,11 +1317,11 @@ export function createRpcConnectionHandler(
 							}
 						},
 					},
-					{ reauthorize, reauthorizeSlot: slotId },
+					{ reauthorize, reauthorizeSlot: slotId, getDeviceId },
 				);
 				emitProviderAccountsChanged(provider);
 			} else {
-				await authStorage.login(provider as OAuthProviderId, callbacks);
+				await authStorage.login(provider as OAuthProviderId, callbacks, { getDeviceId, appName: APP_NAME });
 			}
 			session.modelRegistry.refresh();
 			emitProviderAccountsChanged(provider, "login");

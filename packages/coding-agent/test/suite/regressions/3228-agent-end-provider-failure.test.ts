@@ -57,6 +57,23 @@ describe("agent_end provider failure", () => {
 		return ended;
 	}
 
+	it("publishes a local sign-in requirement without treating it as rejected credentials", async () => {
+		const message = failedTurn("synthetic adapter error", {
+			category: "auth",
+			httpStatus: 401,
+			evidence: "structured_status",
+		});
+		const end = await agentEndOf({
+			...message,
+			errorCause: { type: "sign_in_required", accountNames: ["alpha"] },
+		});
+		expect(end.failure).toMatchObject({
+			category: "sign_in_required",
+			provider: "faux",
+			accountNames: ["alpha"],
+		});
+	});
+
 	it.each([
 		[{ category: "auth", httpStatus: 401, evidence: "structured_status" }, "auth", /re-authenticate/],
 		[

@@ -361,7 +361,11 @@ describe("RPC auth and connection handler contracts", () => {
 		});
 		expect(await url).toMatchObject({ provider: "anthropic", url: "https://stub.example/oauth?code=FAKE" });
 		expect(await end).toMatchObject({ provider: "anthropic", success: true });
-		expect(loginSpy).toHaveBeenCalledWith("anthropic", expect.anything());
+		expect(loginSpy).toHaveBeenCalledWith(
+			"anthropic",
+			expect.anything(),
+			expect.objectContaining({ getDeviceId: expect.any(Function), appName: expect.any(String) }),
+		);
 		await handler.dispose();
 	});
 

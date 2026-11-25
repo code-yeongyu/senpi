@@ -17,6 +17,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
+import { withTransportActivity } from "../utils/transport-activity-fetch.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { deriveOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -278,7 +279,7 @@ function createClient(model: Model<"azure-openai-responses">, apiKey: string, op
 		apiKey,
 		apiVersion,
 		dangerouslyAllowBrowser: true,
-		fetch: options?.fetch,
+		fetch: withTransportActivity(options?.fetch, options?.onTransportActivity),
 		defaultHeaders: headers,
 		baseURL: baseUrl,
 	});

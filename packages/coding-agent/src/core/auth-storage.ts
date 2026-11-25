@@ -12,6 +12,7 @@ import type {
 	Credential,
 	CredentialInfo,
 	CredentialStore,
+	LoginOptions,
 	OAuthAuth,
 	OAuthCredential,
 	OAuthLoginCallbacks,
@@ -30,10 +31,11 @@ import {
 	upsertSlot,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { realmRegistry } from "@earendil-works/pi-realm-registry";
 import { readFile } from "fs/promises";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { createHash } from "node:crypto";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
@@ -68,6 +70,7 @@ import {
 	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
+	LocalCredentialStoreBusyError,
 } from "./lockfile-policy.ts";
 
 type AuthStorageData = Record<string, Credential>;
@@ -193,6 +196,13 @@ type AuthFileReadState = {
 
 let sharedAuthFileReadState: { authPath: string; readState: AuthFileReadState } | undefined;
 
+// The lock library uses resolved paths without following symlinks (realpath: false).
+const localAsyncAuthLocks = realmRegistry(
+	"@code-yeongyu/senpi/local-async-auth-locks/v1",
+	() => new Map<string, symbol>(),
+	(value): value is Map<string, symbol> => value instanceof Map,
+);
+
 /**
  * Outcome of a synchronous store read. `busy` means the lock stayed held past the sync
  * budget, so the in-memory credentials are a fallback rather than the store's contents;
@@ -264,6 +274,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
 				if (!isLockError(error)) throw error;
+				if (localAsyncAuthLocks.has(resolve(path))) throw new LocalCredentialStoreBusyError(path, error);
 				const waitedMs = Date.now() - startedAt;
 				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
 					throw new CredentialStoreBusyError(path, waitedMs, error);
@@ -408,6 +419,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		let release: (() => Promise<void>) | undefined;
 		let lockCompromised = false;
 		let lockCompromisedError: Error | undefined;
+		const lockPath = resolve(this.authPath);
+		const owner = Symbol();
+		const forgetOwner = () => {
+			if (localAsyncAuthLocks.get(lockPath) === owner) localAsyncAuthLocks.delete(lockPath);
+		};
 		const throwIfCompromised = () => {
 			if (lockCompromised) {
 				throw lockCompromisedError ?? new Error("Auth storage lock was compromised");
@@ -418,9 +434,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			release = await this.acquireLockAsync(options?.signal, (error) => {
 				lockCompromised = true;
 				lockCompromisedError = error;
+				forgetOwner();
 			});
 
 			throwIfCompromised();
+			localAsyncAuthLocks.set(lockPath, owner);
 			options?.signal?.throwIfAborted();
 			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
 			const { result, next } = await fn(current);
@@ -437,6 +455,8 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 					await release();
 				} catch {
 					// Ignore unlock errors when lock is compromised.
+				} finally {
+					forgetOwner();
 				}
 			}
 		}
@@ -1258,7 +1278,8 @@ export class AuthStorage implements CredentialStore {
 		);
 	}
 
-	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+	/** `options` reach the provider's login as they do through the runtime login (device id, app name). */
+	async login(providerId: string, callbacks: OAuthLoginCallbacks, options?: LoginOptions): Promise<void> {
 		const oauth = this.oauthAuth(providerId);
 		if (!oauth) throw new Error(`Unknown OAuth provider: ${providerId}`);
 		const signal = callbacks.signal ?? new AbortController().signal;
@@ -1268,7 +1289,7 @@ export class AuthStorage implements CredentialStore {
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
 		const before = this.get(providerId);
-		const credential = await oauth.login(interaction);
+		const credential = await oauth.login(interaction, options);
 		this.set(providerId, credential);
 		if (this.authPath === undefined) return;
 		// Lazy like ModelRuntime.loadCredentialPool: the pool store pulls zod, which must stay out of the
