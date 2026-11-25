@@ -1262,6 +1262,16 @@ export function createRpcConnectionHandler(
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
 				onDeviceCode: (info) => {
+					// The user code is what the user types on the verification page; the URL alone cannot finish
+					// the login (omo-desktop-app#8413). The URL event follows for clients that only open it.
+					outputEvent({
+						type: "device_code",
+						provider,
+						userCode: info.userCode,
+						verificationUri: info.verificationUri,
+						intervalSeconds: info.intervalSeconds,
+						expiresInSeconds: info.expiresInSeconds,
+					});
 					outputEvent({ type: "auth_login_url", provider, url: info.verificationUri });
 				},
 				...createRpcLoginPromptCallbacks(createExtensionUIContext(), loginSignal),
