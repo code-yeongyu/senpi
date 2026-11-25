@@ -215,6 +215,10 @@ zip_current_dir() {
     # Name the entries instead of "." so they carry no "./" prefix, as Info-ZIP's do.
     shopt -s dotglob nullglob
     local -a entries=(*)
+    if [[ ${#entries[@]} -eq 0 ]]; then
+        echo "Error: nothing to archive in $PWD for $1" >&2
+        exit 1
+    fi
     "$bsdtar" -a -c -f "$1" "${entries[@]}"
 }
 
