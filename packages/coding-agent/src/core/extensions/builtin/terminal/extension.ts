@@ -19,6 +19,7 @@ import { appendMonitorOverflow } from "./monitor-overflow-file.ts";
 import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
+import { NotificationWakeGate } from "./notification-wake-gate.ts";
 import { TerminalNotifier, type TerminalNotifierDeps } from "./notify.ts";
 import { buildTerminalPromptSection } from "./prompt.ts";
 import { createDigestSlot, registerRestoreDigestRenderer } from "./restore-digest.ts";
@@ -97,8 +98,12 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
  * a hand (H3) never gets one, so the generation's first pair notifies there: `pi.sendMessage` carries each notice to
  * the loop as a wake, and the loop applies the guards a session applies here (its mode, its model).
  */
-function bindNotifiers(pi: ExtensionAPI, state: TerminalExtensionState): void {
-	const sendMessage: TerminalNotifierDeps["sendMessage"] = (message, delivery) => pi.sendMessage(message, delivery);
+function bindNotifiers(
+	pi: ExtensionAPI,
+	state: TerminalExtensionState,
+	// A session routes both notifiers through its wake gate (senpi#5164); a hand keeps the plain send.
+	sendMessage: TerminalNotifierDeps["sendMessage"] = (message, delivery) => pi.sendMessage(message, delivery),
+): void {
 	const loopRemote = () => pi.isLoopRemote();
 	state.notifier = new TerminalNotifier({
 		sendMessage,
@@ -126,6 +131,7 @@ function bindNotifiers(pi: ExtensionAPI, state: TerminalExtensionState): void {
 export function registerTerminalExtension(pi: ExtensionAPI): void {
 	let reducedMotion = false;
 	let agentBusy = false;
+	let wakeGate: NotificationWakeGate | null = null;
 	const state: TerminalExtensionState = {
 		bundle: null,
 		settings: TERMINAL_SETTINGS_DEFAULTS,
@@ -182,7 +188,10 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.shellPath = settingsManager.getShellPath();
 		reducedMotion = settingsManager.getReducedMotion();
 		agentBusy = false;
-		bindNotifiers(pi, state);
+		wakeGate?.dispose();
+		const gate = new NotificationWakeGate((message, options) => pi.sendMessage(message, options));
+		wakeGate = gate;
+		bindNotifiers(pi, state, gate.sendMessage);
 		const sessionKey = sessionKeyOf(ctx);
 		if (event.reason === "reload") {
 			const claimed = sessionKey === undefined ? undefined : claimParkedBundle(sessionKey);
@@ -218,10 +227,12 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_start", () => {
 		agentBusy = true;
+		wakeGate?.noteTurnStart();
 	});
 
 	pi.on("agent_end", () => {
 		agentBusy = false;
+		wakeGate?.noteTurnEnd();
 	});
 
 	pi.on("session_parked", () => {
@@ -245,6 +256,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	pi.on("input", (event) => {
 		if (event.source === "extension") return;
 		state.monitorNotifier?.noteActivity();
+		wakeGate?.noteUserInput();
 		flushRestoreDigest(pi, state);
 		const resumed = state.bundle?.monitors.resume() ?? [];
 		if (resumed.length > 0) state.monitorNotifier?.resume(resumed.map((monitor) => monitor.id));
@@ -252,6 +264,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 
 	pi.on("tool_call", () => {
 		state.monitorNotifier?.noteActivity();
+		wakeGate?.noteToolCall();
 	});
 
 	pi.on(
@@ -274,6 +287,8 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.monitorNotifier?.dispose();
 		state.monitorNotifier = null;
 		state.notifier = null;
+		wakeGate?.dispose();
+		wakeGate = null;
 		state.statusTicker.stop();
 		const sessionKey = sessionKeyOf(ctx) ?? sessionKeyOf(state.ctx);
 		if (event.reason === "reload" && state.bundle && sessionKey !== undefined) {
