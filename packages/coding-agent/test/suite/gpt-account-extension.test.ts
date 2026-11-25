@@ -276,8 +276,11 @@ describe("/gpt-account command", () => {
 		try {
 			await seedSiwc();
 			const selected = projectSlot(storage.get(providerId), "work");
+			const deviceId = harness.runtimeHost.session.settingsManager.getOrCreateDeviceId();
 			const login = vi.fn<OAuthAuth["login"]>(async (_interaction, options) => {
 				expect(options?.reauthorize).toEqual(selected);
+				// senpi#7127: Sign in with ChatGPT names this installation when it reauthorizes, too.
+				expect(options?.getDeviceId?.()).toBe(deviceId);
 				if (selected?.type !== "oauth") throw new Error("missing fixture");
 				return { ...selected, access: "synthetic-reauthorized" };
 			});
