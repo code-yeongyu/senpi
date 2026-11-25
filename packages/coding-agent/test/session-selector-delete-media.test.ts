@@ -27,8 +27,8 @@ afterEach(() => {
 	rmSync(sessionDir, { recursive: true, force: true });
 });
 
-function storeImage(): string {
-	const outcome = persistToolImage(
+async function storeImage(): Promise<string> {
+	const outcome = await persistToolImage(
 		{ sessionDir, durableSessionId: SESSION_ID },
 		{ toolCallId: "call_1", contentIndex: 0 },
 		{ data: PNG, mimeType: "image/png" },
@@ -39,7 +39,7 @@ function storeImage(): string {
 
 describe("deleting a session from the selector", () => {
 	it("removes the session's images with the session file", async () => {
-		const image = storeImage();
+		const image = await storeImage();
 
 		const result = await deleteSessionFile(sessionFile);
 
@@ -50,7 +50,7 @@ describe("deleting a session from the selector", () => {
 	});
 
 	it("removes images whose folders were made read-only, as a Windows read-only attribute does", async () => {
-		const image = storeImage();
+		const image = await storeImage();
 		chmodSync(join(image, ".."), 0o500);
 
 		const result = await deleteSessionFile(sessionFile);
@@ -60,7 +60,7 @@ describe("deleting a session from the selector", () => {
 	});
 
 	it.skipIf(runningAsRoot)("reports images it could not remove instead of claiming a clean delete", async () => {
-		storeImage();
+		await storeImage();
 		mkdirSync(join(sessionDir, "media"), { recursive: true });
 		chmodSync(join(sessionDir, "media"), 0o500);
 

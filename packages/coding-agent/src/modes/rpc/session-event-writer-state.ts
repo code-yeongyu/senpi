@@ -1,7 +1,7 @@
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { McpPresenterAuthority, McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
-import type { MediaPersister } from "./media-placeholders.ts";
+import type { AsyncMediaPersister } from "./media-placeholders.ts";
 import type { DelegationDescriptor } from "./delegation-record.ts";
 import type { ConnectionLocality } from "./raiser-notices.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
@@ -77,7 +77,7 @@ export abstract class SessionEventWriterState {
 	 */
 	afterRecord?: (sessionId: string) => void;
 	/** Per-session image persisters: bytes reach disk before the placeholder that names them is emitted. */
-	protected readonly mediaPersisters = new Map<string, MediaPersister>();
+	protected readonly mediaPersisters = new Map<string, AsyncMediaPersister>();
 	protected readonly writeRaw: RawWriter;
 	protected readonly waitForBackpressure?: BackpressureWaiter;
 	protected readonly scheduleFlush: FlushScheduler;

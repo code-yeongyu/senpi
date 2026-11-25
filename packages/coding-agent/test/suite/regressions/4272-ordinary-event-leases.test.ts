@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { afterEach, expect, expectTypeOf, it, vi } from "vitest";
 import { type CatalogEntry, CatalogNodeWriter } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
@@ -9,7 +10,9 @@ import type {
 	RecoveryToken,
 } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { type FrozenRef, TransferStaging } from "../../../src/modes/rpc/compact-transfer-staging.ts";
+import { MEDIA_PLACEHOLDERS_CAPABILITY } from "../../../src/modes/rpc/custom-capability.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
+import { toolMediaPersister } from "../../../src/modes/rpc/tool-media-store.ts";
 import { dataOf, type RawClient, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { spoolRoot } from "../compact-storage-support.ts";
 import { FLAG } from "./4272-construction-host-support.ts";
@@ -116,6 +119,69 @@ function release(client: RawClient, routing: string, lease: LeaseRef): Promise<W
 		admissionId: lease.admissionId,
 	});
 }
+
+it("keeps persisted media and its original sequence in a compact event lease (senpi#2628)", async () => {
+	const { host, compact, routing, lane } = await compactHost();
+	const started = Promise.withResolvers<void>();
+	const finish = Promise.withResolvers<void>();
+	try {
+		host.writer.setConnectionCapabilities("compact", [COMPACT_EVENTS, MEDIA_PLACEHOLDERS_CAPABILITY]);
+		const persist = toolMediaPersister(() => ({
+			sessionDir: host.cwd,
+			durableSessionId: "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001",
+		}));
+		host.writer.setSessionMedia(routing, (ref, image) => {
+			const write = persist(ref, image);
+			return (
+				write &&
+				(async () => {
+					started.resolve();
+					await finish.promise;
+					return write();
+				})
+			);
+		});
+		const data = Buffer.from("89504e470d0a1a0a", "hex").toString("base64");
+		const record = {
+			type: "turn_end",
+			toolResults: [
+				{
+					role: "toolResult",
+					toolCallId: "media",
+					content: [
+						{ type: "text", text: "x".repeat(F) },
+						{ type: "image", mimeType: "image/png", data },
+					],
+				},
+			],
+		};
+		const accepted = lane.accept(record, undefined) ?? expect.unreachable("tool result was not accepted");
+		host.writer.enqueue(routing, record);
+		await started.promise;
+		const next = { type: "agent_end", messages: [] };
+		lane.accept(next, undefined);
+		host.writer.enqueue(routing, next);
+		finish.resolve();
+		await host.writer.flush();
+
+		const mediaIndex = compact.inbox.findIndex((frame) => frame.type === "turn_end");
+		const endIndex = compact.inbox.findIndex((frame) => frame.type === "agent_end");
+		expect(mediaIndex).toBeGreaterThanOrEqual(0);
+		expect(endIndex).toBeGreaterThan(mediaIndex);
+		const lease = leaseOf(compact.inbox[mediaIndex]) ?? expect.unreachable("no media event lease");
+		expect(lease.sequence).toBe(accepted.sequence);
+		const rebuilt = JSON.parse(await fetchLease(compact, routing, lease)) as {
+			toolResults: { content: { type: string; path?: string; data?: string }[] }[];
+		};
+		const image = rebuilt.toolResults[0].content[1];
+		expect(image.type).toBe("image_ref");
+		expect(image).not.toHaveProperty("data");
+		expect(await readFile(image.path ?? "", "base64")).toBe(data);
+	} finally {
+		finish.resolve();
+		await host[Symbol.asyncDispose]();
+	}
+});
 
 // Part of the real path: the session's own `sendMessage` reaches the lane (which sequences it) before the writer.
 it("T6 X04 S13-Q1 an oversized message_end reaches a compact-events peer as an envelope <= F whose lease pages rebuild the exact record at its accepted sequence, with no new generation; the legacy peer keeps the whole record", async () => {

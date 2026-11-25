@@ -275,7 +275,12 @@ export class SessionEventFanout {
 	}
 
 	/** Retention only for a session without a lane; a lane-owned session's late peers read its frozen view. */
-	rememberSnapshot(sessionId: string, value: Record<string, unknown>, line: string, placeholderLine?: string): void {
+	rememberSnapshot(
+		sessionId: string,
+		value: Record<string, unknown>,
+		line: string,
+		placeholderLine?: string | (() => Promise<string>),
+	): void {
 		if (!this.acceptance.has(sessionId)) this.replay.remember(sessionId, value, line, placeholderLine);
 	}
 

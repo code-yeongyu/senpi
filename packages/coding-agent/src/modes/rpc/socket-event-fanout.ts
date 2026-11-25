@@ -4,6 +4,7 @@ import { type DrainStallPeer, waitForDrainOrStall } from "./socket-drain-stall.t
 import { SocketEventQueueOverflowError } from "./socket-event-queue-errors.ts";
 import {
 	type AttachEntry,
+	type DeferredSocketLine,
 	isBarrier,
 	type QueueEntry,
 	type RecoveryEntry,
@@ -125,11 +126,12 @@ export class SocketEventSinkActor {
 		reply = false,
 		held?: () => boolean,
 		current?: () => boolean,
+		prepare?: DeferredSocketLine,
 	): void {
 		if (this.closed) return;
 		const bytes = Buffer.byteLength(line);
 		if (this.shed.dropsRecords) {
-			if (reply) this.admitReply({ line, bytes, onWritten, reply, current });
+			if (reply) this.admitReply({ line, bytes, onWritten, reply, current, prepare });
 			else onWritten?.(false);
 			return;
 		}
@@ -139,7 +141,7 @@ export class SocketEventSinkActor {
 				if (this.shed.isPending) this.shed.supersede();
 				else this.cut("overflow");
 				// The cut covers this record; only a reply still needs its own place.
-				if (reply) this.admitReply({ line, bytes, onWritten, reply, current });
+				if (reply) this.admitReply({ line, bytes, onWritten, reply, current, prepare });
 				else onWritten?.(false);
 				void this.drain();
 				return;
@@ -156,6 +158,7 @@ export class SocketEventSinkActor {
 			reply,
 			held: this.shed.isPending ? held : undefined,
 			current,
+			prepare,
 		});
 		void this.drain();
 	}
@@ -300,9 +303,26 @@ export class SocketEventSinkActor {
 						}
 						continue;
 					}
-					const written = (item.held?.() ?? true) && (item.current?.() ?? true);
-					if (written) await this.write(item.line);
-					item.onWritten?.(written);
+					const live = () => !this.closed && (item.held?.() ?? true) && (item.current?.() ?? true);
+					if (item.prepare === undefined) {
+						const written = live();
+						if (written) await this.write(item.line);
+						item.onWritten?.(written);
+					} else if (live()) {
+						// Keep the preview charged while waiting; then check the rendered line's actual size.
+						this.frameBytes = item.bytes;
+						const prepared = await item.prepare(live).finally(() => {
+							this.frameBytes = 0;
+						});
+						const written = prepared !== undefined && live() && this.fits(Buffer.byteLength(prepared.line));
+						if (written) await this.write(prepared.line);
+						else if (prepared && live()) {
+							if (this.recovery && this.recoveryEnabled && !item.reply) this.cutOnce("overflow");
+							else this.failOverflow(Buffer.byteLength(prepared.line), prepared.line);
+						}
+						prepared?.onWritten?.(written);
+						item.onWritten?.(written);
+					} else item.onWritten?.(false);
 				}
 			} catch (cause) {
 				this.failure = cause;

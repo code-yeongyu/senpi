@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "../src/modes/rpc/custom-capability.ts";
-import { type MediaPersister, omitInlineMedia } from "../src/modes/rpc/media-placeholders.ts";
+import { type AsyncMediaPersister, prepareInlineMedia } from "../src/modes/rpc/media-placeholders.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import {
 	MAX_TOOL_IMAGE_BYTES,
@@ -55,17 +55,30 @@ type Placeholder = { type: string; path?: string; unavailableReason?: string; re
 const placeholders = (record: object): Placeholder[] =>
 	(record as { result: { content: Placeholder[] } }).result.content.filter((block) => block.type === "image_ref");
 
+async function omitInlineMedia(record: object, persist: AsyncMediaPersister): Promise<object> {
+	const { preview, ready } = prepareInlineMedia(record, persist);
+	return ready ? ready() : preview;
+}
+
 describe("tool image persistence", () => {
-	it("stores the original bytes before the placeholder naming them exists", () => {
+	it("stores the original bytes before the placeholder naming them exists", async () => {
 		const { bytes, block } = png(7);
 		let existedWhenReported = false;
-		const persist: MediaPersister = (ref, image) => {
-			const outcome = toolMediaPersister(() => scope)(ref, image);
-			existedWhenReported = outcome !== undefined && "path" in outcome && existsSync(outcome.path);
-			return outcome;
+		const persist: AsyncMediaPersister = (ref, image) => {
+			const prepare = toolMediaPersister(() => scope)(ref, image);
+			return (
+				prepare &&
+				(async () => {
+					const outcome = await prepare();
+					existedWhenReported = "path" in outcome && existsSync(outcome.path);
+					return outcome;
+				})
+			);
 		};
 
-		const [placeholder] = placeholders(omitInlineMedia(toolEnd("call_1", [{ type: "image", ...block }]), persist));
+		const [placeholder] = placeholders(
+			await omitInlineMedia(toolEnd("call_1", [{ type: "image", ...block }]), persist),
+		);
 
 		expect(existedWhenReported).toBe(true);
 		expect(placeholder?.path).toBeDefined();
@@ -74,7 +87,7 @@ describe("tool image persistence", () => {
 		expect(placeholder?.path?.endsWith(".png")).toBe(true);
 	});
 
-	it("keeps each image of one result and writes a re-emitted image once", () => {
+	it("keeps each image of one result and writes a re-emitted image once", async () => {
 		const first = png(1);
 		const second = png(2);
 		const record = toolEnd("call_2", [
@@ -83,8 +96,8 @@ describe("tool image persistence", () => {
 		]);
 		const persist = toolMediaPersister(() => scope);
 
-		const [one, two] = placeholders(omitInlineMedia(record, persist));
-		const again = placeholders(omitInlineMedia(record, persist));
+		const [one, two] = placeholders(await omitInlineMedia(record, persist));
+		const again = placeholders(await omitInlineMedia(record, persist));
 
 		expect(one?.path).not.toBe(two?.path);
 		expect(again.map((block) => block.path)).toEqual([one?.path, two?.path]);
@@ -94,21 +107,21 @@ describe("tool image persistence", () => {
 		expect(files).toHaveLength(2);
 	});
 
-	it("makes the stored file read-only and its directories private", () => {
+	it("makes the stored file read-only and its directories private", async () => {
 		const { block } = png(3);
-		const outcome = persistToolImage(scope, { toolCallId: "call_3", contentIndex: 0 }, block);
+		const outcome = await persistToolImage(scope, { toolCallId: "call_3", contentIndex: 0 }, block);
 
 		const path = "path" in outcome ? outcome.path : "";
 		expect(statSync(path).mode & 0o777).toBe(0o400);
 		expect(statSync(join(path, "..")).mode & 0o077).toBe(0);
 	});
 
-	it("reports an image over the per-image limit as too large and stores nothing", () => {
+	it("reports an image over the per-image limit as too large and stores nothing", async () => {
 		const huge = Buffer.alloc(MAX_TOOL_IMAGE_BYTES + 1024, 9);
 		const record = toolEnd("call_4", [{ type: "image", data: huge.toString("base64"), mimeType: "image/png" }]);
 
 		const [placeholder] = placeholders(
-			omitInlineMedia(
+			await omitInlineMedia(
 				record,
 				toolMediaPersister(() => scope),
 			),
@@ -119,50 +132,60 @@ describe("tool image persistence", () => {
 		expect(existsSync(join(sessionDir, "media"))).toBe(false);
 	});
 
-	it("rejects new storage once the session quota is reserved and never evicts what is stored", () => {
+	it("rejects new storage once the session quota is reserved and never evicts what is stored", async () => {
 		const limits = { perImage: 1024, perSession: 150 };
-		const kept = persistToolImage(scope, { toolCallId: "a", contentIndex: 0 }, png(1, 100).block, limits);
-		const refused = persistToolImage(scope, { toolCallId: "b", contentIndex: 0 }, png(2, 100).block, limits);
+		const kept = await persistToolImage(scope, { toolCallId: "a", contentIndex: 0 }, png(1, 100).block, limits);
+		const refused = await persistToolImage(scope, { toolCallId: "b", contentIndex: 0 }, png(2, 100).block, limits);
 
 		expect(refused).toEqual({ unavailableReason: "session_limit" });
 		expect("path" in kept && existsSync(kept.path)).toBe(true);
-		const small = persistToolImage(scope, { toolCallId: "c", contentIndex: 0 }, png(3, 40).block, limits);
+		const small = await persistToolImage(scope, { toolCallId: "c", contentIndex: 0 }, png(3, 40).block, limits);
 		expect("path" in small).toBe(true);
 	});
 
 	it("still counts stored images after the host restarts", async () => {
 		const limits = { perImage: 1024, perSession: 150 };
-		persistToolImage(scope, { toolCallId: "a", contentIndex: 0 }, png(1, 100).block, limits);
+		await persistToolImage(scope, { toolCallId: "a", contentIndex: 0 }, png(1, 100).block, limits);
 		vi.resetModules();
 		const restarted = await import("../src/modes/rpc/tool-media-store.ts");
 
-		const refused = restarted.persistToolImage(
+		const refused = await restarted.persistToolImage(
 			scope,
 			{ toolCallId: "b", contentIndex: 0 },
 			png(2, 100).block,
 			limits,
 		);
-		const again = restarted.persistToolImage(scope, { toolCallId: "a", contentIndex: 0 }, png(1, 100).block, limits);
+		const again = await restarted.persistToolImage(
+			scope,
+			{ toolCallId: "a", contentIndex: 0 },
+			png(1, 100).block,
+			limits,
+		);
 
 		expect(refused).toEqual({ unavailableReason: "session_limit" });
 		expect("path" in again && existsSync(again.path)).toBe(true);
 	});
 
-	it("reports a storage error, and frees the reservation, when the directory cannot be written", () => {
+	it("reports a storage error when the directory cannot be written", async () => {
 		const blocked = join(sessionDir, "blocked");
 		writeFileSync(blocked, "not a directory");
 		const brokenScope = { sessionDir: blocked, durableSessionId: SESSION_ID };
 		const limits = { perImage: 1024, perSession: 150 };
 
-		const failed = persistToolImage(brokenScope, { toolCallId: "a", contentIndex: 0 }, png(1, 100).block, limits);
-		const healthy = persistToolImage(scope, { toolCallId: "a", contentIndex: 0 }, png(1, 100).block, limits);
+		const failed = await persistToolImage(
+			brokenScope,
+			{ toolCallId: "a", contentIndex: 0 },
+			png(1, 100).block,
+			limits,
+		);
+		const healthy = await persistToolImage(scope, { toolCallId: "a", contentIndex: 0 }, png(1, 100).block, limits);
 
 		expect(failed).toEqual({ unavailableReason: "storage_error" });
 		expect("path" in healthy).toBe(true);
 	});
 
-	it("reports a storage error for a format it will not write", () => {
-		const outcome = persistToolImage(
+	it("reports a storage error for a format it will not write", async () => {
+		const outcome = await persistToolImage(
 			scope,
 			{ toolCallId: "a", contentIndex: 0 },
 			{ data: "AAAA", mimeType: "text/html" },
@@ -172,10 +195,10 @@ describe("tool image persistence", () => {
 		expect(existsSync(join(sessionDir, "media"))).toBe(false);
 	});
 
-	it("leaves the placeholder as it was for a session with nowhere durable to keep images", () => {
+	it("leaves the placeholder as it was for a session with nowhere durable to keep images", async () => {
 		const { block } = png(5);
 		const [placeholder] = placeholders(
-			omitInlineMedia(
+			await omitInlineMedia(
 				toolEnd("call_5", [{ type: "image", ...block }]),
 				toolMediaPersister(() => undefined),
 			),
@@ -187,9 +210,9 @@ describe("tool image persistence", () => {
 
 	it("removes the images with the session, and only that session's", async () => {
 		const { block } = png(6);
-		persistToolImage(scope, { toolCallId: "call_6", contentIndex: 0 }, block);
+		await persistToolImage(scope, { toolCallId: "call_6", contentIndex: 0 }, block);
 		const other = { sessionDir, durableSessionId: "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0002" };
-		persistToolImage(other, { toolCallId: "call_6", contentIndex: 0 }, png(8).block);
+		await persistToolImage(other, { toolCallId: "call_6", contentIndex: 0 }, png(8).block);
 		const sessionFile = join(sessionDir, `2026-10-03T00-00-00-000Z_${SESSION_ID}.jsonl`);
 		writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: SESSION_ID })}\n`);
 
@@ -209,7 +232,7 @@ describe("tool image persistence", () => {
 		expect(existsSync(join(sessionDir, "media", SESSION_ID))).toBe(true);
 	});
 
-	it("gives a capable client the path through the event writer while a plain client keeps the bytes", async () => {
+	it("keeps the capable socket's FIFO while only that socket waits for the persisted path", async () => {
 		const writer = new SessionEventWriter(() => {});
 		const lines: Record<string, string[]> = { capable: [], plain: [] };
 		for (const id of ["capable", "plain"]) {
@@ -220,17 +243,37 @@ describe("tool image persistence", () => {
 			writer.setConnectionCapabilities(id, id === "capable" ? [MEDIA_PLACEHOLDERS_CAPABILITY] : []);
 			writer.attachConnectionToSession(id, "rpc-1");
 		}
-		writer.setSessionMedia(
-			"rpc-1",
-			toolMediaPersister(() => scope),
-		);
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const persist = toolMediaPersister(() => scope);
+		writer.setSessionMedia("rpc-1", (ref, block) => {
+			const store = persist(ref, block);
+			return (
+				store &&
+				(async () => {
+					started.resolve();
+					await release.promise;
+					return store();
+				})
+			);
+		});
 		const { bytes, block } = png(4);
 
 		writer.enqueue("rpc-1", toolEnd("call_7", [{ type: "image", ...block }]));
-		await writer.flush();
+		writer.enqueue("rpc-1", { type: "agent_idle" });
+		try {
+			await started.promise;
+			await writer.flushConnection("plain");
+			expect(lines.plain).toHaveLength(2);
+			expect(lines.capable).toEqual([]);
+		} finally {
+			release.resolve();
+			await writer.flush();
+		}
 
-		const capable = JSON.parse(lines.capable?.join("").trim() ?? "{}") as object;
-		const plain = JSON.parse(lines.plain?.join("").trim() ?? "{}") as {
+		const capable = JSON.parse(lines.capable?.[0] ?? "{}") as object;
+		expect(JSON.parse(lines.capable?.[1] ?? "{}")).toHaveProperty("type", "agent_idle");
+		const plain = JSON.parse(lines.plain?.[0] ?? "{}") as {
 			result: { content: Array<{ data?: string }> };
 		};
 		const [placeholder] = placeholders(capable);
@@ -238,10 +281,10 @@ describe("tool image persistence", () => {
 		expect(plain.result.content[1]?.data).toBe(block.data);
 	});
 
-	it("refuses bytes that are not the image format the tool claimed, instead of filing HTML as a png", () => {
+	it("refuses bytes that are not the image format the tool claimed, instead of filing HTML as a png", async () => {
 		const html = Buffer.from("<html><script>alert(1)</script></html>").toString("base64");
 
-		const outcome = persistToolImage(
+		const outcome = await persistToolImage(
 			scope,
 			{ toolCallId: "call_html", contentIndex: 0 },
 			{ data: html, mimeType: "image/png" },
@@ -251,7 +294,7 @@ describe("tool image persistence", () => {
 		expect(existsSync(join(sessionDir, "media"))).toBe(false);
 	});
 
-	it("stores each supported format that carries its own signature", () => {
+	it("stores each supported format that carries its own signature", async () => {
 		const formats = [
 			["image/png", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])],
 			["image/jpeg", Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])],
@@ -260,7 +303,7 @@ describe("tool image persistence", () => {
 		] as const;
 
 		for (const [mimeType, bytes] of formats) {
-			const outcome = persistToolImage(
+			const outcome = await persistToolImage(
 				scope,
 				{ toolCallId: `call_${mimeType}`, contentIndex: 0 },
 				{ data: bytes.toString("base64"), mimeType },
@@ -269,14 +312,14 @@ describe("tool image persistence", () => {
 		}
 	});
 
-	it("never follows a symlink planted where one tool call's images go, inside an otherwise real media folder", () => {
+	it("never follows a symlink planted where one tool call's images go, inside an otherwise real media folder", async () => {
 		const outside = mkdtempSync(join(tmpdir(), "senpi-outside-"));
 		try {
-			persistToolImage(scope, { toolCallId: "call_first", contentIndex: 0 }, png(1).block);
+			await persistToolImage(scope, { toolCallId: "call_first", contentIndex: 0 }, png(1).block);
 			const callFolder = createHash("sha256").update("call_planted").digest("hex");
 			symlinkSync(outside, join(sessionDir, "media", SESSION_ID, callFolder));
 
-			const outcome = persistToolImage(scope, { toolCallId: "call_planted", contentIndex: 0 }, png(2).block);
+			const outcome = await persistToolImage(scope, { toolCallId: "call_planted", contentIndex: 0 }, png(2).block);
 
 			expect(outcome).toEqual({ unavailableReason: "storage_error" });
 			expect(readdirSync(outside)).toEqual([]);
@@ -285,13 +328,13 @@ describe("tool image persistence", () => {
 		}
 	});
 
-	it("never follows a symlink planted where the session's media directory goes", () => {
+	it("never follows a symlink planted where the session's media directory goes", async () => {
 		const outside = mkdtempSync(join(tmpdir(), "senpi-outside-"));
 		try {
 			mkdirSync(join(sessionDir, "media"));
 			symlinkSync(outside, join(sessionDir, "media", SESSION_ID));
 
-			const outcome = persistToolImage(scope, { toolCallId: "call_link", contentIndex: 0 }, png(1).block);
+			const outcome = await persistToolImage(scope, { toolCallId: "call_link", contentIndex: 0 }, png(1).block);
 
 			expect(outcome).toEqual({ unavailableReason: "storage_error" });
 			expect(readdirSync(outside)).toEqual([]);
@@ -314,8 +357,8 @@ describe("tool image persistence", () => {
 
 		const modeOf = (path: string) => statSync(path).mode & 0o777;
 
-		it("removes a link to an outside folder found inside the media folder and leaves that folder as it was", () => {
-			persistToolImage(scope, { toolCallId: "call_a", contentIndex: 0 }, png(1).block);
+		it("removes a link to an outside folder found inside the media folder and leaves that folder as it was", async () => {
+			await persistToolImage(scope, { toolCallId: "call_a", contentIndex: 0 }, png(1).block);
 			symlinkSync(outside, join(sessionDir, "media", SESSION_ID, "link-to-folder"));
 
 			removeToolMedia(scope);
@@ -326,8 +369,8 @@ describe("tool image persistence", () => {
 			expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("keep");
 		});
 
-		it("removes a link to an outside file and leaves that file's mode alone", () => {
-			persistToolImage(scope, { toolCallId: "call_b", contentIndex: 0 }, png(2).block);
+		it("removes a link to an outside file and leaves that file's mode alone", async () => {
+			await persistToolImage(scope, { toolCallId: "call_b", contentIndex: 0 }, png(2).block);
 			symlinkSync(join(outside, "keep.txt"), join(sessionDir, "media", SESSION_ID, "link-to-file"));
 
 			removeToolMedia(scope);

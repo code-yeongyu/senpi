@@ -277,13 +277,6 @@
 			"note": "one theme JSON file (KB-scale)"
 		},
 		{
-			"file": "src/modes/rpc/tool-media-store.ts",
-			"api": "writeFileSync",
-			"symbol": "writeImage",
-			"count": 1,
-			"note": "one tool-result image (at most 20 MiB) written before the placeholder naming it is emitted; the publish-after-write contract needs the file to exist first, and a re-emitted image is memoized so it is written once"
-		},
-		{
 			"file": "src/utils/bundled-bun.ts",
 			"api": "readFileSync",
 			"symbol": "writeIfChanged",

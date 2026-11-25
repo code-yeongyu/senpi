@@ -10,7 +10,7 @@ export interface LegacyViewCursor {
 }
 
 /** The frames of one view: how many, and each one derived on demand from the frozen source. */
-export type FrozenFrames = { readonly count: number; readonly frame: (index: number) => string };
+export type FrozenFrames = { readonly count: number; readonly frame: (index: number) => string | Promise<string> };
 
 /**
  * A cursor over frames the owner releases once. `source` runs on the first read (`next` or `empty`): an owner that

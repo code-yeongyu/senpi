@@ -9736,10 +9736,6 @@
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
-		"packages/coding-agent/src/modes/rpc/tool-media-store.ts#reserved": {
-			"class": "per-copy-safe",
-			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
-		},
 		"packages/coding-agent/src/modes/rpc/ui-answer-ledger.ts#ledgers": {
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
