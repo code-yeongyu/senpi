@@ -1,3 +1,311 @@
+## 2026-11-24 - Conditional logout through the runtime stores (senpi#7406)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `AuthStorage.deleteLogin` compares and removes under the auth.json file lock.
+- `packages/coding-agent/src/core/runtime-credentials.ts`: forwards `deleteLogin`; a backing store without it refuses instead of removing unconditionally.
+- `packages/coding-agent/src/core/model-runtime.ts`: `logoutProvider` checks `expectedLoginId` before the Claude CLI sign-out, so a stale request signs nothing out of the CLI.
+
+### Why
+
+- RPC `logout` `expectedLoginId` must reach the file lock; the Claude CLI sign-out is a side effect that must not run for a refused request.
+
+### Why an extension could not handle it
+
+- The auth store, its runtime overlay and the runtime's logout queue are core.
+
+### Expected merge conflict zones
+
+- LOW: after `AuthStorage.delete`, the end of `RuntimeCredentials`, the head of `logoutProvider`'s queued operation.
+
+## 2026-11-24 - The session event union names the RPC `device_code` login event (omo-desktop-app#8413)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the auth-login members of the session event union gain `device_code` `{provider, userCode, verificationUri, intervalSeconds?, expiresInSeconds?}`, the event RPC `login_start` now emits before a device-code login's `auth_login_url`.
+
+### Why
+
+- RPC clients never received a device-code login's user code, so the desktop's GitHub Copilot sign-in could open the verification page but show nothing to enter there. The union is the typed record of the login events that cross the wire.
+
+### Why an extension could not handle it
+
+- The login events are produced by the core RPC connection handler from the provider callbacks; an extension cannot add fields to `login_start`'s event stream.
+
+### Expected merge conflict zones
+
+- LOW: the auth-login members of the event union near `auth_login_url` in `agent-session.ts`.
+
+## 2026-11-22 - A provider disabled in models.json stays disabled (senpi#3503)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `prepareRequest` refuses a provider the current config disables; a partial `refresh({ providers })` also recomposes every provider whose disabled state changed; a config that fails to load keeps the previous disabled providers.
+- `packages/coding-agent/src/core/model-config.ts`: new `keepingDisabledProvidersOf(previous)`.
+
+### Why
+
+- Disabling was applied only when providers were composed: a partial refresh kept a newly disabled provider, an invalid `models.json` re-enabled every built-in, and requests never checked the setting, so a switched-off pay-per-token provider could keep spending.
+
+### Why an extension could not handle it
+
+- Provider composition, refresh and request preparation live in the model runtime.
+
+### Expected merge conflict zones
+
+- LOW: `refresh` and the head of `prepareRequest` in `model-runtime.ts`; the `ModelConfig` accessors in `model-config.ts`.
+
+## 2026-11-22 - A sync auth write no longer waits on its own event loop (senpi#5715)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts` tracks the async holder of each auth-file lock within the JavaScript realm.
+- `packages/coding-agent/src/core/lockfile-policy.ts` names local contention with a subtype of the existing store-busy error.
+
+### Why
+
+- A blocking wait stopped the async holder from finishing. Failing immediately allows the holder to release the lock; contention with another process still follows the bounded retry policy.
+
+### Why an extension could not handle it
+
+- The lock is acquired by the file-backed credential store before extensions receive control.
+
+### Expected merge conflict zones
+
+- LOW: the synchronous retry and async acquisition/release branches in `packages/coding-agent/src/core/auth-storage.ts` and the credential-store error declarations in `packages/coding-agent/src/core/lockfile-policy.ts`.
+
+## 2026-11-22 - Concurrent fallback loggers preserve new events (senpi#6351)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/log.ts` keys pending first-start cleanup by the canonical log path, resolving the nearest existing directory when `logs/` is absent. The realm registry `@code-yeongyu/senpi/fallback-log-retirements/v1` shares that cleanup across engine copies in one process, including sessions started through symlink aliases. A settled cleanup leaves the registry so a failed one can run again on the next start.
+- `scripts/realm-census.json` classifies `log.ts#retirements` as `realm-registry`.
+
+### Why
+
+- A second logger could delete the first logger's freshly flushed lines while retiring older files.
+
+### Why an extension could not handle it
+
+- Session construction starts the built-in logger; extensions do not control its filesystem cleanup or queue.
+
+### Expected merge conflict zones
+
+- LOW: initialization in `packages/coding-agent/src/core/retry-fallback/log.ts`; the `retry-fallback/log.ts` rows of `scripts/realm-census.json`. The existing marker, per-logger queues and redaction still apply.
+
+## 2026-11-22 - Show sign-in guidance for refused refresh grants (senpi#5351)
+
+### What changed
+- The generic account listing reports a refused refresh grant as a rejected sign-in with no next check.
+
+### Why
+- Users need to know that a new login, rather than a wait, repairs this account.
+
+### Why an extension could not handle it
+- The core account listing reads the credential pool's revision-matched health record.
+
+### Expected merge conflict zones
+- The sidecar block projection in `credential-accounts.ts`.
+
+## 2026-11-22 - Distinguish sign-in requirements on agent_end (senpi#5722)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-failure.ts` projects the local cause and its account labels into `agent_end.failure`.
+
+### Why
+
+- A sign-in-required turn should not tell the user the provider rejected the credentials.
+
+### Why an extension could not handle it
+
+- Core owns the terminal failure contract and publishes the event.
+
+### Expected merge conflict zones
+
+- LOW: the failure categories and the terminal message projection.
+
+## 2026-11-22 - RPC subscription replies (senpi#4669)
+
+### What changed
+- `packages/coding-agent/src/core/event-bus.ts` documents the reply function supplied on subscription.
+
+### Why
+- Initial state belongs to the new subscriber, not every client already connected.
+
+### Why an extension could not handle it
+- Extensions consume this channel; the runner defines its payload.
+
+### Expected merge conflict zones
+- The RPC subscription channel declaration.
+
+## 2026-11-20 - AuthStorage.login hands login options to the provider (#7133, senpi#7127)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `AuthStorage.login` takes optional `LoginOptions` and passes them to the provider's `login`, the parameter `OAuthAuth.login` already declares. The RPC fresh-login path uses it to pass the device ID and app name.
+
+### Why
+
+- senpi#7127: the RPC fresh-login path goes through `AuthStorage.login`, which dropped every login option, so Sign in with ChatGPT never received the installation's device ID there. The path stays on `AuthStorage.login` because it also resolves OAuth providers registered directly in the auth store, which `ModelRuntime.login` does not.
+
+### Why an extension could not handle it
+
+- The options are dropped inside `AuthStorage.login` itself, before any provider or extension code runs.
+
+### Expected merge conflict zones
+
+- LOW: the `login` signature in `auth-storage.ts`.
+
+## 2026-11-06 - verify_api_key probes a caller-resolved regional base URL (senpi#5649)
+
+### What changed
+
+- `packages/coding-agent/src/core/verify-api-key.ts`: `verifyApiKey` takes an optional `baseUrl`; `probeFor` builds the model-list probe from it instead of the catalog `baseUrl` when given. Without it the probe is unchanged.
+
+### Why
+
+- A regional Kimi Code key (kimi.ai) is refused by a check against the catalog host (kimi.com), and a kimi.com key paired with a kimi.ai pick passes against the wrong service. The RPC layer resolves the region to its host and passes it here.
+
+### Why an extension could not handle it
+
+- The key check is core auth plumbing; no extension hook sits between the RPC command and the probe.
+
+### Expected merge conflict zones
+
+- None upstream: `verify-api-key.ts` is fork-only (desktop #2510).
+
+## 2026-11-03 - A stale pre-#4436 writer no longer loses signed-in Claude accounts (senpi#5594)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: `renameCredentialAccount` awaits the rewrite of the renamed Claude CLI account's dir record (`renameAccountLink`) inside the same auth.json lock as the rename, so a later re-link restores the display name the user chose.
+- `packages/coding-agent/src/core/auth-storage.ts`: the async load settles the Claude CLI account records inside its held store lock (`settleAccountLinks`): while a slot the legacy sign-out marked `legacy_sign_in_retired` is left, every recorded account dir no slot references takes its account back (`relinkAfterStaleWrite`) instead of keeping a fresh `dirId` and a sign-in prompt, and each healthy Claude CLI account whose dir has no record gets one (`backfillAccountLinks`); a record it cannot write is reported once. The synchronous load still signs legacy slots out at once and only leaves the revision unset while Claude CLI accounts exist, so the first async read settles the records; `settleLoad()` runs that read on demand and skips a store whose first load failed or found it locked, so startup never waits out a held lock. An async read records a load failure only when it is not the failure already recorded since the store last loaded (`recordAsyncLoadFailure`), so a broken or locked store is reported once per startup. No account-record I/O is synchronous on the session path.
+
+### Why
+
+- An engine from before senpi#4436 that is still running writes its token-shaped copy of the entry back over the Claude CLI slots; the next load gave the account a new dir and orphaned the dir holding the working login, and a second account the stale copy did not hold was lost (senpi#5594).
+
+### Why an extension could not handle it
+
+- The sign-out runs at the auth.json load seam in core, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `withLockAsync` callback of `reloadLockedAsync` and the revision line of `reload()`; the `renameSlotDisplayName` return in `renameCredentialAccount`.
+
+## 2026-11-23 - Replacement runtimes do not inherit the opener's approvals label (senpi#7270)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: every replacement (`switchSession`, `newSession`, both `fork` paths, the in-memory fork, `importFromJsonl`) passes `replacementLaunchProfile(this._launchProfile)`, the launch profile without `sessionContext.approvals`, to the runtime factory, and `apply` drops the label from the runtime's own profile. `persistSession` (a claimed park) records and syncs the refusal of a labelled session before the claim is answered.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#14649 and review M2 of senpi#7270: the label is the opener's declaration about the session it opened. A fork or clone is a new session under a new id, and reusing the launch profile made it refuse with no opener opting in. Review M6: a claimed park became persistent without writing its in-memory refusal to disk.
+
+### Why an extension could not handle it
+
+- The launch profile is reused inside `AgentSessionRuntime` before any extension of the replacement loads; the extension sees only the resulting `pi.sessionContext` and cannot tell an inherited label from its own opener's.
+
+### Expected merge conflict zones
+
+- The `launchProfile:` argument of each `this.createRuntime({ ... })` call in `agent-session-runtime.ts`, the top of `apply` and of `persistSession`, and the import block.
+
+## 2026-11-12 - A runtime's session hold is taken before it is constructed, and the writer fence reads the boot instant first (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-holders.ts`: `holdSessionFile` is async (its holder record carries the async boot instant), and it resolves that record before it reads the reference count, so nothing yields between that check and the record it guards. The move lock's own record is awaited the same way.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the constructor takes the session hold as a seventh argument and no longer touches the holder file. `createAgentSessionRuntime` takes it with the new `holdRuntimeSession` before constructing and releases it if construction throws; `persistSession`, `apply` and `switchSession` await their holds.
+- `packages/coding-agent/src/core/session-holders.ts`: the holder record's shape is exported as `HolderRecord`.
+- `packages/coding-agent/src/core/session-writer-claims.ts`: `WriterProbes.bootAtMs` is an `OwnBootReader`; a claim from another boot on this host is checked against a fresh read before the check runs, so a writer that started after a wall-clock step is not displaced; `acquireWriterClaim` resolves it before its check and passes the value into `ownerGone`, so no await lands between proving the owner gone and publishing the next claim.
+
+### Why
+
+- The boot instant is read asynchronously so one session never blocks the shared host on it (the no-sync session-path audit), and a constructor cannot await, so the hold moved to the async creators.
+
+### Why an extension could not handle it
+
+- Session holds and writer claims are core session ownership.
+
+### Expected merge conflict zones
+
+- MEDIUM: callers of `holdSessionFile` and `new AgentSessionRuntime(...)`, which now await the hold or pass one in.
+
+## 2026-11-20 - every announced queued-drain wait is closed (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_drainQueueAfterProviderBackoff()` closes the `auto_retry_start` it announces with exactly one `auto_retry_end`: `success: true` when it hands the queue to a run or the queue was taken back meanwhile, `success: false` with "Retry cancelled" when it was cancelled.
+
+### Why
+
+- oh-my-openagent#14428 (#7124 review): on the path that hands the queue to a run the wait was never closed, so an extension or RPC client that pairs retry starts and ends was left with an open retry. A wait whose queue the user took back to edit reported a failed retry with no error, which interactive mode showed as "Retry failed ... Unknown error".
+- Correction to the #7124 entry: a queue of a person's own input alone still waits for their next prompt (#4036), but a queue that holds both such input and another session's delivery drains whole, in queue order, after the wait. The code comment at the drain now says so.
+
+### Why an extension could not handle it
+
+- The drain wait and its events are emitted by the session core; an extension only observes them.
+
+### Expected merge conflict zones
+
+- LOW: the end of `_drainQueueAfterProviderBackoff()` in `agent-session.ts`.
+
+## 2026-11-20 - queued input waits out a rate-limited provider instead of parking (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: when the retry owner gives up on a retryable failure (rate limit, overload, transient server error) and the queue holds a delivery from another session, `_drainQueueAfterProviderBackoff()` waits (the longer of the provider's stated delay and the retry profile's backoff for a counter that grows with each such wait and resets after a run that ends without an error, never longer than the agent delay ceiling) and then runs the queue through the scheduled continuation. The ceiling is the one the retry backoff applies (new `_agentDelayCeilingMs()`: a configured `retry.maxAgentDelayMs`, else the profile's override-mode ceiling, else the settings default), and the drain never waits uncapped, so a provider asking for an hour is retried within the ceiling. The wait is announced with `auto_retry_start` (so the UI and `list_sessions` show it) and ends with `auto_retry_end` when it is cancelled or the queue emptied; it uses the retry abort controller, so Esc or `abort()` cancels it like a retry backoff and the run settles.
+
+### Why
+
+- oh-my-openagent#14428: after a night of rate-limited requests the queued cross-session follow-ups stayed parked until an unrelated prompt arrived, while the provider was answering again. Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again, while a person's own input queued behind a failed response still waits for their next prompt (#4036).
+
+### Why an extension could not handle it
+
+- The retry owner's exhaustion and the agent_end continuation decision are session-core state; an extension sees the settle only after the queue has already been parked.
+
+### Expected merge conflict zones
+
+- LOW: the agent_end continuation block in `_handleAgentEvent()` (next to `retryExhaustionAllowsQueuedContinuation`) and the new method next to `abortRetry()`.
+
+## 2026-11-20 - a compaction no longer detaches the session from its agent's events (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `compact()` and the extension `ctx.compact()` keep the session subscribed to its agent while the summary is prepared. `_reconnectToAgent()` is removed and `_disconnectFromAgent()` is called by `dispose()` only. Upstream removed the same detach in e56893f4cd (pi-mono #7253); the fork still carried it.
+
+### Why
+
+- oh-my-openagent#14428: the abort that precedes a compaction does not always leave the agent quiet. It returns at once when the run is already ending (an open `agent_end` boundary) or is a run the session does not own, and that run's own continuation, retry or queue drain then ran with no subscriber. Every message such a run emitted was lost. Queued cross-session deliveries it took were never written and stayed `pending` in the admission ledger for the life of the process, so their sender never delivered them again, and the unheard `agent_end` left the session marked busy.
+
+### Why an extension could not handle it
+
+- The agent subscription and both compaction entry points are session core; an extension cannot observe events the session itself does not receive.
+
+### Expected merge conflict zones
+
+- LOW: the `try`/`finally` of `compact()` and of the extension `compact` action in `agent-session.ts`. Upstream has no detach there either; take upstream's shape.
+
+## 2026-11-20 - The brand profile names the distribution's own extensions (#7118, oh-my-openagent#14465)
+
+### What changed
+
+- `packages/coding-agent/src/core/brand.ts`: `BrandProfile.extensions`, read from `SENPI_BRAND`: the absolute paths of the extensions the distribution's launcher passes with `--extension` on every start. Relative, non-string or NUL-carrying entries are dropped; an empty result leaves the field absent.
+
+### Why
+
+- The attaching start needs to tell the launcher's own plugin from a user flag (see the `cli/changes.md` entry of the same PR).
+
+### Why an extension could not handle it
+
+- The brand profile is parsed before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `BrandProfile` interface and the `parseBrandProfile` return literal in `brand.ts` (fork-only).
+
 ## 2026-11-20 - `getTodoFirstTurnPlan` takes the preset's default (#7110, senpi#7101)
 
 ### What changed

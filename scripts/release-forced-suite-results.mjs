@@ -1,7 +1,7 @@
 /**
  * The forced-suite matrix jobs' result files (senpi#6642). Each job (`forced-rest`, and `forced-shard` 1..N in
  * `.github/workflows/publish-npm.yml`) writes one through `release-forced-test-part.mjs`, and the release job hands
- * them all to `release.mjs --tested-sha`. That is the second gate behind the job's `needs` condition: the release
+ * them all to `release.mjs --shard-results`. That is the second gate behind the job's `needs` condition: the release
  * refuses to stamp unless every part reported a pass, with tests, for the very commit it is about to tag.
  */
 

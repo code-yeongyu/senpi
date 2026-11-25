@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { armExecHeartbeat } from "../src/api/cursor-agent/exec-lifecycle.ts";
 import {
 	findControlFrames,
+	STREAM_HEALTH_THRESHOLD_MS,
 	runExecLifecycleScenario,
 	runStreamHealthScenario,
 	runTurnTerminationScenario,
@@ -51,7 +52,8 @@ export function registerCursorExecLifecycleTests(): void {
 
 	describe("cursor-agent stream health and resume", () => {
 		it("keeps heartbeat-only streams alive past the meaningful-frame window", async () => {
-			const { attempts, message } = await runStreamHealthScenario("heartbeatOnly");
+			const { attempts, heartbeatSpanMs, message } = await runStreamHealthScenario("heartbeatOnly");
+			expect(heartbeatSpanMs).toBeGreaterThan(STREAM_HEALTH_THRESHOLD_MS);
 			expect(attempts).toBe(1);
 			expect(message.stopReason).toBe("stop");
 			expect(message.content).toEqual([expect.objectContaining({ type: "text", text: "alive" })]);

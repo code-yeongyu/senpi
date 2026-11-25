@@ -1,3 +1,59 @@
+## 2026-11-21 - Pilot exact npm tree caching for Linux coding-agent CI (senpi#7193)
+
+### What changed
+
+- `.github/workflows/ci.yml`: use blobless checkout in the coding-agent build and shard jobs, and share an exact npm tree cache seeded by the build before it writes outputs.
+- `.github/actions/install-ci-npm-tree/action.yml`: key the tree on the Linux runner image, architecture, Node, npm, Bun, npm configuration, and lock/workspace manifests. Run `npm ci --ignore-scripts` on a miss.
+
+### Why
+
+- The build and its shards independently materialize the same npm dependency tree. Measure whether the transfer and restore cost less than the install they replace.
+
+### Why an extension could not handle it
+
+- Dependency setup and checkout are controlled by the repository's hosted CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the checkout and dependency install steps in the coding-agent build and test jobs in `.github/workflows/ci.yml`.
+
+## 2026-11-21 - CI job timeouts use measured runner duration (senpi#7191)
+
+### What changed
+
+- `.github/workflows/ci.yml`: set eligible job timeouts to twice the runner-duration p95 measured on 2026-11-21 across 51 CI runs, rounded up to whole minutes with a five-minute floor. Shared matrix caps use the slowest leg. Cap longer steps in `fused-equivalence`, `test-workspaces`, `webview-kernel`, and `process-kernel` at their new job limits.
+- `.github/workflows/ci.yml`: `grep-native-contract`, `socket-secret-native-windows`, and `test-scripts` are held at 30 minutes: cold-build duration not measured. Hold `macos-combined` at 99 minutes (sum of suite caps plus 10 minutes for setup), with its suite caps unchanged pending #7192. The two coding-agent jobs remain out of scope.
+
+### Why
+
+- `.github/workflows/ci.yml`: slow or hung jobs should fail promptly without timing out short jobs on ordinary runner hiccups.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: GitHub Actions enforces the runner budget at the job level.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job-level timeout declarations and the four step caps aligned to them, excluding `build-coding-agent` and `test-coding-agent`.
+
+## 2026-11-21 - Balance coding-agent CI shards using recorded file timings (senpi#7183)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the build job freezes a plan from Vitest discovery and the latest verified timing cache. The ten shard jobs use exact planned file identities, or the existing Vitest hash split without usable timings. `Check and test` verifies the finished file reports against discovery and saves new timings only after a green default-branch push.
+
+### Why
+
+- `.github/workflows/ci.yml` used file-count sharding, leaving the aggregate gate waiting for whichever shard drew the most expensive files. Planning against measured file cost reduces that imbalance without changing the shard count, runners, or test scope.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` schedules and verifies hosted CI jobs before any product extension runs.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: coding-agent build and test shard steps and the `Check and test` fan-in.
+
 ## 2026-11-16 - Build Binaries no longer holds a runner while npm publishes (senpi#6851)
 
 ### What changed

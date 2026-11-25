@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Api, FetchFunction, Model, ProviderResponse } from "../src/types.ts";
+import { isRetryableAssistantError } from "../src/utils/retry.ts";
 
 const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
@@ -504,5 +505,27 @@ describe("Mistral HTTP transport", () => {
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toBe('Mistral API error (403): {"message":"blocked by gateway"}');
+	});
+
+	it.each([
+		{ status: 408, body: "The gateway did not complete the request", retryable: true },
+		{
+			status: 400,
+			body: '{"message":"Invalid parameter: expected a status other than HTTP 408 Request Timeout"}',
+			retryable: false,
+		},
+	])("classifies an actual Mistral HTTP $status for same-model retry", async ({ status, body, retryable }) => {
+		const model = getModel("mistral", "mistral-large-latest");
+		const context = normalizeContext({
+			messages: [{ role: "user", content: "hello", timestamp: 1 }],
+		});
+		const message = await streamMistral(model, context, {
+			apiKey: "test",
+			fetch: async () => new Response(body, { status }),
+		}).result();
+
+		expect(message.stopReason).toBe("error");
+		expect(isRetryableAssistantError(message)).toBe(retryable);
+		expect(message.providerDiagnostic).toMatchObject({ httpStatus: status, evidence: "structured_status" });
 	});
 });

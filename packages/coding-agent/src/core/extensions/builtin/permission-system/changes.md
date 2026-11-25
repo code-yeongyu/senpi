@@ -1,5 +1,23 @@
 # Permission System Builtin Extension
 
+## 2026-11-21 - Case recovery lists a directory only when the spelling can differ (senpi#7150)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/external-pattern.ts`: `canonicalPathCase` `lstat`s each component before anything else. A missing component ends the walk without listing its parent, and an existing one is listed only when its case-swapped spelling is the same entry. Results are unchanged.
+
+### Why
+
+- The walk listed every component's parent first, synchronously on the engine's main thread. A path below a mount whose directory open never returns, such as the macOS `/home` autofs trigger, froze the whole engine. That regressed the no-`open(2)` invariant from senpi#1416.
+
+### Why an extension could not handle it
+
+- The walk runs inside the builtin permission decision.
+
+### Expected merge conflict zones
+
+- LOW: the head of `canonicalPathCase`.
+
 ## 2026-11-14 - The permission check reads ctx.signal unguarded again (senpi#6679)
 
 ### What changed

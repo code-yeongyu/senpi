@@ -51,6 +51,7 @@ import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { isSiwcMissingResponsesScope, SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE } from "../utils/siwc-errors.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
+import { withTransportActivity } from "../utils/transport-activity-fetch.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
@@ -409,7 +410,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				normalizedContext,
 				clientAuth.apiKey,
 				clientAuth.headers,
-				options?.fetch,
+				withTransportActivity(options?.fetch, options?.onTransportActivity),
 				cacheSessionId,
 				options?.env,
 			);

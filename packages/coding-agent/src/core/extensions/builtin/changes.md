@@ -1,3 +1,62 @@
+## 2026-11-23 - Job widget state goes to the new subscriber only (senpi#4669)
+
+### What changed
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/extension.ts` answers a new RPC subscriber through the subscription's reply with the current `job_widget_state`, instead of republishing to every subscriber.
+- `packages/coding-agent/src/core/extensions/builtin/job-widgets/session-host.ts` drops `resendJobWidgetState`, which only that republish used.
+
+### Why
+- A republish reached clients that already had the state and every in-process listener; a client that just attached needs it for itself.
+
+### Why an extension could not handle it
+- This is the builtin's own resend path.
+
+### Expected merge conflict zones
+- The job-widgets `session_start` subscription wiring.
+
+## 2026-11-22 - A text-only model is told about look_at, and tool-result images are described for it (senpi#7260)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/look-at/index.ts`: two handlers. Both act only while `look_at` is an active tool, the model has no image input and `images.blockImages` is off. The `tool_result` handler is registered only while `look_at` is active and the model has no image input, re-checked at `session_start`, `model_select` and after `/look-at`: every registered `tool_result` handler adds a PostToolUse `tool_hook_status` start and end to each tool call's event stream, even when it returns at once, so a session that cannot use the description keeps the event stream it had before.
+  - `context_with_system`, registered with `mutatesMessages: false`: replaces the images in user and tool-result messages with placeholders that name `look_at`, through `downgradeUnsupportedImages` in `packages/ai`. Only the request changes; the transcript keeps the images.
+  - `tool_result`: describes up to three images of a tool result through `runLookAt` (the same model chain, credentials, 10 MiB per-image limit, resize, 4096-token output cap and 120 s request deadline as the tool, aborted with the turn) and returns the content with each described image replaced by one text block, `[Image described by <provider/model> because this model cannot see images. For another question about it, call look_at with the file path.]` followed by the description. A call another tool made (`parentToolCallId`) is left alone. A failed description leaves its image in place, shows one warning, and never changes `isError`.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/image-placeholder.ts` (new): the per-message replacement. A replaced message keeps its session entry identity (`inheritSessionContextEntryId`), like the compaction stages that derive messages.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/tool-result-images.ts` (new): the per-result description and its three-image bound.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/prompts.ts`: the goal sent to the vision model for such an image and the label of the description block.
+- `packages/coding-agent/test/suite/regressions/7233-non-vision-image-description.test.ts` (new), `packages/coding-agent/test/suite/look-at-image-placeholder.test.ts` (new).
+
+### Why
+
+- senpi#7233. In a multi-harness build comparison two runs on a text-only model read a screenshot of their own product and got only the placeholder. One guessed `look_at` and used it 12 times. The other never found it, checked the screenshot by pixel statistics and shipped a broken render.
+- The description replaces the image in the stored tool result, so it is requested once and the bytes are not kept in the transcript. After a switch to a model with image input, an earlier described result stays a description; reading the file again shows the pixels. An image that was not described stays in the transcript and such a model sees it.
+- With no image-capable model available `look_at` is not active (unchanged), so nothing is described and the placeholder names no tool.
+
+### Why an extension could not handle it
+
+- It is one. Both handlers use existing extension events, and nothing under `core/` outside this builtin changed.
+
+### Expected merge conflict zones
+
+- NONE upstream: look-at is fork-only. The placeholder handler depends on `downgradeUnsupportedImages` staying exported from `packages/ai/src/api/transform-messages.ts` (tracked in `packages/ai/src/api/changes.md`).
+
+## 2026-11-12 - The schedule runner awaits the boot instant (senpi#3152)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/schedule/runner-lease.ts`: the runner lease, the delivery lock and the orphaned-delivery check await `processBootAtMs()`, which is async now; the lease resolves it before its write.
+
+### Why
+
+- The boot instant is read asynchronously (senpi#3152).
+
+### Why an extension could not handle it
+
+- The builtin schedule extension owns these leases.
+
+### Expected merge conflict zones
+
+- LOW: `runner-lease.ts`.
+
 ## 2026-11-19 - A regression test pins the over-budget sentence first for an older hand's result with no text part (senpi#7062)
 
 ### What changed

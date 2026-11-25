@@ -1,3 +1,57 @@
+## 2026-11-03 - Startup credential notices wait for the async load (senpi#5594)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics` and `interactiveAuthNotices` are async and await `authStorage.settleLoad()` before taking notices; every call site (model listing, runtime creation, interactive start, print mode) awaits them.
+
+### Why
+
+- The first auth.json load is synchronous and cannot re-link Claude CLI account dirs after a stale pre-#4436 write; without the settle, a fresh start told the user to sign in again for accounts its own async load re-linked a moment later (senpi#5594).
+
+### Why an extension could not handle it
+
+- The startup notices are collected by the CLI entry point before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `collectAuthDiagnostics` / `interactiveAuthNotices` signatures and their four call sites in `main()`.
+
+## 2026-11-23 - A labelled open records its approvals refusal durably before the session exists (senpi#7270)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory`'s runtime factory calls `recordOpenerRefusal` (`core/opener-approvals.ts`) before `createAgentSessionFromServices` when the launch profile carries `sessionContext.approvals = "refuse"`. The record is written to the session file and synced; a failure rejects runtime creation, so the open fails.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#14649: a thread nobody answers must never ask. Review of senpi#7270 showed a record written from an extension's `session_start` could fail silently (the runner reports handler errors and the open still succeeds), so the write moved to the engine, ahead of the session.
+
+### Why an extension could not handle it
+
+- An extension's `session_start` failure cannot fail an open: `ExtensionRunner.emit` catches it and reports an extension error. Only the runtime factory runs before the session exists and can reject the open.
+
+### Expected merge conflict zones
+
+- `createCliRuntimeFactory`'s `createRuntime`, between `markSwitch("sessionOptions")` and `startOpenTimer("runtime-session")`, and the import block.
+
+## 2026-11-20 - Use loaded flag declarations to identify positional messages (#7116)
+
+### What changed
+
+- `main.ts` recovers positional messages in their original order after loading an extension with a boolean flag used in the invocation.
+
+### Why
+
+- A string option consumes its following value; a boolean option must not consume the next message.
+
+### Why an extension could not handle it
+
+- The CLI owns the positional message list passed to the interactive session.
+
+### Expected merge conflict zones
+
+- Startup immediately after collecting extension flag declarations.
+
 ## 2026-11-05 - Root exports for the resolver and the credential store (custody CK18, senpi#5865)
 
 ### What changed

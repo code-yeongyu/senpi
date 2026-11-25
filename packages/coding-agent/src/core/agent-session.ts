@@ -863,6 +863,15 @@ export type AgentSessionEvent =
 	// terminal result arrive here, because an interactive browser round-trip
 	// cannot fit inside the request timeout.
 	| { type: "auth_login_url"; provider: string; url: string }
+	/** A device-code login's code for the user to enter at `verificationUri`; precedes that URL's `auth_login_url`. */
+	| {
+			type: "device_code";
+			provider: string;
+			userCode: string;
+			verificationUri: string;
+			intervalSeconds?: number;
+			expiresInSeconds?: number;
+	  }
 	/**
 	 * A login progress line, such as a `provider_login_start` handler's download status (senpi#4436). The line is
 	 * `text`, not `message`: event consumers detect chat-message events with `"message" in event`.
@@ -1540,6 +1549,8 @@ export class AgentSession {
 	/** senpi#3709: reset moments the failed requests of this run named, and whether its fallback ladder ran out. */
 	private _runLimitResets: number[] = [];
 	private _runLimitFailure = false;
+	/** Back-offs spent waiting for a rate-limited or overloaded provider to take queued input (omo#14428). */
+	private _queuedDrainBackoffAttempt = 0;
 	private _runFallbackExhausted = false;
 	private _promptsInFlight = 0;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
@@ -4401,6 +4412,7 @@ export class AgentSession {
 		let launchedContinuation = false;
 		let retryContinuationBlocked = false;
 		let retryExhaustionAllowsQueuedContinuation = false;
+		let retryableFailureAwaitingDrain: AssistantMessage | undefined;
 		let allowsPostCompactionUsageExemptContinuation = false;
 		let releasedExemptionAllowsQueuedContinuation = false;
 		const userAbortSuppressedQueuedContinuation =
@@ -4415,6 +4427,7 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			if (msg.stopReason !== "error") this._queuedDrainBackoffAttempt = 0;
 			if (msg.stopReason === "error") {
 				const resetAt = limitResetAt(msg, this._fallbackWallNow());
 				if (resetAt !== undefined) this._runLimitResets.push(resetAt);
@@ -4536,6 +4549,19 @@ export class AgentSession {
 				retryOwnedDeferredQueue &&
 				retryOutcome === "not-handled" &&
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
+			// A provider that is only rate limited or overloaded answers again later: the input queued behind this run
+			// waits that out instead of parking until unrelated input arrives (omo#14428). A provider timeout keeps its
+			// own policy: input stays parked until that provider proves responsive.
+			if (
+				!userAbortSuppressedQueuedContinuation &&
+				retryOutcome === "not-handled" &&
+				retryableError &&
+				!isProviderTimeoutError(msg) &&
+				msg.stopReason === "error" &&
+				this.settingsManager.getRetrySettings().enabled
+			) {
+				retryableFailureAwaitingDrain = msg;
+			}
 
 			if (retryOutcome === "not-handled" && msg.errorCause?.type === "model_config") {
 				this._modelConfigErrors.report(msg, this.sessionManager.getSessionId());
@@ -4631,6 +4657,20 @@ export class AgentSession {
 				this._requiredCompactionAdmissionError = undefined;
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
+			}
+			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again.
+			// A queue of a person's own input alone waits for their next prompt (#4036); in a queue that holds both, the
+			// drained run takes the person's input too, in queue order.
+			if (
+				!launchedContinuation &&
+				!retryContinuationBlocked &&
+				retryableFailureAwaitingDrain &&
+				this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
+			) {
+				const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
+				launchedContinuation = drain === "continued";
+				// A cancelled wait settles the run, as a retry cancelled during its backoff does.
+				retryContinuationBlocked ||= drain === "cancelled";
 			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before
 			// the run settles. A user abort or a blocked retry settles without it.
@@ -5037,25 +5077,12 @@ export class AgentSession {
 		return this._structuredLane.available;
 	}
 
-	/**
-	 * Temporarily disconnect from agent events.
-	 * User listeners are preserved and will receive events again after resubscribe().
-	 * Used internally during operations that need to pause event processing.
-	 */
+	/** Disconnect from agent events during disposal. */
 	private _disconnectFromAgent(): void {
 		if (this._unsubscribeAgent) {
 			this._unsubscribeAgent();
 			this._unsubscribeAgent = undefined;
 		}
-	}
-
-	/**
-	 * Reconnect to agent events after _disconnectFromAgent().
-	 * Preserves all existing listeners.
-	 */
-	private _reconnectToAgent(): void {
-		if (this._unsubscribeAgent) return; // Already connected
-		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 	}
 
 	/**
@@ -10787,15 +10814,12 @@ export class AgentSession {
 		const controller = admission.controller;
 		const requestId = randomUUID();
 		let outcome: "completed" | "failed" | "aborted" = "failed";
-		let disconnected = false;
 
 		try {
-			// Keep the session subscriber attached until the aborted run emits
-			// agent_end. That event clears the active-run and retry state that
-			// waitForIdle() depends on.
+			// The session stays subscribed to its agent for the whole compaction. The abort's agent_end clears the
+			// active-run and retry state waitForIdle() depends on, and a run this abort does not stop (a continuation
+			// the ending run schedules, a run the session does not own) still has every message written (omo#14428).
 			await this._abortActiveAgentAndRetry("system");
-			this._disconnectFromAgent();
-			disconnected = true;
 			this._emit({ type: "compaction_start", reason: "manual", requestId });
 			const execution = await this._executeCompaction({
 				controller,
@@ -10846,7 +10870,6 @@ export class AgentSession {
 				this._compactionAbortController = undefined;
 			}
 			this._releasePendingCompactionAdmission(admission, outcome);
-			if (disconnected && !this.isCompacting) this._reconnectToAgent();
 			if (outcome === "completed") this._resumeQueuedMessagesAfterCompaction();
 		}
 	}
@@ -12801,12 +12824,9 @@ export class AgentSession {
 					void (async () => {
 						let outcome: "completed" | "failed" | "aborted" = "failed";
 						let compactionCompleted = false;
-						let disconnected = false;
 
 						try {
 							await this._abortActiveAgentAndRetry("system");
-							this._disconnectFromAgent();
-							disconnected = true;
 							this._emit({
 								type: "compaction_start",
 								reason: "extension",
@@ -12856,7 +12876,6 @@ export class AgentSession {
 								this._compactionAbortController = undefined;
 							}
 							this._releasePendingCompactionAdmission(admission, outcome);
-							if (disconnected && !this.isCompacting) this._reconnectToAgent();
 							// A throwing onComplete consumer overwrites outcome in the catch
 							// block, so recovery keys off whether compaction itself succeeded.
 							if (compactionCompleted) this._resumeQueuedMessagesAfterCompaction();
@@ -13997,16 +14016,7 @@ export class AgentSession {
 		// admitted passes through verbatim; a number is the profile's own cap. The
 		// settings cap applies only when the profile declares no ceiling of its own
 		// (the tiered senpi-default).
-		const profileTurnCeilingMs =
-			retryProfile.turn.serverHint.mode === "override" ? retryProfile.turn.serverHint.ceiling.maxDelayMs : undefined;
-		// An explicitly user-configured retry.maxAgentDelayMs always wins; a profile's own
-		// ceiling is the next authority; the 60s default is the last resort.
-		const userConfiguredCeilingMs = this.settingsManager.isRetryMaxAgentDelayMsConfigured?.() ?? false;
-		const agentCeilingMs = userConfiguredCeilingMs
-			? settings.maxAgentDelayMs
-			: profileTurnCeilingMs === undefined
-				? settings.maxAgentDelayMs
-				: profileTurnCeilingMs;
+		const agentCeilingMs = this._agentDelayCeilingMs(retryProfile, settings.maxAgentDelayMs);
 		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
@@ -14126,6 +14136,64 @@ export class AgentSession {
 		this._scheduleContinuationAfterCurrentEvent(continuation.options, true, continuation.watchdogTimeoutMs);
 
 		return "continued";
+	}
+
+	/**
+	 * omo#14428: the retry owner gave up on a rate-limited or overloaded provider while input was still queued. The
+	 * session waits the provider out (the provider's stated delay, else a backoff that grows with each wait and
+	 * restarts after a run that ends without an error) and then runs the queue, whose own failures retry again. An
+	 * abort cancels the wait like a retry backoff.
+	 */
+	private async _drainQueueAfterProviderBackoff(
+		failure: AssistantMessage,
+	): Promise<"continued" | "cancelled" | "nothing-queued"> {
+		const attempt = ++this._queuedDrainBackoffAttempt;
+		const retryProfile = this._resolveRetryProfile();
+		const settings = this.settingsManager.getRetrySettings();
+		const backoffMs = retryBackoffDelayMs(retryProfile.turn.backoff, attempt, this._retryRandom());
+		const errorMessage = failure.errorMessage ?? "";
+		const hintMs = errorMessage === "" ? undefined : this._getProviderRetryDelayMs(errorMessage);
+		// The same ceiling the retry backoff applies, and never unbounded: this wait holds input the user may still type,
+		// so a provider asking for an hour (the case the retry owner gave up on) is retried within the ceiling instead.
+		const ceilingMs = this._agentDelayCeilingMs(retryProfile, settings.maxAgentDelayMs) ?? settings.maxAgentDelayMs;
+		const delayMs = Math.min(Math.max(backoffMs, hintMs ?? 0), ceilingMs);
+		const controller = new AbortController();
+		this._retryAbortController = controller;
+		// Announced like a retry backoff, so the UI and `list_sessions` show the wait instead of an unexplained busy run.
+		this._emit({ type: "auto_retry_start", attempt, maxAttempts: attempt, delayMs, errorMessage });
+		let outcome: "continued" | "cancelled" | "nothing-queued";
+		try {
+			await sleep(delayMs, controller.signal);
+			outcome = this.agent.hasQueuedMessages() ? "continued" : "nothing-queued";
+		} catch {
+			outcome = "cancelled";
+		} finally {
+			if (this._retryAbortController === controller) this._retryAbortController = undefined;
+		}
+		// Every announced wait is closed: a cancelled one failed; a wait that hands the queue to a run, or that found nothing
+		// left to run (the user took the queue back to edit it), ended as it should.
+		this._emit(
+			outcome === "cancelled"
+				? { type: "auto_retry_end", success: false, attempt, finalError: "Retry cancelled" }
+				: { type: "auto_retry_end", success: true, attempt },
+		);
+		if (outcome !== "continued") return outcome;
+		this._scheduleContinuationAfterCurrentEvent();
+		return "continued";
+	}
+
+	/**
+	 * The ceiling on one agent-level wait: an explicitly configured `retry.maxAgentDelayMs` wins, then a profile's own
+	 * override-mode turn ceiling (`null` is explicitly uncapped, as kimi-code declares), then the settings default.
+	 */
+	private _agentDelayCeilingMs(
+		retryProfile: ReturnType<SettingsManager["resolveRetryProfile"]>,
+		settingsCeilingMs: number,
+	): number | null {
+		const profileTurnCeilingMs =
+			retryProfile.turn.serverHint.mode === "override" ? retryProfile.turn.serverHint.ceiling.maxDelayMs : undefined;
+		const userConfigured = this.settingsManager.isRetryMaxAgentDelayMsConfigured?.() ?? false;
+		return userConfigured || profileTurnCeilingMs === undefined ? settingsCeilingMs : profileTurnCeilingMs;
 	}
 
 	/**

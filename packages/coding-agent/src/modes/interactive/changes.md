@@ -1,3 +1,40 @@
+## 2026-11-24 - A model switch from the picker no longer replays the transcript (senpi#7411)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/model-selector.ts`: an optional `layout.rowsBelow(width)` constructor argument; when it is given, `render()` caps the model list so the picker plus the rows below it fit the terminal height (at least one model), and lets a capped list grow back when the screen gets taller.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the model picker gets `rowsBelow` from the rendered height of `widgetContainerBelow` plus `footerContainer`; `showSelector` clears `lastStatusSpacer`/`lastStatusText`, so the first status after a selector appends a row instead of rewriting the previous status row.
+
+### Why
+
+- A picker taller than the screen pushed its top rows into scrollback, and the status after the choice rewrote a status row the picker had pushed off screen. Either way the frame changed a row above the screen while the line count changed, so the renderer cleared the scrollback and replayed the whole transcript: a full-screen flash, worst over a remote link, and a shifted screen on a phone (sisyphuslabs/doriterm#2745).
+
+### Why an extension could not handle it
+
+- The picker's sizing and the status-row collapse are core interactive-mode behavior; no extension hook sizes a built-in selector or owns the status row anchor.
+
+### Expected merge conflict zones
+
+- LOW: `ModelSelectorComponent` constructor signature and `updateList()` window sizing; `showSelector()` body and the `new ModelSelectorComponent(...)` call in `showModelSelector`.
+
+## 2026-11-22 - Match model-family warnings at name boundaries (senpi#2753)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts` distinguishes actual Qwen and MiniMax family names from unrelated words: the name must not follow a letter, digit, or combining mark and must not be followed by a letter or combining mark. These boundaries apply across scripts and still allow version suffixes.
+
+### Why
+
+- A false warning on an unrelated model undermines the notice for models it is meant to identify.
+
+### Why an extension could not handle it
+
+- The interactive model-selection surface invokes the warning directly.
+
+### Expected merge conflict zones
+
+- LOW: the family predicate in `packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts`. The warning text and rendering are unchanged.
+
 ## 2026-11-14 - The terminal control endpoint refuses an `interrupt` `background` other than `"stop"`
 
 ### What changed

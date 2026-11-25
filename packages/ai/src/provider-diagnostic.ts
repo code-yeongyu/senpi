@@ -29,13 +29,16 @@ export type ProviderDiagnosticEvidence = "structured_status" | "structured_code"
 
 /**
  * Bounded, redaction-safe classification of a provider rejection, minted only by
- * a provider adapter from structured metadata (the SDK HTTP error its own
- * transport call raised, or an explicit SSE error envelope). It is additive: it
- * never changes `errorMessage`, retries, fallback, or exit codes.
+ * a provider adapter from structured metadata (its own HTTP response, an SDK
+ * transport error, or an explicit SSE error envelope). The diagnostic leaves
+ * `errorMessage` unchanged but can inform retry decisions.
  */
 export interface ProviderDiagnostic {
 	category: ProviderDiagnosticCategory;
-	/** Integer 400..599. Absent for an error delivered inside an HTTP 200 stream. */
+	/**
+	 * Integer 400..599. Absent for an error delivered inside an HTTP 200 stream.
+	 * A 408 makes an otherwise non-terminal failure eligible for same-model retry.
+	 */
 	httpStatus?: number;
 	/** Provider token from the closed allowlist, never raw provider text. */
 	code?: string;

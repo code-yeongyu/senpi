@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { configDefaults } from "vitest/config";
 import { BaseSequencer } from "vitest/node";
 import { parse } from "yaml";
+import { balanceShards, verifyCoverage } from "./ci-coding-agent-shards.mjs";
 import { measureShard, SHARD_BUDGET_SECONDS } from "./ci-shard-budget.mjs";
 
 const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
@@ -91,6 +92,38 @@ test("every discovered coding-agent test belongs to exactly one scheduled shard"
 test("shard membership is deterministic regardless of discovery order", async () => {
 	for (const index of indices) {
 		assert.deepEqual(await shard(index), await shard(index, [...files].reverse()));
+	}
+});
+
+test("duration balancing assigns longest work first to the lightest shard with a median for new files", () => {
+	const durations = new Map([
+		["heavy", 10],
+		["medium", 6],
+		["light", 2],
+		["deleted", 1_000],
+	]);
+	const input = ["new-b", "light", "new-a", "heavy", "medium"];
+	const expected = [
+		["heavy", "new-b"],
+		["medium", "new-a", "light"],
+	];
+	assert.deepEqual(balanceShards(input, durations, 2), expected);
+	assert.deepEqual(balanceShards([...input].reverse(), durations, 2), expected);
+});
+
+test("duration balancing requests Vitest hash fallback when no current files have timings", () => {
+	assert.equal(balanceShards(["first", "second"], new Map([["deleted", 10]]), 2), null);
+});
+
+test("coverage accepts only a partition of the discovered file identities", () => {
+	verifyCoverage(["a", "b", "c"], [["c", "a"], ["b"]]);
+	for (const [shards, diagnostic] of [
+		[[["a"], ["c"]], /Missing \(1\): b/],
+		[[["a", "b"], ["c", "a"]], /Duplicate \(1\): a/],
+		[[["a", "b", "b"], ["c"]], /Duplicate \(1\): b/],
+		[[["a", "b"], ["c", "foreign"]], /Unexpected \(1\): foreign/],
+	]) {
+		assert.throws(() => verifyCoverage(["a", "b", "c"], shards), diagnostic);
 	}
 });
 

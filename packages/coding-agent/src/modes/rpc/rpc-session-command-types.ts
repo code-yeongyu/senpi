@@ -389,9 +389,10 @@ export type RpcSessionCommand =
 	| { id?: string; type: "login_start"; provider: string; slotId?: string }
 	| { id?: string; type: "login_cancel"; provider: string }
 	| { id?: string; type: "login_api_key"; provider: string; key: string; region?: string }
-	| { id?: string; type: "logout"; provider: string; slotId?: string }
+	// `expectedLoginId` (a `get_auth_providers` row's `loginId`) signs out only that sign-in; else `stale_login` (senpi#7406).
+	| { id?: string; type: "logout"; provider: string; slotId?: string; expectedLoginId?: string }
 	// Checks a key with the provider's model list without storing it (desktop #2510).
-	| { id?: string; type: "verify_api_key"; provider: string; key: string }
+	| { id?: string; type: "verify_api_key"; provider: string; key: string; region?: string }
 
 	// Provider accounts (task 13) are additive. The desktop consumer contract
 	// lives in ../omo-desktop-app/packages/contracts/src/rpc.ts and is updated separately.

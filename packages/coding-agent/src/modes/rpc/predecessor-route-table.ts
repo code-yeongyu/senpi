@@ -55,9 +55,11 @@ export class RouteTable {
 		this.byId.set(route.id, route);
 		return route;
 	}
+	/** A forgotten route releases everything it owns: every attachment's peer is closed (senpi#7140). */
 	forget(route: Route): void {
 		this.byId.delete(route.id);
 		this.byPath.delete(route.path);
+		for (const caller of [...route.attachments.keys()]) this.dropPeer(route, caller);
 		route.local.resolve();
 	}
 	dropPeer(route: Route, caller: string): void {

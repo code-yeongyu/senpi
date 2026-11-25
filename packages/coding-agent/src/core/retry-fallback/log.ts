@@ -1,6 +1,7 @@
-import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { rotateLogIfNeeded } from "../log-file-rotation.ts";
 import { redactSecrets, redactSensitiveTokenValues } from "../sensitive-output.ts";
 
@@ -31,6 +32,34 @@ export interface SettledFallbackLogger extends FallbackLogger {
 
 const unsettledLoggers = new Set<Promise<void>>();
 
+/**
+ * The first-start removal in flight per canonical log path, shared by every engine copy in the realm (omo#12965): two copies
+ * starting on one agent dir must run one removal, or the later one deletes lines the earlier one already wrote
+ * (senpi#6351). A settled removal leaves the table, so a removal that failed runs again on the next start.
+ */
+interface FallbackLogRetirements {
+	once(filePath: string, start: () => Promise<void>): Promise<void>;
+}
+
+const retirements = realmRegistry(
+	"@code-yeongyu/senpi/fallback-log-retirements/v1",
+	(): FallbackLogRetirements => {
+		const pending = new Map<string, Promise<void>>();
+		return {
+			once: (filePath, start) => {
+				const inFlight = pending.get(filePath);
+				if (inFlight) return inFlight;
+				const retirement = start().finally(() => {
+					if (pending.get(filePath) === retirement) pending.delete(filePath);
+				});
+				pending.set(filePath, retirement);
+				return retirement;
+			},
+		};
+	},
+	(value): value is FallbackLogRetirements => hasFunctions(value, ["once"]),
+);
+
 /** Resolves once every fallback logger created so far has finished its first-start removal and flushed its queue. */
 export async function settledFallbackLoggers(): Promise<void> {
 	await Promise.all([...unsettledLoggers]);
@@ -44,7 +73,7 @@ function errorCode(failure: unknown): string {
 }
 
 export function createFallbackLogger(agentDir: string, options: FallbackLoggerOptions = {}): SettledFallbackLogger {
-	const filePath = join(agentDir, "logs", "fallback.log");
+	const filePath = resolve(agentDir, "logs", "fallback.log");
 	const maxBytes = validMaxBytes(options.maxBytes);
 	let reportedWriteFailure = false;
 	// Lines logged while the earlier generations are still being removed wait here, so the removal can never delete them.
@@ -63,7 +92,7 @@ export function createFallbackLogger(agentDir: string, options: FallbackLoggerOp
 		}
 	}
 
-	const settled = retireUnsharedRegistryGenerations(filePath)
+	const settled = retireOnce(filePath)
 		.then(() => undefined)
 		.catch((error: unknown) => {
 			reportedWriteFailure = true;
@@ -139,6 +168,31 @@ async function retireUnsharedRegistryGenerations(filePath: string): Promise<void
 	await rm(filePath, { force: true });
 	await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
 	await writeFile(marker, "", { mode: 0o600 });
+}
+
+async function retireOnce(filePath: string): Promise<void> {
+	let directory = dirname(filePath);
+	let suffix = basename(filePath);
+	let key = filePath;
+	let canonicalizationFailure: unknown;
+	// The logs directory may not exist yet. Resolve the nearest existing directory before claiming retirement.
+	for (;;) {
+		try {
+			key = join(realpathSync.native(directory), suffix);
+			break;
+		} catch (error) {
+			const parent = dirname(directory);
+			if (errorCode(error) !== "ENOENT" || directory === parent) {
+				canonicalizationFailure = error;
+				break;
+			}
+			suffix = join(basename(directory), suffix);
+			directory = parent;
+		}
+	}
+	// If lookup failed, still attempt retirement with the original path before reporting through the existing warning.
+	await retirements.once(key, () => retireUnsharedRegistryGenerations(filePath));
+	if (canonicalizationFailure !== undefined) throw canonicalizationFailure;
 }
 
 function validMaxBytes(value: number | undefined): number {
