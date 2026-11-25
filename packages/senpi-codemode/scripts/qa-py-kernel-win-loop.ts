@@ -13,7 +13,7 @@ import { readKernelCpuTime } from "../src/kernels/shared/process-cpu.ts";
 const STALL_MS = Number(process.env.PROBE_STALL_MS ?? 6_000);
 const PHASE_CAP_MS = 45_000;
 const plan = new Map(
-	(process.env.PROBE_PLAN ?? "cold=8,warm=30,child=10,fd3=3,vitest=4")
+	(process.env.PROBE_PLAN ?? "vitest=1,redtest=10,fd3=3,child=3,warm=10,vitest=1")
 		.split(",")
 		.map((part) => part.split("="))
 		.map(([key, value]) => [key ?? "", Number(value ?? 0)] as const),
@@ -242,19 +242,20 @@ async function fd3Experiment(count: number, interpreterPath: string): Promise<nu
 	return failed;
 }
 
-async function vitestExperiment(count: number): Promise<number> {
+const CI_STEP_FILES = ["test/py-kernel-startup.test.ts", "test/py-kernel.test.ts", "test/py-kernel-child-error.test.ts"];
+
+async function vitestExperiment(experiment: string, count: number, args: readonly string[]): Promise<number> {
 	let failed = 0;
 	for (let iteration = 0; iteration < count; iteration += 1) {
 		const started = performance.now();
-		const output = await run(
-			"bun",
-			["../../scripts/run-tests.mjs", "vitest", "run", "test/py-kernel-startup.test.ts", "test/py-kernel.test.ts", "test/py-kernel-child-error.test.ts"],
-			240_000,
-		);
+		const output = await run("bun", ["../../scripts/run-tests.mjs", "vitest", "run", ...args, "--reporter=verbose"], 240_000);
 		const ok = !output.includes("[exit");
 		if (!ok) failed += 1;
-		const lines = output.split("\n").filter((line) => /FAIL |Error|Tests |stage/.test(line));
-		log({ experiment: "vitest", iteration, ok, ms: Math.round(performance.now() - started), lines: lines.slice(0, 12) });
+		const plain = output.replace(new RegExp(String.fromCharCode(27) + "\\[[0-9;]*m", "g"), "");
+		const lines = plain
+			.split("\n")
+			.filter((line) => /FAIL |Error|Tests |stage|TIMEOUT|child:|[0-9]{4,}ms/.test(line));
+		log({ experiment, iteration, ok, ms: Math.round(performance.now() - started), lines: lines.slice(0, 16) });
 	}
 	return failed;
 }
@@ -280,16 +281,23 @@ log({
 	},
 });
 
+const experiments: Record<string, (count: number) => Promise<number>> = {
+	cold: (count) =>
+		process.platform === "win32" && existsSync(basePrefix)
+			? pairs(count, (i) => persistsSequence("cold", i, coldCopy(basePrefix, i)))
+			: Promise.resolve(0),
+	warm: (count) => pairs(count, (i) => persistsSequence("warm", i, detected.path)),
+	child: (count) => childExperiment(count, detected.path),
+	fd3: (count) => fd3Experiment(count, detected.path),
+	vitest: (count) => vitestExperiment("vitest", count, CI_STEP_FILES),
+	redtest: (count) => vitestExperiment("redtest", count, ["test/py-kernel.test.ts", "-t", "#2980"]),
+};
 const summary: Record<string, { readonly runs: number; readonly failed: number }> = {};
-const cold = process.platform === "win32" && existsSync(basePrefix) ? (plan.get("cold") ?? 0) : 0;
-if (cold > 0) summary.cold = { runs: cold, failed: await pairs(cold, (i) => persistsSequence("cold", i, coldCopy(basePrefix, i))) };
-const warm = plan.get("warm") ?? 0;
-if (warm > 0) summary.warm = { runs: warm, failed: await pairs(warm, (i) => persistsSequence("warm", i, detected.path)) };
-const child = plan.get("child") ?? 0;
-if (child > 0) summary.child2980 = { runs: child, failed: await childExperiment(child, detected.path) };
-const fd3 = plan.get("fd3") ?? 0;
-if (fd3 > 0) summary.fd3 = { runs: fd3, failed: await fd3Experiment(fd3, detected.path) };
-const vitest = plan.get("vitest") ?? 0;
-if (vitest > 0) summary.vitest = { runs: vitest, failed: await vitestExperiment(vitest) };
+for (const [name, count] of plan) {
+	const experiment = experiments[name];
+	if (experiment === undefined || count <= 0) continue;
+	const key = summary[name] === undefined ? name : `${name}-${Object.keys(summary).length}`;
+	summary[key] = { runs: count, failed: await experiment(count) };
+}
 console.log(`PROBE-SUMMARY ${JSON.stringify(summary)}`);
 process.exit(Object.values(summary).some((entry) => entry.failed > 0) ? 1 : 0);

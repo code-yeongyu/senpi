@@ -57,6 +57,33 @@ describe("PythonKernel transport", () => {
 });
 
 describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
+	// senpi#2980: on Windows a child that inherits the control pipe as stdin blocks at startup while the kernel's
+	// reader thread has a read pending on that pipe (CPython gh-78961), so the cell's own timeout fires.
+	it("gives a cell's child process EOF on stdin instead of the control pipe (#2980)", async () => {
+		const kernel = await liveKernel();
+		try {
+			const child = await runCell(
+				kernel,
+				[
+					"import subprocess, sys",
+					"done = subprocess.run([sys.executable, '-c', 'import sys; print(repr(sys.stdin.read()))'],",
+					"    capture_output=True, text=True, timeout=5)",
+					"f'child:{done.returncode}:{done.stdout.strip()}'",
+				].join("\n"),
+			);
+			expect(child, JSON.stringify(child)).toMatchObject({
+				ok: true,
+				valueRepr: expect.stringContaining("child:0:''"),
+			});
+
+			const own = await runCell(kernel, "import sys\n'own:' + repr(sys.stdin.read())");
+			expect(own, JSON.stringify(own)).toMatchObject({ ok: true, valueRepr: expect.stringContaining("own:''") });
+			await expect(runCell(kernel, "6 * 7")).resolves.toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+		}
+	});
+
 	it("persists state across cells and reset clears it", async () => {
 		const kernel = await liveKernel();
 		try {
