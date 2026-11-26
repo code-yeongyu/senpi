@@ -154,13 +154,14 @@ async function claimReady(
 		if (host.draining || host.drainExitRequested) return miss();
 		entry.acceptance?.applyTranscript(runtime.session.sessionManager.drainTranscript());
 		ownOpen(host, claimed, owner);
-		host.bindings
-			.get(claimed.sessionId)
-			?.setClientCapabilities?.(
-				(owner === undefined ? undefined : host.pendingCapabilities.get(owner)) ??
-					host.connectionOptions?.capabilities ??
-					[],
-			);
+		const binding = host.bindings.get(claimed.sessionId);
+		// The claim gave the parked session its file without a rebind (senpi#6505 review).
+		binding?.sessionPersisted?.();
+		binding?.setClientCapabilities?.(
+			(owner === undefined ? undefined : host.pendingCapabilities.get(owner)) ??
+				host.connectionOptions?.capabilities ??
+				[],
+		);
 		publishOpen(host, claimed, entry);
 		await syncRetainedRecord(host, claimed.sessionId, undefined);
 		replyOpen(host, claimed, entry, command);

@@ -280,6 +280,11 @@ export interface RpcConnectionHandler {
 	readonly ready: Promise<void>;
 	/** Complete a prebuilt binding with the capabilities its opener supplied. */
 	setClientCapabilities(capabilities: readonly string[]): void;
+	/**
+	 * The bound session became durable without a rebind (a parked session's claim gives it its file): record its
+	 * identity now, as the outgoing one a later replacement announces.
+	 */
+	sessionPersisted(): void;
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
 	/**
@@ -448,6 +453,8 @@ export function createRpcConnectionHandler(
 	// already learns the new identity from its command response.
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
+	/** The bound session's identity, recorded when it was bound: what a replacement announces as the outgoing one. */
+	let boundIdentity: { readonly sessionId: string; readonly sessionFile: string | undefined } | undefined;
 	const rpcOwners = new ExtensionOwnerLifetime(
 		options.sessionId === undefined,
 		options.rpcOwner,
@@ -1046,8 +1053,12 @@ export function createRpcConnectionHandler(
 		unsubscribeSecurityNotices?.();
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
-		const replacedSession = session !== runtimeHost.session;
+		// The outgoing identity is the one recorded at its bind, not read now: an in-memory fork reuses the outgoing
+		// session's manager and starts the new session in it before this rebind, so the outgoing AgentSession
+		// already reads the replacement's id and file here.
+		const replaced = session !== runtimeHost.session ? boundIdentity : undefined;
 		session = runtimeHost.session;
+		boundIdentity = { sessionId: session.sessionId, sessionFile: session.sessionFile };
 		const hostedSecurity = options.bindSecurityPresentation?.(session, {
 			...createExtensionUIContext(),
 			select: selectGrantDialog,
@@ -1092,7 +1103,7 @@ export function createRpcConnectionHandler(
 						}),
 					});
 		session.setRelocationHost?.(relocation);
-		if (replacedSession) {
+		if (replaced) {
 			lastAbortSource = undefined;
 			if (routingSessionId !== undefined || !replacementIssuedHere) {
 				// A replacement can be driven by ANY attached client, so every connection must be
@@ -1101,6 +1112,8 @@ export function createRpcConnectionHandler(
 				// the window the refresh takes.
 				outputEvent({
 					type: "session_replaced",
+					replacedSessionId: replaced.sessionId,
+					replacedSessionFile: replaced.sessionFile,
 					durableSessionId: session.sessionId,
 					sessionFile: session.sessionFile,
 					cwd: session.sessionManager.getCwd(),
@@ -2767,6 +2780,9 @@ export function createRpcConnectionHandler(
 		setClientCapabilities(capabilities) {
 			replaceClientCapabilities([...capabilities]);
 			refreshGrantPresentation();
+		},
+		sessionPersisted() {
+			boundIdentity = { sessionId: session.sessionId, sessionFile: session.sessionFile };
 		},
 		isShutdownRequested() {
 			return shutdownRequested;
