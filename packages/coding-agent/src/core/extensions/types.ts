@@ -18,6 +18,7 @@ import type { ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 export type { ContextEvent } from "./context-event.ts";
 
+import type { ModelWindowOverlays } from "../model-window-overlays.ts";
 import type {
 	AgentMessage,
 	AgentTool,
@@ -3287,6 +3288,15 @@ export interface ExtensionAPI {
 	 */
 	setSessionModel(model: Model<any>): Promise<boolean>;
 
+	/**
+	 * Replace this extension generation's context windows for a provider in this session.
+	 * An empty map removes the contribution. Explicit models.json windows take precedence.
+	 * Session registry model reads reflect changes immediately; update an already-selected model
+	 * separately with setSessionModel. Raw provider/runtime reads remain shared and unmodified.
+	 * The extension owns persistence and must register again on reload.
+	 */
+	setModelWindowOverrides(providerId: string, windows: Readonly<Record<string, number>>): void;
+
 	/** Set thinking level for this session only (clamped), leaving the persisted default untouched. */
 	setSessionThinkingLevel(level: ThinkingLevel): void;
 
@@ -3845,6 +3855,8 @@ export type PendingProviderRegistration =
  * Contains flag values (defaults set during registration, CLI values set after).
  */
 export interface ExtensionRuntimeState {
+	/** Session-local model windows owned by this extension generation. */
+	modelWindowOverlays: ModelWindowOverlays;
 	flagValues: Map<string, boolean | string>;
 	/** Backs `pi.isLoopRemote()`; a hand's runner with a wake route sets it (H3). */
 	isLoopRemote: () => boolean;

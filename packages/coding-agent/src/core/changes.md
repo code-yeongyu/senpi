@@ -18280,3 +18280,17 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 ### Expected merge conflict zones
 
 - LOW: `_warnQueuedInputOutlivingRun` in `agent-session.ts`.
+
+## 2026-11-26 - Session-local model window overrides
+
+### What changed
+
+`agent-session.ts`, `model-registry.ts`, `model-runtime.ts`, and `sdk.ts` keep extension-proposed windows in the session, below explicit user configuration. Model selection admits changes against the transcript; reload and provider refresh do not silently install an unadmitted window.
+
+### Why
+
+Extensions can apply catalog-derived windows without rewriting shared model configuration. Only the host owns session selection and compaction admission, so an extension cannot implement this safely on its own.
+
+### Merge notes
+
+Check session registry construction, model selection, request routing, and extension reload when merging upstream.

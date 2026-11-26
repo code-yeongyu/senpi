@@ -102,6 +102,24 @@ describe("AgentSession virtual models", () => {
 		expect(harness.session.getContextUsage()?.contextWindow).toBe(200_000);
 	});
 
+	it("uses the session overlay for the routed physical model's limits", async () => {
+		const { harness } = await createRoutedHarness(defaultRoute, {
+			extensionFactories: [(pi) => pi.setModelWindowOverrides("faux", { large: 300_000 })],
+		});
+		const windows: number[] = [];
+		const stream = harness.session.agent.streamFunction;
+		harness.session.agent.streamFunction = (model, context, options) => {
+			windows.push(model.contextWindow);
+			return stream(model, context, options);
+		};
+		harness.setResponses([fauxAssistantMessage("done")]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.session.getContextUsage()?.contextWindow).toBe(300_000);
+		expect(windows).toEqual([300_000]);
+	});
+
 	it("retries the first request of a turn on the model routed for that turn", async () => {
 		const { harness, requests, reasons, dispatched } = await createRoutedHarness(defaultRoute, {
 			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
@@ -259,6 +277,39 @@ describe("AgentSession virtual models", () => {
 		// L3a: admission cannot see the routed window, so the small model gets the uncompacted context first.
 		expect(compactedBeforeSmall).toBe(false);
 		expect(dispatched().at(-1)).toBe("faux/small:off");
+	});
+
+	it("uses the overlay window for compaction after routing to a physical model", async () => {
+		const { harness, dispatched } = await createRoutedHarness(defaultRoute, {
+			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			extensionFactories: [(pi) => pi.setModelWindowOverrides("faux", { small: 100_000 })],
+		});
+		harness.setResponses([fauxAssistantMessage("y".repeat(170_000)), fauxAssistantMessage("small answer")]);
+
+		await harness.session.prompt("hello");
+		harness.session.setThinkingLevel("low");
+		await harness.session.prompt("next");
+
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+		expect(dispatched().at(-1)).toBe("faux/small:off");
+		expect(harness.session.getContextUsage()?.contextWindow).toBe(100_000);
+	});
+
+	it("checks a routed response against the window used by its request", async () => {
+		const { harness } = await createRoutedHarness(defaultRoute, {
+			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+		});
+		harness.setResponses([
+			(_context, _options, _state, model) => {
+				expect(model.contextWindow).toBe(200_000);
+				const overlays = harness.session.resourceLoader.getExtensions().runtime.modelWindowOverlays;
+				overlays.replace({}, overlays.prepare("faux", { large: 10_000 }));
+				return fauxAssistantMessage("y".repeat(100_000));
+			},
+		]);
+		await harness.session.prompt("hello");
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+		expect(harness.session.getContextUsage()?.contextWindow).toBe(200_000);
 	});
 
 	it("compacts between turns of a run when the next request is routed to a smaller window", async () => {

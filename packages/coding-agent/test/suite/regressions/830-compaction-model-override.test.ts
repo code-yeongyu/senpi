@@ -29,6 +29,7 @@ const SCENARIOS: Record<Path, { seedTokens: number; reply: string; mode?: "rpc" 
 interface RecordedCall {
 	model: string;
 	summary: boolean;
+	contextWindow: number;
 }
 
 function lastMessageText(context: Context): string {
@@ -117,13 +118,16 @@ async function runPath(
 		signalSummary = resolve;
 	});
 	harness.setResponses(
-		Array.from({ length: 6 }, () => (context: Context, _options: unknown, _state: unknown, model: { id: string }) => {
-			const summary = SUMMARY_REQUEST.test(lastMessageText(context));
-			calls.push({ model: model.id, summary });
-			if (!summary) return fauxAssistantMessage(scenario.reply);
-			signalSummary();
-			return fauxAssistantMessage("Summary of the earlier work.");
-		}),
+		Array.from(
+			{ length: 6 },
+			() => (context: Context, _options: unknown, _state: unknown, model: { id: string; contextWindow: number }) => {
+				const summary = SUMMARY_REQUEST.test(lastMessageText(context));
+				calls.push({ model: model.id, summary, contextWindow: model.contextWindow });
+				if (!summary) return fauxAssistantMessage(scenario.reply);
+				signalSummary();
+				return fauxAssistantMessage("Summary of the earlier work.");
+			},
+		),
 	);
 
 	await harness.session.prompt("continue");
@@ -143,6 +147,20 @@ describe("#830 compaction.model on a healthy provider", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
 		for (const harness of harnesses.splice(0)) harness.cleanup();
+	});
+
+	it("uses session overlay windows for the configured compaction model", async () => {
+		const { harness, calls } = await runPath("threshold", "faux/summary-model", undefined, {
+			extensionFactories: [
+				compactionExtension,
+				(pi) => pi.setModelWindowOverrides("faux", { "summary-model": 180_000 }),
+			],
+		});
+		harnesses.push(harness);
+
+		expect(calls.filter((call) => call.summary)).toContainEqual(
+			expect.objectContaining({ model: "summary-model", contextWindow: 180_000 }),
+		);
 	});
 
 	it.each(["threshold", "speculative", "idle"] as const)(

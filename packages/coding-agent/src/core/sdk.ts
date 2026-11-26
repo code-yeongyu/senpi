@@ -96,7 +96,7 @@ export interface CreateAgentSessionOptions {
 	modelRuntime?: ModelRuntime;
 	/** Legacy credential facade retained for SDK compatibility. */
 	authStorage?: AuthStorage;
-	/** Legacy model facade retained for SDK compatibility. */
+	/** Legacy model facade retained for SDK compatibility. Sessions use a separate view that delegates to it. */
 	modelRegistry?: ModelRegistry;
 
 	/** Model to use. Default: from settings, else first available */

@@ -182,4 +182,22 @@ describe("#1422 overflow recovery with auto-compaction disabled", () => {
 		expect(compacted).toBe(false);
 		expect(runAutoCompaction).not.toHaveBeenCalled();
 	});
+
+	it("does not detect overflow against an unselected registry window", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 100_000 }],
+			settings: { compaction: { enabled: true, reserveTokens: 1_000 } },
+		});
+		harnesses.push(harness);
+		const overlays = harness.session.resourceLoader.getExtensions().runtime.modelWindowOverlays;
+		overlays.replace({}, overlays.prepare("faux", { "faux-1": 5_000 }));
+		const successful = assistant(harness, { stopReason: "stop", usage: usage(6_000) });
+		harness.sessionManager.appendMessage(successful);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const runAutoCompaction = stubRunAutoCompaction(harness.session);
+
+		expect(harness.session.model?.contextWindow).toBe(100_000);
+		expect(await getCheckCompaction(harness.session)(successful)).toBe(false);
+		expect(runAutoCompaction).not.toHaveBeenCalled();
+	});
 });

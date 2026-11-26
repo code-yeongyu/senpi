@@ -357,6 +357,7 @@ import {
 } from "./model-change-origin.ts";
 import { ModelNotReadyError } from "./model-not-ready-error.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import { modelsWithWindowOverlay } from "./model-window-overlays.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
@@ -572,6 +573,7 @@ const OVERFLOW_RECOVERY_EXHAUSTED_MESSAGE =
 const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
 /** Abort reason for a retry backoff a manual model change cuts short (senpi#6893). */
 const MANUAL_MODEL_SWITCH_HANDOFF = "manual-model-switch-handoff";
+const MODEL_WINDOW_OVERLAY_ACTOR = "<model-window-overlays>";
 
 // ============================================================================
 // Skill Invocation Formatting and Parsing (see ./skill-invocation.ts)
@@ -2021,7 +2023,7 @@ export class AgentSession {
 			throw new MissingModelAccessError();
 		}
 		this._modelRuntime = modelRuntime;
-		this._modelRegistry = config.modelRegistry ?? new ModelRegistry(modelRuntime);
+		this._modelRegistry = (config.modelRegistry ?? new ModelRegistry(modelRuntime)).forkForSession();
 		this._agentDir = config.agentDir ?? getAgentDir();
 		const fallbackLogger = createFallbackLogger(this._agentDir);
 		this._fallbackLog = fallbackLogger;
@@ -2199,6 +2201,9 @@ export class AgentSession {
 				activeToolNames: this._initialActiveToolNames,
 				includeAllExtensionTools: true,
 			});
+			if (this.agent.state.model) {
+				this.agent.state.model = this._modelRegistry.projectModel(this.agent.state.model);
+			}
 			this._deadlineTracker = new AgentDeadlineTracker(this, () =>
 				resolveTurnDeadlineSettings({
 					turn_inactivity_ms: this.settingsManager.getTurnInactivityMs(),
@@ -2282,15 +2287,17 @@ export class AgentSession {
 		callbacks?: RetryCallbacks,
 	): Promise<SummarizationRequestAuth> {
 		// Resolve a virtual selection once so auth retries cannot choose another model.
-		const { model, thinkingLevel } = isVirtualModel(selectedModel)
+		const routed = isVirtualModel(selectedModel);
+		const { model, thinkingLevel } = routed
 			? await this._modelRuntime.resolveModel(selectedModel, convertToLlm(this.messages), {
 					reason: "direct",
 					thinkingLevel: this.thinkingLevel,
 					signal,
 				})
 			: { model: selectedModel, thinkingLevel: this.thinkingLevel };
+		const requestModel = routed ? this._modelRegistry.projectModel(model) : model;
 		return retryTransientCall(
-			() => this._resolveSummarizationRequestAuth(model, thinkingLevel, signal),
+			() => this._resolveSummarizationRequestAuth(requestModel, thinkingLevel, signal),
 			isOAuthRefreshUnavailableError,
 			this.settingsManager.getRetrySettings(),
 			signal,
@@ -2343,7 +2350,7 @@ export class AgentSession {
 		const slash = override?.indexOf("/") ?? -1;
 		const configured =
 			override && slash > 0
-				? this._modelRuntime.getModel(override.slice(0, slash), override.slice(slash + 1))
+				? this._modelRegistry.find(override.slice(0, slash), override.slice(slash + 1))
 				: undefined;
 		const usable = (model: Model<any>): boolean => !this._retryFallback.isProviderSpent(model.provider);
 		// Preserve the explicit override and original-model geometry on healthy sessions.
@@ -2376,8 +2383,8 @@ export class AgentSession {
 		const requiredContextWindow =
 			estimateMessagesTokens(filterContextExcludedMessages(this._runtimeMessages())) +
 			this._getCompactionSettings().reserveTokens;
-		const available = this._modelRuntime
-			.getModels()
+		const available = this._modelRegistry
+			.getAll()
 			.find(
 				(model) =>
 					usable(model) &&
@@ -2433,7 +2440,12 @@ export class AgentSession {
 	 */
 	private _modelForMessage(message: AssistantMessage): Model<any> | undefined {
 		const model = this.model;
-		if (model && isVirtualModel(model)) return this._modelRuntime.getPhysicalModel(message.provider, message.model);
+		if (model && isVirtualModel(model)) {
+			const dispatched = this._routedResponseModels.get(message);
+			if (dispatched) return dispatched;
+			const physical = this._modelRuntime.getPhysicalModel(message.provider, message.model);
+			return physical;
+		}
 		return model?.provider === message.provider && model.id === message.model ? model : undefined;
 	}
 
@@ -2747,6 +2759,7 @@ export class AgentSession {
 			);
 			const thinkingLevel = previous?.thinkingLevel ?? this.agent.state.thinkingLevel;
 			if (!isVirtualModel(model)) {
+				this._routedRequestModel = undefined;
 				// A request after a routed one in the same run still names the routed model.
 				return request.model === model ? previous : { ...previous, model, thinkingLevel };
 			}
@@ -2768,7 +2781,14 @@ export class AgentSession {
 				const data: VirtualModelStateData = { provider: model.provider, modelId: model.id, state: route.state };
 				this._emitEntryAppended(this.sessionManager.appendCustomEntry(VIRTUAL_MODEL_STATE_ENTRY, data));
 			}
-			return { ...previous, context, model: route.model, thinkingLevel: route.thinkingLevel };
+			const physical = this._modelRegistry.projectModel(route.model);
+			this._routedRequestModel = physical;
+			return {
+				...previous,
+				context,
+				model: physical,
+				thinkingLevel: route.thinkingLevel,
+			};
 		};
 	}
 
@@ -3772,6 +3792,8 @@ export class AgentSession {
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
 	private _requestSelectedModel: SelectedModel | undefined;
+	private _routedRequestModel: Model<Api> | undefined;
+	private readonly _routedResponseModels = new WeakMap<AssistantMessage, Model<Api>>();
 	private readonly _endSelectedModels = new WeakMap<AgentEvent, SelectedModel>();
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
@@ -3785,10 +3807,14 @@ export class AgentSession {
 			if (event.type === "agent_start") {
 				this._lifecycleBinding.startRun();
 				this._requestSelectedModel = undefined;
+				this._routedRequestModel = undefined;
 				noteRunStart(this.sessionManager);
 			}
 			if (event.type === "message_start" && (event.message.role === "user" || hasInputTurnMark(event.message)))
 				noteUserMessageStart(this.sessionManager, event.message);
+			if (event.type === "message_end" && event.message.role === "assistant" && this._routedRequestModel) {
+				this._routedResponseModels.set(event.message, this._routedRequestModel);
+			}
 			// Bind now: the core can start another run before this event's asynchronous delivery.
 			const bound =
 				event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
@@ -3998,10 +4024,11 @@ export class AgentSession {
 			return undefined;
 		}
 
+		const limitsModel = isVirtualModel(model) ? this._modelForMessage(message) ?? model : model;
 		const sameModel = isSameOverflowSource(
 			message,
-			model,
-			this._modelRuntime.getCompatibilityRequestConfig(model).upstreamModelId,
+			limitsModel,
+			this._modelRuntime.getCompatibilityRequestConfig(limitsModel).upstreamModelId,
 		);
 		const contextUsage = this.getContextUsage();
 		const currentContextNeedsCompaction =
@@ -4009,10 +4036,10 @@ export class AgentSession {
 			contextUsage.tokens !== null &&
 			shouldCompact(contextUsage.tokens, contextUsage.contextWindow, settings);
 		const isOverflow =
-			(isContextOverflow(message, model.contextWindow) && (sameModel || currentContextNeedsCompaction)) ||
+			(isContextOverflow(message, limitsModel.contextWindow) && (sameModel || currentContextNeedsCompaction)) ||
 			this._isCursorPayloadOverflow(message);
 		if (isOverflow) {
-			if (settings.enabled || isTurnStuckOnContextOverflow(message, model.contextWindow)) return "overflow";
+			if (settings.enabled || isTurnStuckOnContextOverflow(message, limitsModel.contextWindow)) return "overflow";
 			return undefined;
 		}
 		if (!settings.enabled) {
@@ -4783,7 +4810,7 @@ export class AgentSession {
 		const now = this._fallbackNow();
 		const schedule = probeBackSchedule(hintMs, now);
 		const modelId = parts.slice(1).join("/");
-		const demotedModel = this._modelRuntime.getModel(provider, modelId);
+		const demotedModel = this._modelRegistry.find(provider, modelId);
 		if (!demotedModel) return;
 
 		this._probeBackScheduler.arm({
@@ -5329,7 +5356,7 @@ export class AgentSession {
 	get routedModel(): { model: Model<any>; thinkingLevel?: ThinkingLevel } | undefined {
 		if (!this.model || !isVirtualModel(this.model)) return undefined;
 		const latest = findLatestResponse(this.agent.state.messages);
-		const model = latest && this._modelRuntime.getPhysicalModel(latest.provider, latest.model);
+		const model = latest && this._modelForMessage(latest);
 		return model && { model, thinkingLevel: latest?.thinkingLevel };
 	}
 
@@ -5949,7 +5976,9 @@ export class AgentSession {
 
 	private _getCurrentFavoriteModels(): SessionModelEntry[] {
 		const availableById = new Map(
-			this._modelRuntime.getAvailableSnapshot().map((model) => [`${model.provider}/${model.id}`, model]),
+			this._modelRuntime
+				.getAvailableSnapshot()
+				.map((model) => [`${model.provider}/${model.id}`, this._modelRegistry.projectModel(model)]),
 		);
 		const narrowedModelIds =
 			this._scopedModels.length > 0
@@ -9540,7 +9569,13 @@ export class AgentSession {
 		persistDefault: boolean,
 		origin: ModelChangeOrigin,
 	): void {
-		const pending = createPendingModelSwitch({ model, projection, persistDefault, origin });
+		const pending = createPendingModelSwitch({
+			model,
+			catalogBacked: this._modelRegistry.find(model.provider, model.id) !== undefined,
+			projection,
+			persistDefault,
+			origin,
+		});
 		this._clearPendingModelSwitch();
 		this._pendingModelSwitch = pending;
 		this._pendingSwitchTokenScale = this._switchTokenScale(projection.liveContextTokens);
@@ -9641,38 +9676,53 @@ export class AgentSession {
 		const pending = this._pendingModelSwitch;
 		if (pending === undefined) return false;
 		if (!this.model) throw new RequiredCompactionError();
+		const resolveTarget = () => {
+			if (!pending.catalogBacked) return pending.model;
+			const target = this._modelRegistry.find(pending.model.provider, pending.model.id);
+			if (target) return target;
+			this._pendingModelSwitch = undefined;
+			const error = new Error(`Model ${pending.model.provider}/${pending.model.id} is no longer available.`);
+			this._emit({ type: "model_change_cancelled", origin: pending.origin, reason: "error", detail: error.message });
+			throw error;
+		};
+		const tokenScale = this._pendingSwitchTokenScale;
+		let target = resolveTarget();
 
-		await this._runPrePromptCompaction(
-			assistantMessage,
-			skipAbortedCheck,
-			inlineReason,
-			false,
-			false,
-			pendingSwitchKeepRecentTokens(pending.projection),
-		);
+		let projection = this._projectSwitchFit(target, tokenScale);
+		if (target.contextWindow === pending.model.contextWindow || !projection.usable) {
+			await this._runPrePromptCompaction(
+				assistantMessage,
+				skipAbortedCheck,
+				inlineReason,
+				false,
+				false,
+				pendingSwitchKeepRecentTokens(projection),
+			);
+			if (this._pendingModelSwitch !== pending) return false;
+			target = resolveTarget();
+			projection = this._projectSwitchFit(target, tokenScale);
+		}
 
 		// The post-compaction transcript has no reported usage yet, so it is charged
 		// at the ratio the switch was admitted on (senpi#3447).
-		const tokenScale = this._pendingSwitchTokenScale;
-		let projection = this._projectSwitchFit(pending.model, tokenScale);
 		if (!projection.usable) {
 			const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
 			if (plan) {
 				this.applyResumeSlice(plan);
-				projection = this._projectSwitchFit(pending.model, tokenScale);
+				projection = this._projectSwitchFit(target, tokenScale);
 			}
 		}
 
 		if (!projection.usable) {
 			const error = new ModelUsabilityBudgetError(projection);
 			this._clearPendingModelSwitch(error);
-			this._recordRejectedModelChange(pending.model, error);
+			this._recordRejectedModelChange(target, error);
 			throw error;
 		}
 		this._pendingModelSwitch = undefined;
 
 		try {
-			await this._switchActiveModel(pending.model, {
+			await this._switchActiveModel(target, {
 				persistDefault: pending.persistDefault,
 				appendSessionEntry: true,
 				emitModelSelect: true,
@@ -9860,32 +9910,43 @@ export class AgentSession {
 	}
 
 	private async _setModel(
-		model: Model<Api>,
+		requestedModel: Model<Api>,
 		updateGlobalDefaults: boolean,
 		origin: ModelChangeOrigin,
+		options?: { readonly preserveFallback?: boolean; readonly expectedModel?: Model<Api> },
 	): Promise<SystemPromptChangeEvent | undefined> {
-		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
-		const deferral = this._projectSwitchDeferral(model, liveContextTokens);
-		if (deferral === undefined) {
-			this._assertModelUsableForSwitch(model, liveContextTokens);
+		const authenticated = await this._modelRuntime.checkAuth(requestedModel.provider);
+		if (options?.expectedModel && (this.model !== options.expectedModel || this._pendingModelSwitch)) {
+			return undefined;
 		}
-		if (!(await this._modelRuntime.checkAuth(model.provider))) {
-			const error = new ModelSwitchAuthError(model.provider, model.id);
-			this._recordRejectedModelChange(model, error);
+		if (!authenticated) {
+			const error = new ModelSwitchAuthError(requestedModel.provider, requestedModel.id);
+			this._recordRejectedModelChange(requestedModel, error);
 			throw error;
 		}
-		// Auth is the last check that can refuse outright, so the switch is only held
-		// once it is otherwise good: a pending switch to a model with no key would
-		// surface its failure a whole message later.
+		// Authentication can span a reload. A registry projection is a snapshot, not a durable selection.
+		const model = modelsWithWindowOverlay.has(requestedModel)
+			? this._modelRegistry.find(requestedModel.provider, requestedModel.id)
+			: this._modelRegistry.projectModel(requestedModel);
+		if (!model) {
+			const error = new Error(`Model ${requestedModel.provider}/${requestedModel.id} is no longer available.`);
+			this._recordRejectedModelChange(requestedModel, error);
+			throw error;
+		}
+		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
+		const deferral = this._projectSwitchDeferral(model, liveContextTokens);
 		if (deferral !== undefined) {
 			this._admitSwitchCompactionRequired(model, deferral, updateGlobalDefaults, origin);
 			return undefined;
 		}
+		this._assertModelUsableForSwitch(model, liveContextTokens);
 
 		// A manual model change abandons any active fallback window, and a live retry
 		// loop continues on the picked model rather than ending (senpi#6893).
-		this._probeBackScheduler.cancel("manual-model-change");
-		this._retryFallback.clearForManualModelChange(model);
+		if (!options?.preserveFallback) {
+			this._probeBackScheduler.cancel("manual-model-change");
+			this._retryFallback.clearForManualModelChange(model);
+		}
 		// Re-picking the model already in force changes nothing the retry depends on:
 		// its backoff, retry-after and budget stay.
 		const previousModel = this.model;
@@ -9899,7 +9960,9 @@ export class AgentSession {
 			origin,
 		});
 		const modelChanged = previousModel === undefined || !modelsAreEqual(previousModel, model);
-		if (modelChanged && this.model && modelsAreEqual(this.model, model)) this._handOffRetryToManualModel();
+		if (!options?.preserveFallback && modelChanged && this.model && modelsAreEqual(this.model, model)) {
+			this._handOffRetryToManualModel();
+		}
 		return systemPromptChange;
 	}
 
@@ -11696,9 +11759,7 @@ export class AgentSession {
 		// shouldn't trigger compaction for the new model. Under a virtual selection, the
 		// physical model that produced the message supplies the limits.
 		const limitsModel =
-			this.model && isVirtualModel(this.model)
-				? this._modelRuntime.getPhysicalModel(assistantMessage.provider, assistantMessage.model)
-				: this.model;
+			this.model && isVirtualModel(this.model) ? this._modelForMessage(assistantMessage) : this.model;
 		const sameModel =
 			limitsModel &&
 			isSameOverflowSource(
@@ -12573,17 +12634,35 @@ export class AgentSession {
 	}
 
 	private _refreshCurrentModelFromRegistry(): void {
-		this._delegatedCompactionKey = undefined;
 		const currentModel = this.model;
 		if (!currentModel) {
+			this._delegatedCompactionKey = undefined;
 			return;
 		}
 
-		const refreshedModel = this._modelRuntime.getModel(currentModel.provider, currentModel.id);
-		if (!refreshedModel || refreshedModel === currentModel) {
+		const candidate = this._modelRegistry.find(currentModel.provider, currentModel.id);
+		if (!candidate || candidate === currentModel) {
 			return;
 		}
+		// A provider refresh updates metadata, not the window admitted for the active transcript.
+		const refreshedModel =
+			candidate.contextWindow !== currentModel.contextWindow &&
+			(modelsWithWindowOverlay.has(candidate) || modelsWithWindowOverlay.has(currentModel))
+				? { ...candidate, contextWindow: currentModel.contextWindow }
+				: candidate;
+		if (modelsWithWindowOverlay.has(currentModel) && refreshedModel !== candidate) {
+			modelsWithWindowOverlay.add(refreshedModel);
+		}
 
+		const currentFields = { ...currentModel };
+		const refreshedFields = { ...refreshedModel };
+		for (const fields of [currentFields, refreshedFields]) {
+			for (const key of Reflect.ownKeys(fields)) {
+				if (Reflect.get(fields, key) === undefined) Reflect.deleteProperty(fields, key);
+			}
+		}
+		if (isDeepStrictEqual(currentFields, refreshedFields)) return;
+		this._delegatedCompactionKey = undefined;
 		this.agent.state.model = refreshedModel;
 	}
 
@@ -13100,6 +13179,7 @@ export class AgentSession {
 		this._delegatedCompactionKey = undefined;
 		this._lazyToolActivation.reset();
 		const extensionsResult = this._resourceLoader.getExtensions();
+		this._modelRegistry.setModelWindowOverlays(extensionsResult.runtime.modelWindowOverlays);
 		const runtime = bootstrapRuntime({
 			cwd: this._cwd,
 			settingsManager: this.settingsManager,
@@ -13303,6 +13383,52 @@ export class AgentSession {
 			this._extensionCommandContextActions ||
 			this._extensionShutdownHandler ||
 			this._extensionErrorListener;
+		const reconcileWindows = async () => {
+			const currentModel = this.model;
+			if (
+				!currentModel ||
+				(!modelsWithWindowOverlay.has(currentModel) &&
+					this._resourceLoader.getExtensions().runtime.modelWindowOverlays.get(currentModel.provider, currentModel.id) ===
+						undefined)
+			) {
+				return;
+			}
+			const refreshed = this._modelRegistry.find(currentModel.provider, currentModel.id);
+			const ownedPending = this._pendingModelSwitch?.origin.actor === MODEL_WINDOW_OVERLAY_ACTOR;
+			if (ownedPending && refreshed && this._pendingModelSwitch?.model.contextWindow !== refreshed.contextWindow) {
+				this._clearPendingModelSwitch();
+			}
+			if (refreshed && refreshed.contextWindow !== currentModel.contextWindow && this._pendingModelSwitch) {
+				if (!ownedPending) {
+					this._extensionRunner
+						.getUIContext()
+						.notify("Model window changed; finish the pending model switch before reselecting.", "warning");
+				}
+			} else if (refreshed && refreshed.contextWindow !== currentModel.contextWindow) {
+				try {
+					await this._setModel(
+						refreshed,
+						false,
+						{ source: "extension", actor: MODEL_WINDOW_OVERLAY_ACTOR },
+						{ preserveFallback: true, expectedModel: currentModel },
+					);
+					const selected = this.model;
+					if (selected?.provider !== currentModel.provider || selected.id !== currentModel.id) {
+						this._extensionRunner.getUIContext().notify("Model changed while updating its window.", "warning");
+					} else if (selected.contextWindow !== refreshed.contextWindow) {
+						const message =
+							this._pendingModelSwitch?.origin.actor === MODEL_WINDOW_OVERLAY_ACTOR
+								? "Model window update is pending compaction."
+								: "Model window was not updated; reselect the model.";
+						this._extensionRunner.getUIContext().notify(message, "warning");
+					}
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					this._extensionRunner.emitError({ extensionPath: MODEL_WINDOW_OVERLAY_ACTOR, event: "reload", error: message });
+					this._extensionRunner.getUIContext().notify(`Could not update the model window: ${message}`, "warning");
+				}
+			}
+		};
 		if (hasBindings) {
 			const settleSessionStart = this._beginSessionStartSettlement();
 			this._sessionStartDispatching = true;
@@ -13320,6 +13446,7 @@ export class AgentSession {
 				this._notifyAdmissionIdle();
 			}
 		}
+		await reconcileWindows();
 		time("lifecycle", "reload");
 		return { cancelled: false };
 	}

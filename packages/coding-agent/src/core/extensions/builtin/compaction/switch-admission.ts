@@ -4,6 +4,7 @@ import type { ModelUsabilityBudgetProjection } from "./model-usability-budget.ts
 
 export interface PendingModelSwitch {
 	readonly model: Model<Api>;
+	readonly catalogBacked: boolean;
 	readonly projection: ModelUsabilityBudgetProjection;
 	readonly persistDefault: boolean;
 	/** What asked for the switch; the applied switch records it as held (senpi#2870). */
@@ -13,6 +14,7 @@ export interface PendingModelSwitch {
 
 export function createPendingModelSwitch(input: {
 	model: Model<Api>;
+	catalogBacked: boolean;
 	projection: ModelUsabilityBudgetProjection;
 	persistDefault: boolean;
 	origin: ModelChangeOrigin;

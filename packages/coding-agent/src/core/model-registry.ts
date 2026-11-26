@@ -23,11 +23,14 @@ import type {
 } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import { createSessionModelRegistry } from "./model-registry-session.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelRuntime as DefaultModelRuntime } from "./model-runtime.ts";
+import { ModelWindowProjection, modelsWithWindowOverlay, type ModelWindowOverlays } from "./model-window-overlays.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
 import type { ProviderOrigin } from "./provider-origin.ts";
+
 import type { VirtualModelDefinition } from "./virtual-models.ts";
 
 export type { ProviderConfigInput } from "./provider-composer.ts";
@@ -54,6 +57,8 @@ export class ModelRegistry {
 	private readonly runtime: ModelRuntime;
 	readonly authStorage: AuthStorage;
 	private busyRetriedThisTurn = false;
+	private modelWindowOverlays?: ModelWindowOverlays;
+	private readonly modelWindowProjection = new ModelWindowProjection();
 
 	constructor(runtime: ModelRuntime, authStorage: AuthStorage = AuthStorage.inMemory()) {
 		this.runtime = runtime;
@@ -78,6 +83,26 @@ export class ModelRegistry {
 		return this.runtime;
 	}
 
+	/** Create a session-local registry view over the same provider and credential runtime. */
+	forkForSession(): ModelRegistry {
+		return createSessionModelRegistry(this, new ModelRegistry(this.runtime, this.authStorage));
+	}
+
+	/** Attach the current session's extension generation, without changing the shared runtime. */
+	setModelWindowOverlays(overlays: ModelWindowOverlays): void {
+		this.modelWindowOverlays = overlays;
+	}
+
+	/** Apply session windows while preserving explicitly configured user windows. */
+	projectModel(model: Model<Api>): Model<Api> {
+		const window = this.modelWindowOverlays?.get(model.provider, model.id);
+		if (window === undefined) return model;
+		const configured = this.runtime.getConfiguredModelWindow(model.provider, model.id);
+		const projected = this.modelWindowProjection.apply(model, configured ?? window);
+		if (configured === undefined && projected !== model) modelsWithWindowOverlay.add(projected);
+		return projected;
+	}
+
 	/** Reload models.json asynchronously. Await before making synchronous registry reads. */
 	refresh(options?: ModelsRefreshOptions): Promise<ModelsRefreshResult> {
 		return this.runtime.refresh(options);
@@ -87,13 +112,18 @@ export class ModelRegistry {
 		return this.runtime.getError();
 	}
 
-	getAll(): Model<Api>[] {
-		return [...this.runtime.getModels()];
+	/** Read the catalog with user configuration, optionally ignoring session window overlays. */
+	getAll(options?: { readonly includeWindowOverlays?: boolean }): Model<Api>[] {
+		return this.runtime.getModels().map((model) => {
+			if (options?.includeWindowOverlays !== false) return this.projectModel(model);
+			const configured = this.runtime.getConfiguredModelWindow(model.provider, model.id);
+			return configured === undefined ? model : this.modelWindowProjection.apply(model, configured);
+		});
 	}
 
 	getAvailable(): Model<Api>[] {
 		if (this.runtime.hasAvailabilitySnapshot()) {
-			return [...this.runtime.getAvailableSnapshot()];
+			return this.runtime.getAvailableSnapshot().map((model) => this.projectModel(model));
 		}
 		this.retryBusyCredentialRead();
 		return this.runtime.getProviders().flatMap((provider) => {
@@ -101,12 +131,15 @@ export class ModelRegistry {
 				return [];
 			}
 			const models = this.runtime.getModels(provider.id);
-			return [...(provider.filterModels?.(models, this.authStorage.get(provider.id)) ?? models)];
+			return (provider.filterModels?.(models, this.authStorage.get(provider.id)) ?? models).map((model) =>
+				this.projectModel(model),
+			);
 		});
 	}
 
 	find(provider: string, modelId: string): Model<Api> | undefined {
-		return this.runtime.getModel(provider, modelId);
+		const model = this.runtime.getModel(provider, modelId);
+		return model ? this.projectModel(model) : undefined;
 	}
 
 	/** Find a model of a non-chat type, e.g. `findOfType("classifier", "typesafe", "jev-latest")`. */
