@@ -1,10 +1,26 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { onTestFinished } from "vitest";
+import { afterAll, onTestFinished } from "vitest";
 
 export const CLI = join(__dirname, "..", "..", "src", "cli.ts");
 export const CLI_MAIN = join(__dirname, "..", "..", "src", "cli-main.ts");
+
+// Every run gets a fresh home, which would also give Bun a cold runtime transpiler cache for each start: measured at
+// load 29 to 59, ten paired starts of cli-main took a median 4.5 s with a fresh cache and 2.5 s with a shared one (32.0 s
+// against 17.9 s at load 58.6). The runs of one test file share one cache directory, outside every run's home, removed
+// after the file; nothing else of the child's environment is shared.
+let transpilerCache: string | undefined;
+function sharedTranspilerCache(): string {
+	transpilerCache ??= mkdtempSync(join(tmpdir(), "real-engine-transpiler-cache-"));
+	return transpilerCache;
+}
+afterAll(() => {
+	if (transpilerCache !== undefined) rmSync(transpilerCache, { recursive: true, force: true });
+	transpilerCache = undefined;
+});
 
 export interface RealEngineRun {
 	readonly code: number | null;
@@ -47,6 +63,7 @@ export async function realEngine(args: readonly string[], options: RealEngineOpt
 			SENPI_CODING_AGENT_DIR: join(root, "agent"),
 			PI_OFFLINE: "1",
 			NO_COLOR: "1",
+			BUN_RUNTIME_TRANSPILER_CACHE_PATH: sharedTranspilerCache(),
 			...(table === undefined ? {} : { SENPI_PRIVATE_FDS: table }),
 		},
 	});
