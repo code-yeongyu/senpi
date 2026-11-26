@@ -99,6 +99,11 @@ export function admitExternalMessage(
 		ok: true,
 		data: { kind, turnId: String(epoch) },
 	});
+	// A duplicate known only from a reopened transcript has no turn on record: it answers without one (senpi#7479).
+	const duplicate = (turnId: string | undefined): AdmitExternalMessageAnswer => ({
+		ok: true,
+		data: turnId === undefined ? { kind: "already_admitted" } : { kind: "already_admitted", turnId },
+	});
 	// One id space with prompts, across every origin (senpi#7479): the same message under an admitted id is that
 	// admission, a different one the conflict; either answer names the outcome and the id, nothing of the first message.
 	const digest = messageDigest(command.text);
@@ -108,7 +113,8 @@ export function admitExternalMessage(
 		const priorDigest = "digest" in prior ? prior.digest : prior.messageDigest;
 		if (priorDigest !== undefined && priorDigest !== digest)
 			return { ok: true, data: { kind: "id_conflict", deliveryId: command.deliveryId } };
-		return answer("already_admitted", prior.turnId ?? admission.turnEpoch);
+		const written = "written" in prior && prior.written === true;
+		return duplicate(prior.turnId ?? (written ? undefined : String(admission.turnEpoch)));
 	}
 	const id = ledgerId(command.deliveryId, origin);
 	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id))
@@ -133,7 +139,7 @@ export function admitExternalMessage(
 		},
 	);
 	const first = firstAnswer(result.kind, result.turn_epoch, digest);
-	if (first !== undefined) noteDeliveryAdmitted(session, command.deliveryId, first);
+	if (first !== undefined) noteDeliveryAdmitted(session, command.deliveryId, id, first);
 	if (result.holds === undefined) return answer(result.kind, result.turn_epoch);
 	return { ok: true, data: { kind: result.kind, turnId: String(result.turn_epoch), holds: [...result.holds] } };
 }

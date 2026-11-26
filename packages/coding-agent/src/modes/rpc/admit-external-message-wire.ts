@@ -36,7 +36,7 @@ export interface RpcAdmitExternalMessageCommand {
 }
 
 export interface RpcAdmitExternalMessageAdmission {
-	kind: ExternalAdmissionKind;
+	kind: Exclude<ExternalAdmissionKind, "already_admitted">;
 	/** The session's turn when the delivery was admitted, in `get_state.currentTurnId`'s form. */
 	turnId: string;
 	/** `held` only: the kinds of the holds that keep the delivery until a person releases them (senpi#6490). */
@@ -52,7 +52,19 @@ export interface RpcAdmitExternalMessageIdConflict {
 	deliveryId: string;
 }
 
-export type RpcAdmitExternalMessageReply = RpcAdmitExternalMessageAdmission | RpcAdmitExternalMessageIdConflict;
+/**
+ * The id was admitted before (senpi#7479). In the process that admitted it the answer carries the session's turn; after
+ * a reopen, a duplicate of a written delivery is known from the transcript only, which records no turn, so it has none.
+ */
+export interface RpcAdmitExternalMessageAlreadyAdmitted {
+	kind: "already_admitted";
+	turnId?: string;
+}
+
+export type RpcAdmitExternalMessageReply =
+	| RpcAdmitExternalMessageAdmission
+	| RpcAdmitExternalMessageAlreadyAdmitted
+	| RpcAdmitExternalMessageIdConflict;
 
 export interface RpcAdmitExternalMessageResponse {
 	id?: string;

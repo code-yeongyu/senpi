@@ -107,6 +107,55 @@ describe("one admission id space for prompts and deliveries (senpi#7479)", () =>
 		expect(await reopened.send(delivery("x-5", CANARY_B))).toMatchObject({ data: { kind: "id_conflict" } });
 	});
 
+	it("admits a delivery again once the engine cleared it unwritten, and runs it once", async () => {
+		const { fixture, deliveries } = await setup();
+		const rpc = fixture.bind();
+		expect(await rpc.send(delivery("x-6", CANARY_A))).toMatchObject({ data: { kind: "queued" } });
+		expect(await rpc.send({ type: "clear_queue" })).toMatchObject({ success: true });
+
+		const redelivered = await rpc.send(delivery("x-6", CANARY_A));
+		await rpc.send({ type: "prompt", message: "flush", clientMessageId: "x-flush-6" });
+		await Promise.all(rpc.handler.pendingPrompts());
+
+		expect(redelivered).toMatchObject({ success: true, data: { kind: "queued" } });
+		expect(deliveries()).toHaveLength(1);
+	});
+
+	it("never admits a written delivery again, on the same session object or after a reopen", async () => {
+		const { fixture, deliveries } = await setup();
+		const rpc = fixture.bind();
+		expect(await rpc.send(delivery("x-7", CANARY_A))).toMatchObject({ data: { kind: "queued" } });
+		await rpc.send({ type: "prompt", message: "flush", clientMessageId: "x-flush-7" });
+		await Promise.all(rpc.handler.pendingPrompts());
+		expect(deliveries()).toHaveLength(1);
+		expect(await rpc.send({ type: "clear_queue" })).toMatchObject({ success: true });
+
+		const inProcess = await rpc.send(delivery("x-7", CANARY_A));
+		const reopened = await fixture.reopen();
+		const afterReopen = await reopened.send(delivery("x-7", CANARY_A));
+
+		expect(inProcess).toMatchObject({ success: true, data: { kind: "already_admitted" } });
+		expect(afterReopen).toMatchObject({ success: true, data: { kind: "already_admitted" } });
+		expect(
+			fixture.session.sessionManager.getEntries().filter((entry) => entry.type === "custom_message"),
+		).toHaveLength(1);
+	});
+
+	it("answers a duplicate of a written delivery with its turn id in process, and without one after a reopen", async () => {
+		const { fixture } = await setup();
+		const rpc = fixture.bind();
+		expect(await rpc.send(delivery("x-8", CANARY_A))).toMatchObject({ data: { kind: "queued" } });
+		await rpc.send({ type: "prompt", message: "flush", clientMessageId: "x-flush-8" });
+		await Promise.all(rpc.handler.pendingPrompts());
+
+		const inProcess = (await rpc.send(delivery("x-8", CANARY_A))) as { data: Record<string, unknown> };
+		const reopened = await fixture.reopen();
+		const afterReopen = (await reopened.send(delivery("x-8", CANARY_A))) as { data: Record<string, unknown> };
+
+		expect(inProcess.data).toMatchObject({ kind: "already_admitted", turnId: expect.any(String) });
+		expect(afterReopen.data).toEqual({ kind: "already_admitted" });
+	});
+
 	it("admits ids that differ only by the class the sender derived them for, each once", async () => {
 		const { fixture, deliveries } = await setup();
 		const rpc = fixture.bind();
