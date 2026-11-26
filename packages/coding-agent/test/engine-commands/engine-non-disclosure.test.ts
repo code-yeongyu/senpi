@@ -227,8 +227,17 @@ describe("no canary reaches a prohibited output (security design 6, senpi#7451)"
 		expect(leaked(serialized(events))).toEqual([]);
 		expect(readFileSync(keyOut, "utf8")).toBe(CANARIES.launch_key);
 
-		const held = await launchRpc(ports({ FAKE_ENGINE_HOLD: "1" }), { api_key: launchKey() });
-		if (held.kind === "ok") await held.value.stop();
+		const rpcKeyOut = join(root, "rpc-key-out");
+		const held = await launchRpc(ports({ FAKE_ENGINE_HOLD: "1", FAKE_ENGINE_KEY_OUT: rpcKeyOut }), {
+			api_key: launchKey(),
+		});
+		if (held.kind !== "ok" || !("stdio" in held.value)) throw new Error("the keyed rpc launch did not start");
+		const output = held.value.stdio.output;
+		if (output === null) throw new Error("the rpc launch has no output stream");
+		// The fake engine writes the key destination before its first output line, so that line orders the read.
+		await new Promise<void>((ready) => output.once("data", () => ready()));
+		expect(readFileSync(rpcKeyOut, "utf8")).toBe(CANARIES.launch_key);
+		await held.value.stop();
 		expect(leaked(serialized(held))).toEqual([]);
 	});
 
