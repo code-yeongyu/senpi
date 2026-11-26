@@ -11,8 +11,10 @@ import type {
 	SessionBeforeCompactEvent,
 	SessionBeforeCompactResult,
 } from "../../src/core/extensions/index.ts";
+import type { HistoryReducer } from "../../src/core/session-history-reduce.ts";
 import type { SessionEntry, SessionMessageEntry } from "../../src/core/session-manager.ts";
 import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { reduceEntries } from "../helpers/reduce-entries.ts";
 import { OPENAI_NATIVE_LEGACY_MODEL } from "./openai-remote-test-models.ts";
 
 function messageEntry(id: string, parentId: string | null, message: SessionMessageEntry["message"]): SessionEntry {
@@ -164,6 +166,7 @@ function createRemoteAbortHarness(options?: {
 		isProjectTrusted: () => true,
 		sessionManager: {
 			getEntries: () => branch,
+			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branch, reducer),
 			getBranch: () => branch,
 			getSessionId: () => "remote-abort-session",
 		} as unknown as ExtensionContext["sessionManager"],

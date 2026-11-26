@@ -67,6 +67,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			const snapshot = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
 			const history = convertToLlm(filterContextExcludedMessages(snapshot.messages));
 			const systemPrompt = ctx.getSystemPrompt();
+			const systemPromptStablePrefix = ctx.getSystemPromptStablePrefix?.();
 			const thinkingLevel = pi.getThinkingLevel();
 			const sessionId = ctx.sessionManager.getSessionId();
 
@@ -92,7 +93,9 @@ export default function btwExtension(pi: ExtensionAPI) {
 				});
 			}
 
-			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+			const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model, {
+				sessionId: ctx.sessionManager.getSessionId(),
+			});
 			if (!auth.ok) {
 				if (active !== entry) return;
 				dismiss(ctx, { abort: false });
@@ -103,6 +106,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			try {
 				const context = buildSideQueryContext({
 					systemPrompt,
+					...(systemPromptStablePrefix === undefined ? {} : { systemPromptStablePrefix }),
 					history,
 					question,
 					promptContextWindow: getSideQueryPromptContextWindow(model),
@@ -120,7 +124,10 @@ export default function btwExtension(pi: ExtensionAPI) {
 						sessionId,
 						thinkingLevel: thinkingLevel === "off" ? undefined : thinkingLevel,
 						streamFn: (streamModel, streamContext, options) =>
-							ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, options),
+							ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, {
+								...options,
+								cwd: ctx.cwd,
+							}),
 					},
 					context,
 					{

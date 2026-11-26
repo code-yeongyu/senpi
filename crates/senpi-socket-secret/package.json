@@ -1,0 +1,19 @@
+{
+  "name": "@earendil-works/senpi-socket-secret-native",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./senpi_socket_secret.node",
+  "scripts": {
+    "build": "napi build --platform"
+  },
+  "napi": {
+    "binaryName": "senpi_socket_secret",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc"
+    ]
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.10.4"
+  }
+}

@@ -65,6 +65,10 @@ interface OpenFields {
 	readonly promptSurface?: "terminal" | "app" | "chat";
 	readonly browserEngine?: "connected" | "builtin" | "none";
 	readonly retryFallback?: { modelFallback: boolean; fallbackChains: Record<string, string[]> };
+	readonly env?: Record<string, string>;
+	readonly spawnedBy?: { parentSessionId: string; rootSessionId: string; taskId: string };
+	readonly retain_on_disconnect?: boolean;
+	readonly telemetry?: { consent: "granted" | "declined" | "unanswered" };
 }
 
 /**
@@ -100,12 +104,16 @@ export async function contextHost(
 		autoTitleSessions?: boolean;
 		titleModel?: boolean;
 		browserStateExtension?: boolean;
+		/** Extension under test, loaded through the real host runtime. */
+		extension?: string;
 		/** A faux provider every session can reach (`--provider`/`--model` select its first model). */
 		faux?: ReturnType<typeof fauxProvider>;
 		/** Additional independently authenticated providers for fallback profile tests. */
 		additionalProviders?: readonly Provider[];
 		/** Global settings written to `<agentDir>/settings.json` before the host starts. */
 		globalSettings?: Record<string, unknown>;
+		/** Observes the host's telemetry containment last resort instead of exiting (senpi#7446). */
+		onTelemetryContainmentLost?: (sessionId: string) => void;
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-context-"));
@@ -114,7 +122,7 @@ export async function contextHost(
 	await mkdir(cwd);
 	await mkdir(agentDir);
 	const probe = join(scratch, "probe.mjs");
-	await writeFile(probe, PROBE_EXTENSION);
+	await writeFile(probe, options.extension ?? PROBE_EXTENSION);
 	const browserState = join(scratch, "browser-state.mjs");
 	await writeFile(browserState, BROWSER_STATE_EXTENSION);
 	if (options.globalSettings !== undefined) {
@@ -222,6 +230,9 @@ export async function contextHost(
 		{
 			now: () => clock.now,
 			idleEvictionMs: options.idleEvictionMs,
+			...(options.onTelemetryContainmentLost
+				? { onTelemetryContainmentLost: options.onTelemetryContainmentLost }
+				: {}),
 		},
 	);
 	let serial = 0;
@@ -245,6 +256,7 @@ export async function contextHost(
 		inbox: (connection: string): readonly WireRecord[] => inboxes.get(connect(connection)) ?? [],
 		connect,
 		send,
+		waitFor,
 		async prompt(connection: string, sessionId: string, message: string): Promise<void> {
 			const idle = waitFor((record) => record.type === "agent_idle" && record.sessionId === sessionId);
 			const record = await send(connection, { type: "prompt", sessionId, message });
@@ -262,6 +274,12 @@ export async function contextHost(
 			const outcome = z.object({ success: z.boolean(), error: z.string().optional() }).parse(record);
 			if (outcome.success) throw new Error("open_session unexpectedly succeeded");
 			return outcome.error ?? "";
+		},
+		/** The launch profile the host keeps for a session (what a park or handover records). */
+		profile(sessionId: string) {
+			const profile = registry.peek(sessionId)?.profile;
+			if (profile === undefined) throw new Error(`no session ${sessionId}`);
+			return profile;
 		},
 		/** The system prompt the session's runtime currently holds. */
 		systemPrompt(sessionId: string): string {

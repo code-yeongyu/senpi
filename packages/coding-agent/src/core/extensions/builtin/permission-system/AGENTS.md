@@ -17,6 +17,7 @@ permission-system/
 ├── config.ts           # preset rules / fromConfig / merge / disabled state transforms
 ├── storage.ts          # JSONL persistence (CONTRACT — don't change line shape)
 ├── arity.ts            # Bash command prefix parser
+├── bash-command-segments.ts # Every simple command a bash call runs (fail closed: `unparsed`)
 ├── parsers.ts          # Tool input parser registry (paths, globs, apply_patch bodies)
 ├── prompt.ts           # TUI permission prompt
 ├── non-interactive.ts  # No-UI fallback (print/json/rpc modes)
@@ -32,6 +33,12 @@ permission-system/
 - An "always" answer on `eval` therefore allows arbitrary code for the rest of the session.
 - An `eval` tool's own `permissionParser` never downgrades the class: the shared resolver (`permissionRequestsFor` in `parsers.ts`, used by both the `tool_call` handler and `dispatch-policy.ts`) adds the `eval` request to any call whose tool-owned requests don't include it, so a `read`-class answer can never approve a cell (`fallbackEvalPermissionRequest`). It matches the exact name `eval`; a differently named tool whose execution is arbitrary code would need the same guard.
 - Invariant, pinned by `test/permission/eval-preset-floor.test.ts`: under every preset the `eval` call is at least as strict as the strictest of `bash`, `edit` and `write`, and it is `allow` only when every permission is allowed. `decideAuto` never approves `eval`, and any reviewer or judge layered on `auto` must decline it (or review only the nested `tool.*` calls), never approve a cell wholesale.
+
+## BASH COMMANDS
+
+- A `bash` call (and `bash_input`, command `monitor`) is decided on EVERY simple command it runs: `analyzeBashCommand` splits operators, subshells, substitutions and here-document bodies and unwraps wrappers (`env`, `sudo`, `xargs`, `sh -c`, `find -exec`, ...). The request has one arity-prefix pattern per command; all must be allowed and any deny refuses the call. Never decide a bash call on its first word alone.
+- An `unparsed` command is the target `(unparsed) <command>`: only a `*` rule decides it, so no single-command grant can allow it, and its plain words are still matched against deny rules by a deny-only request.
+- Pinned by `test/permission/bash-command-segments.test.ts` (shape x preset table).
 
 ## WHERE TO LOOK
 

@@ -59,6 +59,7 @@ async function liveLane(): Promise<{
 	let active = true;
 	const pi = new Proxy({} as ExtensionAPI, {
 		get: (_target, key) => {
+			if (key === "cwd") return process.cwd();
 			if (key === "registerProvider")
 				return (name: string, config: ProviderConfig) => {
 					if (!active) throw new Error("stale extension context");
@@ -73,7 +74,7 @@ async function liveLane(): Promise<{
 	});
 	registerAnthropicSubscriptionExtension(pi);
 	return {
-		window: () => runtime.getModel(PROVIDER, "claude-opus-5-5")?.contextWindow,
+		window: () => runtime.getModel(PROVIDER, "claude-opus-4-6")?.contextWindow,
 		shutdown: () => {
 			const ctx = { sessionManager: { getSessionId: () => "session-3408" } };
 			for (const handler of shutdownHandlers) void handler({ type: "session_shutdown" }, ctx);
@@ -122,7 +123,7 @@ describe("#3408: an account that refuses the 1M window plans and requests 200k",
 		expect(lane.window()).toBe(200_000);
 	});
 
-	it("keeps the resident fingerprint across a live model switch, and changes it only on a refusal", () => {
+	it("keeps the resident fingerprint across a live switch at the same window, and changes it on a refusal", () => {
 		const fingerprintFor = (id: string, contextWindow: number) =>
 			configFingerprint(
 				buildAnthropicSubscriptionQueryOptions({
@@ -135,15 +136,16 @@ describe("#3408: an account that refuses the 1M window plans and requests 200k",
 				"ambient",
 				"ambient",
 			).toolsetHash;
-		const opus = fingerprintFor("claude-opus-5-5", 1_000_000);
-		const sonnet = fingerprintFor("claude-sonnet-5-5", 1_000_000);
+		const opus = fingerprintFor("claude-opus-4-6", 1_000_000);
+		const sonnet = fingerprintFor("claude-sonnet-4-6", 1_000_000);
 		const haiku = fingerprintFor("claude-haiku-4-5", 200_000);
 
 		markLongContextRefused();
 
 		expect(sonnet).toBe(opus);
-		expect(haiku).toBe(opus);
-		expect(fingerprintFor("claude-opus-5-5", 200_000)).not.toBe(opus);
+		// Claude Code reads its window once at spawn: a different window restarts the process (#3801).
+		expect(haiku).not.toBe(opus);
+		expect(fingerprintFor("claude-opus-4-6", 1_000_000)).not.toBe(opus);
 	});
 
 	it("still re-registers the live session when an older runtime's extension context is stale", async () => {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import lockfile from "proper-lockfile";
+import { lockWithLossHandling } from "../../../file-lock.ts";
 import {
 	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
 	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
@@ -82,10 +82,10 @@ async function acquireGoalLock(
 	let attempt = 0;
 	while (true) {
 		try {
-			const release = await lockfile.lock(filePath, {
+			const { release } = await lockWithLossHandling(filePath, {
 				...GOAL_LOCK_OPTIONS,
 				lockfilePath,
-				onCompromised: (error: Error) => {
+				onLost: (error: Error) => {
 					compromise = { error };
 				},
 			});

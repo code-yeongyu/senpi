@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
 
@@ -6,6 +6,11 @@ import { getAgentDir } from "../../../../config.ts";
 export const LONG_CONTEXT_REFUSAL_TTL_MS = 6 * 60 * 60 * 1_000;
 
 const STATE_FILE = "anthropic-subscription-long-context.json";
+/**
+ * Refusals before version 2 were recorded for native-1M models too, which never needed the opt-in
+ * (senpi#3801); such a record is dropped on first read so the legacy ids do not inherit it.
+ */
+const STATE_VERSION = 2;
 
 type Listener = (available: boolean) => void;
 
@@ -19,10 +24,12 @@ function load(): void {
 	loaded = true;
 	try {
 		const parsed: unknown = JSON.parse(readFileSync(statePath(), "utf8"));
-		const until =
-			parsed !== null && typeof parsed === "object"
-				? (parsed as { refusedUntil?: unknown }).refusedUntil
-				: undefined;
+		const state = parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+		if (state.version !== STATE_VERSION) {
+			rmSync(statePath(), { force: true });
+			return;
+		}
+		const until = state.refusedUntil;
 		if (typeof until === "number" && Number.isFinite(until)) {
 			refusedUntil = until;
 			scheduleExpiry(Date.now());
@@ -73,7 +80,7 @@ export function markLongContextRefused(now = Date.now()): void {
 	try {
 		mkdirSync(dirname(statePath()), { recursive: true });
 		const temporary = `${statePath()}.${process.pid}.tmp`;
-		writeFileSync(temporary, `${JSON.stringify({ refusedUntil })}\n`);
+		writeFileSync(temporary, `${JSON.stringify({ version: STATE_VERSION, refusedUntil })}\n`);
 		renameSync(temporary, statePath());
 	} catch {
 		// Persisting only spares the next process one refused request; this process already holds the state.

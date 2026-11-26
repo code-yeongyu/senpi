@@ -21,6 +21,7 @@ import type {
 import { thisProcessStartTime } from "../rpc/host-daemon-registration.ts";
 import { gcHostEndpoints } from "../rpc/host-gc.ts";
 import { createSocketSecret, socketSecretPath } from "../rpc/socket-transport.ts";
+import { ControlAttachments } from "./session-control-attach.ts";
 import { runControlCommand } from "./session-control-commands.ts";
 import { ControlFeed } from "./session-control-feed.ts";
 import {
@@ -31,6 +32,7 @@ import {
 import { registerTuiEndpoint, resolveTuiSocket, unregisterTuiEndpoint } from "./session-control-registry.ts";
 import { listenControlSocket } from "./session-control-server.ts";
 import { WakeScheduler, watchInbox } from "./session-control-wake.ts";
+import { startTerminalPresenters } from "./terminal-presenter-surface.ts";
 
 export type { ActiveControlEndpoint, TuiControlContext } from "./session-control-lifecycle.ts";
 
@@ -79,26 +81,45 @@ async function openEndpoint(
 	);
 	const secret = await createSocketSecret(socketSecretPath(socket));
 	const feed = new ControlFeed();
+	// Every wake runs a pass, so a failure that repeats is shown once, until a pass succeeds again.
+	let failing: string | undefined;
 	const scheduler = new WakeScheduler(
 		async (event) => {
 			await session.extensionRunner.emit(event);
-			return (await options.drain(event)) ?? { admitted: [] };
+			const result = (await options.drain(event)) ?? { admitted: [] };
+			failing = undefined;
+			return result;
 		},
-		(error) => surface.notice(`control endpoint drain failed: ${errorText(error)}`),
+		(error) => {
+			const reason = errorText(error);
+			if (reason === failing) return;
+			failing = reason;
+			surface.notice(`control endpoint drain failed: ${reason}`);
+		},
 	);
 	cleanups.push(() => scheduler.dispose());
 	const wake = (reason: SessionControlWakeReason, ids?: readonly string[]): Promise<SessionControlDrainResult> =>
 		scheduler.request(reason, ids);
+	const presenters = context.mcpPresenter ? await startTerminalPresenters(context.mcpPresenter) : undefined;
+	if (presenters) cleanups.push(presenters.dispose);
+	const attachments = new ControlAttachments(session, () => surface.pendingQuestionIds().length, presenters?.surface);
+	cleanups.push(() => attachments.dispose());
 	const commandContext = {
 		instanceId,
 		session,
 		surface,
 		feed,
 		wake: (ids?: readonly string[]) => wake("command", ids),
+		attachments,
 	};
 	const server = await listenControlSocket(socket, secret, {
 		command: (connection, command) => runControlCommand(commandContext, connection, command),
-		closed: (connection) => feed.unsubscribe(connection.id),
+		opened: (connection) => attachments.opened(connection),
+		respond: (connection, answer) => attachments.respond(connection, answer),
+		closed: (connection) => {
+			feed.unsubscribe(connection.id);
+			attachments.closed(connection);
+		},
 		listenerError: (error) => surface.notice(`control endpoint listener failed: ${error.message}`),
 	});
 	cleanups.push(() => server.close());
@@ -131,7 +152,7 @@ async function openEndpoint(
 			surface.notice(`control endpoint gc of dead terminals failed: ${errorText(error)}`),
 		);
 	});
-	return endpoint;
+	return presenters ? { ...endpoint, dispose: () => endpoint.dispose().finally(presenters.dispose) } : endpoint;
 }
 
 function errorText(error: unknown): string {

@@ -27,6 +27,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelRuntime as DefaultModelRuntime } from "./model-runtime.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
+import type { ProviderOrigin } from "./provider-origin.ts";
 import type { VirtualModelDefinition } from "./virtual-models.ts";
 
 export type { ProviderConfigInput } from "./provider-composer.ts";
@@ -52,6 +53,7 @@ export { clearApiKeyCache } from "./provider-composer.ts";
 export class ModelRegistry {
 	private readonly runtime: ModelRuntime;
 	readonly authStorage: AuthStorage;
+	private busyRetriedThisTurn = false;
 
 	constructor(runtime: ModelRuntime, authStorage: AuthStorage = AuthStorage.inMemory()) {
 		this.runtime = runtime;
@@ -124,10 +126,19 @@ export class ModelRegistry {
 	/**
 	 * The live auth check reads the in-memory credentials. When the last read found the store
 	 * locked they were never loaded, so re-read now (bounded by the sync lock budget) instead
-	 * of answering from the empty fallback for the rest of the process.
+	 * of answering from the empty fallback for the rest of the process. A store that could not be
+	 * loaded is re-read the same way, so a repaired auth.json is seen without a restart (#4413).
 	 */
 	private retryBusyCredentialRead(): void {
-		if (this.authStorage.isCredentialStoreBusy()) this.authStorage.reload();
+		if (!this.authStorage.isCredentialStoreBusy() && !this.authStorage.getLoadError()) return;
+		// A re-read of a store another process holds blocks for the sync lock budget, and a provider list
+		// re-reads once per row in one synchronous pass: wait once per pass, not once per row (#6841).
+		if (this.busyRetriedThisTurn) return;
+		if (this.authStorage.reload() !== "busy") return;
+		this.busyRetriedThisTurn = true;
+		queueMicrotask(() => {
+			this.busyRetriedThisTurn = false;
+		});
 	}
 
 	getUpstreamModelId(model: Model<Api>): string | undefined {
@@ -138,9 +149,17 @@ export class ModelRegistry {
 		return this.runtime.getCompatibilityRequestConfig(model).serviceTier;
 	}
 
-	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
+	/**
+	 * Request auth for a direct provider call. A caller acting for a session passes its id so the
+	 * key belongs to the account that session's turns use; without it the stored credential is
+	 * resolved as for session-less callers.
+	 */
+	async getApiKeyAndHeaders(model: Model<Api>, options: { sessionId?: string } = {}): Promise<ResolvedRequestAuth> {
 		try {
-			const resolution = await this.runtime.getAuth(model);
+			const resolution =
+				options.sessionId === undefined
+					? await this.runtime.getAuth(model)
+					: await this.runtime.getSessionAuth(model, options.sessionId);
 			const compatibility = this.runtime.getCompatibilityRequestConfig(model);
 			if (!resolution) {
 				if (compatibility.authHeader) {
@@ -175,15 +194,24 @@ export class ModelRegistry {
 	}
 
 	getProviderAuthStatus(provider: string): AuthStatus {
+		return this.resolveProviderAuth(provider).status;
+	}
+
+	providerAuthIsHeaderOnly(provider: string): boolean {
+		return this.runtime.providerAuthIsHeaderOnly(provider);
+	}
+
+	/** `getProviderAuthStatus` plus whether it is a non-stored sign-in, from one resolution (#3537). */
+	resolveProviderAuth(provider: string): { status: AuthStatus; signIn: boolean } {
 		this.retryBusyCredentialRead();
-		const status = this.runtime.getProviderAuthStatus(provider);
-		if (status.configured || this.runtime.hasAvailabilitySnapshot()) return status;
+		const resolved = this.runtime.resolveProviderAuth(provider);
+		if (resolved.status.configured || this.runtime.hasAvailabilitySnapshot()) return resolved;
 		// Until an availability pass succeeds the runtime's stored-provider set is empty, so answer
 		// from the live store, as getAvailable() does through hasAuth(); otherwise a store that was
 		// locked on its first read keeps reporting "not configured" while its models are usable
 		// (#2249). getAuthStatus() labels the source (stored, --api-key, environment) correctly.
 		const live = this.authStorage.getAuthStatus(provider);
-		return live.configured ? live : status;
+		return live.configured ? { status: live, signIn: false } : resolved;
 	}
 
 	getProvider(provider: string): Provider | undefined {
@@ -301,5 +329,9 @@ export class ModelRegistry {
 
 	getRegisteredProviderIds(): readonly string[] {
 		return this.runtime.getRegisteredProviderIds();
+	}
+
+	getProviderOrigin(providerName: string): ProviderOrigin | undefined {
+		return this.runtime.getProviderOrigin(providerName);
 	}
 }

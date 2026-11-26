@@ -37,8 +37,12 @@ export class PythonKernelTools {
 		readonly post: (message: HostToKernelMessage) => void;
 		readonly isOpen: () => boolean;
 		readonly peerDescribe?: PeerKernelToolsDescribe;
+		readonly invocation?: (
+			request: KernelToolsInvokeRequest,
+			options?: AbortSignal | KernelToolsInvokeOptions,
+		) => () => void;
 	}) {
-		this.#pump = new KernelToolHostPump(options.post, options.isOpen);
+		this.#pump = new KernelToolHostPump(options.post, options.isOpen, options.invocation);
 		this.#peerDescribe = options.peerDescribe;
 	}
 

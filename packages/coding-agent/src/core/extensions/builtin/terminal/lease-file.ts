@@ -11,7 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { link, open, readFile, rename, stat, unlink } from "node:fs/promises";
-import { ownProcessStartedAtMs, processBootAtMs, sameBoot, sameProcessStart } from "./process-identity.ts";
+import { ownProcessStartedAtMs, processBootAtMs, sameBootAsOwn, sameProcessStart } from "./process-identity.ts";
 import { readProcessStartMs as defaultReadProcessStartMs } from "./process-start-probe.ts";
 
 export function errorCode(error: unknown): string | undefined {
@@ -108,7 +108,7 @@ export interface ReclaimLockHolder {
 
 type LockState =
 	| { readonly state: "free" }
-	| { readonly state: "held"; readonly holder?: ReclaimLockHolder }
+	| { readonly state: "held"; readonly holder?: ReclaimLockHolder; readonly unproven?: true }
 	| { readonly state: "stale"; readonly raw: string };
 
 /** A lock that cannot even be parsed was left by a crash mid-write; past this age it is abandoned. */
@@ -141,7 +141,7 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 		);
 		return age > UNREADABLE_LOCK_STALE_MS ? { state: "stale", raw } : { state: "held" };
 	}
-	if (!sameBoot(holder.bootAtMs, processBootAtMs())) return { state: "stale", raw };
+	if (!(await sameBootAsOwn(holder.bootAtMs))) return { state: "stale", raw };
 	if (holder.pid === process.pid) {
 		// Our own pid: held only by this very process (another reclaim in flight here), never by a
 		// crashed earlier process whose pid this one now wears.
@@ -151,9 +151,10 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 	}
 	if (!(probes.isProcessAlive ?? pidAlive)(holder.pid)) return { state: "stale", raw };
 	const observed = await (probes.readProcessStartMs ?? defaultReadProcessStartMs)(holder.pid).catch(() => undefined);
-	if (observed === undefined || sameProcessStart(holder.processStartedAtMs, observed))
-		return { state: "held", holder };
-	return { state: "stale", raw };
+	// An unreadable start time cannot tell the holder from a process wearing its reused pid: held, but
+	// `unproven`, so a caller with positive evidence of the holder's death may still reclaim it.
+	if (observed === undefined) return { state: "held", holder, unproven: true };
+	return sameProcessStart(holder.processStartedAtMs, observed) ? { state: "held", holder } : { state: "stale", raw };
 }
 
 /** Remove a stale lock only if it still holds `raw`; a lock someone took meanwhile is put back. */
@@ -179,7 +180,7 @@ export async function breakStaleLock(lock: string, raw: string): Promise<void> {
 async function takeReclaimLock(lock: string, probes: LockProbes): Promise<string | { holder?: ReclaimLockHolder }> {
 	const mine = JSON.stringify({
 		pid: process.pid,
-		bootAtMs: processBootAtMs(),
+		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 	});
 	for (let attempt = 0; attempt < 3; attempt += 1) {

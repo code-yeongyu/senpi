@@ -84,6 +84,19 @@ async function filesUnder(root: string): Promise<string[]> {
 	return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name));
 }
 
+// The kernel writes ledgers such as kernels/py-globals.json atomically: it writes <path>.<pid>.tmp, then renames it.
+// A temp file is never a spill and may be renamed away at any moment, so it is never stat'ed or read: only final
+// paths are candidates. A final path the kernel replaces by rename still exists, so stat and read cannot race it.
+export function spillCandidates(paths: readonly string[]): string[] {
+	return paths.filter((path) => !path.endsWith(".tmp"));
+}
+
+export async function largestSpill(paths: readonly string[]): Promise<string | null> {
+	const candidates = spillCandidates(paths);
+	const sizes = await Promise.all(candidates.map(async (path) => ({ path, size: (await stat(path)).size })));
+	return sizes.sort((a, b) => b.size - a.size)[0]?.path ?? null;
+}
+
 const outputSpill: Scenario = {
 	name: "output-spill",
 	run: async ({ language, session }) => {
@@ -93,9 +106,8 @@ const outputSpill: Scenario = {
 			return { observations: { retainedPreviewBytes: Buffer.byteLength(outcome.text) } };
 		});
 		const spills = (await filesUnder(session.artifactsDir)).filter((path) => !existing.has(path));
-		const sizes = await Promise.all(spills.map(async (path) => ({ path, size: (await stat(path)).size })));
-		const largest = sizes.sort((a, b) => b.size - a.size)[0];
-		const spill = largest === undefined ? null : await readFile(largest.path);
+		const largest = await largestSpill(spills);
+		const spill = largest === null ? null : await readFile(largest);
 		return {
 			...result,
 			observations: {

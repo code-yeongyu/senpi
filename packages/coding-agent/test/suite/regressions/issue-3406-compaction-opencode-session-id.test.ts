@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
@@ -6,6 +8,7 @@ import {
 	type Provider,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { opencodeGoProvider } from "../../../../ai/src/providers/opencode-go.ts";
 import compactionExtension from "../../../src/core/extensions/builtin/compaction/index.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -117,5 +120,66 @@ describe("issue #3406 OpenCode Go compaction session ID", () => {
 		await harness.session.compact();
 
 		expect(capturedSessionId).toBe(harness.session.sessionId);
+	});
+
+	it("sends the active session ID on the real OpenCode Go compaction request", async () => {
+		const received: Array<string | string[] | undefined> = [];
+		const server = createServer((request, response) => {
+			received.push(request.headers["x-opencode-session"]);
+			request.resume();
+			request.on("end", () => {
+				const chunk = (delta: Record<string, unknown>, finish: string | null) =>
+					`data: ${JSON.stringify({
+						id: "chatcmpl-compaction",
+						object: "chat.completion.chunk",
+						created: 0,
+						model: "test-model",
+						choices: [{ index: 0, delta, finish_reason: finish }],
+					})}\n\n`;
+				response.writeHead(200, { "content-type": "text/event-stream" });
+				response.write(chunk({ role: "assistant", content: "<summary>compact summary</summary>" }, null));
+				response.write(chunk({}, "stop"));
+				response.end("data: [DONE]\n\n");
+			});
+		});
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(0, "127.0.0.1", resolve);
+		});
+		try {
+			const { port } = server.address() as AddressInfo;
+			const catalogModel: Model<"openai-completions"> = {
+				id: "test-model",
+				name: "Test model",
+				api: "openai-completions",
+				provider: "opencode-go",
+				baseUrl: `http://127.0.0.1:${port}/v1`,
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128_000,
+				maxTokens: 4096,
+			};
+			const nativeProvider = opencodeGoProvider();
+			harness = await createHarness({
+				extensionFactories: [compactionExtension],
+				settings: { compaction: { enabled: true, keepRecentTokens: 1 } },
+			});
+			seedCompactableSession(harness);
+			harness.session.agent.state.model = catalogModel;
+			await harness.authStorage.modify("opencode-go", async () => ({ type: "api_key", key: "test-key" }));
+			harness.session.modelRuntime.registerNativeProvider({
+				...nativeProvider,
+				getModels: () => [catalogModel],
+				getAllModels: () => [catalogModel],
+			});
+			await harness.session.modelRuntime.refresh({ allowNetwork: false, providers: ["opencode-go"] });
+
+			await harness.session.compact();
+
+			expect(received).toEqual([harness.session.sessionId]);
+		} finally {
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		}
 	});
 });

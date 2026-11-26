@@ -23,7 +23,7 @@ import { holdSessionCount } from "./host-probe.ts";
 import { startSuccessor } from "./host-successor.ts";
 
 /** One session count; an unregistered host is counted twice (before the swap and over the held connection after). */
-export const SESSION_COUNT_TIMEOUT_MS = 10_000;
+const SESSION_COUNT_TIMEOUT_MS = 10_000;
 
 export async function handoffUnregisteredHost(
 	options: HandoffHostOptions,

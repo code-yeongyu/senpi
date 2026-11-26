@@ -63,27 +63,33 @@ export class ZeroSessionTrimmer {
 	 * in the same second must not hide it either.
 	 */
 	private declined = false;
+	/** A drop to zero that landed inside the spacing: answered when it ends, unless sessions came back first. */
+	private zeroPending = false;
 	private lastTrimAt: number | undefined;
 	/** A collection that ran on the previous tick; its record waits for the allocator to return the pages. */
 	private pending: PendingTrim | undefined;
 	private lastPauseMs = 0;
-	private timer: ReturnType<typeof setInterval> | undefined;
+	private timer: ReturnType<typeof setTimeout> | undefined;
+	private started = false;
 
 	constructor(options: ZeroSessionTrimmerOptions) {
 		this.options = options;
 		this.now = options.now ?? Date.now;
 	}
 
+	/**
+	 * Ticks only while a trim is owed (senpi#3747): the registry reports every open and close through
+	 * `observe`, so a host whose session count holds still has nothing to check and no timer runs.
+	 */
 	start(): void {
-		if (this.timer !== undefined) return;
-		// Unref'd: a trim must never be the reason the host stays alive.
-		this.timer = setInterval(() => this.check(), ZERO_SESSION_TRIM_TICK_MS);
-		this.timer.unref?.();
+		this.started = true;
+		this.arm();
 	}
 
 	stop(): void {
+		this.started = false;
 		if (this.timer === undefined) return;
-		clearInterval(this.timer);
+		clearTimeout(this.timer);
 		this.timer = undefined;
 	}
 
@@ -92,24 +98,55 @@ export class ZeroSessionTrimmer {
 		if (size > 0) this.heldSessions = true;
 		if (size < this.lastSessionCount) this.declined = true;
 		this.lastSessionCount = size;
+		this.arm();
 	}
 
 	check(): void {
+		this.evaluate();
+		this.arm();
+	}
+
+	/** A collection waiting to be reported, a drop waiting for its spacing, or a zero not yet answered. */
+	private owesTick(): boolean {
+		return (
+			this.pending !== undefined ||
+			this.declined ||
+			this.zeroPending ||
+			(this.heldSessions && this.lastSessionCount === 0)
+		);
+	}
+
+	private arm(): void {
+		if (!this.started || this.timer !== undefined || !this.owesTick()) return;
+		this.timer = setTimeout(() => {
+			this.timer = undefined;
+			this.check();
+		}, ZERO_SESSION_TRIM_TICK_MS);
+		// Unref'd: a trim must never be the reason the host stays alive.
+		this.timer.unref?.();
+	}
+
+	private evaluate(): void {
 		if (this.pending !== undefined) this.report(this.pending);
 		const sessions = this.options.sessions();
 		if (sessions < this.lastSessionCount) this.declined = true;
 		this.lastSessionCount = sessions;
 		if (sessions > 0) {
 			this.heldSessions = true;
+			this.zeroPending = false;
 			if (!this.declined || !this.busyIntervalElapsed()) return;
 			this.declined = false;
 			if (this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) this.trim(sessions);
 			return;
 		}
 		this.declined = false;
-		if (!this.heldSessions) return;
+		if (!this.heldSessions && !this.zeroPending) return;
 		this.heldSessions = false;
-		if (!this.intervalElapsed(ZERO_SESSION_TRIM_MIN_INTERVAL_MS)) return;
+		if (!this.intervalElapsed(ZERO_SESSION_TRIM_MIN_INTERVAL_MS)) {
+			this.zeroPending = true;
+			return;
+		}
+		this.zeroPending = false;
 		this.trim(0);
 	}
 

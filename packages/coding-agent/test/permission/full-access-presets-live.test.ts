@@ -17,6 +17,7 @@ import {
 afterEach(closeLiveHosts);
 
 const servers: Server[] = [];
+// oxlint-disable-next-line jest/no-duplicate-hooks -- a second top-level hook kept separate; merging them would change the hook order
 afterEach(async () => {
 	for (const server of servers.splice(0)) {
 		await new Promise<void>((resolve) => server.close(() => resolve()));

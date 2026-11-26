@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, ExtensionUIDialogOptions } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext, ExtensionUIDialogOptions, QuestionCancelOrigin } from "../../types.ts";
 import type { PendingQuestion } from "./pending.ts";
 import type { QuestionRequest, QuestionResponse } from "./schema.ts";
 import type { AskUserState } from "./tool.ts";
@@ -16,7 +16,7 @@ export interface PendingQuestionEntry {
 	request: QuestionRequest;
 	pending: PendingQuestion;
 	completion: Promise<QuestionResponse>;
-	cancel(message?: string, reportDetachedLoss?: boolean): void;
+	cancel(origin: QuestionCancelOrigin, message?: string, reportDetachedLoss?: boolean): void;
 	detach(): void;
 	rebind(pi: ExtensionAPI, ctx: ExtensionContext, state: AskUserState): void;
 	reattach(): void;

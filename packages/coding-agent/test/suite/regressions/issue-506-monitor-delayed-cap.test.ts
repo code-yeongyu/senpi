@@ -118,7 +118,13 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 			expect(events.emitted.filter((event) => event.channel === "goal_continuation_guard_tripped")).toEqual([
 				{
 					channel: "goal_continuation_guard_tripped",
-					data: { goalId: goal.id, reason: "cap", count: 8, unattendedContinuations: 0 },
+					data: {
+						goalId: goal.id,
+						reason: "cap",
+						count: 8,
+						unattendedContinuations: 0,
+						noProgressContinuations: 0,
+					},
 				},
 			]);
 			expect(entries.filter((entry) => entry.customType === "goal-continuation-stopped")).toEqual(
@@ -132,6 +138,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 									reason: "cap",
 									consecutiveContinuations: 8,
 									unattendedContinuations: 0,
+									noProgressContinuations: 0,
 									at: Date.now(),
 								},
 							},

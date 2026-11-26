@@ -300,7 +300,7 @@ describe("todo argument correction fixture replay", () => {
 		const error = await executeError(captured.tool, { op: "done", task: "task-12" }, captured.context);
 
 		expect(error.message).toContain(
-			'Task "task-12" not found. Tasks are referenced by content, not by IDs — pass the task\'s full text from the previous result.',
+			'Task "task-12" not found. Tasks are referenced by content, not by IDs: pass the task\'s full text from the previous result.',
 		);
 		expect(captured.getCurrentPhases()).toEqual(initialPhases);
 		expect(captured.getAppendCalls()).toBe(0);

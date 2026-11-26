@@ -22,6 +22,8 @@ export interface SessionRegistrySession {
 	readonly stop?: () => MaybePromise<unknown>;
 	readonly kill?: (signal?: TerminalSessionSignal) => MaybePromise<unknown>;
 	readonly signal?: (signal: TerminalSessionSignal) => MaybePromise<unknown>;
+	/** Stops what the session left in its process group after it settled (TerminalSession, senpi#6201). */
+	readonly stopLeftover?: () => Promise<unknown>;
 	readonly waitExit?: () => Promise<unknown>;
 	readonly wait?: () => Promise<unknown>;
 }
@@ -68,6 +70,11 @@ export interface SessionRegistrySweepOptions {
 
 export interface SessionRegistryOptions<TSession extends SessionRegistrySession = SessionRegistrySession> {
 	readonly maxSessions?: number;
+	/**
+	 * Inserted between the command prefix and the counter (`bash_<scope>_1`), so two registries whose ids reach the same
+	 * caller - a host's and its tool child's - never hand out the same id. Letters and digits only.
+	 */
+	readonly idScope?: string;
 	readonly initialSessions?: readonly InitialSessionRegistryEntry<TSession>[];
 	readonly createSession?: (options: SessionRegistryCreateContext) => MaybePromise<TSession>;
 	readonly killProcess?: (target: number, signal: TerminalSessionSignal) => void;

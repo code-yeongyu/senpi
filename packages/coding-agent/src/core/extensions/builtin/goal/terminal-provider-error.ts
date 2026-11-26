@@ -79,6 +79,8 @@ export function terminalProviderAuthFailure(event: AgentEndEvent): TerminalProvi
 	if (event.willRetry !== false) return undefined;
 	const message = lastAssistantMessage(event.messages);
 	if (message?.stopReason !== "error") return undefined;
+	// A recently served credential can be refused for this request without being dead (#2491).
+	if (message.credentialServedRecently === true && message.providerDiagnostic?.category === "auth") return undefined;
 	const httpStatus = authStatusOf(message);
 	if (httpStatus === undefined) return undefined;
 	return { httpStatus, provider: message.provider, model: message.model };

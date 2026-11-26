@@ -222,7 +222,6 @@ describe("builtin providers", () => {
 			["openrouter", "openai/gpt-5.6-terra"],
 		] as const;
 		const unsupported = [
-			["fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"],
 			["openai", "gpt-4.1"],
 			["openai", "gpt-5.2"],
 			["anthropic", "claude-sonnet-4-5"],
@@ -245,6 +244,12 @@ describe("builtin providers", () => {
 			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).not.toHaveProperty(
 				"compat.supportsMidConvoSystemMessages",
 			);
+		}
+		// Fireworks rows retire upstream often, so the negative side covers every non-K3 row the catalog has.
+		const fireworksWithoutKimiK3 = models.getModels("fireworks").filter((model) => !model.id.includes("kimi-k3"));
+		expect(fireworksWithoutKimiK3.length).toBeGreaterThan(0);
+		for (const model of fireworksWithoutKimiK3) {
+			expect(model, `fireworks/${model.id}`).not.toHaveProperty("compat.supportsMidConvoSystemMessages");
 		}
 	});
 
@@ -302,12 +307,52 @@ describe("builtin providers", () => {
 		}
 	});
 
+	it("uses official Kimi K3.1 Pro list pricing on both Moonshot providers", () => {
+		const models = builtinModels();
+		const expectedCosts = {
+			"kimi-k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+			"kimi-k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
+		};
+		for (const provider of ["moonshotai", "moonshotai-cn"] as const) {
+			for (const [modelId, cost] of Object.entries(expectedCosts)) {
+				expect(models.getModel(provider, modelId)?.cost, `${provider}/${modelId}`).toEqual(cost);
+			}
+		}
+	});
+
+	it("gives Moonshot Kimi K3.1 Pro the Kimi K3 request contract", () => {
+		const models = builtinModels();
+		for (const provider of ["moonshotai", "moonshotai-cn"] as const) {
+			for (const modelId of ["kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"] as const) {
+				const model = models.getModel(provider, modelId);
+				expect(model?.compat, `${provider}/${modelId}`).toMatchObject({
+					supportsReasoningEffort: true,
+					thinkingFormat: "openai",
+					requiresReasoningContentOnAssistantMessages: true,
+					supportsMidConvoSystemMessages: true,
+					supportsMidConvoToolAdditions: true,
+				});
+				expect(model?.thinkingLevelMap, `${provider}/${modelId}`).toEqual({
+					off: null,
+					minimal: null,
+					low: "low",
+					medium: null,
+					high: "high",
+					xhigh: null,
+					max: "max",
+				});
+			}
+		}
+	});
+
 	it("uses API-equivalent implied pricing for Kimi Coding subscription models", () => {
 		const models = builtinModels();
 		const expectedCosts = {
 			"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 			k3: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3 },
 			"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
+			"k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+			"k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
 		};
 
 		for (const [modelId, cost] of Object.entries(expectedCosts)) {
@@ -478,6 +523,28 @@ describe("builtin providers", () => {
 			auth: {},
 			env: { GOOGLE_CLOUD_PROJECT: "project-id", GOOGLE_CLOUD_LOCATION: "us-central1" },
 		});
+	});
+
+	it.each([
+		["adc", "", "us-central1", "project"],
+		["adc", "project-id", " \t", "location"],
+		["service-account", " \t", "us-central1", "project"],
+		["service-account", "project-id", "", "location"],
+	])("rejects %s login with project %j and location %j", async (method, project, location, field) => {
+		const answers = [method, project, location, "/test/credentials.json"];
+		const login = googleVertexProvider().auth.apiKey?.login;
+		if (login === undefined) throw new Error("google-vertex must expose an API-key login");
+		await expect(
+			login({
+				signal: neverAbortedSignal,
+				prompt: async () => {
+					const answer = answers.shift();
+					if (answer === undefined) throw new Error("login asked more questions than the test answers");
+					return answer;
+				},
+				notify: () => {},
+			}),
+		).rejects.toThrow(new RegExp(field, "i"));
 	});
 
 	it("resolves vertex via ADC file plus project and location", async () => {

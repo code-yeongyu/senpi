@@ -1,4 +1,4 @@
-import type { McpServerConfig } from "../config-schema.ts";
+import type { McpServerDeclaredConfig } from "../config-schema.ts";
 import type { McpLogger } from "../log.ts";
 import { openCallbackChannel } from "./callback.ts";
 import { resolveServerAuth } from "./context.ts";
@@ -15,9 +15,9 @@ import type { McpOAuthProvider } from "./oauth-provider.ts";
 
 type Notify = (message: string, type?: "info" | "warning" | "error") => void;
 
-export interface AuthCommandDeps {
+export interface AuthCommandDeps<Config extends McpServerDeclaredConfig = McpServerDeclaredConfig> {
 	serverName: string;
-	config: McpServerConfig;
+	config: Config;
 	agentDir?: string;
 	env?: Record<string, string | undefined>;
 	logger?: McpLogger;
@@ -48,7 +48,7 @@ function ensureOAuth(deps: AuthCommandDeps): void {
 
 function buildProvider(
 	deps: AuthCommandDeps,
-	redirectUrl: string,
+	redirectUrl?: string,
 	onRedirect?: (url: URL) => void | Promise<void>,
 ): McpOAuthProvider {
 	const plan = resolveServerAuth({
@@ -73,7 +73,8 @@ function buildProvider(
 export async function runAuth(deps: AuthCommandDeps): Promise<void> {
 	ensureOAuth(deps);
 	if (deps.config.oauth?.flow === "client_credentials") {
-		const provider = buildProvider(deps, deps.callbackUrl ?? PASTE_REDIRECT);
+		// No authorize request, so no redirect: any stored registration may serve the grant (senpi#6327).
+		const provider = buildProvider(deps);
 		await clientCredentialsGrant(provider, deps.flow);
 		await deps.onReconnect();
 		deps.notify(`MCP server ${deps.serverName} authenticated (client_credentials)`);

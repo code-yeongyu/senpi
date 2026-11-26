@@ -1,7 +1,9 @@
 /**
- * Command watches: a PTY session's output, line-buffered and filtered, with the durable fire budget
- * that auto-mutes a restartable watch that fires too often. Output stays in the runtime's bounded
- * history; a record holds at most one unfinished line.
+ * Command watches: a PTY session's output, line-buffered and filtered. A durable (restartable) watch
+ * counts its matched lines in a persisted rolling fire window and carries the runaway guard, which
+ * pauses it with a visible notice only after a sustained flood; a busy watch is never muted, its
+ * wakes are paced by the notifier instead. Output stays in the runtime's bounded history; a record
+ * holds at most one unfinished line.
  */
 import { MonitorLineBuffer } from "./monitor-line-buffer.ts";
 import {
@@ -11,7 +13,7 @@ import {
 	type MonitorSourceHost,
 } from "./monitor-types.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
-import { DEFAULT_DURABLE_MONITOR_FIRE_BUDGET, FIRE_BUDGET_AUTO_MUTE_SUMMARY, FIRE_BUDGET_WINDOW_MS } from "./shared.ts";
+import { FIRE_BUDGET_WINDOW_MS, runawayPauseSummary } from "./shared.ts";
 import type { MonitorDurabilityClass } from "./terminal-manifest.ts";
 import { describeExit } from "./tools/spawn.ts";
 
@@ -25,12 +27,23 @@ export interface RegisterMonitorOptions {
 	readonly description: string;
 	readonly runtime: TerminalRuntimeSession;
 	readonly filter?: RegExp;
-	/** Durability class from the manifest spec; non-ephemeral records carry the fire budget. */
+	/** Durability class from the manifest spec; non-ephemeral records carry the fire window and runaway guard. */
 	readonly durabilityClass?: MonitorDurabilityClass;
 	/** Persisted fire window re-bound by a restore, so a restart cannot reset the budget. */
 	readonly fireWindow?: MonitorFireWindow;
 	/** Durability deadline of a durable watch; omitted for an ephemeral one. */
 	readonly expiresAt?: number;
+	/** Output lines are a person's words (a chat bridge); goal continuation counts them as new input. */
+	readonly humanInput?: boolean;
+	/** Per-monitor wake-rate override of a persistent watch; unset uses terminal.monitorWakesPerHour. */
+	readonly wakesPerHour?: number;
+}
+
+/** One-minute bucket of matched lines plus the run of consecutive flood minutes before it. */
+interface RunawayWindow {
+	minuteStartMs: number;
+	count: number;
+	floodMinutes: number;
 }
 
 export interface MonitorRecord extends MonitorRecordBase {
@@ -52,8 +65,11 @@ export interface MonitorRecord extends MonitorRecordBase {
 	paused: boolean;
 	settled: boolean;
 	fireWindow: MonitorFireWindow | undefined;
+	runaway: RunawayWindow | undefined;
+	readonly wakesPerHour: number | undefined;
 	unsubscribeOutput: (() => void) | undefined;
 	unsubscribeExit: (() => void) | undefined;
+	readonly humanInput: boolean;
 }
 
 export class CommandMonitorSource {
@@ -97,8 +113,11 @@ export class CommandMonitorSource {
 			paused: false,
 			settled: false,
 			fireWindow: durable ? { ...(options.fireWindow ?? { startMs: Date.now(), count: 0 }) } : undefined,
+			runaway: undefined,
+			wakesPerHour: options.wakesPerHour,
 			unsubscribeOutput: undefined,
 			unsubscribeExit: undefined,
+			humanInput: options.humanInput === true,
 		};
 		this.#records.set(record.id, record);
 		this.#host.changed();
@@ -136,24 +155,55 @@ export class CommandMonitorSource {
 				record.mutedDropped += 1;
 				continue;
 			}
-			this.#host.emit(record, { type: "line", id: record.id, description: record.description, line });
+			this.#host.emit(record, {
+				type: "line",
+				id: record.id,
+				description: record.description,
+				line,
+				...(record.humanInput ? { humanInput: true as const } : {}),
+			});
 			if (record.fireWindow !== undefined) {
 				const now = Date.now();
 				if (now - record.fireWindow.startMs >= FIRE_BUDGET_WINDOW_MS)
 					record.fireWindow = { startMs: now, count: 0 };
 				record.fireWindow.count += 1;
-				if (record.fireWindow.count >= DEFAULT_DURABLE_MONITOR_FIRE_BUDGET) {
+				if (this.#floodsRunaway(record, now)) {
+					const guard = this.#host.runawayGuard();
 					record.paused = true;
 					this.#host.emit(record, {
 						type: "summary",
 						id: record.id,
 						description: record.description,
-						summary: FIRE_BUDGET_AUTO_MUTE_SUMMARY,
+						summary: runawayPauseSummary(record.id, guard.linesPerMinute, guard.minutes),
 					});
 					this.#host.changed();
 				}
 			}
 		}
+	}
+
+	/**
+	 * Count one matched line into the record's minute bucket. A minute with more lines than the guard
+	 * allows is a flood minute; the watch trips once the current minute floods and the minutes right
+	 * before it flooded too, `minutes` in a row. A quiet or skipped minute resets the run.
+	 */
+	#floodsRunaway(record: MonitorRecord, now: number): boolean {
+		const guard = this.#host.runawayGuard();
+		const previous = record.runaway;
+		let current = previous;
+		if (current === undefined || now - current.minuteStartMs >= 60_000) {
+			const elapsedMinutes = previous === undefined ? 0 : Math.floor((now - previous.minuteStartMs) / 60_000);
+			const previousFlooded =
+				previous !== undefined && elapsedMinutes === 1 && previous.count > guard.linesPerMinute;
+			current = {
+				minuteStartMs: previous === undefined ? now : previous.minuteStartMs + elapsedMinutes * 60_000,
+				count: 0,
+				floodMinutes: previous !== undefined && previousFlooded ? previous.floodMinutes + 1 : 0,
+			};
+			record.runaway = current;
+		}
+		current.count += 1;
+		return current.count > guard.linesPerMinute && current.floodMinutes + 1 >= guard.minutes;
 	}
 
 	#settle(record: MonitorRecord): void {
@@ -163,16 +213,20 @@ export class CommandMonitorSource {
 		record.unsubscribeExit?.();
 		this.#records.delete(record.id);
 		this.#host.changed();
+		const exit = record.runtime.exitResult;
 		const status = describeExit(record.runtime) ?? "exited";
-		const code = record.runtime.exitResult?.exitCode;
+		const code = exit?.exitCode;
 		const codeText = code === null || code === undefined ? "" : ` (exit code ${code})`;
 		this.#host.emit(record, {
 			type: "summary",
 			id: record.id,
 			description: record.description,
-			summary: `watcher ${status}${codeText}`,
+			// A timed-out watch was KILLED by its own timeout_ms deadline; say so instead of a
+			// passive "timed_out" that reads like a mere observation. The exit code is
+			// deliberately omitted in this branch: a killed child's code is noise, and
+			// "killed at deadline" names the cause instead.
+			summary: exit?.timedOut ? `watcher killed at deadline (${status})` : `watcher ${status}${codeText}`,
 		});
-		const exit = record.runtime.exitResult;
 		this.#host.ended(record, exit?.timedOut ? "timeout" : exit?.cancelled ? "killed" : "exit", code ?? null);
 	}
 

@@ -10,6 +10,8 @@ import {
 } from "../../../src/kernels/shared/subprocess-kernel.ts";
 
 class FakeSubprocess extends EventEmitter {
+	// POSIX: a pid above every platform's pid_max, so a real group signal fails with ESRCH and the direct kill is recorded.
+	readonly pid: number | undefined = process.platform === "win32" ? undefined : 2 ** 22 + 1;
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
 	readonly killedSignals: NodeJS.Signals[] = [];

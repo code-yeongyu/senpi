@@ -5,8 +5,13 @@
 
 import {
 	type AssistantMessage,
-	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
+	type AssistantProgress,
+	type AssistantRecord,
+	assistantRecords,
+	carryAssistantCapture,
+	clampThinkingLevel,
+	getAssistantCapture,
 	type Context,
 	type CursorExecResolvedCarrier,
 	createInitialSystemMessage,
@@ -14,6 +19,7 @@ import {
 	getCurrentTools,
 	getToolStateChanges,
 	isCursorExecResolved,
+	isAssistantProgress,
 	normalizeContext,
 	type SystemMessage,
 	supportsAllowedToolChoice,
@@ -25,16 +31,26 @@ import {
 } from "@earendil-works/pi-ai";
 import {
 	createTerminalFailureAssistantMessage,
-	demoteToolUseWithoutToolCalls,
 	isStreamIdleTimeoutError,
 	normalizeTerminalAssistantMessage,
-	promoteStopWithPendingToolCalls,
+	settleStopReason,
 	shouldFinalizeIdleAsStop,
 	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
+import { createResponseTimingRecorder } from "./response-timing.ts";
+import { type InternalLoopConfig, internalProgressSink } from "./internal-events.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
+import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiveness } from "./stream-keepalive.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
-import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
+import { withToolNameCorrection } from "./tool-name-alias.ts";
+import { createPreparedToolHost } from "./execution/prepared/pipeline-prepared.ts";
+import { BatchStoreMissingError, PreflightCarryMissingError, type ToolHost } from "./execution/tool-host.ts";
+import {
+	createErrorToolResult,
+	createToolResultMessage,
+	emitToolExecutionEnd,
+	emitToolResultMessage,
+} from "./execution/tool-outcome-events.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -191,7 +207,7 @@ class StreamIdleTimeoutError extends Error {
 export class StreamStartTimeoutError extends Error {
 	constructor(timeoutMs: number) {
 		super(
-			`Provider stream start timed out after ${timeoutMs}ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
+			`Provider stream start timed out after ${timeoutMs}ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
 		);
 		this.name = "StreamStartTimeoutError";
 	}
@@ -203,13 +219,16 @@ export class StreamStartTimeoutError extends Error {
 async function runLoop(
 	initialContext: AgentContext,
 	newMessages: AgentMessage[],
-	initialConfig: AgentLoopConfig,
+	initialConfig: InternalLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
 ): Promise<void> {
 	let currentContext = initialContext;
-	let config = initialConfig;
+	let config: InternalLoopConfig = {
+		...initialConfig,
+		executionScope: initialConfig.executionScope ?? { id: crypto.randomUUID(), root: "" },
+	};
 	let firstTurn = true;
 	let firstProviderRequest = true;
 	let drainedTerminatingQueue: "steering" | "followUp" | undefined;
@@ -218,18 +237,30 @@ async function runLoop(
 	let explicitContinuation = false;
 	// Messages from `prepareNextTurn`, appended before the next provider request.
 	let preparedMessages: AgentMessage[] = [];
+	// Which queue the current pendingMessages were drained from, so consumption is committed against it.
+	let pendingSource: "steering" | "followUp" = "steering";
+	const drainSteering = async (): Promise<AgentMessage[]> => {
+		pendingSource = "steering";
+		return (await config.getSteeringMessages?.()) || [];
+	};
+	const drainFollowUp = async (): Promise<AgentMessage[]> => {
+		pendingSource = "followUp";
+		return (await config.getFollowUpMessages?.()) || [];
+	};
 	const refreshTerminatingQueueDrain = async (): Promise<void> => {
 		if (!drainedTerminatingQueue || !config.restorePendingMessages) return;
 		await config.restorePendingMessages(drainedTerminatingQueue, pendingMessages);
-		pendingMessages = (await config.getSteeringMessages?.()) || [];
+		pendingMessages = await drainSteering();
 		drainedTerminatingQueue = pendingMessages.length > 0 ? "steering" : undefined;
 		if (pendingMessages.length === 0) {
-			pendingMessages = (await config.getFollowUpMessages?.()) || [];
+			pendingMessages = await drainFollowUp();
 			drainedTerminatingQueue = pendingMessages.length > 0 ? "followUp" : undefined;
 		}
 	};
 	// Check for steering messages at start (user may have typed while waiting)
-	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
+	let pendingMessages: AgentMessage[] = await drainSteering();
+	// Follow-ups an error-ended run parked are taken here, so this run writes them even if its request fails.
+	if (pendingMessages.length === 0 && config.takeFollowUpsAtStart) pendingMessages = await drainFollowUp();
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -251,6 +282,17 @@ async function runLoop(
 					return;
 				}
 				drainedTerminatingQueue = undefined;
+			}
+
+			// Commit the queued messages' consumption before any of them reaches the context or a provider;
+			// a rejected commit restores them and fails this attempt.
+			if (pendingMessages.length > 0 && config.commitQueuedConsumption) {
+				try {
+					await config.commitQueuedConsumption(pendingSource, pendingMessages);
+				} catch (error) {
+					await config.restorePendingMessages?.(pendingSource, pendingMessages);
+					throw error;
+				}
 			}
 
 			// Process prepared and queued messages before the next assistant response.
@@ -298,7 +340,7 @@ async function runLoop(
 				withEmptyAssistantRecovery(requestConfig.model, streamFunction),
 				isInitialProviderRequest ? config.timeoutMs : requestConfig.timeoutMs,
 			);
-			const message = demoteToolUseWithoutToolCalls(promoteStopWithPendingToolCalls(streamed.message));
+			const message = streamed.message;
 			const providerToolResults = streamed.providerToolResults;
 			newMessages.push(message);
 			const toolResults: ToolResultMessage[] = [];
@@ -309,6 +351,7 @@ async function runLoop(
 				newMessages.push(result);
 				toolResults.push(result);
 			}
+			if (config.commitStep) await config.commitStep({ message, providerToolResults });
 
 			if (shouldTerminateAssistantTurn(message)) {
 				// Hard exit: the decision is ignored, but the hook still sees the finished turn before turn_end.
@@ -362,10 +405,10 @@ async function runLoop(
 			}
 			explicitContinuation = decision?.action === "continue";
 			if (toolBatchTerminated) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				pendingMessages = await drainSteering();
 				if (pendingMessages.length > 0) drainedTerminatingQueue = "steering";
 				if (pendingMessages.length === 0) {
-					pendingMessages = (await config.getFollowUpMessages?.()) || [];
+					pendingMessages = await drainFollowUp();
 					if (pendingMessages.length > 0) drainedTerminatingQueue = "followUp";
 				}
 				if (pendingMessages.length === 0 && !explicitContinuation) {
@@ -408,7 +451,7 @@ async function runLoop(
 				drainedTerminatingQueue = undefined;
 			}
 			if (!toolBatchTerminated) {
-				pendingMessages = (await config.getSteeringMessages?.()) || [];
+				pendingMessages = await drainSteering();
 			}
 			if (hasMoreToolCalls || pendingMessages.length > 0) {
 				explicitContinuation = false;
@@ -416,7 +459,7 @@ async function runLoop(
 		}
 
 		// Agent would stop here. Check for follow-up messages.
-		const followUpMessages = (await config.getFollowUpMessages?.()) || [];
+		const followUpMessages = await drainFollowUp();
 		if (followUpMessages.length > 0) {
 			// Set as pending so inner loop processes them
 			explicitContinuation = false;
@@ -435,6 +478,20 @@ async function runLoop(
 	}
 
 	await emit({ type: "agent_end", messages: newMessages });
+}
+
+/**
+ * The level a request is sent at. Thinking-off reaches a model whose ladder has no `off` (a thinking-only
+ * model such as Kimi K3.1 Pro) when a level is carried over from another model; that model rejects the
+ * request, so it is raised to the model's lowest supported level instead (omo#12316).
+ */
+function sendableReasoning(
+	model: AgentLoopConfig["model"],
+	reasoning: AgentLoopConfig["reasoning"],
+): AgentLoopConfig["reasoning"] {
+	if (reasoning !== undefined || !model.reasoning) return reasoning;
+	const level = clampThinkingLevel(model, "off");
+	return level === "off" ? undefined : level;
 }
 
 /** Apply a `prepareNextTurn` or `prepareRequest` update to the loop config for this and later requests. */
@@ -567,6 +624,9 @@ export async function buildProviderContext(
 	const { tools, activeToolNames } = providerTools(context, config.model);
 	return normalizeContext({
 		systemPrompt: context.systemPrompt,
+		...(context.systemPromptStablePrefix === undefined
+			? {}
+			: { systemPromptStablePrefix: context.systemPromptStablePrefix }),
 		messages: await config.convertToLlm(messages),
 		...(tools === undefined ? {} : { tools: tools.map(toProviderToolDeclaration) }),
 		...(activeToolNames === undefined ? {} : { activeToolNames }),
@@ -579,7 +639,7 @@ export async function buildProviderContext(
  */
 async function streamAssistantResponse(
 	context: AgentContext,
-	config: AgentLoopConfig,
+	config: InternalLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
@@ -595,8 +655,10 @@ async function streamAssistantResponse(
 	// after the assistant message so pairs stay adjacent in the transcript.
 	const providerToolResults: ToolResultMessage[] = [];
 	const thinkingTiming = new Map<number, { startedAt: number; endedAt?: number }>();
+	const responseTiming = createResponseTimingRecorder();
 
-	function propagateThinkingTiming(finalMessage: AssistantMessage): void {
+	function stampTiming(finalMessage: AssistantMessage): void {
+		responseTiming.stamp(finalMessage);
 		for (const timing of thinkingTiming.values()) {
 			if (timing.endedAt === undefined) timing.endedAt = Date.now();
 		}
@@ -611,6 +673,7 @@ async function streamAssistantResponse(
 	// Dedicated controller for the provider request so the loop can tear the
 	// request down itself (idle timeout), not only when the caller aborts.
 	const requestAbortController = new AbortController();
+	const liveness = createTransportLiveness(normalizeTimeoutMs(config.streamKeepAliveTimeoutMs));
 	let detachCallerAbort: (() => void) | undefined;
 	if (signal !== undefined) {
 		if (signal.aborted) {
@@ -637,12 +700,19 @@ async function streamAssistantResponse(
 		const resolvedApiKey =
 			(config.getApiKey ? await preStream.run(config.getApiKey(config.model.provider)) : undefined) || config.apiKey;
 
+		const reasoning = sendableReasoning(config.model, config.reasoning);
+		responseTiming.requested();
 		const response = await preStream.run(
 			streamFunction(config.model, llmContext, {
 				...config,
+				reasoning,
 				streamKind: "main",
 				apiKey: resolvedApiKey,
 				signal: requestAbortController.signal,
+				onTransportActivity: () => {
+					liveness.noteActivity();
+					config.onTransportActivity?.();
+				},
 				// Cursor exec bridging (ignored by every other provider): handlers
 				// execute mid-stream; their paired results buffer here.
 				...(config.cursorExecHandlers
@@ -665,9 +735,12 @@ async function streamAssistantResponse(
 			},
 		);
 		// Record the requested level, whichever stream function answered.
-		const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });
+		const result = async () => Object.assign(await response.result(), { thinkingLevel: reasoning ?? "off" });
 
-		const iterator = response[Symbol.asyncIterator]();
+		// Without an internal listener the loop reads the public stream exactly as before: no records, no carriers.
+		const sink = config[internalProgressSink];
+		const records: AsyncIterable<AssistantRecord> = sink ? assistantRecords(response) : response;
+		const iterator = records[Symbol.asyncIterator]();
 		const eventReader = createAssistantEventReader(
 			iterator,
 			streamIdleTimeoutMs,
@@ -676,21 +749,30 @@ async function streamAssistantResponse(
 			preStream.remainingStartMs(),
 			response,
 			normalizeTimeoutMs(config.streamStartTimeoutMs),
+			liveness,
 		);
 		try {
 			while (true) {
 				const next = await eventReader.next();
 				if (next.done) break;
 				const event = next.value;
+				if (isAssistantProgress(event)) {
+					await sink?.(event);
+					continue;
+				}
 				switch (event.type) {
 					case "start":
+						responseTiming.started();
 						partialMessage = event.partial;
 						context.messages.push(partialMessage);
 						addedPartial = true;
-						await emit({
-							type: "message_start",
-							message: { ...partialMessage },
-						});
+						await emit(
+							carryAssistantCapture(event, {
+								type: "message_start",
+								message: { ...partialMessage },
+								streaming: true,
+							}),
+						);
 						break;
 
 					case "text_start":
@@ -704,6 +786,8 @@ async function streamAssistantResponse(
 					case "toolcall_end":
 						if (partialMessage) {
 							partialMessage = event.partial;
+							responseTiming.observe(event);
+							let timingProgress: AssistantProgress | undefined;
 							if (
 								event.type === "thinking_start" ||
 								event.type === "thinking_delta" ||
@@ -719,33 +803,51 @@ async function streamAssistantResponse(
 								if (block?.type === "thinking" && timing !== undefined) {
 									block.startedAt = timing.startedAt;
 									if (timing.endedAt !== undefined) block.endedAt = timing.endedAt;
+									// Stamped after provider capture: it amends this event's seed or end block, so it follows it.
+									if (getAssistantCapture(event) && event.type !== "thinking_delta")
+										timingProgress = Object.freeze({
+											type: "message_block_metadata",
+											contentIndex: event.contentIndex,
+											...timing,
+										});
 								}
 							}
 							context.messages[context.messages.length - 1] = partialMessage;
-							await emit({
-								type: "message_update",
-								assistantMessageEvent: event,
-								message: { ...partialMessage },
-							});
+							await emit(
+								carryAssistantCapture(event, {
+									type: "message_update",
+									assistantMessageEvent: event,
+									message: { ...partialMessage },
+								}),
+							);
+							if (timingProgress) await sink?.(timingProgress);
 						}
 						break;
 
 					case "done":
 					case "error": {
-						const finalMessage = normalizeTerminalAssistantMessage(await result(), event);
-						propagateThinkingTiming(finalMessage);
+						const finalMessage = settleStopReason(normalizeTerminalAssistantMessage(await result(), event));
+						stampTiming(finalMessage);
 						if (addedPartial) {
 							context.messages[context.messages.length - 1] = finalMessage;
 						} else {
 							context.messages.push(finalMessage);
 						}
 						if (!addedPartial) {
-							await emit({
-								type: "message_start",
-								message: { ...finalMessage },
-							});
+							await emit(
+								carryAssistantCapture(
+									event,
+									{
+										type: "message_start",
+										message: { ...finalMessage },
+									},
+									finalMessage,
+								),
+							);
 						}
-						await emit({ type: "message_end", message: finalMessage });
+						await emit(
+							carryAssistantCapture(event, { type: "message_end", message: finalMessage }, finalMessage),
+						);
 						return { message: finalMessage, providerToolResults };
 					}
 				}
@@ -754,8 +856,8 @@ async function streamAssistantResponse(
 			eventReader.dispose();
 		}
 
-		const finalMessage = await result();
-		propagateThinkingTiming(finalMessage);
+		const finalMessage = settleStopReason(await result());
+		stampTiming(finalMessage);
 		if (addedPartial) {
 			context.messages[context.messages.length - 1] = finalMessage;
 		} else {
@@ -766,7 +868,7 @@ async function streamAssistantResponse(
 		return { message: finalMessage, providerToolResults };
 	} catch (error) {
 		if (isStreamIdleTimeoutError(error) && shouldFinalizeIdleAsStop(partialMessage, providerToolResults)) {
-			const finalMessage: AssistantMessage = {
+			const finalMessage = settleStopReason({
 				role: "assistant",
 				content: partialMessage?.content ?? [{ type: "text", text: "" }],
 				api: partialMessage?.api ?? config.model.api,
@@ -785,8 +887,8 @@ async function streamAssistantResponse(
 				},
 				stopReason: "stop",
 				timestamp: partialMessage?.timestamp ?? Date.now(),
-			};
-			propagateThinkingTiming(finalMessage);
+			});
+			stampTiming(finalMessage);
 			if (addedPartial) {
 				context.messages[context.messages.length - 1] = finalMessage;
 			} else {
@@ -796,13 +898,23 @@ async function streamAssistantResponse(
 			await emit({ type: "message_end", message: finalMessage });
 			return { message: finalMessage, providerToolResults };
 		}
+		// A caller abort is the reason a turn ended even when the bound fired first on a step that never finished:
+		// the user gets the abort's own message, not a timeout and advice to raise it (#3481).
+		// A step that rethrows the caller's own reason (`throwIfAborted()`, a fetch rejected with it) shows that reason
+		// through the same shaping and cap (#3510).
+		const callerAbortedPastBound =
+			signal?.aborted === true &&
+			(error instanceof StreamStartTimeoutError ||
+				error instanceof StreamKeepAliveTimeoutError ||
+				isStreamIdleTimeoutError(error) ||
+				error === signal.reason);
 		const finalMessage = createTerminalFailureAssistantMessage(
 			config.model,
 			signal?.aborted ? "aborted" : "error",
-			error,
+			callerAbortedPastBound ? abortError(signal.reason) : error,
 			partialMessage,
 		);
-		propagateThinkingTiming(finalMessage);
+		stampTiming(finalMessage);
 		if (addedPartial) {
 			context.messages[context.messages.length - 1] = finalMessage;
 		} else {
@@ -820,15 +932,34 @@ async function streamAssistantResponse(
 const ABORTED = Symbol("aborted");
 
 type AssistantEventReader = {
-	next(): Promise<IteratorResult<AssistantMessageEvent>>;
+	next(): Promise<IteratorResult<AssistantRecord>>;
 	dispose(): void;
 };
 
+const MAX_ABORT_REASON_CHARS = 500;
+
 function abortError(reason: unknown): Error {
-	return reason instanceof Error ? reason : new Error("Request was aborted");
+	if (reason instanceof Error) return reason;
+	// A caller's own words are its abort reason: a plain string, or an object carrying a `message` (#3510).
+	const text = abortReasonText(reason);
+	if (text === undefined) return new Error("Request was aborted");
+	const characters = Array.from(text);
+	return new Error(
+		characters.length > MAX_ABORT_REASON_CHARS ? `${characters.slice(0, MAX_ABORT_REASON_CHARS).join("")}…` : text,
+	);
 }
 
-function closeAssistantIterator(iterator: AsyncIterator<AssistantMessageEvent>): void {
+function abortReasonText(reason: unknown): string | undefined {
+	const text =
+		typeof reason === "string"
+			? reason
+			: typeof reason === "object" && reason !== null && "message" in reason && typeof reason.message === "string"
+				? reason.message
+				: undefined;
+	return text !== undefined && text.trim() !== "" ? text : undefined;
+}
+
+function closeAssistantIterator(iterator: AsyncIterator<AssistantRecord>): void {
 	void Promise.resolve(iterator.return?.()).catch(() => undefined);
 }
 
@@ -902,7 +1033,7 @@ function normalizeTimeoutMs(timeoutMs: number | undefined): number | undefined {
 }
 
 function createAssistantEventReader(
-	iterator: AsyncIterator<AssistantMessageEvent>,
+	iterator: AsyncIterator<AssistantRecord>,
 	timeoutMs: number | undefined,
 	signal: AbortSignal | undefined,
 	onIdleTimeout?: (error: Error) => void,
@@ -911,11 +1042,14 @@ function createAssistantEventReader(
 	// The bound the error names, when the timer only gets what is left of it (the steps before the stream used
 	// the rest); the error must name the configured bound, which users raise.
 	configuredStartTimeoutMs?: number,
+	liveness?: TransportLiveness,
 ): AssistantEventReader {
 	const idleTimeoutMs = normalizeTimeoutMs(timeoutMs);
 	const startTimeoutMs = normalizeTimeoutMs(streamStartTimeoutMs);
 	const reportedStartTimeoutMs = configuredStartTimeoutMs ?? startTimeoutMs;
 	let sawFirstEvent = false;
+	// Provider silence since the last public event: internal progress records re-arm neither bound.
+	let silentMs = 0;
 	let removeAbortListener: (() => void) | undefined;
 	let abortPromise: Promise<typeof ABORTED> | undefined;
 
@@ -943,17 +1077,28 @@ function createAssistantEventReader(
 			const readTimeoutMs = useStartBound ? startTimeoutMs : idleTimeoutMs;
 			const makeTimeoutError = useStartBound
 				? (ms: number) => new StreamStartTimeoutError(reportedStartTimeoutMs ?? ms)
-				: (ms: number) => new StreamIdleTimeoutError(ms);
+				: (ms: number) => new StreamIdleTimeoutError(idleTimeoutMs ?? ms);
+			const readStartedAt = Date.now();
+			// Keep-alives are judged against the whole configured bound, not the share of it left for this read.
+			const windowMs = useStartBound ? (reportedStartTimeoutMs ?? startTimeoutMs) : idleTimeoutMs;
 			const result = await readNextAssistantEvent(
 				iterator,
-				readTimeoutMs,
+				readTimeoutMs === undefined ? undefined : Math.max(1, readTimeoutMs - silentMs),
 				makeTimeoutError,
 				abortPromise,
 				onIdleTimeout,
 				stream,
 				signal,
+				liveness && windowMs !== undefined ? { liveness, windowMs } : undefined,
 			);
-			if (!result.done) sawFirstEvent = true;
+			if (!result.done && isAssistantProgress(result.value)) silentMs += Date.now() - readStartedAt;
+			else {
+				silentMs = 0;
+				if (!result.done) {
+					sawFirstEvent = true;
+					liveness?.contentArrived();
+				}
+			}
 			return result;
 		},
 		dispose: () => removeAbortListener?.(),
@@ -961,14 +1106,15 @@ function createAssistantEventReader(
 }
 
 async function readNextAssistantEvent(
-	iterator: AsyncIterator<AssistantMessageEvent>,
+	iterator: AsyncIterator<AssistantRecord>,
 	idleTimeoutMs: number | undefined,
 	makeTimeoutError: (timeoutMs: number) => Error,
 	abortPromise: Promise<typeof ABORTED> | undefined,
 	onIdleTimeout?: (error: Error) => void,
 	stream?: Pick<AssistantMessageEventStream, "hasPendingLocalWork">,
 	signal?: AbortSignal,
-): Promise<IteratorResult<AssistantMessageEvent>> {
+	keepAlive?: { liveness: TransportLiveness; windowMs: number },
+): Promise<IteratorResult<AssistantRecord>> {
 	if (idleTimeoutMs === undefined && abortPromise === undefined) {
 		return iterator.next();
 	}
@@ -976,7 +1122,7 @@ async function readNextAssistantEvent(
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	let settled = false;
 
-	return new Promise<IteratorResult<AssistantMessageEvent>>((resolve, reject) => {
+	return new Promise<IteratorResult<AssistantRecord>>((resolve, reject) => {
 		const settle = (complete: () => void): void => {
 			if (settled) return;
 			settled = true;
@@ -996,7 +1142,13 @@ async function readNextAssistantEvent(
 					timeout = setTimeout(onIdleDeadline, idleTimeoutMs);
 					return;
 				}
-				const error = makeTimeoutError(idleTimeoutMs);
+				// A provider that accepted the request and is still sending keep-alive bytes is working, not dead.
+				const verdict = keepAlive?.liveness.onSilenceDeadline(keepAlive.windowMs);
+				if (verdict?.kind === "extend") {
+					timeout = setTimeout(onIdleDeadline, verdict.delayMs);
+					return;
+				}
+				const error = verdict?.kind === "keep-alive-exhausted" ? verdict.error : makeTimeoutError(idleTimeoutMs);
 				closeAssistantIterator(iterator);
 				settle(() => reject(error));
 				// Abort after settling so the failure surfaces as an idle timeout,
@@ -1077,191 +1229,33 @@ async function executeToolCalls(
 	const toolCalls = assistantMessage.content.filter(
 		(c): c is AgentToolCall => c.type === "toolCall" && !isCursorExecResolved(c as CursorExecResolvedCarrier),
 	);
-	if (config.toolExecution === "sequential") {
-		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, emit);
+	const host: ToolHost = config.toolHost ?? defaultToolHost();
+	return host.execute(
+		{
+			scope: config.executionScope ?? { id: crypto.randomUUID(), root: "" },
+			calls: toolCalls,
+			mode: config.toolExecution ?? "parallel",
+		},
+		{
+			signal,
+			emit,
+			recordWitness: config.onExecutionPipeline,
+			local: { context: currentContext, assistantMessage },
+		},
+	);
+
+	function defaultToolHost(): ToolHost {
+		if (config.batchStoreFactory === undefined) throw new BatchStoreMissingError();
+		const afterToolFreeze = config.afterToolFreeze;
+		if (afterToolFreeze === undefined) throw new PreflightCarryMissingError();
+		return createPreparedToolHost({ ...config, afterToolFreeze }, config.batchStoreFactory);
 	}
-	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
 }
 
 type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
 	terminate: boolean;
 };
-
-async function executeToolCallsSequential(
-	currentContext: AgentContext,
-	assistantMessage: AssistantMessage,
-	toolCalls: AgentToolCall[],
-	config: AgentLoopConfig,
-	signal: AbortSignal | undefined,
-	emit: AgentEventSink,
-): Promise<ExecutedToolCallBatch> {
-	const finalizedCalls: FinalizedToolCallOutcome[] = [];
-	const messages: ToolResultMessage[] = [];
-
-	for (const toolCall of toolCalls) {
-		const tool = await resolveCallTool(currentContext, toolCall, config);
-		await emit({
-			type: "tool_execution_start",
-			toolCallId: toolCall.id,
-			toolName: tool?.name ?? toolCall.name,
-			args: toolCall.arguments,
-		});
-
-		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, tool, config, signal);
-		let finalized: FinalizedToolCallOutcome;
-		if (preparation.kind === "immediate") {
-			finalized = {
-				toolCall: preparation.toolCall,
-				result: preparation.result,
-				isError: preparation.isError,
-			};
-		} else {
-			const executed = await executePreparedToolCall(
-				preparation,
-				signal,
-				emitToolExecutionUpdate(preparation.toolCall, emit),
-			);
-			finalized = await finalizeExecutedToolCall(
-				currentContext,
-				assistantMessage,
-				preparation,
-				executed,
-				config,
-				signal,
-			);
-		}
-
-		await emitToolExecutionEnd(finalized, emit);
-		const toolResultMessage = createToolResultMessage(finalized);
-		await emitToolResultMessage(toolResultMessage, emit);
-		finalizedCalls.push(finalized);
-		messages.push(toolResultMessage);
-
-		if (signal?.aborted) {
-			break;
-		}
-	}
-
-	return {
-		messages,
-		terminate: shouldTerminateToolBatch(finalizedCalls),
-	};
-}
-
-async function executeToolCallsParallel(
-	currentContext: AgentContext,
-	assistantMessage: AssistantMessage,
-	toolCalls: AgentToolCall[],
-	config: AgentLoopConfig,
-	signal: AbortSignal | undefined,
-	emit: AgentEventSink,
-): Promise<ExecutedToolCallBatch> {
-	const finalizedCalls: Promise<FinalizedToolCallOutcome>[] = [];
-	const preparedCalls: Array<{
-		preparation: PreparedToolCall | ImmediateToolCallOutcome;
-		isSequential: boolean;
-		dependencies: Promise<FinalizedToolCallOutcome>[];
-	}> = [];
-	let lastSequentialCall: Promise<FinalizedToolCallOutcome> | undefined;
-	let currentParallelWave: Promise<FinalizedToolCallOutcome>[] = [];
-
-	for (const toolCall of toolCalls) {
-		const tool = await resolveCallTool(currentContext, toolCall, config);
-		await emit({
-			type: "tool_execution_start",
-			toolCallId: toolCall.id,
-			toolName: tool?.name ?? toolCall.name,
-			args: toolCall.arguments,
-		});
-
-		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, tool, config, signal);
-		const isSequential = isSequentialToolCall(currentContext, preparation.toolCall);
-		const dependencies = isSequential
-			? [...(lastSequentialCall ? [lastSequentialCall] : []), ...currentParallelWave]
-			: lastSequentialCall
-				? [lastSequentialCall]
-				: [];
-
-		preparedCalls.push({ preparation, isSequential, dependencies });
-
-		if (isSequential) {
-			// Dependencies are assigned in the second phase after all preflight hooks
-			// have completed, so a later preflight abort vetoes every execution.
-			lastSequentialCall = undefined;
-			currentParallelWave = [];
-		} else {
-			currentParallelWave.push(Promise.resolve(undefined as never));
-		}
-
-		if (signal?.aborted) {
-			break;
-		}
-	}
-
-	let previousSequential: Promise<FinalizedToolCallOutcome> | undefined;
-	let previousWave: Promise<FinalizedToolCallOutcome>[] = [];
-	for (const { preparation, isSequential } of preparedCalls) {
-		const dependencies = isSequential
-			? [...(previousSequential ? [previousSequential] : []), ...previousWave]
-			: previousSequential
-				? [previousSequential]
-				: [];
-		const finalizedCall = (async () => {
-			await Promise.all(dependencies);
-			const finalized = signal?.aborted
-				? { toolCall: preparation.toolCall, result: createErrorToolResult("Operation aborted"), isError: true }
-				: await runPreparedToolCall(currentContext, assistantMessage, preparation, config, signal, emit);
-			await emitToolExecutionEnd(finalized, emit);
-			return finalized;
-		})();
-		finalizedCalls.push(finalizedCall);
-		if (isSequential) {
-			previousSequential = finalizedCall;
-			previousWave = [];
-		} else previousWave.push(finalizedCall);
-	}
-	const orderedFinalizedCalls = await Promise.all(finalizedCalls);
-	const messages: ToolResultMessage[] = [];
-	for (const finalized of orderedFinalizedCalls) {
-		const toolResultMessage = createToolResultMessage(finalized);
-		await emitToolResultMessage(toolResultMessage, emit);
-		messages.push(toolResultMessage);
-	}
-
-	return {
-		messages,
-		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
-	};
-}
-
-async function runPreparedToolCall(
-	currentContext: AgentContext,
-	assistantMessage: AssistantMessage,
-	preparation: PreparedToolCall | ImmediateToolCallOutcome,
-	config: AgentLoopConfig,
-	signal: AbortSignal | undefined,
-	emit: AgentEventSink,
-): Promise<FinalizedToolCallOutcome> {
-	if (preparation.kind === "immediate") {
-		return {
-			toolCall: preparation.toolCall,
-			result: preparation.result,
-			isError: preparation.isError,
-		};
-	}
-
-	const executed = await executePreparedToolCall(
-		preparation,
-		signal,
-		emitToolExecutionUpdate(preparation.toolCall, emit),
-	);
-	return finalizeExecutedToolCall(currentContext, assistantMessage, preparation, executed, config, signal);
-}
-
-function isSequentialToolCall(currentContext: AgentContext, toolCall: AgentToolCall): boolean {
-	return currentContext.tools?.find((tool) => tool.name === toolCall.name)?.executionMode === "sequential";
-}
 
 type PreparedToolCall = {
 	kind: "prepared";
@@ -1292,10 +1286,6 @@ export type ToolCallHooks = Pick<AgentLoopConfig, "beforeToolCall" | "afterToolC
 type ToolPreparationConfig = ToolCallHooks & Pick<AgentLoopConfig, "removedToolHints">;
 
 type ToolUpdateSink = (partialResult: AgentToolResult<any>) => Promise<void> | void;
-
-function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
-	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
-}
 
 export interface PreparedAgentToolCall {
 	toolCall: AgentToolCall;
@@ -1439,17 +1429,6 @@ function abortReleasePromise(signal: AbortSignal | undefined): Promise<typeof AB
 	});
 }
 
-function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink): ToolUpdateSink {
-	return (partialResult) =>
-		emit({
-			type: "tool_execution_update",
-			toolCallId: toolCall.id,
-			toolName: toolCall.name,
-			args: toolCall.arguments,
-			partialResult,
-		});
-}
-
 /** Options for {@link runToolCall}. */
 export interface RunToolCallOptions extends ToolCallHooks {
 	/** Tools the call resolves against. */
@@ -1571,42 +1550,4 @@ async function finalizeExecutedToolCall(
 		result,
 		isError,
 	};
-}
-
-function createErrorToolResult(message: string): AgentToolResult<unknown> {
-	return {
-		content: [{ type: "text", text: message }],
-		details: {},
-	};
-}
-
-async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: AgentEventSink): Promise<void> {
-	await emit({
-		type: "tool_execution_end",
-		toolCallId: finalized.toolCall.id,
-		toolName: finalized.toolCall.name,
-		result: finalized.result,
-		isError: finalized.isError,
-	});
-}
-
-function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResultMessage {
-	return {
-		role: "toolResult",
-		toolCallId: finalized.toolCall.id,
-		toolName: finalized.toolCall.name,
-		// Untyped tools (JS extensions) can return results without content; normalize
-		// so the null never enters session history or provider payloads.
-		content: finalized.result.content ?? [],
-		details: finalized.result.details,
-		usage: finalized.result.usage,
-		...(finalized.result.addedToolNames?.length ? { addedToolNames: finalized.result.addedToolNames } : {}),
-		isError: finalized.isError,
-		timestamp: Date.now(),
-	};
-}
-
-async function emitToolResultMessage(toolResultMessage: ToolResultMessage, emit: AgentEventSink): Promise<void> {
-	await emit({ type: "message_start", message: toolResultMessage });
-	await emit({ type: "message_end", message: toolResultMessage });
 }

@@ -6,15 +6,13 @@ import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sdkModelId } from "../../../src/core/extensions/builtin/anthropic-subscription/context-window.ts";
 import { classifySdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import {
 	_resetLongContextForTesting,
 	markLongContextRefused,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/long-context.ts";
-import {
-	buildAnthropicSubscriptionQueryOptions,
-	sdkModelId,
-} from "../../../src/core/extensions/builtin/anthropic-subscription/options.ts";
+import { buildAnthropicSubscriptionQueryOptions } from "../../../src/core/extensions/builtin/anthropic-subscription/options.ts";
 
 const LONG_CONTEXT_BETA = "context-1m-2025-08-07";
 let directory: string;
@@ -108,14 +106,24 @@ async function captureRequest(target: Model<Api>): Promise<Captured> {
 }
 
 describe("#3408: the subscription request carries the window senpi plans against", () => {
-	it("asks Claude Code for 1M with the [1m] model id, and the installed CLI sends the long-context beta", async () => {
-		const opus = model("claude-opus-5-5", 1_000_000);
+	it("asks Claude Code for a legacy model's 1M with the [1m] id, and the installed CLI sends the long-context beta", async () => {
+		const opus = model("claude-opus-4-6", 1_000_000);
 
 		const request = await captureRequest(opus);
 
-		expect(sdkModelId(opus)).toBe("claude-opus-5-5[1m]");
-		expect(request.model).toBe("claude-opus-5-5");
+		expect(sdkModelId(opus)).toBe("claude-opus-4-6[1m]");
+		expect(request.model).toBe("claude-opus-4-6");
 		expect(request.betas).toContain(LONG_CONTEXT_BETA);
+	}, 60_000);
+
+	it("requests a native-1M model by its plain id: the installed CLI sends no long-context beta (#3801)", async () => {
+		const fable = model("claude-fable-5", 1_000_000);
+
+		const request = await captureRequest(fable);
+
+		expect(sdkModelId(fable)).toBe("claude-fable-5");
+		expect(request.model).toBe("claude-fable-5");
+		expect(request.betas).not.toContain(LONG_CONTEXT_BETA);
 	}, 60_000);
 
 	it("sends no long-context request for a model planned at 200k", async () => {
@@ -129,15 +137,15 @@ describe("#3408: the subscription request carries the window senpi plans against
 
 	it("drops the long-context request once the account refused it", async () => {
 		markLongContextRefused();
-		const opus = model("claude-opus-5-5", 1_000_000);
+		const opus = model("claude-opus-4-6", 1_000_000);
 
 		const request = await captureRequest(opus);
 
-		expect(sdkModelId(opus)).toBe("claude-opus-5-5");
+		expect(sdkModelId(opus)).toBe("claude-opus-4-6");
 		expect(request.betas).not.toContain(LONG_CONTEXT_BETA);
 	}, 60_000);
 
-	it("a live switch to a 1M model through setModel makes the installed CLI send the long-context beta", async () => {
+	it("a live switch to a legacy 1M model through setModel makes the installed CLI send the long-context beta", async () => {
 		const captured: Captured[] = [];
 		const server = createServer((request, response) => {
 			let body = "";
@@ -164,7 +172,7 @@ describe("#3408: the subscription request carries the window senpi plans against
 			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 			const { port } = server.address() as AddressInfo;
 			const haiku = model("claude-haiku-4-5", 200_000);
-			const opus = model("claude-opus-5-5", 1_000_000);
+			const opus = model("claude-opus-4-6", 1_000_000);
 			const options = buildAnthropicSubscriptionQueryOptions({
 				model: haiku,
 				context: { messages: [] },
@@ -209,7 +217,7 @@ describe("#3408: the subscription request carries the window senpi plans against
 				// The capture endpoint answers 400 on purpose; only the requests it received matter.
 			}
 			const before = captured.filter((request) => request.model === "claude-haiku-4-5");
-			const after = captured.filter((request) => request.model === "claude-opus-5-5");
+			const after = captured.filter((request) => request.model === "claude-opus-4-6");
 			expect(captured.map((request) => request.model)).toEqual(
 				[...before, ...after].map((request) => request.model),
 			);

@@ -1,6 +1,4 @@
 import { randomBytes } from "node:crypto";
-import type { AccountSlot } from "./accounts.ts";
-import { EXPIRING_WITHIN_MS } from "./auth-lane.ts";
 import type { Options, SDKUserMessage, SdkQuery, SdkQueryHandle } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
 import {
@@ -104,9 +102,13 @@ export interface AnthropicSubscriptionSessionEntry {
 	taintedReason: string | null;
 	/** Wave C seam: a divergence boundary recorded for the next continuity decision. */
 	pendingForkReason: string | null;
+	/** senpi#1975: first diverged field path the commit boundary named for the pending fork, when it named one. */
+	pendingForkDivergedPath: string | null;
 	lastUsedAt: number;
 	/** Digest of the access token the resident subprocess was spawned with. */
 	credentialDigest?: string;
+	/** senpi#6411: the live `setModel` chain (`done` never rejects) and the model it selects, until it settles. */
+	pendingModelSwitch?: { done: Promise<void>; modelId: string };
 }
 
 export interface CreateSessionRegistryEntryInput {
@@ -231,8 +233,10 @@ export class AnthropicSubscriptionSessionRegistry {
 			branchInfo: null,
 			taintedReason: null,
 			pendingForkReason: null,
+			pendingForkDivergedPath: null,
 			lastUsedAt: now,
 		};
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let entry!: AnthropicSubscriptionSessionEntry;
 		entry = new Proxy(target, {
 			set: (current, property, value) => {
@@ -321,12 +325,12 @@ export function markTainted(senpiSessionId: string, reason: string): void {
 	annotateTainted(sessionRegistry, senpiSessionId, reason);
 }
 
-export async function switchSessionModel(senpiSessionId: string, modelId: string, sdkModel?: string): Promise<boolean> {
+export function switchSessionModel(senpiSessionId: string, modelId: string, sdkModel?: string): boolean {
 	return switchEntryModel(sessionRegistry, senpiSessionId, modelId, sdkModel);
 }
 
-export function recordPendingFork(senpiSessionId: string, reason: string): void {
-	annotatePendingFork(sessionRegistry, senpiSessionId, reason);
+export function recordPendingFork(senpiSessionId: string, reason: string, divergedPath?: string): void {
+	annotatePendingFork(sessionRegistry, senpiSessionId, reason, divergedPath);
 }
 
 export function recordBranchInfo(senpiSessionId: string, info: SessionBranchInfo): void {
@@ -335,14 +339,4 @@ export function recordBranchInfo(senpiSessionId: string, info: SessionBranchInfo
 
 export function isCurrentGeneration(senpiSessionId: string, generation: number): boolean {
 	return sessionRegistry.isCurrentGeneration(senpiSessionId, generation);
-}
-
-export function isBoundAccountTokenExpiring(
-	entry: Pick<AnthropicSubscriptionSessionEntry, "accountName">,
-	accounts: readonly Pick<AccountSlot, "name" | "expires" | "source">[],
-): boolean {
-	const account = accounts.find((candidate) => candidate.name === entry.accountName);
-	return account?.source !== "env" && account !== undefined
-		? activeSessionRegistryBoundary.now() >= account.expires - EXPIRING_WITHIN_MS
-		: false;
 }

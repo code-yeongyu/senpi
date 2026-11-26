@@ -1,12 +1,19 @@
-import type { ExtensionUIContext, QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import type {
+	ExtensionUIContext,
+	QuestionCancelOrigin,
+	QuestionRequest,
+	QuestionResponse,
+} from "../../core/extensions/types.ts";
+import type { UiRequestChange } from "./snapshot-types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
+import { type RpcRemoteOrigin, remoteOriginField } from "./remote-origin.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
 type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
 type Pending = {
 	frame: RpcQuestionUiRequest;
-	progress: (draft: RpcExtensionUIProgress) => void;
-	respond: (response: RpcExtensionUIResponse) => boolean;
+	progress: (draft: RpcExtensionUIProgress) => "applied" | "question_already_resolved";
+	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean | "question_already_resolved";
 	cancel: () => void;
 };
 export const sessionQuestionBridges = new WeakMap<object, ConnectionQuestionBridge>();
@@ -15,8 +22,19 @@ export class ConnectionQuestionBridge {
 	private readonly pending = new Map<string, Pending>();
 	private readonly resolved = new Set<string>();
 	private readonly output: (record: object) => void;
-	constructor(output: (record: object) => void) {
+	private readonly changed: ((change?: UiRequestChange) => void) | undefined;
+	private readonly raiser: () => string | undefined;
+	private readonly origin: () => RpcRemoteOrigin | undefined;
+	constructor(
+		output: (record: object) => void,
+		changed?: (change?: UiRequestChange) => void,
+		raiser: () => string | undefined = () => undefined,
+		origin: () => RpcRemoteOrigin | undefined = () => undefined,
+	) {
 		this.output = output;
+		this.changed = changed;
+		this.raiser = raiser;
+		this.origin = origin;
 	}
 	pendingQuestions(): RpcQuestionUiRequest[] {
 		return [...this.pending.values()].map(({ frame }) => ({
@@ -36,6 +54,8 @@ export class ConnectionQuestionBridge {
 			toolCallId: request.requestId,
 			waitForAnswer: request.waitForAnswer,
 			questions: request.questions,
+			raisedBy: this.raiser() ?? "agent",
+			...remoteOriginField(this.origin()),
 			timeout,
 			askedAtMs,
 			deadlineAtMs: askedAtMs + timeout,
@@ -46,13 +66,23 @@ export class ConnectionQuestionBridge {
 			let comment: string | undefined;
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
+			let claimed = false;
 			const unanswered = () => unansweredQuestionIds(request.questions, answers);
-			const finish = (status: QuestionResponse["status"], resolvedBy?: QuestionResponse["resolvedBy"]) => {
+			const finish = (
+				status: QuestionResponse["status"],
+				resolvedBy?: QuestionResponse["resolvedBy"],
+				cancelOrigin?: QuestionCancelOrigin,
+			) => {
 				if (finished) return;
 				finished = true;
 				clearTimeout(timer);
 				opts?.signal?.removeEventListener("abort", cancel);
 				this.pending.delete(id);
+				this.changed?.({
+					type: "ui_request_settled",
+					uiRequestId: id,
+					disposition: status === "answered" || status === "comment-submitted" ? "answered" : "cancelled",
+				});
 				this.resolved.add(id);
 				const result: QuestionResponse = {
 					status,
@@ -61,6 +91,7 @@ export class ConnectionQuestionBridge {
 					comment,
 					unanswered: unanswered(),
 					...(status === "timed_out" ? { autoResolvedAfterMs: Date.now() - askedAtMs } : {}),
+					...(cancelOrigin !== undefined ? { cancelOrigin } : {}),
 				};
 				this.output({
 					type: "question_resolved",
@@ -93,6 +124,9 @@ export class ConnectionQuestionBridge {
 				frame,
 				cancel,
 				progress: (draft) => {
+					// A claimed question already has its winner: a draft that lands while that answer is being admitted
+					// must not overwrite the selections it settles with (senpi#5960).
+					if (claimed) return "question_already_resolved";
 					if (draft.answers !== undefined) answers = draft.answers;
 					if (draft.comment !== undefined) comment = draft.comment;
 					arm();
@@ -104,10 +138,14 @@ export class ConnectionQuestionBridge {
 							deadlineAtMs: frame.deadlineAtMs,
 							remainingMs: Math.max(0, frame.deadlineAtMs - Date.now()),
 						});
+					return "applied";
 				},
-				respond: (response) => {
+				respond: (response, beforeAnswer) => {
+					// The first answer wins: one that arrives while the winner's `beforeAnswer` runs settles nothing.
+					if (claimed) return "question_already_resolved";
+					// The client's cancel is the user's; a closed connection or an abort is a lifecycle cancel.
 					if ("cancelled" in response) {
-						cancel();
+						finish("cancelled", undefined, "user");
 						return true;
 					}
 					if (!("answers" in response)) return false;
@@ -115,23 +153,45 @@ export class ConnectionQuestionBridge {
 					comment = response.comment;
 					const status = settledQuestionStatus(answers, comment);
 					if (status === undefined) return false;
+					// Only a tool-result answer is reported here. An async or resumed answer is delivered as a
+					// user message, whose question-input release reports it; reporting both would count it twice.
+					if (request.waitForAnswer && opts?.deliver !== "user-message") {
+						claimed = true;
+						try {
+							beforeAnswer?.();
+						} finally {
+							claimed = false;
+						}
+						// A cancel or abort that ran inside `beforeAnswer` settled the question first.
+						if (finished) return "question_already_resolved";
+					}
 					finish(status, "rpc_connection");
 					return true;
 				},
 			});
 			arm();
+			this.changed?.({ type: "ui_request_pending", uiRequestId: id, method: "question", request: frame });
 			this.output(frame);
 			opts?.signal?.addEventListener("abort", cancel, { once: true });
 			if (opts?.signal?.aborted) cancel();
 		});
 	}
-	respond(response: RpcExtensionUIResponse): boolean | "question_incomplete" | "question_already_resolved" {
+	respond(
+		response: RpcExtensionUIResponse,
+		beforeAnswer?: () => void,
+	): boolean | "question_incomplete" | "question_already_resolved" {
 		const pending = this.pending.get(response.id);
-		if (pending) return pending.respond(response) || "question_incomplete";
+		if (pending) {
+			const result = pending.respond(response, beforeAnswer);
+			return result === false ? "question_incomplete" : result;
+		}
 		return this.resolved.has(response.id) ? "question_already_resolved" : false;
 	}
-	progress(draft: RpcExtensionUIProgress): void {
-		this.pending.get(draft.id)?.progress(draft);
+	/** Hands a draft to its pending question; reports whether one took it, or why none did (senpi#5761). */
+	progress(draft: RpcExtensionUIProgress): "applied" | "question_already_resolved" | "unknown_extension_ui_request" {
+		const pending = this.pending.get(draft.id);
+		if (pending) return pending.progress(draft);
+		return this.resolved.has(draft.id) ? "question_already_resolved" : "unknown_extension_ui_request";
 	}
 	cancelAll(): void {
 		for (const pending of this.pending.values()) pending.cancel();
@@ -143,26 +203,48 @@ export async function degradeQuestion(
 	request: QuestionRequest,
 	opts?: Options,
 ): Promise<QuestionResponse> {
+	const askedAtMs = Date.now();
 	const answers: QuestionResponse["answers"] = {};
 	const other = "Other (type an answer)";
 	for (const question of request.questions) {
+		// An abort ends the fallback: no dialog opens after it.
+		if (opts?.signal?.aborted) break;
 		const selected = await ui.select(
 			question.question,
 			[...question.options.map((option) => option.label), other],
 			opts,
 		);
+		// A pick that lands after the abort is not an answer, whether a label or "Other".
+		if (opts?.signal?.aborted) break;
 		if (selected === other) {
 			const text = await ui.input(question.question, undefined, opts);
 			if (text?.trim()) answers[question.id] = { selected: [], text };
 		} else if (selected !== undefined) answers[question.id] = { selected: [selected] };
+		// Report the answers so far as the structured bridge does: an abort or the idle timer settles the
+		// question from the extension's draft, before this fallback returns.
+		if (answers[question.id] !== undefined) opts?.onProgress?.({ answers: { ...answers } });
 	}
-	const comment = await ui.input("Anything else? (optional)", undefined, opts);
-	const unanswered = request.questions.filter((q) => !answers[q.id]).map((q) => q.id);
+	const unanswered = unansweredQuestionIds(request.questions, answers);
+	// An abort is never an answer. Like the structured bridge it settles cancelled, or timed_out when
+	// the aborting side resolved that status; what the user had answered is kept as partial answers.
+	if (opts?.signal?.aborted) {
+		const timedOut = opts.signal.reason === "timed_out";
+		return {
+			status: timedOut ? "timed_out" : "cancelled",
+			answers,
+			unanswered,
+			...(timedOut ? { autoResolvedAfterMs: Date.now() - askedAtMs } : {}),
+		};
+	}
+	// No trailing "anything else?" prompt: a client without `question` shows every dialog as its own
+	// blocking card, so an optional comment read as a new question from the agent
+	// (sisyphuslabs/omo-desktop-app#4042). "Other" above still takes a typed answer per question.
+	// A partial answer settles like the structured path: answered, with the rest listed unanswered.
+	const status = settledQuestionStatus(answers, undefined);
 	return {
-		status: comment?.trim() ? "comment-submitted" : unanswered.length ? "cancelled" : "answered",
-		...(comment?.trim() || unanswered.length === 0 ? { resolvedBy: "rpc_connection" as const } : {}),
+		status: status ?? "cancelled",
+		...(status !== undefined ? { resolvedBy: "rpc_connection" as const } : {}),
 		answers,
-		comment,
 		unanswered,
 	};
 }

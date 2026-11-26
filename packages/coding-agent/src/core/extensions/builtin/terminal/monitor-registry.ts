@@ -16,6 +16,10 @@ import type {
 	MonitorSnapshotEntry,
 	MonitorSourceHost,
 } from "./monitor-types.ts";
+import { loadRpcMonitorSource } from "./rpc-monitor.lazy.ts";
+import type { RegisterRpcMonitorOptions, RpcMonitorSource } from "./rpc-monitor-source.ts";
+import type { MonitorRunawayGuard } from "./settings.ts";
+import { DEFAULT_MONITOR_RUNAWAY_LINES_PER_MINUTE, DEFAULT_MONITOR_RUNAWAY_MINUTES } from "./shared.ts";
 
 export type { RegisterMonitorOptions } from "./command-monitor-source.ts";
 export type { RegisterFileMonitorOptions } from "./file-monitor-source.ts";
@@ -50,7 +54,13 @@ export class MonitorRegistry {
 	readonly #onFire: ((snapshot: readonly MonitorSnapshotEntry[]) => void) | undefined;
 	readonly #commands: CommandMonitorSource;
 	readonly #files: FileMonitorSource;
+	readonly #host: MonitorSourceHost;
+	#rpc: RpcMonitorSource | undefined;
 	#parked = false;
+	#runawayGuard: MonitorRunawayGuard = {
+		linesPerMinute: DEFAULT_MONITOR_RUNAWAY_LINES_PER_MINUTE,
+		minutes: DEFAULT_MONITOR_RUNAWAY_MINUTES,
+	};
 
 	constructor(emit: (event: MonitorEvent) => void, options?: MonitorRegistryOptions) {
 		this.#emit = emit;
@@ -62,9 +72,26 @@ export class MonitorRegistry {
 			emitRaw: (event) => this.#emit(event),
 			ended: (record, reason, exitCode) => this.#emitEnded(record, reason, exitCode),
 			changed: () => this.#notifyChange(),
+			runawayGuard: () => this.#runawayGuard,
 		};
+		this.#host = host;
 		this.#commands = new CommandMonitorSource(host);
 		this.#files = new FileMonitorSource(host, options?.reserve);
+	}
+
+	/** Apply the resolved runaway-guard settings; the registry outlives a reload, the settings do not. */
+	setRunawayGuard(guard: MonitorRunawayGuard): void {
+		this.#runawayGuard = guard;
+	}
+
+	/**
+	 * Wake pacing of a live watch: only persistent command watches are paced. Returns the watch's
+	 * own wake-rate override (undefined = the setting) or undefined when the watch is not paced.
+	 */
+	wakePacing(id: string): { readonly wakesPerHour: number | undefined } | undefined {
+		const record = this.#commands.get(id);
+		if (record === undefined || !record.persistent) return undefined;
+		return { wakesPerHour: record.wakesPerHour };
 	}
 
 	/** Attachment parking is independent of persisted monitor mute and wake budgets. */
@@ -75,7 +102,7 @@ export class MonitorRegistry {
 	}
 
 	snapshot(): readonly MonitorSnapshotEntry[] {
-		return [...this.#commands.values(), ...this.#files.values()].map((record) => ({
+		return [...this.#commands.values(), ...this.#files.values(), ...(this.#rpc?.values() ?? [])].map((record) => ({
 			id: record.id,
 			monitorId: record.monitorId,
 			description: record.description,
@@ -108,7 +135,7 @@ export class MonitorRegistry {
 
 	/** Inject one line into a live command or file watch's event stream (e.g. a restore notice). */
 	emitLine(id: string, line: string): boolean {
-		const record = this.#commands.get(id) ?? this.#files.get(id);
+		const record = this.#commands.get(id) ?? this.#files.get(id) ?? this.#rpc?.get(id);
 		if (!record || record.settled) return false;
 		this.#emitForRecord(record, { type: "line", id: record.id, description: record.description, line });
 		return true;
@@ -126,10 +153,27 @@ export class MonitorRegistry {
 		return this.#commands.register(options);
 	}
 
+	/** Arms an rpc watch (the source loads on the first one); resolves with the arm-time session rows. */
+	async registerRpc(options: RegisterRpcMonitorOptions): Promise<{ id: string; monitorId: string; rows: string[] }> {
+		if (this.#rpc === undefined) {
+			const { RpcMonitorSource } = await loadRpcMonitorSource();
+			this.#rpc ??= new RpcMonitorSource(this.#host);
+		}
+		return this.#rpc.register(options);
+	}
+
+	stopRpc(id: string): boolean {
+		return this.#rpc?.settle(id, "watcher killed") ?? false;
+	}
+
+	stopAllRpc(): number {
+		return this.#rpc?.settleAll("watcher killed") ?? 0;
+	}
+
 	pause(ids: readonly string[]): string[] {
 		const paused: string[] = [];
 		for (const id of ids) {
-			const record = this.#commands.get(id) ?? this.#files.get(id);
+			const record = this.#commands.get(id) ?? this.#files.get(id) ?? this.#rpc?.get(id);
 			if (!record || record.paused) continue;
 			record.paused = true;
 			if ("watch" in record) record.watch.pause();
@@ -140,20 +184,22 @@ export class MonitorRegistry {
 	}
 
 	pauseAll(): string[] {
-		return this.pause([...this.#commands.keys(), ...this.#files.keys()]);
+		return this.pause([...this.#commands.keys(), ...this.#files.keys(), ...(this.#rpc?.keys() ?? [])]);
 	}
 
 	resume(ids?: readonly string[]): MonitorResumeResult[] {
-		const candidates = ids ?? [...this.#commands.keys(), ...this.#files.keys()];
+		const candidates = ids ?? [...this.#commands.keys(), ...this.#files.keys(), ...(this.#rpc?.keys() ?? [])];
 		const resumed: MonitorResumeResult[] = [];
 		for (const id of candidates) {
-			const record = this.#commands.get(id) ?? this.#files.get(id);
+			const record = this.#commands.get(id) ?? this.#files.get(id) ?? this.#rpc?.get(id);
 			if (!record?.paused) continue;
 			record.paused = false;
 			const mutedDropped = "mutedDropped" in record ? record.mutedDropped : 0;
 			if ("mutedDropped" in record) record.mutedDropped = 0;
-			// A rearm (or any resume) restarts the rolling fire budget while keeping its window start.
+			// A rearm (or any resume) restarts the rolling fire count while keeping its window start,
+			// and gives the runaway guard a clean minute history.
 			if ("fireWindow" in record && record.fireWindow !== undefined) record.fireWindow.count = 0;
+			if ("runaway" in record) record.runaway = undefined;
 			resumed.push({ id: record.id, mutedDropped });
 			if ("watch" in record && !this.#files.parked) record.watch.resume();
 		}
@@ -162,11 +208,11 @@ export class MonitorRegistry {
 	}
 
 	mutedDropped(id: string): number {
-		return this.#commands.get(id)?.mutedDropped ?? 0;
+		return this.#commands.get(id)?.mutedDropped ?? this.#rpc?.get(id)?.mutedDropped ?? 0;
 	}
 
 	rearm(id: string): MonitorRearmResult {
-		const record = this.#commands.get(id) ?? this.#files.get(id);
+		const record = this.#commands.get(id) ?? this.#files.get(id) ?? this.#rpc?.get(id);
 		if (!record) return "not_found";
 		if (!record.paused) return "not_paused";
 		this.resume([id]);
@@ -181,6 +227,7 @@ export class MonitorRegistry {
 	dispose(): void {
 		this.#commands.dispose();
 		this.#files.dispose();
+		this.#rpc?.settleAll("watcher disposed");
 		this.#notifyChange();
 	}
 

@@ -26,6 +26,7 @@ afterEach(removeSupervisedScratches, 60_000);
 
 const NO_STALL_ENV = { SENPI_RPC_LOOP_LAG_ERROR_MS: "600000" };
 const frozen: Array<{ pid: number; backlog: ListenBacklog }> = [];
+// oxlint-disable-next-line jest/no-duplicate-hooks -- a second top-level hook kept separate; merging them would change the hook order
 afterEach(() => {
 	for (const { pid, backlog } of frozen.splice(0)) {
 		backlog.release();

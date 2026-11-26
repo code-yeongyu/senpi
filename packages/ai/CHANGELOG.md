@@ -8,9 +8,1050 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.11.26] - 2026-11-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.25] - 2026-11-25
+
+### Breaking Changes
+
+### Added
+
+- Assistant errors can identify the local accounts that require sign-in ([#7214](https://github.com/code-yeongyu/senpi/pull/7214)).
+- `Models.logout` accepts `expectedLoginId` and refuses with `ModelsError` code `stale_login`, changing nothing, when the stored sign-in is not that one; credential stores can implement `deleteLogin` ([#7407](https://github.com/code-yeongyu/senpi/pull/7407))
+
+### Changed
+
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 1 models.
+
+### Fixed
+
+- Kimi K3.1 Pro rows declare `supportsDisabledThinking: false`, a thinking-off turn there no longer sends `thinking: disabled`, and a disabled-thinking rejection is non-retryable even inside a gateway 5xx ([#5721](https://github.com/code-yeongyu/senpi/pull/5721))
+- Google Vertex login now rejects blank project IDs and locations before saving credentials ([#7216](https://github.com/code-yeongyu/senpi/pull/7216)).
+- Retry confirmed HTTP 408s and reset connections on the same model before trying the fallback chain. Mistral now reports the actual HTTP status, so a 400 that quotes a 408 does not trigger a timeout retry ([#7362](https://github.com/code-yeongyu/senpi/pull/7362)).
+- OpenAI Completions, Responses, Azure Responses, and Codex SSE streams now count keep-alive comments as transport activity while waiting for model output ([#4608](https://github.com/code-yeongyu/senpi/issues/4608)).
+- Cursor stream retries are no longer settled by a closed earlier attempt's late `end`, `error`, `trailers` or `data` event, so a stall retry reaches the server instead of exhausting the retry budget ([#7420](https://github.com/code-yeongyu/senpi/pull/7420))
+
+### Removed
+
+## [2026.11.24] - 2026-11-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The OpenGateway model catalog now matches the gateway: it removes `openai/gpt-4-turbo`, `openai/o1`, `openai/o3-mini`, `openai/o4-mini`; updates limits, prices, or capabilities for 2 models.
+
+### Fixed
+
+### Removed
+
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+- `downgradeUnsupportedImages` is exported from `api/transform-messages` and takes `imageDescriptionTool`: with it, the placeholder that replaces an image for a model without image input names a tool that can describe the image ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opencode`, `opencode-go`, `openrouter`).
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 2 models.
+- A Claude OAuth token (`sk-ant-oat...`) given as an API key to an `anthropic-messages` model is no longer refused with `ClaudeOAuthTokenRefusedError`; it is sent as a plain `x-api-key` to the model's `baseUrl` like any other key. `ClaudeOAuthTokenRefusedError` and `isClaudeOAuthTokenRefusedError` are removed ([#7392](https://github.com/code-yeongyu/senpi/pull/7392))
+
+### Fixed
+
+### Removed
+
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+### Removed
+
+## [2026.11.20] - 2026-11-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Bedrock Claude models' on-demand routes carry their own price band (e.g. Haiku 5.5 $0.11/$0.55 per MTok) instead of the global inference band, in the bundled model catalog ([#7122](https://github.com/code-yeongyu/senpi/pull/7122))
+
+### Removed
+
+## [2026.11.19-5] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-4] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-2] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-3] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-2] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+- GPT-6.2 Astra and GPT-6.2 Sol on the ChatGPT subscription (with Fast and, for Sol, Ultrafast variants), plus GPT-6 tier metadata for their OpenAI API and gateway rows ([#6948](https://github.com/code-yeongyu/senpi/pull/6948))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.17-2] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.17] - 2026-11-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15-4] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15-3] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.15-2] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A shared ChatGPT subscription's item-limit 400 now surfaces as a typed error naming the route and the switch-model remedy instead of a raw provider error ([#6718](https://github.com/code-yeongyu/senpi/pull/6718))
+
+### Removed
+
+## [2026.11.15] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- ChatGPT subscription (Sign in with ChatGPT): a session whose thinking level changed no longer fails every turn with `subscription_sharing_unsupported_capability`; the level is sent as the request's reasoning effort ([#6607](https://github.com/code-yeongyu/senpi/issues/6607))
+
+### Removed
+
+## [2026.11.13] - 2026-11-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`cloudflare-ai-gateway`, `cloudflare-workers-ai`, `google`, `google-vertex`, `mistral`, `nvidia`, `opencode`, `opengateway`, `openrouter`, `radius`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+- Provider strict mode and the active provider scope hold across every copy of pi-ai in one process, instead of each copy keeping its own ([#6422](https://github.com/code-yeongyu/senpi/pull/6422)).
+- `activeProviderScope()` (`@earendil-works/pi-ai/node/provider-scope`) throws an error whose `code` is `PI_PROVIDER_SCOPE_UNREADABLE` inside a provider scope it cannot read, instead of reporting that there is no scope ([#6422](https://github.com/code-yeongyu/senpi/pull/6422)).
+
+### Removed
+
+- `installProviderScopeAccessor` and `installImagesProviderScopeAccessor` (the second was reachable through `@earendil-works/pi-ai/compat`). The active provider scope is read from one registry per process, so a per-copy lookup can no longer be installed. Nothing in senpi or omo called them except pi-ai's own `node/provider-scope` ([#6422](https://github.com/code-yeongyu/senpi/pull/6422))
+
+## [2026.11.12] - 2026-11-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.11] - 2026-11-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-3] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Ultrafast pricing adapters and the selection warning now read one shared list of documented Ultrafast models ([#6323](https://github.com/code-yeongyu/senpi/pull/6323))
+
+### Removed
+
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+- Claude Fable 5.2 (`claude-fable-5-2`) is in the generated model catalog for anthropic, amazon-bedrock, openrouter, vercel-ai-gateway, opencode and venice with its release specs: 1M context window, 128k max output, $8/$40 pricing with cache reads at $0.20/MTok, adaptive-only thinking, and Opus 5 as the permitted refusal-fallback target ([#6309](https://github.com/code-yeongyu/senpi/pull/6309))
+
+### Changed
+
+### Fixed
+
+- Array and object tool arguments that arrive as their JSON text are decoded to the declared structure instead of being wrapped into a one-element array of that text, so every parallel `generate_image` call in a turn gets its `reference_image_paths` ([#6266](https://github.com/code-yeongyu/senpi/pull/6266))
+- ChatGPT subscription models no longer report a fixed prompt-cache TTL: OpenAI keeps a signed-in ChatGPT user's cache with no expiry, so `resolvePromptCacheLifetime()` returns `best-effort` and the handoff hint no longer says the cache expired after 30 idle minutes ([#6292](https://github.com/code-yeongyu/senpi/pull/6292), closes [#6290](https://github.com/code-yeongyu/senpi/issues/6290); reported by @jamestesting)
+- `cacheRetention: "long"` on OpenAI GPT-5.6+ Responses requests sends `prompt_cache_options.ttl: "12h"` and resolves a 12-hour lifetime; it previously sent the default `"30m"` ([#6292](https://github.com/code-yeongyu/senpi/pull/6292))
+
+### Removed
+
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The bundled catalog drops the Fireworks models upstream retired (`gpt-oss-120b`, `inkling`, `nemotron-3-ultra-nvfp4`, `nemotron-lightning-3p5-30b-a3b`), and the Fireworks tests no longer depend on which rows upstream still ships, so a release that regenerates the catalog after such a retirement passes its tests ([#6209](https://github.com/code-yeongyu/senpi/pull/6209), fixes #6207)
+
+### Removed
+
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Codex Fast turns are now priced at the tier that was sent when the backend echoes `auto` or `default`, including tiers set only by the `/fast` payload hook, on both SSE and websocket transports ([#6156](https://github.com/code-yeongyu/senpi/pull/6156))
+
+### Removed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+- GPT Image 2.6 Sunburst and Flare in the OpenAI image catalog, and the 2.6 `complexity` option on OpenAI image requests ([#5820](https://github.com/code-yeongyu/senpi/issues/5820))
+
+### Changed
+
+### Fixed
+
+- An explicit `compat.supportsLongCacheRetention` on an `anthropic-messages` model is now authoritative on any host: `true` sends `cache_control.ttl: "1h"` (and reports a 3600 s prompt-cache TTL) through Anthropic-compatible proxies, `false` keeps the 5-minute TTL everywhere, and an unset flag keeps the native-host inference ([#1248](https://github.com/code-yeongyu/senpi/pull/1248))
+- The prompt-cache keep-alive pre-flight and the warm request now share one Anthropic host decision, so an `anthropic-messages` gateway whose model sets `compat.supportsLongCacheRetention: true` is warmed instead of reported unsupported ([#1248](https://github.com/code-yeongyu/senpi/pull/1248))
+- Route selected ChatGPT reauthorization and revocation through the account's saved OAuth route.
+
+### Removed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+- Add opt-in SIWC request shaping to the public Responses adapter, including supported tool loading and HTTP history replay ([#5021](https://github.com/code-yeongyu/senpi/pull/5021)). Provider registration remains separate.
+- Route saved SIWC ChatGPT accounts through public Responses, retain native web search, and keep legacy account requests unchanged (part of #5003).
+- Continue with ChatGPT signs in through SIWC on the existing ChatGPT subscription provider; signing in again with the same verified registration replaces its slot instead of duplicating it (part of #5003).
+- Offer Continue with ChatGPT alongside legacy sign-in through the shared subscription provider.
+
+### Changed
+
+### Fixed
+
+- Sign in with ChatGPT models are ineligible for prompt-cache prewarm even when their catalog enables explicit caching (#5101).
+
+### Removed
+
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Validate Sign in with ChatGPT ID-token signatures and claims before returning credentials, retaining verified identity and the ID token for later sign-in hints ([#5012](https://github.com/code-yeongyu/senpi/pull/5012)).
+- Sign in with ChatGPT refresh errors distinguish reauthorization-required tokens from invalid client configuration while preserving transient network and server failures.
+- Keep validated ChatGPT sign-ins without plan permission, reject inference with actionable typed errors, and allow explicit later plan consent without forcing it on ordinary sign-ins ([#5044](https://github.com/code-yeongyu/senpi/pull/5044)).
+- Reauthorize saved Sign in with ChatGPT accounts using their issued client ID and retained hints, rejecting callback-client or verified-subject mismatches before credentials change ([#5046](https://github.com/code-yeongyu/senpi/pull/5046)).
+- OpenAI-compatible providers that return a tool call's thought signature in `provider_specific_fields` (LiteLLM serving Gemini) no longer fail the request after every tool call: the signature is kept and sent back on the replayed tool call. Thanks to @bluet for the report ([#4564](https://github.com/code-yeongyu/senpi/issues/4564))
+
+### Removed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- `StreamOptions.sessionAffinityKey`: an opaque routing key that Anthropic Messages sends in the session-affinity header instead of `sessionId` ([#5086](https://github.com/code-yeongyu/senpi/pull/5086))
+
+### Changed
+
+### Fixed
+
+- Sign in with ChatGPT uses a free IPv4 loopback callback port when port 1455 is occupied, keeping the same redirect URI for authorization, code exchange and manual paste ([#5008](https://github.com/code-yeongyu/senpi/pull/5008)).
+- OAuth refresh can use an injected session lock to prevent rotating-token reuse across processes without blocking unrelated accounts.
+- A credential pool's all-blocked refusal reports a rate limit with the time the first account is due back instead of an unclassified error ([#5032](https://github.com/code-yeongyu/senpi/pull/5032))
+
+### Removed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Stored credentials carry an optional `loginId` that each sign-in through `Models.login` writes fresh; a token refresh keeps or drops it and never mints one ([#4430](https://github.com/code-yeongyu/senpi/pull/4430))
+- Provider diagnostic codes `account_pool_blocked` (`rate_limit`) and `account_pool_auth_blocked` (`auth`) for a request a subscription account pool refuses locally (#4676).
+
+### Changed
+
+### Fixed
+
+- A managed account-pool placeholder credential is never sent to a provider's token endpoint; resolving it without an account fails with an auth error instead of a provider 401 ([#4426](https://github.com/code-yeongyu/senpi/pull/4426))
+- The page shown after a provider browser sign-in no longer shows the pi logo; it shows the product set with `setOAuthPageBrand` ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- The ChatGPT sign-in authorize request falls back to the host's brand name as `agent_name_hint` when the caller passes no app name ([#4434](https://github.com/code-yeongyu/senpi/pull/4434))
+- Anthropic sessions whose replayed thinking is bound to a different conversation recover instead of failing every turn: Claude requests replaying signed thinking ask the API to drop a mismatched block, and the 400 is retried once on the same model without the replayed thinking ([#5589](https://github.com/code-yeongyu/senpi/pull/5589))
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- A provider request that fails TLS chain verification now reports the runtime's verification code (for example `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`) as its `network` diagnostic code instead of the SDK's connection error class or no diagnostic ([#5253](https://github.com/code-yeongyu/senpi/pull/5253))
+
+### Fixed
+
+- Sign in with ChatGPT reuses the standalone AI CLI's installation ID and uses the configured app name during registration (part of [#5003](https://github.com/code-yeongyu/senpi/issues/5003)).
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fall back to ambient environment variables when stored Google Vertex location or project is an empty string ([#5135](https://github.com/code-yeongyu/senpi/pull/5135)).
+- A 503 whose error body merely mentions a billing lookup (e.g. "resolve Billing Scope: ... dial tcp: i/o timeout") is no longer classified as a spent account, so the turn retries instead of failing as an account usage limit ([#4632](https://github.com/code-yeongyu/senpi/issues/4632))
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- `OAuthTokenEndpointError` carries the response's OAuth error code (`oauthError`) and whether the adapter decided the endpoint refused the credential (`credentialRefused`); Kimi Code's refresh sets both, so its refusal is read from facts rather than from its message ([#5010](https://github.com/code-yeongyu/senpi/pull/5010))
+- Per-account model catalog for Sign in with ChatGPT accounts, read from the account's `/v1/models` list and refreshed when the active account changes.
+
+### Changed
+
+### Fixed
+
+- SIWC sign-out atomically clears local tokens, revokes renewable sessions with bounded retries, and retains registration metadata. In-flight refresh cannot restore a signed-out slot; discarded rotated tokens are revoked and logout waits for their cleanup. Overlapping logouts keep auth blocked until all finish, and unknown slots or unconfirmed remote revocation return a typed unconfirmed result ([#5025](https://github.com/code-yeongyu/senpi/pull/5025)).
+- Classify Sign in with ChatGPT admission and streaming errors using exact provider codes, preserve direct-admission details, and avoid retrying terminal restrictions or invalid requests.
+- A tool call whose name carries a stray word prefix (`trophy_eval`) runs the one registered tool its `_`-separated suffix names, with the usual `[auto-corrected]` notice; a prefix that is a destructive verb or another tool's name is refused ([#5316](https://github.com/code-yeongyu/senpi/pull/5316))
+
+### Removed
+
+- The unused duplicate credential-pool failover engine (`runSlotFailover`, `PoolFailoverError`, `classifyPoolFailure` in `auth/pool/failover` and `auth/pool/classify`); the coding agent's credential pool was always the engine in use. `DEFAULT_SLOT_BLOCK_MS`, `MAX_SLOT_BLOCK_MS` and the `TURN_RETRY_SUPPRESSION_PREFIX` re-export stay ([#5022](https://github.com/code-yeongyu/senpi/pull/5022), part of [#2304](https://github.com/code-yeongyu/senpi/issues/2304))
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Preserve typed-secret OAuth prompt metadata through the compatibility adapter. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
+### Changed
+
+- A Claude OAuth token given to the `anthropic` provider is refused before any request with `ClaudeOAuthTokenRefusedError`, which points at `/login anthropic-subscription`; Anthropic API keys, `ANTHROPIC_AUTH_TOKEN` headers and workload identity federation are unchanged ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+
+### Fixed
+
+- Signing in to ChatGPT Subscription again as an already-saved account replaces that account instead of adding a duplicate, so sessions stop picking its invalidated old token ([#5009](https://github.com/code-yeongyu/senpi/pull/5009))
+- Avoid mixing strict and non-strict function tools on OpenGateway routes; reject conflicting required-strict tools before sending ([#4821](https://github.com/code-yeongyu/senpi/issues/4821)).
+- Tool argument validation for a discriminated `anyOf`/`oneOf` schema reports only the branch the arguments address, as one actionable line ([#5147](https://github.com/code-yeongyu/senpi/pull/5147)).
+- On OpenAI-compatible routes, tools whose parameters are a union of object shapes now tell the model which fields each shape requires ([#5150](https://github.com/code-yeongyu/senpi/pull/5150))
+
+### Removed
+
+- The Anthropic Messages API no longer takes Claude OAuth tokens (`sk-ant-oat...`) as API keys: the request path that presented senpi as Claude Code (identity betas, `claude-cli/<version>` user agent, Claude Code system block, tool-name mapping) and the `PI_CLAUDE_CODE_VERSION` fingerprint resolver are removed ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Anthropic requests send the cross-session stable part of the system prompt as its own cached block, so a new session reads it from cache even when memory or MCP instructions differ ([#4455](https://github.com/code-yeongyu/senpi/pull/4455))
+
+### Fixed
+
+- A 429 that names its reset as a wall clock with a zone ("resets 12am (Asia/Seoul)") now yields a retry hint ([#5047](https://github.com/code-yeongyu/senpi/pull/5047)).
+
+### Removed
+
+- The built-in Anthropic OAuth (PKCE) login, its copy-code login, its loopback callback listener on port 53692, its token refresh, and `loadAnthropicOAuth` from `@earendil-works/pi-ai/oauth`; Claude subscription sign-in goes through the Claude Code CLI ([#4515](https://github.com/code-yeongyu/senpi/pull/4515))
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- GPT-6.1 Terra (`gpt-6.1-terra`) in the ChatGPT subscription catalog, with a 500k-token context ([#4585](https://github.com/code-yeongyu/senpi/pull/4585))
+
+### Changed
+
+### Fixed
+
+- `describeProviderFailureForUser` rewrites the `Provider is not configured: <id>` failure into a neutral step (connect the provider, or choose another model), and shared account-limit descriptions omit TUI login/model commands. The message itself keeps the sentinel for classifiers ([#4341](https://github.com/code-yeongyu/senpi/pull/4341))
+- `AllSlotsBlockedError` shows its due-back time in local time, followed by the ISO instant, with a wait or sign-in step; `soonestUnblockAt` is unchanged ([#4544](https://github.com/code-yeongyu/senpi/pull/4544))
+- An OpenAI-compatible 429 that names a quota exhaustion only in `error.type` (`exceeded_current_quota_error`, no `error.code`) now classifies as `quota` instead of `unknown`; coarse `type` buckets are still ignored ([#4950](https://github.com/code-yeongyu/senpi/issues/4950))
+
+### Removed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+- Assistant messages can carry `errorCause: { type: "model_config", model }` for a model id its route does not serve; every provider stream sets it from the raw body of an error message (`stopReason: "error"`) and keeps only the redacted body of every provider error, and `isRetryableAssistantError` never retries it. `isModelConfigError`, the value-based `redactSecrets` (one token-wise pass, linear in the input, no regular expressions), `redactCredentialShapes` (known key prefixes and JWTs only) and `sanitizeProviderErrorMessage` are exported ([#4283](https://github.com/code-yeongyu/senpi/pull/4283))
+- `AssistantMessage.credentialServedRecently?: true` marks a failed response whose credential served a response moments before ([#2491](https://github.com/code-yeongyu/senpi/issues/2491))
+- Internal block seeds declare their producer-time replay or continuation offset (part of #4272).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `huggingface`, `opengateway`, `openrouter`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+- Moonshot `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` now send `reasoning_effort` (low / high / max) like `kimi-k3`, replay reasoning content, and bill the official USD list price on both Moonshot endpoints ([#4442](https://github.com/code-yeongyu/senpi/pull/4442))
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Recovery stream wrappers carry captured block records with remapped indices instead of dropping them; public events and bytes are unchanged ([#4307](https://github.com/code-yeongyu/senpi/pull/4307))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Assistant event streams can capture block seeds, delta coverage and native block transitions at the moment a provider emits them, for Anthropic, OpenAI Responses (including Codex and Azure) and OpenAI Completions; public events and bytes are unchanged ([#4277](https://github.com/code-yeongyu/senpi/pull/4277))
+- Bedrock, Mistral, Google, Vertex, Cursor, Pi messages, Devin and Faux streams capture block seeds, signatures and native block transitions at emission; public events and bytes are unchanged ([#4285](https://github.com/code-yeongyu/senpi/pull/4285))
+
+### Changed
+
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
 
 ### Fixed
+
+- Protocol-owned tool validators can preserve model arguments instead of applying compatibility coercion ([#4191](https://github.com/code-yeongyu/senpi/issues/4191)).
+
+### Removed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- Provider request options carry the originating session's working directory for subprocess-backed adapters ([#4181](https://github.com/code-yeongyu/senpi/pull/4181)).
+- Kimi Code (`kimi-coding`) serves Kimi K3.1 Pro as `k3.1-pro` and K3.1 Pro Highspeed as `k3.1-pro-highspeed`: thinking only (low / high / max), up to 1M context, image and video input ([#4183](https://github.com/code-yeongyu/senpi/pull/4183))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- `CredentialStore.readSlot` (optional) lets a store resolve one pooled account for a slot-scoped request. `resolveProviderAuth` uses it, and refuses a projected key that is still an unresolved reference object with a named `ConfigReferenceError` ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
+- Shared configuration-value schemas and runtime validation recognize exact `$file`, `$env`, and flat `$concat` objects, with named errors for malformed references ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+- Removed the `llama-cpp-classify` API (`api/llama-cpp-classify.ts` and its `.lazy.ts` wrapper), which existed only to serve the removed `/llama` llama.cpp extension, and dropped `"llama-cpp-classify"` from `KnownClassifierApi` ([#3202](https://github.com/code-yeongyu/senpi/issues/3202), requested by @code-yeongyu).
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `calculateCost` reports `Usage.costUnknown` for a model whose `ModelCost.unknown` is set instead of a $0 cost ([#3844](https://github.com/code-yeongyu/senpi/issues/3844)).
+- OpenGateway catalog generation and runtime refresh accept the public price envelope and legacy flat tables, and reject unsupported currency or billing units. Runtime refresh and release regeneration keep the last good catalog when the feed fails or yields no usable models; the dedicated strict OpenGateway refresh still fails on it ([#4067](https://github.com/code-yeongyu/senpi/issues/4067)).
+
+### Removed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+- Claude Fable 5.5 is known to the model-catalog generator, so the catalog refresh after its release lists it with the pricing, limits and status models.dev publishes. The Anthropic catalog also keeps a model it already ships after models.dev marks it deprecated, labeled deprecated, like the other providers do ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
+
+### Changed
+
+### Fixed
+
+- An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account. Providers that work without a key, or fall back to an ambient key, set `apiKey.keyOptional` and keep accepting a blank key; Kimi does, so a blank-key login that only picks the region for `KIMI_API_KEY` still works ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
+- `AssistantMessage.promptCacheBreakpoint?: true` marks the end of a stable prefix; the Anthropic adapter keeps a cache checkpoint there, so context reduction no longer re-writes the cached conversation at every step ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).
+- Context estimation and overflow checks can use the latest request's context separately from cumulative billed usage, preventing internal SDK requests from inflating context pressure ([omo#10792](https://github.com/code-yeongyu/oh-my-openagent/issues/10792)).
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+- `AssistantMessage.timing` (`AssistantMessageTiming`): optional response timing stamped by the agent loop ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
+- `AssistantMessage.failureSource?: "local"` marks a failure raised by local code rather than a provider, so retry and model fallback can skip it ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`huggingface`, `nvidia`, `opencode`, `openrouter`, `radius`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
+- Claude usage-limit failures retain the reset time from spent five-hour and weekly windows, so goal recovery can wait until the account is usable again ([#3825](https://github.com/code-yeongyu/senpi/issues/3825)).
+- OpenAI (Completions and Responses) and Google (Gemini API and Vertex) leave `usage.reasoning` unset when the provider reports no reasoning count, instead of reporting 0, as the `Usage` contract documents ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
+- Responses prompt-cache keys now follow the model, instructions, and tool schemas instead of session ids across OpenAI, ChatGPT subscription, and Azure. New sessions and task children with identical prefixes share cache affinity, and Responses tools render in deterministic name order ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
+
+- Cursor: Claude Opus 5.5, Fable 5.1, Sonnet 5.5, Haiku 5.5, Muse Wonder, Muse Spark 1.3, Grok 4.7, Gemini 4 Argon, Gemini 3.8 Flash and Auto advertise the context window Cursor actually serves instead of the 200k placeholder; Haiku 5.5 and Grok 4.7 Fast get clean names, and Kimi K3, Muse and Grok 4.5/4.6 accept images ([#3620](https://github.com/code-yeongyu/senpi/issues/3620)).
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Models that models.dev marks deprecated stay available and are labeled `deprecated` instead of disappearing from the bundled catalog: GitHub Copilot Claude Opus 4.7, GPT-5.5 and GPT-5.4, Baseten's Kimi K2 models and others keep working. A model models.dev no longer lists is still removed, and models the catalog had already dropped are not brought back.
+- The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- OpenGateway's DeepSeek V4.1 Flash Ultrafast now costs about 5x more per input token ($0.03 -> $0.15 per 1M) and GLM-5.3 Flash Ultrafast about 7x more ($0.015 -> $0.105), following the gateway's prices; OpenRouter DeepSeek Chat and GLM-5 have smaller context windows (128,000 and 198,000 tokens); Mistral Ministral 3B, Ministral 8B and Voxtral Small and about a dozen OpenRouter models follow upstream prices ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+- The bundled model catalog is refreshed: `deepseek-v4.1-flash-1017` appears on the Alibaba and Qwen token plans and Cloudflare, Venice adds `mercury-3`, several models report lower maximum output tokens (Together Qwen3.6-Plus and Qwen3.7-Max, Vercel AI Gateway DeepSeek V4.1 Flash, OpenRouter Qwen3.5 397B, Qwen3.8 27B, DeepSeek Chat and GLM-5), Cloudflare Workers AI Gemma 4 26B and Nemotron 3 120B change their thinking levels, and Amazon Bedrock GPT-5.6 Sol and Terra support strict tool schemas in the US and India regions ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+
+### Fixed
+
+- A ChatGPT subscription failure now carries a `providerDiagnostic` in every shape the backend reports it (an HTTP error, an in-stream `error` event, a `response.failed` event): a usage limit is `quota` and a rate limit `rate_limit`, each with the new optional `resetsAt` (epoch ms) when the backend names the reset, and an unrecognized failure keeps the provider's own lowercase error type as its `code` instead of reading "no code" ([#3771](https://github.com/code-yeongyu/senpi/issues/3771)).
+
+### Removed
+
+- Mistral `open-mistral-7b`, `open-mixtral-8x22b` and `open-mixtral-8x7b` (deprecated upstream) and Venice `zai-org-glm-4.7-flash` leave the bundled catalog ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+- Image generation results (`AssistantImages`) carry `providerDiagnostic` on failure, with the HTTP status and category, like assistant messages ([omo#10285](https://github.com/code-yeongyu/oh-my-openagent/issues/10285)).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+- Anthropic requests of 4096+ characters to `api.anthropic.com` are sent gzip-compressed, as Claude Code does; `compat.supportsGzipRequestBody` turns it on or off per model, and an endpoint that refuses the encoding gets the same request uncompressed once and stays uncompressed. A custom `fetch` (or a test stub of the global fetch) for `api.anthropic.com` now receives those bodies as gzip bytes with `Content-Encoding: gzip` instead of a JSON string; set `compat.supportsGzipRequestBody: false` to keep the old behavior ([#3643](https://github.com/code-yeongyu/senpi/issues/3643)).
+
+### Changed
+
+### Fixed
+
+- ChatGPT subscription costs for the Fast tier are estimated at 2.5x Standard on every model (was 2x), and GPT-6 Astra / GPT-6.1 Sol Ultrafast at 8x (was 6x), the rates OpenAI meters against a plan's included usage ([#3670](https://github.com/code-yeongyu/senpi/pull/3670)).
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- ChatGPT browser login no longer dead-ends on "State mismatch." when another session or an earlier attempt still holds the callback port: a new login asks the old listener to let go (as Codex CLI does), falls back to port 1457, always closes its own listener, and says plainly when the address has to be pasted. Reported by 채완 ([#3623](https://github.com/code-yeongyu/senpi/issues/3623)).
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+- `auth/pool/select`: `applyAccountOrder` puts the accounts a user order names first, in that order, ahead of the ranked rest; `withoutOrderedAccount` drops a removed account from a stored order. `PooledCredential` gains `order` ([#3591](https://github.com/code-yeongyu/senpi/issues/3591)).
+- `apiKeyEnvProviders()` and `providerCredentialEnvNames()` list the providers and variable names the environment credential lookup reads (#3531).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
+
+### Fixed
+
+- ChatGPT sign-in: a refusal past the plan's usage limit now says which limit applies (an account whose credits ChatGPT did not apply, workspace credits used up, a spend cap, or the plan limit) and how to keep going, from the `x-codex-*` headers Codex reads. Reported by 요즘잘자쿨오모냥이 ([#3615](https://github.com/code-yeongyu/senpi/issues/3615)).
 
 ### Removed
 

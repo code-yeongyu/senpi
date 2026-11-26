@@ -5,6 +5,7 @@ export type OAuthProviderId = string;
 
 /** Legacy extension OAuth prompt. */
 export interface OAuthPrompt {
+	type?: "text" | "secret" | "manual_code";
 	message: string;
 	placeholder?: string;
 	allowEmpty?: boolean;

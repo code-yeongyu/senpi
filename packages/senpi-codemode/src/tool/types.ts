@@ -15,6 +15,7 @@ import {
 } from "../config/settings.ts";
 import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
+import type { CellToolUpdateSink } from "./nested-tool-output.ts";
 
 export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
 export type EvalLanguage = (typeof evalLanguageOrder)[number];
@@ -59,6 +60,8 @@ export interface EvalToolInput {
 	readonly reset?: boolean;
 	/** Run in a fresh sandbox VM instead of the persistent kernel; accepted only while `sandbox.enabled` is on. */
 	readonly isolate?: boolean;
+	/** Set when the call omitted language and it was filled (senpi#5154); the result then says so. */
+	readonly language_inferred?: "only-enabled-language" | "code-markers";
 }
 
 export interface EvalListInput {
@@ -206,7 +209,8 @@ export interface EvalKernelRunInput {
 	 */
 	readonly resolveAtStart?: () => CellSourceAtStart;
 	/**
-	 * Subprocess kernels attach this to the cell's host calls, and the host gives those calls the cell's kernel tools.
+	 * Subprocess kernels attach this to the cell's host calls, and the host gives those calls the cell's kernel tools
+	 * and streams their partial results into the cell's live update.
 	 * A fresh secret per run, sent only to the kernel that runs the cell; never a model-visible id.
 	 */
 	readonly bridgeCellToken?: string;
@@ -261,6 +265,8 @@ export interface EvalKernelManager {
 	 * the host over the bridge, outside the cell's async context). The returned release runs when the cell settles.
 	 */
 	bindCellKernelTools?(token: string, capability: KernelToolsCapability): () => void;
+	/** Streams the partial results of the tools a subprocess-kernel cell calls over the bridge into that cell (#6167). */
+	bindCellToolUpdates?(token: string, sink: CellToolUpdateSink): () => void;
 }
 
 export type ExecuteTool = (
@@ -333,6 +339,19 @@ export interface EvalListDetails {
 
 export type EvalResultDetails = EvalToolDetails | EvalListDetails;
 
+/** Workspace source files written while the cell ran without a `write` or `edit` call (senpi#7232). */
+export interface EvalWrittenFilesDetails {
+	/** Workspace-relative paths, at most the list limit. */
+	readonly files: readonly string[];
+	/** Every source file written; `files` holds the first of them. */
+	readonly total: number;
+	/** How many of `files` the write hooks ran for. */
+	readonly hooked: number;
+	readonly hookFailures?: readonly { readonly path: string; readonly error: string }[];
+	/** Why the cell's writes were not checked, when they were not. */
+	readonly unchecked?: "git_unavailable" | "over_budget" | "scan_failed" | "check_failed";
+}
+
 export interface EvalToolDetails {
 	readonly language: EvalLanguage;
 	readonly languages?: readonly EvalLanguage[];
@@ -358,6 +377,7 @@ export interface EvalToolDetails {
 	readonly memory?: EvalMemoryDetails;
 	/** What a kernel death did to this cell's state, when one did. */
 	readonly kernelState?: EvalKernelState;
+	readonly writtenFiles?: EvalWrittenFilesDetails;
 }
 
 export type EvalKernelState = NonNullable<EvalKernelResult["kernelState"]>;

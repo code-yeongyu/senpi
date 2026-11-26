@@ -53,7 +53,7 @@ describe("regression #1169: Claude SDK is_error results", () => {
 			}),
 		});
 		try {
-			const failure = await streamAnthropicSubscription(model, { messages: [] }).result();
+			const failure = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 			expect(failure.stopReason).toBe("error");
 			expect(failure.errorMessage).toContain("API failure");
 			expect(failure.usage).toMatchObject({ input: 7, output: 3, cacheRead: 11, cacheWrite: 5, totalTokens: 26 });
@@ -85,7 +85,7 @@ describe("regression #1169: Claude SDK is_error results", () => {
 			}),
 		});
 		try {
-			const failure = await streamAnthropicSubscription(model, { messages: [] }).result();
+			const failure = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 			expect(failure.stopReason).toBe("error");
 			expect(failure.usage).toMatchObject({ input: 7, output: 3, cacheRead: 11, cacheWrite: 5, totalTokens: 26 });
 		} finally {
@@ -111,7 +111,7 @@ describe("regression #1169: Claude SDK is_error results", () => {
 			}),
 		});
 		try {
-			const failure = await streamAnthropicSubscription(model, { messages: [] }).result();
+			const failure = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 			expect(failure.stopReason).toBe("error");
 			expect(failure.errorMessage).toContain("session limit");
 		} finally {
@@ -128,7 +128,7 @@ describe("regression #1169: Claude SDK is_error results", () => {
 			}),
 		});
 		try {
-			const success = await streamAnthropicSubscription(model, { messages: [] }).result();
+			const success = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 			expect(success.stopReason).not.toBe("error");
 			expect(success.content).toEqual([{ type: "text", text: "ordinary answer" }]);
 		} finally {

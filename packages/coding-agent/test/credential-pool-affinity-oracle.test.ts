@@ -6,25 +6,22 @@ import {
 	selectSlot,
 } from "@earendil-works/pi-ai/auth/pool/select";
 import { describe, expect, test } from "vitest";
-import type { AccountSlot } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import type {
+	AccountSlot,
+	ClaudeCliAccountSlot,
+} from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	rendezvousOrder as sdkRendezvousOrder,
 	selectAccount,
 } from "../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { TURN_RETRY_SUPPRESSION_PREFIX as SDK_PREFIX } from "../src/core/extensions/builtin/anthropic-subscription/failover.ts";
+import { cliSlot } from "./support/claude-cli-test-slots.ts";
 
 /** The exact hash the anthropic-subscription oracle uses, injected into the pool engine. */
 const sha256Hasher: SlotHasher = (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0);
 
-function account(name: string, extra?: Partial<AccountSlot>): AccountSlot {
-	return {
-		name,
-		access: `${name}-access`,
-		refresh: `${name}-refresh`,
-		expires: 4_102_444_800_000,
-		source: "login",
-		...extra,
-	};
+function account(name: string, extra?: Partial<ClaudeCliAccountSlot>): AccountSlot {
+	return cliSlot(name, extra);
 }
 
 const SLOT_NAME_SETS = [

@@ -211,7 +211,8 @@ async function walkDirectoryWithFd(
 		};
 
 		const onAbort = () => {
-			if (child.exitCode === null) {
+			// A child that never started has no pid; on Node < 24.22 / 26.10 its kill() signals our own process group.
+			if (child.pid !== undefined && child.exitCode === null) {
 				child.kill("SIGKILL");
 			}
 		};

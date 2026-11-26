@@ -1,4 +1,4 @@
-export type TokenFamily = "ctrl" | "sgml" | "bracket";
+export type TokenFamily = "ctrl" | "sgml" | "bracket" | "dsml";
 
 export interface ControlToken {
 	readonly family: TokenFamily;
@@ -20,6 +20,7 @@ type ParserMode =
 	| "ctrlFirst"
 	| "ctrlName"
 	| "ctrlClose"
+	| "dsmlPrefix"
 	| "sgmlFirst"
 	| "sgmlName"
 	| "bracketFirst"
@@ -33,6 +34,7 @@ const MIN_BRACKET_NAME = 2;
 const LESS_THAN = "<";
 const GREATER_THAN = ">";
 const PIPE = "|";
+const DSML_MARKER = "｜DSML｜";
 const SLASH = "/";
 const LEFT_BRACKET = "[";
 const RIGHT_BRACKET = "]";
@@ -59,6 +61,40 @@ function isAsciiLetter(value: string): boolean {
 
 function isNameChar(value: string): boolean {
 	return isAsciiLetter(value) || isAsciiDigit(value) || value === UNDERSCORE;
+}
+
+/**
+ * Angle-bracket special tokens that tokenizers actually define (SentencePiece/Llama `<s>`,
+ * BERT-style `<pad>`/`<unk>`/`<mask>`, Gemma turn markers, reasoning and tool-call delimiters).
+ * Matched case-insensitively, with or without the closing slash. Anything else in angle
+ * brackets is markup, not a control token.
+ */
+export const SGML_CONTROL_TOKEN_NAMES: ReadonlySet<string> = new Set([
+	"s",
+	"pad",
+	"unk",
+	"mask",
+	"bos",
+	"eos",
+	"sep",
+	"cls",
+	"eot",
+	"eom",
+	"endoftext",
+	"think",
+	"start_of_turn",
+	"end_of_turn",
+	"start_of_image",
+	"end_of_image",
+	"im_start",
+	"im_end",
+	"tool_call",
+	"tool_response",
+]);
+
+export function isSgmlControlTokenName(rawName: string): boolean {
+	const name = rawName.startsWith(SLASH) ? rawName.slice(1) : rawName;
+	return SGML_CONTROL_TOKEN_NAMES.has(name.toLowerCase());
 }
 
 function isBracketNameChar(value: string): boolean {
@@ -99,6 +135,24 @@ export class CandidateParser {
 
 	#advance(value: string, offset: number): CandidateOutcome[] {
 		const mode = this.#mode;
+		if ((mode === "angleOpen" || mode === "sgmlFirst") && value === DSML_MARKER[0]) {
+			this.#buffer += value;
+			this.#nameLength = 1;
+			this.#mode = "dsmlPrefix";
+			return [];
+		}
+		if (mode === "dsmlPrefix") {
+			if (value !== DSML_MARKER[this.#nameLength]) {
+				return this.#rejectWith(value, offset);
+			}
+			this.#nameLength += 1;
+			// The marker ends before the tag name and attributes, not at the closing angle bracket.
+			if (this.#nameLength === DSML_MARKER.length) {
+				return [this.#emit("dsml", this.#buffer.startsWith("</") ? 3 : 2, 0, value, offset)];
+			}
+			this.#buffer += value;
+			return [];
+		}
 		if (mode === "angleOpen") {
 			if (value === PIPE) {
 				this.#buffer += value;
@@ -160,6 +214,12 @@ export class CandidateParser {
 		}
 		if (mode === "sgmlName") {
 			if (value === GREATER_THAN) {
+				// Only a tokenizer special token is a leak candidate. Ordinary markup (`</div>`, `<span>`)
+				// is text: runs of HTML/XML closing tags in prose, code samples and tool arguments
+				// latched the guard (omo#10789).
+				if (!isSgmlControlTokenName(this.#buffer.slice(1))) {
+					return this.#rejectWith(value, offset);
+				}
 				return [this.#emit("sgml", 1, 0, value, offset)];
 			}
 			if (isNameChar(value)) {

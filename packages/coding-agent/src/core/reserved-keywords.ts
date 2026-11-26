@@ -32,7 +32,7 @@ const NOT_AFTER_IDENTIFIER = String.raw`(?<![A-Za-z0-9][-_.]|[/\\])`;
 const NOT_BEFORE_PATH = String.raw`(?![-_.]?[A-Za-z0-9]*[/\\])`;
 // The name must end its own word (`ulw-plan-refactor`, `ulw-plan.md` do not count); a chained
 // skill word may follow if it, too, ends there (`mass ulw-loop`).
-const SEGMENT_END = String.raw`(?![-_.]?[A-Za-z0-9])`;
+const SEGMENT_END = "(?![-_.]?[A-Za-z0-9])";
 const NOT_INTO_IDENTIFIER = String.raw`(?![-_](?!(?:loop|plan|research|execute|mass)${SEGMENT_END})[A-Za-z0-9]|\.[A-Za-z0-9])`;
 
 const keywordPattern = (body: string): RegExp =>

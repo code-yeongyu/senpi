@@ -1,5 +1,6 @@
 import type { Static } from "typebox";
 import { Type } from "typebox";
+import { runtimeNameOf } from "../kernels/js/runtime-name.ts";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -43,6 +44,12 @@ export const featureSettingsProperties = {
 		Type.Object({ advertiseHelpers: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
 	),
 	kernelTools: Type.Optional(Type.Object({ enabled: Type.Optional(Type.Boolean()) }, { additionalProperties: false })),
+	jsCells: Type.Optional(
+		Type.Object(
+			{ typescript: Type.Optional(Type.Boolean()), scope: Type.Optional(Type.Boolean()) },
+			{ additionalProperties: false },
+		),
+	),
 };
 
 const featureSettingsSchema = Type.Object(featureSettingsProperties);
@@ -50,6 +57,33 @@ const featureSettingsSchema = Type.Object(featureSettingsProperties);
 export type CodemodeFeatureSettings = Static<typeof featureSettingsSchema>;
 
 export type JsIsolation = "worker" | "process";
+
+/** The host as the JavaScript kernel's default isolation sees it: what its own executable is, and on which platform. */
+export interface JsIsolationHost {
+	/** "bun" or "node" when the host's executable is that runtime; undefined for a compiled binary. */
+	readonly executable: "bun" | "node" | undefined;
+	readonly platform: NodeJS.Platform;
+}
+
+export function currentJsIsolationHost(
+	execPath: string = process.execPath,
+	platform: NodeJS.Platform = process.platform,
+): JsIsolationHost {
+	return { executable: runtimeNameOf(execPath), platform };
+}
+
+/**
+ * Without a setting, a POSIX host whose executable is bun runs the kernel in its own process: a Bun 1.4.4 Worker thread
+ * can corrupt the JavaScriptCore heap and take the whole host down with it (SIGBUS/SIGTRAP on macOS, the open upstream
+ * class behind omo#12369), and a kernel process cannot. A Node.js host keeps the worker thread, and so does a compiled
+ * binary: its executable cannot run process-entry.js, so process mode there needs a bun or node on PATH, which only an
+ * explicit setting asks for. A Windows bun host keeps the worker thread too: the crash evidence is macOS, and the
+ * process kernel's Windows channel (no libc, cell output shares the frame channel) has no CI coverage, so there the
+ * mode stays opt-in.
+ */
+export function defaultJsIsolation(host: JsIsolationHost): JsIsolation {
+	return host.executable === "bun" && host.platform !== "win32" ? "process" : "worker";
+}
 
 export interface ResolvedSandbox {
 	readonly enabled: boolean;
@@ -71,14 +105,19 @@ export function pickFeatureSettings(input: CodemodeFeatureSettings): CodemodeFea
 		...(input.sandbox === undefined ? {} : { sandbox: input.sandbox }),
 		...(input.prompt === undefined ? {} : { prompt: input.prompt }),
 		...(input.kernelTools === undefined ? {} : { kernelTools: input.kernelTools }),
+		...(input.jsCells === undefined ? {} : { jsCells: input.jsCells }),
 	};
 }
 
-/** The environment wins over the file; an unknown value is ignored. Default: today's worker-thread kernel. */
-export function resolveJsIsolation(settings: CodemodeFeatureSettings, env: Environment = process.env): JsIsolation {
+/** The environment wins over the file, the file over the host default; an unknown value is ignored. */
+export function resolveJsIsolation(
+	settings: CodemodeFeatureSettings,
+	env: Environment = process.env,
+	host: JsIsolationHost = currentJsIsolationHost(),
+): JsIsolation {
 	const fromEnv = env[JS_ISOLATION_ENVIRONMENT_FLAG];
 	if (fromEnv === "worker" || fromEnv === "process") return fromEnv;
-	return settings.isolation?.js ?? "worker";
+	return settings.isolation?.js ?? defaultJsIsolation(host);
 }
 
 /** Off by default; the environment's memory cap wins over the file when it is a positive integer. */
@@ -107,4 +146,16 @@ export function resolveAdvertiseHelpers(settings: CodemodeFeatureSettings): bool
 
 export function resolveKernelToolsEnabled(settings: CodemodeFeatureSettings): boolean {
 	return settings.kernelTools?.enabled ?? true;
+}
+
+export interface ResolvedJsCells {
+	/** Run JS cells written in TypeScript with their types erased; the prompt says so. */
+	readonly typescript: boolean;
+	/** Install the `scope()` helper for `await using` cleanup; the prompt documents it. */
+	readonly scope: boolean;
+}
+
+/** Both off by default, so the kernel, its globals and the default eval prompt stay as they were. */
+export function resolveJsCells(settings: CodemodeFeatureSettings): ResolvedJsCells {
+	return { typescript: settings.jsCells?.typescript ?? false, scope: settings.jsCells?.scope ?? false };
 }

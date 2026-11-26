@@ -101,7 +101,7 @@ export function renderQuestionLine(question: Question): string {
 	return (
 		INDENT +
 		theme.fg("text", theme.bold(question.header)) +
-		theme.fg("muted", " — ") +
+		theme.fg("muted", " - ") +
 		theme.fg("text", question.question)
 	);
 }
@@ -124,6 +124,25 @@ export function renderAnswerHint(): string {
 		theme.fg("dim", "/answer"),
 		theme.fg("muted", "or just type your reply"),
 	].join(theme.fg("muted", " · "));
+}
+
+/**
+ * How to select text while the app owns the mouse: Option on iTerm2, Option on macOS VS Code only with
+ * `terminal.integrated.macOptionClickForcesSelection`, Shift elsewhere (Windows Terminal, Ghostty,
+ * WezTerm, kitty, VS Code on Windows/Linux). Terminal.app documents no drag bypass (Option-drag is its
+ * rectangular selection); its documented way out is Command-R, which toggles Allow Mouse Reporting.
+ * Inside tmux the outer terminal decides and cannot be detected.
+ */
+export function selectionBypassHint(
+	termProgram = process.env.TERM_PROGRAM ?? "",
+	platform: NodeJS.Platform = process.platform,
+): string {
+	if (termProgram === "iTerm.app") return "option+drag";
+	if (termProgram === "Apple_Terminal") return "cmd+r (toggle mouse reporting)";
+	if (termProgram === "vscode" && platform === "darwin")
+		return "option+drag (with terminal.integrated.macOptionClickForcesSelection)";
+	if (termProgram === "tmux") return "shift+drag (option+drag on iTerm2)";
+	return "shift+drag";
 }
 
 export interface AskUserAsyncWidgetOptions {
@@ -243,12 +262,17 @@ export class AskUserAsyncWidget implements Component {
 				theme.fg("muted", `▸ +${this.pendingCount - 1} more · ${keyText("app.question.next")} next question`),
 				"next",
 			);
-		if (this.options.mouseCaptureActive) {
-			const bypass = ["iTerm.app", "Apple_Terminal"].includes(process.env.TERM_PROGRAM ?? "")
-				? "option+drag"
-				: "shift+drag";
-			lines.push(...new Text(theme.fg("muted", `click an option · ${bypass} to select text`), 0, 0).render(width));
-		}
+		const capture = this.options.mouseCaptureActive ? (this.options.tui?.mouseCaptureState() ?? "armed") : "off";
+		if (capture === "armed")
+			lines.push(
+				...new Text(theme.fg("muted", `click an option · ${selectionBypassHint()} to select text`), 0, 0).render(
+					width,
+				),
+			);
+		else if (capture === "yielded")
+			lines.push(
+				...new Text(theme.fg("muted", "wheel scrolls · press any key to click options again"), 0, 0).render(width),
+			);
 		lines.push(...new Text(renderAnswerHint(), 0, 0).render(width));
 		return lines;
 	}

@@ -13,6 +13,8 @@ interface FakeOwner extends DeadlineSessionOwner {
 	readonly stops: TurnDeadline[];
 	readonly warnings: string[];
 	aborts: number;
+	/** Extension handler waits holding the turn; releasing them lets the aborted run settle (senpi#3650). */
+	heldHandlers: number;
 	/** Ends the aborted run, as the agent loop does once every tool saw the abort signal. */
 	settleAbort(): void;
 }
@@ -25,6 +27,13 @@ function fakeOwner(): FakeOwner {
 		stops: [],
 		warnings: [],
 		aborts: 0,
+		heldHandlers: 0,
+		releaseHeldExtensionHandlers: () => {
+			const released = owner.heldHandlers;
+			owner.heldHandlers = 0;
+			if (released > 0) settle();
+			return released;
+		},
 		_recordDeadlineStop: (deadline) => owner.stops.push(deadline),
 		abortTurnForDeadline: () => {
 			owner.aborts += 1;
@@ -59,17 +68,34 @@ describe("turn deadline tracker (senpi#3227 review)", () => {
 		expect(owner.warnings).toEqual([]);
 	});
 
-	it("reports a turn no abort can end after the grace instead of faking idle", async () => {
+	it("reports a turn neither the abort nor the handler release can end, after both graces, instead of faking idle", async () => {
 		const owner = fakeOwner();
 		const tracker = new AgentDeadlineTracker(owner, () => ({ inactivityMs: 60_000, maxRuntimeMs: 0 }));
 		tracker.arm();
 
-		await vi.advanceTimersByTimeAsync(60_000 + TURN_DEADLINE_GRACE_MS - 1);
+		await vi.advanceTimersByTimeAsync(60_000 + 2 * TURN_DEADLINE_GRACE_MS - 1);
 		expect(owner.warnings).toEqual([]);
 		await vi.advanceTimersByTimeAsync(1);
 
 		expect(owner.isIdle).toBe(false);
 		expect(owner.warnings).toEqual(["turn_deadline_unsettled"]);
+	});
+
+	it("releases extension handlers holding the turn after the grace, so the turn settles without a report (senpi#3650)", async () => {
+		// given a turn held by an extension handler that the abort alone cannot end
+		const owner = fakeOwner();
+		owner.heldHandlers = 1;
+		const tracker = new AgentDeadlineTracker(owner, () => ({ inactivityMs: 60_000, maxRuntimeMs: 0 }));
+		tracker.arm();
+
+		// when the lease fires and the first grace runs out
+		await vi.advanceTimersByTimeAsync(60_000 + TURN_DEADLINE_GRACE_MS);
+		await vi.advanceTimersByTimeAsync(TURN_DEADLINE_GRACE_MS);
+
+		// then the held handler was released, the turn settled, and nothing was reported as unsettled
+		expect(owner.heldHandlers).toBe(0);
+		expect(owner.isIdle).toBe(true);
+		expect(owner.warnings).toEqual([]);
 	});
 
 	it("keeps a stopped, unsettled run's deadline when the user steers into it", async () => {

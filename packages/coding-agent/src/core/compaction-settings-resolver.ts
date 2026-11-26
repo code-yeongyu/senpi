@@ -20,7 +20,6 @@ export interface ResolvedCompactionSettings {
 	idleCompactionEnabled: boolean;
 	graceBandEnabled: boolean;
 	toolAdmissionEnabled: boolean;
-	reminderEnabled: boolean;
 	reserveScalingEnabled: boolean;
 	speculativeLeadTokens?: number;
 	/** Positive finite number, or undefined for the size-adaptive default. */
@@ -42,7 +41,6 @@ const DEFAULTS = {
 	idleCompactionEnabled: true,
 	graceBandEnabled: true,
 	toolAdmissionEnabled: true,
-	reminderEnabled: true,
 	reserveScalingEnabled: true,
 } as const;
 
@@ -54,7 +52,7 @@ export function resolveCompactionSettings(
 	settings?: CompactionSettings,
 	forModel?: CompactionModelSelector,
 ): ResolvedCompactionSettings {
-	const raw = settings as Record<string, unknown> | undefined;
+	const raw = settings;
 	return {
 		enabled: typeof raw?.enabled === "boolean" ? raw.enabled : DEFAULTS.enabled,
 		// Token budgets resolve through the per-model override table and reject invalid
@@ -76,7 +74,6 @@ export function resolveCompactionSettings(
 		graceBandEnabled: typeof raw?.graceBandEnabled === "boolean" ? raw.graceBandEnabled : DEFAULTS.graceBandEnabled,
 		toolAdmissionEnabled:
 			typeof raw?.toolAdmissionEnabled === "boolean" ? raw.toolAdmissionEnabled : DEFAULTS.toolAdmissionEnabled,
-		reminderEnabled: typeof raw?.reminderEnabled === "boolean" ? raw.reminderEnabled : DEFAULTS.reminderEnabled,
 		reserveScalingEnabled:
 			typeof raw?.reserveScalingEnabled === "boolean" ? raw.reserveScalingEnabled : DEFAULTS.reserveScalingEnabled,
 		speculativeLeadTokens:

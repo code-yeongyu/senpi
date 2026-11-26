@@ -99,7 +99,7 @@ describe("openai-responses allowed_tools refusal", () => {
 		expect(message.stopReason).toBe("stop");
 		expect(sent).toHaveLength(2);
 		expect(choiceType(sent[0])).toBe("allowed_tools");
-		expect(toolNames(sent[1] ?? {})).toEqual(["read", "bash"]);
+		expect(toolNames(sent[1] ?? {})).toEqual(["bash", "read"]);
 		expect(sent[1]?.tool_choice).toBeUndefined();
 	});
 
@@ -145,7 +145,7 @@ describe("openai-responses allowed_tools refusal", () => {
 
 		expect(message.stopReason).toBe("stop");
 		expect(sent.map(choiceType)).toEqual(["allowed_tools", undefined, undefined]);
-		expect(toolNames(sent[2] ?? {})).toEqual(["read", "bash"]);
+		expect(toolNames(sent[2] ?? {})).toEqual(["bash", "read"]);
 	});
 
 	it("does not retry an unrelated 400", async () => {

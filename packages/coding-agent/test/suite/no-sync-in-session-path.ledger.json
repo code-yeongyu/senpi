@@ -40,13 +40,6 @@
 	"syncFs": [
 		{
 			"file": "src/core/agent-session.ts",
-			"api": "readFileSync",
-			"symbol": "_expandSkillCommand",
-			"count": 1,
-			"note": "one skill markdown file per explicit $skill token (KB-scale, read once per expansion)"
-		},
-		{
-			"file": "src/core/agent-session.ts",
 			"api": "writeFileSync",
 			"symbol": "exportToJsonl",
 			"count": 1,
@@ -193,6 +186,13 @@
 			"note": "this process's holder record for the open session (~100 bytes), written once per session open or switch (senpi#2184)"
 		},
 		{
+			"file": "src/core/session-write-fence.ts",
+			"api": "readFileSync",
+			"symbol": "readSessionFence",
+			"count": 1,
+			"note": "DELIBERATE transcript path (senpi#3652): the session file's write fence (<file>.fence, ~40 bytes, normally ENOENT) re-read right before each transcript write, in the same synchronous step as the write it guards, so a writer whose file was taken over cannot append in between"
+		},
+		{
 			"file": "src/core/session-manager.ts",
 			"api": "appendFileSync",
 			"symbol": "_persist",
@@ -219,20 +219,6 @@
 			"symbol": "forkFrom",
 			"count": 1,
 			"note": "DELIBERATE transcript path: forked transcript written once (session-scale)"
-		},
-		{
-			"file": "src/core/session-manager.ts",
-			"api": "appendFileSync",
-			"symbol": "open",
-			"count": 1,
-			"note": "DELIBERATE transcript path: session file read and re-appended on open (session-scale)"
-		},
-		{
-			"file": "src/core/session-manager.ts",
-			"api": "readFileSync",
-			"symbol": "open",
-			"count": 1,
-			"note": "DELIBERATE transcript path: session file read and re-appended on open (session-scale)"
 		},
 		{
 			"file": "src/core/session-resident-store.ts",
@@ -317,6 +303,20 @@
 			"symbol": "getFileContentRevision",
 			"count": 1,
 			"note": "whole file hashed for a content revision (file-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "readFileSync",
+			"symbol": "seenNoticeIds",
+			"count": 1,
+			"note": "auth-notices-seen.json beside auth.json, read when credential notices are listed at startup (senpi#3486; a few hundred bytes)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "writeFileSync",
+			"symbol": "markNoticesSeen",
+			"count": 1,
+			"note": "auth-notices-seen.json, written once when a credential notice is first shown at startup (senpi#3486; a few hundred bytes, 0600)"
 		}
 	]
 }

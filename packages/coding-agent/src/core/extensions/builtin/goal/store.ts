@@ -8,6 +8,7 @@ import { transitionGoalStatus } from "./transitions.ts";
 import type {
 	Goal,
 	GoalAccountingMode,
+	GoalContinuationStoppedDetail,
 	GoalStoreRef,
 	GoalUpdate,
 	GoalUpdateSource,
@@ -67,6 +68,7 @@ export async function createGoal(ref: GoalStoreRef, objective: string, tokenBudg
 			timeUsedSeconds: 0,
 			consecutiveContinuations: 0,
 			unattendedContinuations: 0,
+			noProgressContinuations: 0,
 			createdAt: now,
 			updatedAt: now,
 			lastStartedAt: now,
@@ -109,6 +111,7 @@ export async function updateGoal(
 				timeUsedSeconds: 0,
 				consecutiveContinuations: 0,
 				unattendedContinuations: 0,
+				noProgressContinuations: 0,
 				createdAt: now,
 				updatedAt: now,
 				...(tokenBudget === undefined ? {} : { tokenBudget }),
@@ -133,14 +136,18 @@ export async function updateGoal(
 		if (next.status !== current.status) {
 			next.consecutiveContinuations = 0;
 			next.unattendedContinuations = 0;
+			next.noProgressContinuations = 0;
 			delete next.lastContinuationSignature;
 			delete next.continuationStoppedAt;
+			delete next.continuationStoppedDetail;
 		}
 		if (source === "user" && requestedStatus === "active") {
 			next.consecutiveContinuations = 0;
 			next.unattendedContinuations = 0;
+			next.noProgressContinuations = 0;
 			delete next.lastContinuationSignature;
 			delete next.continuationStoppedAt;
+			delete next.continuationStoppedDetail;
 			next.lastStartedAt ??= nowSeconds();
 		}
 		if (tokenBudget === undefined) delete next.tokenBudget;
@@ -202,18 +209,21 @@ export async function recordContinuationDelivered(
 	ref: GoalStoreRef,
 	signature: string,
 	expectedGoalId?: string,
-	options: { countUnattended?: boolean } = {},
+	options: { countUnattended?: boolean; countStreak?: boolean } = {},
 ): Promise<Goal | null> {
 	return withGoalFileLock(ref, async (held) => {
 		const goal = await readGoalFile(ref);
 		if (!goal || (expectedGoalId !== undefined && goal.id !== expectedGoalId)) return null;
+		const counted = options.countUnattended === false ? 0 : 1;
 		const next: Goal = {
 			...goal,
-			consecutiveContinuations: (goal.consecutiveContinuations ?? 0) + 1,
-			unattendedContinuations: (goal.unattendedContinuations ?? 0) + (options.countUnattended === false ? 0 : 1),
+			consecutiveContinuations: (goal.consecutiveContinuations ?? 0) + (options.countStreak === false ? 0 : 1),
+			unattendedContinuations: (goal.unattendedContinuations ?? 0) + counted,
+			noProgressContinuations: (goal.noProgressContinuations ?? 0) + counted,
 			lastContinuationSignature: signature,
 		};
 		delete next.continuationStoppedAt;
+		delete next.continuationStoppedDetail;
 		if (next.status === "active") next.lastStartedAt ??= nowSeconds();
 		await held.write(next);
 		return next;
@@ -222,15 +232,17 @@ export async function recordContinuationDelivered(
 
 export async function resetContinuationStreak(
 	ref: GoalStoreRef,
-	options: { unattended?: boolean } = {},
+	options: { unattended?: boolean; progress?: boolean } = {},
 ): Promise<Goal | null> {
 	return withGoalFileLock(ref, async (held) => {
 		const goal = await readGoalFile(ref);
 		if (!goal) return goal;
 		const next: Goal = { ...goal, consecutiveContinuations: 0 };
 		if (options.unattended === true) next.unattendedContinuations = 0;
+		if (options.unattended === true || options.progress === true) next.noProgressContinuations = 0;
 		delete next.lastContinuationSignature;
 		delete next.continuationStoppedAt;
+		delete next.continuationStoppedDetail;
 		if (options.unattended === true && next.status === "active") next.lastStartedAt ??= nowSeconds();
 		await held.write(next);
 		return next;
@@ -243,6 +255,7 @@ export async function recordGoalContinuationStopped(
 	expected: Goal,
 	at: number,
 	blockedReason: string | undefined,
+	detail: GoalContinuationStoppedDetail,
 ): Promise<{ goal: Goal | null; recorded: boolean }> {
 	return withGoalFileLock(ref, async (held) => {
 		const current = await readGoalFile(ref);
@@ -265,10 +278,14 @@ export async function recordGoalContinuationStopped(
 		if (blockedReason !== undefined) {
 			next.consecutiveContinuations = 0;
 			next.unattendedContinuations = 0;
+			next.noProgressContinuations = 0;
 			delete next.lastContinuationSignature;
 		}
 		delete next.lastStartedAt;
 		next.continuationStoppedAt = at;
+		// The claim alone cannot rebuild the session entries; keep the denied payload with it so a later
+		// session start can re-append exactly the entries a crash swallowed (senpi#3015).
+		next.continuationStoppedDetail = detail;
 		await held.write(next);
 		return { goal: next, recorded: true };
 	});

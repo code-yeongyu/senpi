@@ -26,6 +26,8 @@ const admissionIdentitySchema = clientMessageIdentitySchema.extend({
 	durableSessionId: z.string(),
 	fingerprint: z.string(),
 	disposition: z.enum(["queued", "started", "handled"]),
+	/** The engine turn this admission started; older, queued, and handled admissions omit it. */
+	turnId: z.string().optional(),
 	/** The host minted `clientMessageId` for input sent without one (`host:<durableSessionId>:<uuid>`). */
 	hostMinted: z.literal(true).optional(),
 });
@@ -35,6 +37,8 @@ const preparedInputSchema = clientMessageIdentitySchema.extend({
 	images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() })).optional(),
 	mode: z.enum(["steer", "followUp"]),
 	enqueueOrder: z.number(),
+	// Additive: a record written before this field restores with no source (unknown origin).
+	source: z.enum(["interactive", "rpc", "extension"]).optional(),
 });
 
 export const clientAdmissionRecordSchema = z.discriminatedUnion("state", [

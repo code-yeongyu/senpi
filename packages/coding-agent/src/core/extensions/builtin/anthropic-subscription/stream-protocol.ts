@@ -45,13 +45,30 @@ export function mapToolArguments(name: string, argumentsValue: Record<string, un
 	return mapToolArgs(name, argumentsValue);
 }
 
-export function updateUsage(model: Model<Api>, output: AssistantMessage, usage: SdkUsage): void {
+export function updateUsage(
+	model: Model<Api>,
+	output: AssistantMessage,
+	usage: SdkUsage,
+	scope: "request-start" | "request-delta" | "query",
+): void {
+	if (scope === "request-start") {
+		output.usage.input = 0;
+		output.usage.output = 0;
+		output.usage.cacheRead = 0;
+		output.usage.cacheWrite = 0;
+	}
 	if (usage.input_tokens != null) output.usage.input = usage.input_tokens;
 	if (usage.output_tokens != null) output.usage.output = usage.output_tokens;
 	if (usage.cache_read_input_tokens != null) output.usage.cacheRead = usage.cache_read_input_tokens;
 	if (usage.cache_creation_input_tokens != null) output.usage.cacheWrite = usage.cache_creation_input_tokens;
 	output.usage.totalTokens =
 		output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+	if (scope !== "query") {
+		output.usage.contextUsage = {
+			input: output.usage.input + output.usage.cacheRead + output.usage.cacheWrite,
+			output: output.usage.output,
+		};
+	}
 	calculateCost(model, output.usage);
 }
 
@@ -63,6 +80,7 @@ export function emptyOutput(model: Model<Api>): AssistantMessage {
 		provider: model.provider,
 		model: model.id,
 		usage: {
+			contextUsage: null,
 			input: 0,
 			output: 0,
 			cacheRead: 0,

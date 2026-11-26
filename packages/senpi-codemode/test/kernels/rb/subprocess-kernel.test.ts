@@ -7,6 +7,8 @@ import type { SubprocessSpawn } from "../../../src/kernels/shared/subprocess-ker
 import { SubprocessKernel } from "../../../src/kernels/shared/subprocess-kernel.ts";
 
 class FakeProc extends EventEmitter {
+	// POSIX: a pid above every platform's pid_max, so a real group signal fails with ESRCH and the direct kill is recorded.
+	readonly pid: number | undefined = process.platform === "win32" ? undefined : 2 ** 22 + 1;
 	readonly stdin: { readonly writes: string[]; readonly write: (chunk: string) => number };
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();

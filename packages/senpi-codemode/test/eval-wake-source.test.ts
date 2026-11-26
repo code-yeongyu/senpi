@@ -183,6 +183,7 @@ class WiringSessionManager implements CodemodeSessionManager {
 
 const artifactsRoot = join(tmpdir(), `senpi-codemode-channel-wiring-${process.pid}`);
 
+// oxlint-disable-next-line jest/no-duplicate-hooks -- a second top-level hook kept separate; merging them would change the hook order
 afterEach(async () => {
 	await rm(artifactsRoot, { recursive: true, force: true });
 });

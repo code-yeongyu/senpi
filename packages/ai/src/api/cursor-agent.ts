@@ -21,6 +21,7 @@ import * as http2 from "node:http2";
 import { create, fromBinary, fromJson, type JsonValue as PbJsonValue, toBinary, toJson } from "@bufbuild/protobuf";
 import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { CURSOR_COMPOSER_PROMPT, isCursorComposerModel } from "../cursor/composer-prompt.ts";
+import { cursorDiscoveredInput } from "../cursor/model-input.ts";
 import { calculateCost } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
@@ -701,7 +702,7 @@ export function mapH2TransportError(error: unknown, baseUrl: string): unknown {
 		return new Error(
 			`Cursor run transport could not negotiate HTTP/2 with ${baseUrl}: "h2 is not supported". ` +
 				"This host serves the run RPC over HTTP/2 only, and the TLS handshake did not negotiate " +
-				"h2 via ALPN — typically an ALPN-stripping TLS-intercepting proxy. " +
+				"h2 via ALPN: typically an ALPN-stripping TLS-intercepting proxy. " +
 				"Front the provider with a local HTTP/2 bridge and point the model's baseUrl at it.",
 		);
 	}
@@ -713,7 +714,7 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 	context: TranscriptContext,
 	options?: CursorAgentOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const requestView = toCursorRequestView(context);
 
 	(async () => {
@@ -903,7 +904,11 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 						settleH2(new CursorRetryableStreamError("Cursor HTTP/2 session closed", "transport"));
 					}
 				});
-				h2Request = attemptH2Client.request(requestHeaders);
+				const attemptRequest = attemptH2Client.request(requestHeaders);
+				h2Request = attemptRequest;
+				// Request events are this attempt's only: a closed predecessor's late
+				// `end`/`error` must not settle the retry that replaced it.
+				const isCurrentRequest = (): boolean => h2Request === attemptRequest;
 
 				if (attempt === 1) {
 					stream.push({ type: "start", partial: output });
@@ -1001,7 +1006,8 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				};
 				armStreamHealthTimer();
 
-				h2Request.on("data", (chunk: Buffer) => {
+				attemptRequest.on("data", (chunk: Buffer) => {
+					if (!isCurrentRequest()) return;
 					// Steady state drains fully per chunk; alias the fresh h2 chunk
 					// instead of copying it through Buffer.concat.
 					pendingBuffer = pendingBuffer.length === 0 ? chunk : Buffer.concat([pendingBuffer, chunk]);
@@ -1080,7 +1086,8 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 					h2Request.write(frameConnectMessage(heartbeatBytes));
 				};
 
-				h2Request.on("trailers", (trailers) => {
+				attemptRequest.on("trailers", (trailers) => {
+					if (!isCurrentRequest()) return;
 					const status = trailers["grpc-status"];
 					const msg = trailers["grpc-message"];
 					if (status && status !== "0" && !endStreamError) {
@@ -1088,7 +1095,8 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 					}
 				});
 
-				h2Request.on("end", () => {
+				attemptRequest.on("end", () => {
+					if (!isCurrentRequest()) return;
 					if (!sawTurnEnded && !endStreamError) {
 						settleH2(new CursorRetryableStreamError("Cursor stream ended before turnEnded", "clean-end"));
 						return;
@@ -1096,7 +1104,8 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 					settleH2();
 				});
 
-				h2Request.on("error", (error) => {
+				attemptRequest.on("error", (error) => {
+					if (!isCurrentRequest()) return;
 					const mapped = mapH2TransportError(error, baseUrl);
 					settleH2(
 						sawTurnEnded
@@ -3885,7 +3894,10 @@ export function processInteractionUpdate(
 				target[kStreamingLastParseLen] = nextBuffer.length;
 			}
 			const idx = output.content.indexOf(target);
-			stream.push({ type: "toolcall_delta", contentIndex: idx, delta: chunk, partial: output });
+			stream.push(
+				{ type: "toolcall_delta", contentIndex: idx, delta: chunk, partial: output },
+				{ parsedThrough: target[kStreamingLastParseLen] ?? 0 },
+			);
 		}
 	} else if (updateCase === "toolCallCompleted") {
 		// Correlate on the envelope's `call_id`, NOT the block id: MCP, Pi and
@@ -4722,11 +4734,6 @@ const CURSOR_DEFAULT_MAX_TOKENS = 64_000;
 const CURSOR_1M_CONTEXT_WINDOW = 1_000_000;
 const CURSOR_1M_NAME_PATTERN = /\b1m\b/i;
 const CURSOR_MAX_MODE_1M_ID_PATTERN = /claude|gemini/;
-/**
- * Model-id families whose native catalogs are multimodal. Cursor-only or
- * text-only families (`composer-*`, `grok-code-*`) stay outside this pattern.
- */
-const CURSOR_MULTIMODAL_ID_PATTERN = /claude|gemini|gpt-|codex/;
 
 export interface CursorDiscoveredModel {
 	id: string;
@@ -4841,7 +4848,7 @@ export async function fetchCursorUsableModels(options: {
 				id,
 				name,
 				reasoning: Boolean(model.thinkingDetails),
-				input: CURSOR_MULTIMODAL_ID_PATTERN.test(id.toLowerCase()) ? ["text", "image"] : ["text"],
+				input: cursorDiscoveredInput(id),
 				contextWindow,
 				maxTokens: CURSOR_DEFAULT_MAX_TOKENS,
 				cursorMaxMode: maxMode,

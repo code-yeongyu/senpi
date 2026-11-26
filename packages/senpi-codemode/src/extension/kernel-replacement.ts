@@ -1,7 +1,10 @@
 import type { HostToKernelMessage } from "../bridge/protocol.ts";
+import { type HostMemoryReader, readHostMemoryState } from "../kernels/shared/host-memory-state.ts";
 import {
 	type KernelLifecycle,
 	KernelUnavailableError,
+	type LostGlobals,
+	replacedKernelNotice,
 	restartNotice,
 	unstartedResult,
 } from "../kernels/shared/kernel-death.ts";
@@ -13,9 +16,20 @@ import type {
 	KernelInterruptHandle,
 	PendingCell,
 } from "../tool/types.ts";
+import { KernelGlobalsLedger } from "./kernel-globals-ledger.ts";
 import { hasKernelTools, type KernelToolsMethods } from "./kernel-tools-probe.ts";
 
 export type StartKernel = (lifecycle: Required<KernelLifecycle>) => Promise<EvalKernel>;
+
+export interface ReplaceableKernelOptions {
+	/** Names the globals a death or an earlier generation of the session took with it. */
+	readonly ledger?: KernelGlobalsLedger;
+	/** Read when a SIGKILL nobody in senpi sent explains a death; the default asks the OS. */
+	readonly readHostMemory?: HostMemoryReader;
+}
+
+/** An unlabeled SIGKILL reaching a live host came from outside senpi: on a desktop, most often the OS under memory pressure. */
+const SIGKILL_REASON = "signal 9";
 
 class ReplaceableKernelClosedError extends Error {
 	readonly name = "ReplaceableKernelClosedError";
@@ -50,14 +64,25 @@ export class ReplaceableKernel implements EvalKernel {
 	#announce: string | null = null;
 	#closed = false;
 	#closeFailure: unknown;
+	readonly #ledger: KernelGlobalsLedger;
+	readonly #readHostMemory: HostMemoryReader;
+	/** What the instance held when it died, named by the replacement's notice. */
+	#lostAtDeath: LostGlobals | undefined;
 
 	// Present only when the instance has kernel tools, so a probe sees what it would see on the instance itself.
 	declare readonly describeKernelTools?: KernelToolsMethods["describeKernelTools"];
 	declare readonly invokeKernelTool?: KernelToolsMethods["invokeKernelTool"];
 
-	private constructor(language: EvalLanguage, start: StartKernel, first: EvalKernel) {
+	private constructor(
+		language: EvalLanguage,
+		start: StartKernel,
+		first: EvalKernel,
+		options: ReplaceableKernelOptions,
+	) {
 		this.#language = language;
 		this.#start = start;
+		this.#ledger = options.ledger ?? KernelGlobalsLedger.inMemory();
+		this.#readHostMemory = options.readHostMemory ?? readHostMemoryState;
 		this.#kernel = first;
 		// Python is the one subprocess kernel with kernel tools; rb and jl only carry tools_unavailable stubs to hide.
 		if (language === "py" && hasKernelTools(first)) {
@@ -77,7 +102,11 @@ export class ReplaceableKernel implements EvalKernel {
 	}
 
 	/** Starts the first instance; one that cannot hand back its queue is returned as it is. */
-	static async create(language: EvalLanguage, start: StartKernel): Promise<EvalKernel> {
+	static async create(
+		language: EvalLanguage,
+		start: StartKernel,
+		options: ReplaceableKernelOptions = {},
+	): Promise<EvalKernel> {
 		let owner: ReplaceableKernel | undefined;
 		const first = await start({
 			onDeath: (reason) => {
@@ -85,7 +114,7 @@ export class ReplaceableKernel implements EvalKernel {
 			},
 		});
 		if (first.drainPending === undefined) return first;
-		owner = new ReplaceableKernel(language, start, first);
+		owner = new ReplaceableKernel(language, start, first, options);
 		return owner;
 	}
 
@@ -123,6 +152,7 @@ export class ReplaceableKernel implements EvalKernel {
 	}
 
 	async reset(): Promise<void> {
+		this.#ledger.clear();
 		if (this.#replacing !== null) await this.#replacing;
 		if (this.#kernel.isAlive?.() === false) {
 			// A reset discards every global anyway, so the fresh instance announces nothing.
@@ -144,6 +174,7 @@ export class ReplaceableKernel implements EvalKernel {
 		if (this.#replacing !== null) await this.#replacing;
 		if (this.#closeFailure !== undefined) throw this.#closeFailure;
 		await this.#kernel.close();
+		await this.#ledger.flush();
 	}
 
 	listKernelToolNames(): readonly string[] {
@@ -159,7 +190,10 @@ export class ReplaceableKernel implements EvalKernel {
 			if (kernel.isAlive?.() === false)
 				return result.kernelState === undefined ? { ...result, kernelState: "lost" } : result;
 			this.#recovering = null;
-			const notice = this.#announce;
+			this.#ledger.observe(result);
+			const inherited = this.#ledger.takeInherited();
+			const notice =
+				this.#announce ?? (inherited.count > 0 ? replacedKernelNotice(this.#language, inherited) : null);
 			if (notice === null) return result;
 			this.#announce = null;
 			return { ...result, notice, kernelState: "restarted" };
@@ -169,6 +203,7 @@ export class ReplaceableKernel implements EvalKernel {
 	#died(generation: number, reason: string): void {
 		if (generation !== this.#generation || this.#closed) return;
 		this.#held = [...(this.#kernel.drainPending?.() ?? []), ...this.#held];
+		this.#lostAtDeath = this.#ledger.takeLost();
 		if (this.#recovering !== null) {
 			this.#recovering = null;
 			this.#unannounced = reason;
@@ -194,6 +229,9 @@ export class ReplaceableKernel implements EvalKernel {
 	/** Never rejects: every failure settles the held cells with what went wrong. */
 	async #replace(reason: string | null): Promise<void> {
 		const dead = this.#kernel;
+		// Composed while the old interpreter retires, and before the replacement starts: a death of the
+		// replacement must find it already current, with no await between its start and its adoption.
+		const announcing = reason === null ? Promise.resolve(null) : this.#restartNotice(reason);
 		try {
 			await dead.close();
 		} catch (error) {
@@ -201,6 +239,7 @@ export class ReplaceableKernel implements EvalKernel {
 			this.#failUnavailable(reason, `its interpreter could not be retired: ${errorText(error)}`);
 			return;
 		}
+		const announce = await announcing;
 		if (this.#closed) return;
 		const generation = ++this.#nextGeneration;
 		let next: EvalKernel;
@@ -218,12 +257,21 @@ export class ReplaceableKernel implements EvalKernel {
 		}
 		this.#kernel = next;
 		this.#generation = generation;
-		this.#announce = reason === null ? null : restartNotice(this.#language, reason);
+		this.#announce = announce;
 		for (const cell of this.#held.splice(0)) {
 			void this.#submit(generation, next, cell.input).then(cell.settle, (error: unknown) =>
 				cell.settle(unstartedResult(cell.input.cellId, errorText(error))),
 			);
 		}
+	}
+
+	async #restartNotice(reason: string): Promise<string> {
+		const lost = this.#lostAtDeath;
+		this.#lostAtDeath = undefined;
+		if (!reason.startsWith(SIGKILL_REASON)) return restartNotice(this.#language, reason, lost);
+		const memory = await this.#readHostMemory();
+		const cause = `probably killed by the system, most often under memory pressure${memory === undefined ? "" : ` (${memory})`}`;
+		return restartNotice(this.#language, `${reason}, ${cause}`, lost);
 	}
 
 	#failUnavailable(reason: string | null, detail: string): void {

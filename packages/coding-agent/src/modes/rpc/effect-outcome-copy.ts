@@ -30,6 +30,13 @@ export const EFFECT_OUTCOMES = {
 		detail: "no queued message has this queuedId in this session",
 		action: "read queuedId values from get_state or queue_update and retry with one that is still queued",
 	},
+	queuedInputConflict: {
+		kind: "conflict",
+		reason: "conflict",
+		detail: "the queued message was changed after the revision this request was based on, so nothing was changed",
+		action:
+			"read the input's current text and revision from get_state or queue_update, then retry with that expectedRevision if the change still applies",
+	},
 	inputDroppedByReplace: {
 		kind: "dropped_by_replace",
 		reason: "dropped_by_replace",

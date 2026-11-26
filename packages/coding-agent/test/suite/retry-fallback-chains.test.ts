@@ -162,8 +162,8 @@ describe("fallback chain selectors", () => {
 		expect(resolved.chains["*"]).toBeUndefined();
 	});
 
-	it("ships the fable family an opus-only ladder led by Opus 5.5 at max", () => {
-		const ladder = ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"];
+	it("ships the fable family an opus-only ladder led by Opus 5.5 without overriding thinking effort", () => {
+		const ladder = ["claude-opus-5-5", "claude-opus-5"];
 		const resolved = resolveRetryFallbackSettings(undefined);
 
 		expect(resolved.chains["claude-fable-5-1"]).toEqual(ladder);
@@ -171,20 +171,24 @@ describe("fallback chain selectors", () => {
 		expect(resolved.modelFallback).toBe(true);
 	});
 
-	it("ships Opus 5.5 its own same-family step-down ladder", () => {
+	// Owner's order, Slack C0C50M2NFU5 ts 1794719178.424289 / 1794719397.623049 (senpi#6699).
+	it("ships Opus 5.5 Fable 5.2 at medium, then Kimi K3.1 Pro at max, and nothing else (senpi#6699)", () => {
 		const resolved = resolveRetryFallbackSettings(undefined);
 
-		expect(resolved.chains["claude-opus-5-5"]).toEqual([
-			"claude-opus-5:max",
-			"claude-opus-4-8:max",
-			"claude-opus-4-6:max",
-		]);
+		expect(resolved.chains["claude-opus-5-5"]).toEqual(["claude-fable-5-2:medium", "kimi-k3.1-pro:max"]);
 	});
 
-	it("keeps every shipped rung inside the anthropic opus family", () => {
-		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
+	it("keeps every shipped Fable rung on a bare anthropic claude model", () => {
+		const { "claude-opus-5-5": _opus55, ...fableChains } = DEFAULT_FALLBACK_CHAINS;
+		for (const entries of Object.values(fableChains)) {
 			expect(entries.length).toBeGreaterThan(0);
-			for (const entry of entries) expect(entry.startsWith("claude-opus-")).toBe(true);
+			for (const entry of entries) expect(entry).toMatch(/^claude-(?:opus|fable)-[0-9]/);
+		}
+	});
+
+	it("never ships a pre-5 Opus rung, so a Claude session cannot land on claude-opus-4-x (senpi#3727)", () => {
+		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
+			for (const entry of entries) expect(entry).not.toMatch(/^claude-opus-4-/);
 		}
 	});
 

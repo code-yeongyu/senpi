@@ -1,92 +1,22 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	type AgentSessionEvent,
-	MAX_SKILL_EXPANSIONS_PER_PROMPT,
-	MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT,
-	type PromptOptions,
-	parseSkillInvocationTokens,
-} from "../../../src/core/agent-session.ts";
-import type { Settings } from "../../../src/core/settings-manager.ts";
-import { createSyntheticSourceInfo } from "../../../src/core/source-info.ts";
+import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { UnknownCommandError } from "../../../src/core/unknown-command.ts";
 import type { ResourceLoader } from "../../../src/index.ts";
-import { createTestResourceLoader } from "../../utilities.ts";
-import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.ts";
-
-type SkillDefinition = {
-	name: string;
-	body: string;
-};
-
-const skippedWarning = (names: readonly string[], cap: number): string =>
-	`Skipped ${names.length} skill${names.length === 1 ? "" : "s"} (${names.join(", ")}): at most ${cap} skills load per prompt. Raise maxSkillExpansionsPerPrompt to load more.`;
-
-type SkillFixture = SkillDefinition & {
-	filePath: string;
-};
-
-const skillBlock = (skill: SkillFixture, baseDir: string): string =>
-	`The user explicitly invoked the "${skill.name}" skill. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions.\n\n<skill-instruction name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${baseDir}.\n\n${skill.body}\n</skill-instruction>`;
-
-const userRequest = (request: string): string => `<user-request>\n${request}\n</user-request>`;
-
-function createSkillResourceLoader(
-	tempDir: string,
-	definitions: SkillDefinition[],
-): {
-	resourceLoader: ResourceLoader;
-	skills: SkillFixture[];
-} {
-	const skills = definitions.map((definition) => {
-		const filePath = join(tempDir, `${definition.name}.md`);
-		writeFileSync(filePath, definition.body);
-		return { ...definition, filePath };
-	});
-
-	return {
-		resourceLoader: {
-			...createTestResourceLoader(),
-			getSkills: () => ({
-				skills: skills.map((skill) => ({
-					name: skill.name,
-					description: `${skill.name} skill`,
-					filePath: skill.filePath,
-					disableModelInvocation: false,
-					baseDir: tempDir,
-					sourceInfo: createSyntheticSourceInfo(skill.filePath, {
-						source: "local",
-						scope: "project",
-						origin: "top-level",
-						baseDir: tempDir,
-					}),
-				})),
-				diagnostics: [],
-			}),
-		},
-		skills,
-	};
-}
-
-async function promptAndCapture(harness: Harness, text: string, options?: PromptOptions): Promise<string> {
-	let captured = "";
-	harness.setResponses([
-		(context) => {
-			const userMessages = context.messages.filter((message) => message.role === "user");
-			const user = userMessages[userMessages.length - 1];
-			captured = user ? getMessageText(user) : "";
-			return fauxAssistantMessage("ok");
-		},
-	]);
-
-	await harness.session.prompt(text, options);
-	return captured;
-}
+import { createHarness, getUserTexts, type Harness } from "../harness.ts";
+import {
+	createSkillResourceLoader,
+	promptAndCapture,
+	type SkillDefinition,
+	type SkillFixture,
+	skillBlock,
+	userRequest,
+} from "./308-skill-composition-support.ts";
 
 function collectSkillInvocationEvents(harness: Harness): {
 	events: AgentSessionEvent[];
@@ -251,17 +181,6 @@ describe("#308 skill composition", () => {
 		expect(actual).toBe(`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("    const x = 1;\n\treturn x;")}`);
 	});
 
-	it("bounds token parsing before processing adversarial repeated input", () => {
-		const prompt = Array.from({ length: MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT + 20 }, () => "$skill:debugging").join(
-			" ",
-		);
-
-		const tokens = parseSkillInvocationTokens(prompt);
-
-		expect(tokens).toHaveLength(MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT);
-		expect(prompt.slice(tokens.at(-1)!.end)).toContain("$skill:debugging");
-	});
-
 	it("expands a bare inline dollar mention of a loaded skill and keeps unknown ones literal", async () => {
 		const { resourceLoader, skills, tempDir } = createFixtures([
 			{ name: "debugging", body: "# Debugging Skill\n\nTrace the defect." },
@@ -347,131 +266,6 @@ describe("#308 skill composition", () => {
 		expect(await promptAndCapture(harness, "/skill:first /skill:first compose once")).toBe(
 			`${skillBlock(skills[0]!, tempDir)}\n\n${userRequest("compose once")}`,
 		);
-	});
-
-	it("keeps a repeated skill's marker on later lines once the cap is reached", async () => {
-		const definitions = Array.from({ length: MAX_SKILL_EXPANSIONS_PER_PROMPT + 1 }, (_, index) => ({
-			name: `skill-${index + 1}`,
-			body: `# Skill ${index + 1}\n\nUse skill ${index + 1}.`,
-		}));
-		const { resourceLoader, skills, tempDir } = createFixtures(definitions);
-		const harness = await createHarness({ resourceLoader });
-		harnesses.push(harness);
-		const errors: string[] = [];
-		const unsubscribe = harness.getExtensionRunner().onError((error) => {
-			if (error.event === "skill_expansion") errors.push(error.error);
-		});
-		const loaded = skills.slice(0, MAX_SKILL_EXPANSIONS_PER_PROMPT);
-		const overCap = skills[MAX_SKILL_EXPANSIONS_PER_PROMPT]!;
-
-		const actual = await promptAndCapture(
-			harness,
-			`${loaded.map((skill) => `/skill:${skill.name}`).join(" ")} first line\nsecond line $${overCap.name} then $${skills[0]!.name} again`,
-		);
-		unsubscribe();
-
-		expect(actual).toBe(
-			`${loaded.map((skill) => skillBlock(skill, tempDir)).join("\n\n")}\n\n${userRequest(
-				`first line\nsecond line [skill not loaded: ${overCap.name}] then [skill: ${skills[0]!.name}] again`,
-			)}`,
-		);
-		expect(errors).toEqual([
-			`Skipped duplicate skill invocation: ${skills[0]!.name}`,
-			skippedWarning([overCap.name], MAX_SKILL_EXPANSIONS_PER_PROMPT),
-		]);
-	});
-
-	describe("maxSkillExpansionsPerPrompt setting", () => {
-		async function expandWithSettings(skillCount: number, settings: Partial<Settings>) {
-			const definitions = Array.from({ length: skillCount }, (_, index) => ({
-				name: `skill-${index + 1}`,
-				body: `# Skill ${index + 1}\n\nUse skill ${index + 1}.`,
-			}));
-			const { resourceLoader, skills, tempDir } = createFixtures(definitions);
-			const harness = await createHarness({ resourceLoader, settings });
-			harnesses.push(harness);
-			const errors: string[] = [];
-			const unsubscribe = harness.getExtensionRunner().onError((error) => {
-				if (error.event === "skill_expansion") errors.push(error.error);
-			});
-			const actual = await promptAndCapture(
-				harness,
-				`${skills.map((skill) => `/skill:${skill.name}`).join(" ")} compose`,
-			);
-			unsubscribe();
-			return { actual, errors, skills, tempDir };
-		}
-
-		const expected = (skills: SkillFixture[], tempDir: string, cap: number): string =>
-			`${skills
-				.slice(0, cap)
-				.map((skill) => skillBlock(skill, tempDir))
-				.join("\n\n")}\n\n${userRequest(
-				`${skills
-					.slice(cap)
-					.map((skill) => `[skill not loaded: ${skill.name}]`)
-					.join(" ")} compose`,
-			)}`;
-		const capWarning = (skills: SkillFixture[], cap: number): string =>
-			skippedWarning(
-				skills.slice(cap).map((skill) => skill.name),
-				cap,
-			);
-
-		it("keeps the default cap at five", async () => {
-			const { actual, errors, skills, tempDir } = await expandWithSettings(6, {});
-
-			expect(MAX_SKILL_EXPANSIONS_PER_PROMPT).toBe(5);
-			expect(actual).toBe(expected(skills, tempDir, 5));
-			expect(errors).toEqual([capWarning(skills, 5)]);
-		});
-
-		it("expands up to a configured higher cap", async () => {
-			const { actual, errors, skills, tempDir } = await expandWithSettings(11, { maxSkillExpansionsPerPrompt: 10 });
-
-			expect(actual).toBe(expected(skills, tempDir, 10));
-			expect(errors).toEqual([capWarning(skills, 10)]);
-		});
-
-		it("falls back to the default for an invalid configured cap", async () => {
-			const { actual, errors, skills, tempDir } = await expandWithSettings(6, { maxSkillExpansionsPerPrompt: 0 });
-
-			expect(actual).toBe(expected(skills, tempDir, 5));
-			expect(errors).toEqual([capWarning(skills, 5)]);
-		});
-	});
-
-	it("caps expansion, marks the remaining skills as not loaded, and emits a visible warning", async () => {
-		const definitions = Array.from({ length: MAX_SKILL_EXPANSIONS_PER_PROMPT + 2 }, (_, index) => ({
-			name: `skill-${index + 1}`,
-			body: `# Skill ${index + 1}\n\nUse skill ${index + 1}.`,
-		}));
-		const { resourceLoader, skills, tempDir } = createFixtures(definitions);
-		const harness = await createHarness({ resourceLoader });
-		harnesses.push(harness);
-		const errors: string[] = [];
-		const unsubscribe = harness.getExtensionRunner().onError((error) => {
-			if (error.event === "skill_expansion") errors.push(error.error);
-		});
-
-		const prompt = `${skills.map((skill) => `/skill:${skill.name}`).join(" ")} compose within the cap`;
-		const actual = await promptAndCapture(harness, prompt);
-		unsubscribe();
-
-		expect(actual).toBe(
-			`${skills
-				.slice(0, MAX_SKILL_EXPANSIONS_PER_PROMPT)
-				.map((skill) => skillBlock(skill, tempDir))
-				.join("\n\n")}\n\n${userRequest(
-				`[skill not loaded: ${skills[MAX_SKILL_EXPANSIONS_PER_PROMPT]!.name}] [skill not loaded: ${skills[MAX_SKILL_EXPANSIONS_PER_PROMPT + 1]!.name}] compose within the cap`,
-			)}`,
-		);
-		expect(errors).toEqual([
-			skippedWarning(
-				[skills[MAX_SKILL_EXPANSIONS_PER_PROMPT]!.name, skills[MAX_SKILL_EXPANSIONS_PER_PROMPT + 1]!.name],
-				MAX_SKILL_EXPANSIONS_PER_PROMPT,
-			),
-		]);
 	});
 
 	it("uses the same composed expansion for queued steering and follow-up messages", async () => {

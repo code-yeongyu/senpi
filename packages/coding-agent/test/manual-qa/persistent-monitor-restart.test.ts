@@ -11,6 +11,7 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { createEventBus } from "../../src/core/event-bus.ts";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
 import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
 import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
@@ -87,8 +88,10 @@ function generation(dir: string): Generation {
 		exec: async () => ({ stdout: "", stderr: "", code: 0 }),
 		getActiveTools: () => [],
 		setActiveTools: () => {},
-		events: { emit: () => {} },
+		// The real bus: the extension subscribes through `events.on` (state replay) as well as emitting.
+		events: createEventBus(),
 		rpc: { emit: () => {} },
+		isLoopRemote: () => false,
 	} as unknown as ExtensionAPI;
 	registerTerminalExtension(api);
 	const context = {
@@ -151,7 +154,7 @@ async function flushManifestWriters(): Promise<void> {
 	await Promise.all(harness.writers.map((writer) => writer.flush()));
 }
 
-it("restores persistent monitors across two session generations and enforces the fire budget", async () => {
+it("restores persistent monitors across two session generations and paces a burst without muting", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-qa-persistent-restart-"));
 	const deploy = join(dir, "deploy.log");
 	const service = join(dir, "svc.log");
@@ -255,19 +258,23 @@ it("restores persistent monitors across two session generations and enforces the
 		await postRestartNotice;
 		expect(b.messages.filter((message) => message.includes("post-restart"))).toHaveLength(1);
 
-		const budgetNotice = nextMessage(b, (content) => content.includes("auto-muted: fire budget (200/24h) reached"));
-		await appendFile(service, Array.from({ length: 300 }, (_, index) => `budget-${index}\n`).join(""));
-		const budgetSummary = await budgetNotice;
-		expect(
-			b.messages.filter((message) => message.includes("auto-muted: fire budget (200/24h) reached")),
-		).toHaveLength(1);
-		expect(budgetSummary).toContain("service log");
+		// A 300-line burst on the restored durable watch: the old 200/24h budget muted it here. Now one
+		// wake carries the first batch and names the overflow file holding the rest; nothing is muted.
+		const burstNotice = nextMessage(b, (content) => /more lines in \S+overflow/.test(content));
+		await appendFile(service, Array.from({ length: 300 }, (_, index) => `burst-${index}\n`).join(""));
+		const burstWake = await burstNotice;
+		expect(burstWake).toContain("service log");
+		expect(b.messages.filter((message) => message.includes("auto-muted"))).toHaveLength(0);
+		const overflowPath = /more lines in (\S+\.log)\]/.exec(burstWake)?.[1];
+		if (overflowPath === undefined) throw new Error(`no overflow path in the wake: ${burstWake}`);
+		const inline = burstWake.match(/\bburst-\d+\b/g) ?? [];
+		const spilled = (await readFile(overflowPath, "utf8")).trim().split("\n");
+		expect([...inline, ...spilled]).toEqual(Array.from({ length: 300 }, (_, index) => `burst-${index}`));
 		expect(restoredRegistry.snapshot()).toContainEqual(
 			expect.objectContaining({
 				id: restoredRuntimeId,
 				monitorId: commandMonitorId,
-				paused: true,
-				fireWindow: expect.objectContaining({ count: 200 }),
+				paused: false,
 			}),
 		);
 	} finally {

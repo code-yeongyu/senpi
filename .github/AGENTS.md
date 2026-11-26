@@ -19,10 +19,11 @@ upstream.json  Accepted upstream baseline recorded by merges (read by scripts)
 
 | Task | Path |
 |---|---|
-| CI parity for local checks | `workflows/ci.yml` (Node 24, `npm ci --ignore-scripts`, bun 1.4.2 pinned through `oven-sh/setup-bun` in the jobs that run bun, fan-in job named exactly `Check and test`) |
+| CI parity for local checks | `workflows/ci.yml` (Node 24, `npm ci --ignore-scripts`, bun 1.4.4 pinned through `oven-sh/setup-bun` in the jobs that run bun, fan-in job named exactly `Check and test`) |
 | npm publish path | `workflows/publish-npm.yml` (the ONLY publisher; triggered after release tag) |
 | Binary/native builds | `workflows/build-binaries.yml`, `workflows/native-prebuilds.yml` |
 | PR changelog gate | `workflows/changelog-gate.yml` (drives `scripts/check-pr-changelog.mjs`) |
+| macOS/Windows coverage | Pull requests run Linux only; the `run-full-ci` label (`workflows/ci-full-label.yml`) is the one opt-in for the macOS/Windows legs. Main pushes, releases and dispatches always run them; `workflows/platform-red.yml` files one tracking issue when one fails on main, and the release refuses meanwhile (`scripts/ci-platform-red.mjs`, senpi#6834) |
 | Merge agent procedure | `agent/README.md`, `agent/merge-driver.md`, `agent/skills/merge-upstream/` |
 | Release audit agent | `agent/release-driver.md`, `agent/skills/release-publish/` |
 | Changelog audit command | `agent/commands/cl.md` |
@@ -30,12 +31,12 @@ upstream.json  Accepted upstream baseline recorded by merges (read by scripts)
 ## CONVENTIONS
 
 - GitHub Actions are pinned by full commit SHA (e.g. `actions/checkout@df4cb1c0...`); never reference floating tags.
-- Workflows install with `npm ci --ignore-scripts` and run the root scripts through npm (`npm run check`, `npm run build`, `npm run test:scripts`); `test-workspaces` also runs `bun run test:scripts` under pinned bun 1.4.2 to prove the bun path of the root scripts and runs the workspace suites through `scripts/run-workspaces.mjs`; `rpc-windows` runs its suites through `bunx vitest`.
+- Workflows install with `npm ci --ignore-scripts` and run the root scripts through npm (`npm run check`, `npm run build`, `npm run test:scripts`); `test-scripts` also runs `bun run test:scripts` under pinned bun 1.4.4 to prove the bun path of the root scripts; the `test-workspaces` matrix runs the workspace suites through `scripts/run-workspaces.mjs`, one group per runner, and `scripts/ci-workspace-coverage.test.mjs` checks every workspace `test` script runs in exactly one job; `rpc-windows` runs its suites through `bunx vitest`.
 - The release driver emits a final stdout status line: `RELEASE_DECISION: RELEASE | SKIP | FAILED`.
   The merge agent emits `MERGE_RESULT: CLEAN_PR_READY | NO_RELEASE_NEEDED | CONFLICTS | QA_FAILED | AGENT_FAILED`.
 - Release runs only after the upstream PR is merge-committed into `main`, a fresh `/cl`
-  audit passes on that tip, and `scripts/upstream-release-worthy.mjs` finds `## [Unreleased]`
-  package changelog entries.
+  audit passes on that tip, and `scripts/upstream-release-worthy.mjs` finds package entries
+  in `[Unreleased]` or pending fragments (a read-only compile preview).
 
 ## ANTI-PATTERNS
 

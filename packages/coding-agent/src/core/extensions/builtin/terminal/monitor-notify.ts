@@ -1,13 +1,18 @@
+import { MONITOR_NOTIFICATION_CUSTOM_TYPE } from "../monitor-state-event.ts";
+import { withTerminalContext } from "./context-lifetime.ts";
+import { monitorDetails } from "./monitor-notify-details.ts";
+import { buildWakeMessage, eventBody, renderedLength, WAKE_BUDGET_PAUSE_NOTICE } from "./monitor-notify-format.ts";
+import { type MonitorSpill, OverflowBook } from "./monitor-overflow.ts";
 import type { MonitorEvent } from "./monitor-registry.ts";
+import { fitWake } from "./monitor-wake-fit.ts";
+import { WakePacer } from "./monitor-wake-pacing.ts";
 import { getTerminalNotificationDelivery, type TerminalNotifierDeps } from "./notify.ts";
-import { sanitizeTerminalOutput } from "./output-format.ts";
 import type { MonitorDeliverySettings } from "./settings.ts";
-import { FIRE_BUDGET_AUTO_MUTE_SUMMARY } from "./shared.ts";
+import { RUNAWAY_PAUSE_SUMMARY_PREFIX } from "./shared.ts";
 
-const SYSTEM_REMINDER_OPEN = "<system-reminder>";
-const SYSTEM_REMINDER_CLOSE = "</system-reminder>";
+export type { MonitorSpill, MonitorSpillResult } from "./monitor-overflow.ts";
+
 const QUEUE_OVERHEAD_CHARS = 512;
-const MONITOR_NOTIFICATION_CUSTOM_TYPE = "senpi-monitor:notification";
 const WAKE_STREAK_QUIET_GAP_MULTIPLIER = 2;
 
 export interface MonitorNotificationScheduler {
@@ -26,14 +31,11 @@ export interface MonitorNotifierDeps extends TerminalNotifierDeps {
 	readonly getSettings: () => MonitorDeliverySettings;
 	/** Pause the monitors contributing to a shared wake-budget exhaustion. */
 	readonly pauseMonitors: (ids: readonly string[]) => readonly string[];
+	/** Wake rate (and burst) of a paced monitor; undefined leaves the monitor unpaced. */
+	readonly wakesPerHour?: (id: string) => number | undefined;
+	/** Append overflow lines to the monitor's overflow file; undefined when it has none. */
+	readonly spillOverflow?: MonitorSpill;
 	readonly scheduler?: MonitorNotificationScheduler;
-}
-
-interface Overflow {
-	readonly id: string;
-	readonly description: string;
-	count: number;
-	kinds: Set<MonitorEvent["type"]>;
 }
 
 function boundedPositiveInt(value: number, fallback: number, minimum: number, maximum: number): number {
@@ -48,44 +50,21 @@ function resolveSettings(settings: MonitorDeliverySettings): MonitorDeliverySett
 		maxLinesPerInjection: boundedPositiveInt(settings.maxLinesPerInjection, 50, 1, 200),
 		maxCharsPerInjection: boundedPositiveInt(settings.maxCharsPerInjection, 4096, 512, 16_384),
 		wakeBudget: boundedPositiveInt(settings.wakeBudget, 5, 1, 100),
+		wakesPerHour: boundedPositiveInt(settings.wakesPerHour, 12, 1, 3600),
 	};
-}
-
-function eventBody(event: MonitorEvent): string {
-	const value = event.type === "line" ? event.line : event.summary;
-	return sanitizeTerminalOutput(value)
-		.replace(/[\r\n]+/g, " ")
-		.trimEnd();
-}
-
-function clip(text: string, maxChars: number): string {
-	if (text.length <= maxChars) return text;
-	if (maxChars <= 3) return text.slice(0, maxChars);
-	return `${text.slice(0, maxChars - 3)}...`;
-}
-
-function formatEvents(events: readonly MonitorEvent[]): string {
-	const groups = new Map<string, { description: string; bodies: string[] }>();
-	for (const event of events) {
-		const group = groups.get(event.id) ?? { description: event.description, bodies: [] };
-		group.bodies.push(eventBody(event));
-		groups.set(event.id, group);
-	}
-	return [...groups.values()]
-		.map((group) => `Monitor event(${group.description}): ${group.bodies.join("\n")}`)
-		.join("\n");
 }
 
 /**
  * Session-scoped monitor delivery queue. It preserves the terminal runtime as the authoritative,
- * bounded event history while retaining only one capped coalescing batch for chat injection.
+ * bounded event history while retaining only capped per-monitor batches for chat injection. A
+ * wake is filled by whole monitors; a monitor that does not fit stays queued for the next wake.
  */
 export class MonitorNotifier {
 	readonly #deps: MonitorNotifierDeps;
 	readonly #scheduler: MonitorNotificationScheduler;
+	readonly #pacer: WakePacer;
+	readonly #overflow: OverflowBook;
 	#events: MonitorEvent[] = [];
-	#eventChars = 0;
-	#overflow = new Map<string, Overflow>();
 	#lastInjectionAt = new Map<string, number>();
 	#lastInjectedBatch = new Map<string, string>();
 	#timer: unknown;
@@ -96,6 +75,8 @@ export class MonitorNotifier {
 	constructor(deps: MonitorNotifierDeps) {
 		this.#deps = deps;
 		this.#scheduler = deps.scheduler ?? systemScheduler;
+		this.#pacer = new WakePacer((id) => deps.wakesPerHour?.(id));
+		this.#overflow = new OverflowBook(deps.spillOverflow);
 	}
 
 	notifyEvent(event: MonitorEvent): void {
@@ -103,20 +84,32 @@ export class MonitorNotifier {
 			this.#lastInjectionAt.delete(event.id);
 			this.#lastInjectedBatch.delete(event.id);
 		}
-		if (!getTerminalNotificationDelivery(this.#deps, MONITOR_NOTIFICATION_CUSTOM_TYPE)) return;
+		const delivery = withTerminalContext(
+			() => getTerminalNotificationDelivery(this.#deps, MONITOR_NOTIFICATION_CUSTOM_TYPE),
+			() => this.dispose(),
+		);
+		if (!delivery) return;
 		const settings = resolveSettings(this.#deps.getSettings());
-		const rendered = `Monitor event(${event.description}): ${eventBody(event)}`;
 		const queueLimit = Math.max(1, settings.maxCharsPerInjection - QUEUE_OVERHEAD_CHARS);
+		const own = this.#events.filter((queued) => queued.id === event.id);
+		const ownChars = own.reduce((total, queued) => total + renderedLength(queued), 0);
 		if (
 			event.type !== "summary" &&
-			(this.#events.length >= settings.maxLinesPerInjection || this.#eventChars + rendered.length > queueLimit)
+			(own.length >= settings.maxLinesPerInjection ||
+				ownChars + renderedLength(event) > queueLimit ||
+				this.#overflow.count(event.id) > 0)
 		) {
-			this.#recordOverflow(event);
+			this.#overflow.record(event, eventBody(event));
 		} else {
 			this.#events.push(event);
-			this.#eventChars += rendered.length;
 		}
-		this.#schedule(settings.coalesceWindowMs);
+		// A paced monitor out of tokens is not flushed before its next token: no wasted wake-ups.
+		const now = this.#scheduler.now();
+		const delay =
+			event.type === "summary"
+				? settings.coalesceWindowMs
+				: Math.max(settings.coalesceWindowMs, this.#pacer.readyAt(event.id, now) - now);
+		this.#schedule(delay);
 	}
 
 	/** Any explicit user or tool activity breaks a consecutive monitor-only wake streak. */
@@ -142,21 +135,9 @@ export class MonitorNotifier {
 		this.#timer = undefined;
 		this.#scheduledAt = undefined;
 		this.#events = [];
-		this.#eventChars = 0;
 		this.#overflow.clear();
 		this.#lastInjectedBatch.clear();
-	}
-
-	#recordOverflow(event: MonitorEvent): void {
-		const overflow = this.#overflow.get(event.id) ?? {
-			id: event.id,
-			description: event.description,
-			count: 0,
-			kinds: new Set<MonitorEvent["type"]>(),
-		};
-		overflow.count++;
-		overflow.kinds.add(event.type);
-		this.#overflow.set(event.id, overflow);
+		this.#pacer.clear();
 	}
 
 	#schedule(delayMs: number): void {
@@ -164,7 +145,18 @@ export class MonitorNotifier {
 		if (this.#timer !== undefined && this.#scheduledAt !== undefined && this.#scheduledAt <= due) return;
 		if (this.#timer !== undefined) this.#scheduler.clearTimeout(this.#timer);
 		this.#scheduledAt = due;
-		this.#timer = this.#scheduler.setTimeout(() => this.#flush(), delayMs);
+		this.#timer = this.#scheduler.setTimeout(
+			() =>
+				withTerminalContext(
+					() => this.#flush(),
+					() => this.dispose(),
+				),
+			delayMs,
+		);
+	}
+
+	#pendingIds(): Set<string> {
+		return new Set([...this.#events.map((event) => event.id), ...this.#overflow.ids()]);
 	}
 
 	#flush(): void {
@@ -178,18 +170,17 @@ export class MonitorNotifier {
 
 		const settings = resolveSettings(this.#deps.getSettings());
 		const now = this.#scheduler.now();
-		const pendingIds = new Set([...this.#events.map((event) => event.id), ...this.#overflow.keys()]);
+		const pendingIds = this.#pendingIds();
 		if (pendingIds.size === 0) return;
 		const summaryIds = new Set(this.#events.filter((event) => event.type === "summary").map((event) => event.id));
-		const ready = new Set(
-			[...pendingIds].filter((id) => {
-				if (summaryIds.has(id)) return true;
-				const last = this.#lastInjectionAt.get(id);
-				return last === undefined || now - last >= settings.rateLimitMs;
-			}),
-		);
-		if (ready.size === 0) {
-			this.#scheduleNextRateLimit(pendingIds, now, settings);
+		const ready = [...pendingIds].filter((id) => {
+			if (summaryIds.has(id)) return true;
+			const last = this.#lastInjectionAt.get(id);
+			if (last !== undefined && now - last < settings.rateLimitMs) return false;
+			return this.#pacer.readyAt(id, now) <= now;
+		});
+		if (ready.length === 0) {
+			this.#scheduleNext(pendingIds, now, settings);
 			return;
 		}
 
@@ -199,16 +190,21 @@ export class MonitorNotifier {
 				.filter(([id, fingerprint]) => this.#lastInjectedBatch.get(id) === fingerprint)
 				.map(([id]) => id),
 		);
-		const injectedIds = new Set([...ready].filter((id) => !suppressedIds.has(id)));
-		const selected = this.#events.filter((event) => injectedIds.has(event.id));
-		const deferred = this.#events.filter((event) => !ready.has(event.id));
-		if (injectedIds.size === 0) {
-			this.#discardSuppressed(deferred, now, settings);
+		this.#events = this.#events.filter((event) => !suppressedIds.has(event.id));
+		const wake = fitWake(
+			this.#events,
+			this.#overflow,
+			ready.filter((id) => !suppressedIds.has(id)),
+			summaryIds,
+			settings.maxCharsPerInjection,
+		);
+		if (wake.size === 0) {
+			this.#scheduleNext(this.#pendingIds(), now, settings);
 			return;
 		}
-		const overflowCount = [...this.#overflow.values()]
-			.filter((overflow) => injectedIds.has(overflow.id))
-			.reduce((total, overflow) => total + overflow.count, 0);
+		const injectedIds = new Set(wake.keys());
+		const selected = [...wake.values()].flatMap((share) => share.events);
+		const delivered = new Set(selected);
 		if (
 			this.#lastWakeAt !== undefined &&
 			now - this.#lastWakeAt > settings.rateLimitMs * WAKE_STREAK_QUIET_GAP_MULTIPLIER
@@ -216,103 +212,60 @@ export class MonitorNotifier {
 			this.#consecutiveWakes = 0;
 		}
 		const deliversSummary = selected.some(
-			// A fire-budget auto-mute summary is a mute, not a completion: exempting it keeps the
+			// A runaway-guard pause summary is a pause, not a completion: exempting it keeps the
 			// session-global wake streak — the notifier's own pause state — from being cleared.
-			(event) => event.type === "summary" && event.summary !== FIRE_BUDGET_AUTO_MUTE_SUMMARY,
+			(event) => event.type === "summary" && !event.summary.startsWith(RUNAWAY_PAUSE_SUMMARY_PREFIX),
 		);
 		const reachesBudget = !deliversSummary && this.#consecutiveWakes + 1 >= settings.wakeBudget;
-		const pauseNotice = reachesBudget
-			? "Monitor paused after repeated updates. Completion still wakes this session; peek bash_output or re-arm only for intermediate events."
-			: "";
-		const content = this.#buildMessage(selected, overflowCount, pauseNotice, settings.maxCharsPerInjection);
-
-		const details = { monitors: this.#monitorDetails(selected, injectedIds) };
+		const notices = [...wake].map(([id, share]) => (share.whole ? this.#overflow.notice(id) : ""));
+		const content = buildWakeMessage(
+			selected,
+			notices,
+			reachesBudget ? WAKE_BUDGET_PAUSE_NOTICE : "",
+			settings.maxCharsPerInjection,
+		);
+		const details = { monitors: monitorDetails(selected, injectedIds, this.#overflow) };
 		delivery.send(content, reachesBudget ? { forceWake: true, details } : { details });
 		this.#lastWakeAt = now;
-		for (const id of injectedIds) {
+		for (const [id, share] of wake) {
+			if (share.events.some((event) => event.type === "summary")) this.#pacer.forget(id);
+			else this.#pacer.spend(id, now);
 			this.#lastInjectionAt.set(id, now);
-			this.#overflow.delete(id);
-			const fingerprint = fingerprints.get(id);
+			// A monitor that sent only a prefix keeps its remaining lines and overflow for the next wake.
+			if (share.whole) this.#overflow.delete(id);
+			const fingerprint = share.whole ? fingerprints.get(id) : undefined;
 			if (fingerprint === undefined) this.#lastInjectedBatch.delete(id);
 			else this.#lastInjectedBatch.set(id, fingerprint);
 		}
-		this.#events = deferred;
-		this.#eventChars = deferred.reduce(
-			(total, event) => total + `Monitor event(${event.description}): ${eventBody(event)}`.length,
-			0,
-		);
+		this.#events = this.#events.filter((event) => !delivered.has(event));
 		this.#consecutiveWakes = deliversSummary ? 0 : this.#consecutiveWakes + 1;
-
 		if (reachesBudget) {
+			// Only the monitors in this wake are paused; every other monitor keeps its held lines.
 			this.#deps.pauseMonitors([...injectedIds]);
-			this.#events = [];
-			this.#eventChars = 0;
-			this.#overflow.clear();
 			this.#consecutiveWakes = 0;
-			return;
 		}
-		const remainingIds = new Set([...this.#events.map((event) => event.id), ...this.#overflow.keys()]);
-		if (remainingIds.size > 0) this.#scheduleNextRateLimit(remainingIds, now, settings);
+		const remainingIds = this.#pendingIds();
+		if (remainingIds.size > 0) this.#scheduleNext(remainingIds, now, settings);
 	}
 
-	#scheduleNextRateLimit(ids: ReadonlySet<string>, now: number, settings: MonitorDeliverySettings): void {
-		const nextAt = Math.min(...[...ids].map((id) => (this.#lastInjectionAt.get(id) ?? now) + settings.rateLimitMs));
+	#scheduleNext(ids: ReadonlySet<string>, now: number, settings: MonitorDeliverySettings): void {
+		const nextAt = Math.min(
+			...[...ids].map((id) =>
+				Math.max((this.#lastInjectionAt.get(id) ?? now) + settings.rateLimitMs, this.#pacer.readyAt(id, now)),
+			),
+		);
 		this.#schedule(Math.max(1, nextAt - now));
 	}
 
 	/** A ready monitor whose line-only batch matches its previous injection carries no new information. */
-	#batchFingerprints(ids: ReadonlySet<string>): Map<string, string> {
+	#batchFingerprints(ids: readonly string[]): Map<string, string> {
 		const fingerprints = new Map<string, string>();
 		for (const id of ids) {
-			if ((this.#overflow.get(id)?.count ?? 0) > 0) continue;
+			if (this.#overflow.count(id) > 0) continue;
 			const batch = this.#events.filter((event) => event.id === id);
 			if (batch.length === 0 || batch.some((event) => event.type !== "line")) continue;
 			fingerprints.set(id, batch.map(eventBody).join("\n"));
 		}
 		return fingerprints;
-	}
-
-	#discardSuppressed(deferred: MonitorEvent[], now: number, settings: MonitorDeliverySettings): void {
-		this.#events = deferred;
-		this.#eventChars = deferred.reduce(
-			(total, event) => total + `Monitor event(${event.description}): ${eventBody(event)}`.length,
-			0,
-		);
-		const remainingIds = new Set([...deferred.map((event) => event.id), ...this.#overflow.keys()]);
-		if (remainingIds.size > 0) this.#scheduleNextRateLimit(remainingIds, now, settings);
-	}
-
-	#monitorDetails(
-		events: readonly MonitorEvent[],
-		ids: ReadonlySet<string>,
-	): Array<{ id: string; description: string; eventCount: number; kinds: string[] }> {
-		return [...ids].map((id) => {
-			const own = events.filter((event) => event.id === id);
-			const overflow = this.#overflow.get(id);
-			const kinds = new Set<MonitorEvent["type"]>(own.map((event) => event.type));
-			for (const kind of overflow?.kinds ?? []) kinds.add(kind);
-			return {
-				id,
-				description: own[0]?.description ?? overflow?.description ?? id,
-				eventCount: own.length + (overflow?.count ?? 0),
-				kinds: [...kinds],
-			};
-		});
-	}
-
-	#buildMessage(
-		events: readonly MonitorEvent[],
-		overflowCount: number,
-		pauseNotice: string,
-		maxChars: number,
-	): string {
-		const overflowNotice =
-			overflowCount > 0
-				? `[${overflowCount} additional event lines omitted; peek bash_output for full history.]`
-				: "";
-		const suffix = [overflowNotice, pauseNotice].filter(Boolean).join("\n");
-		const fixedChars = SYSTEM_REMINDER_OPEN.length + SYSTEM_REMINDER_CLOSE.length + (suffix ? suffix.length + 1 : 0);
-		const body = clip(formatEvents(events), Math.max(0, maxChars - fixedChars));
-		return `${SYSTEM_REMINDER_OPEN}${body}${body && suffix ? "\n" : ""}${suffix}${SYSTEM_REMINDER_CLOSE}`;
 	}
 }

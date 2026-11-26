@@ -21,6 +21,7 @@ import {
 } from "./detached-cell-state.ts";
 import { detachedStatusEntries, detachedWakeSourceState } from "./detached-cell-status.ts";
 import { DetachedNotificationQueue } from "./detached-notification-queue.ts";
+import { SettlingCells } from "./detached-settling.ts";
 import { createManagedCell, type LiveResultProvider, type ManagedCell } from "./managed-cell.ts";
 import { SettledImageSpill } from "./settled-image-spill.ts";
 import { TerminalSnapshotStore } from "./terminal-snapshot-store.ts";
@@ -38,10 +39,50 @@ export type {
 export class EvalCellNotFoundError extends Error {
 	readonly code = "eval_cell_not_found";
 
-	constructor(cellId: string) {
-		super(`Unknown detached eval cell "${cellId}"`);
+	constructor(cellId: string, suggestion?: string) {
+		super(
+			suggestion === undefined
+				? `Unknown detached eval cell "${cellId}"`
+				: `Unknown detached eval cell "${cellId}"; did you mean "${suggestion}"?`,
+		);
 		this.name = "EvalCellNotFoundError";
 	}
+}
+
+function editDistance(a: string, b: string): number {
+	let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+	for (let i = 1; i <= a.length; i++) {
+		const current = [i];
+		for (let j = 1; j <= b.length; j++) {
+			const substitution = (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1);
+			current.push(Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, substitution));
+		}
+		previous = current;
+	}
+	return previous[b.length] ?? 0;
+}
+
+/**
+ * The one known id within a quarter of the mistyped id's length (at least 1 edit), or undefined when
+ * none is that close or two or more tie for closest, so a suggestion never picks between candidates.
+ */
+function closestCellId(cellId: string, known: Iterable<string>): string | undefined {
+	const limit = Math.max(1, Math.floor(cellId.length / 4));
+	let best: string | undefined;
+	let bestDistance = Number.POSITIVE_INFINITY;
+	let tied = false;
+	for (const candidate of known) {
+		const distance = editDistance(cellId, candidate);
+		if (distance > limit) continue;
+		if (distance < bestDistance) {
+			best = candidate;
+			bestDistance = distance;
+			tied = false;
+		} else if (distance === bestDistance) {
+			tied = true;
+		}
+	}
+	return tied ? undefined : best;
 }
 
 export class EvalDetachedCellManager {
@@ -50,6 +91,9 @@ export class EvalDetachedCellManager {
 	readonly #cells = new Map<string, ManagedCell>();
 	readonly #interrupting = new Map<string, ManagedCell>();
 	readonly #detached = new Map<string, ManagedCell>();
+	/** Ended cells whose final result is still settling, by id; a new cell under the id supersedes the old one. */
+	readonly #amending = new Map<string, ManagedCell>();
+	readonly #settling = new SettlingCells<ManagedCell>(() => this.#emitWakeSourceState([...this.#detached.values()]));
 	readonly #terminalSnapshots: TerminalSnapshotStore;
 	readonly #notificationQueue: DetachedNotificationQueue;
 	readonly #now: () => number;
@@ -90,6 +134,7 @@ export class EvalDetachedCellManager {
 			this.#cells.delete(cellId);
 		}
 		this.#terminalSnapshots.delete(cellId);
+		this.#amending.delete(cellId);
 		const cell = createManagedCell({
 			cellId,
 			input,
@@ -151,13 +196,29 @@ export class EvalDetachedCellManager {
 		return true;
 	}
 
-	complete(cell: ManagedCell, result: AgentToolResult<EvalToolDetails>): boolean {
+	/**
+	 * Ends the cell with `result` now. When `final` is given, the cell's result becomes what it resolves to (the result
+	 * with its written files) and the completion notification waits for it; the state never does.
+	 */
+	complete(
+		cell: ManagedCell,
+		result: AgentToolResult<EvalToolDetails>,
+		final?: Promise<AgentToolResult<EvalToolDetails>>,
+	): boolean {
 		const state =
 			result.details.cells?.[0]?.status === "cancelled"
 				? "cancelled"
 				: result.details.isError === true
 					? "failed"
 					: "completed";
+		if (final !== undefined && allowsDetachedCellTransition(cell.state, state)) {
+			this.#amending.set(cell.cellId, cell);
+			// A settlement that fails keeps the result the cell ended with.
+			cell.finalResult = final.then(
+				(amended) => this.#amend(cell, amended),
+				() => this.#amend(cell, undefined),
+			);
+		}
 		return this.#settle(cell, state, result);
 	}
 
@@ -195,9 +256,13 @@ export class EvalDetachedCellManager {
 		return { live: this.liveCells(), recent: this.#terminalSnapshots.list() };
 	}
 
+	/** The cell's final snapshot: once it ended and its result has its written files. */
 	async waitForTerminal(cellId: string): Promise<EvalDetachedCellSnapshot> {
-		const live = this.#cells.get(cellId);
-		return live === undefined ? this.#terminal(cellId) : await live.terminal.promise;
+		const cell = this.#cells.get(cellId) ?? this.#amending.get(cellId);
+		if (cell === undefined) return this.#terminal(cellId);
+		await cell.terminal.promise;
+		await cell.finalResult;
+		return this.#snapshot(cell);
 	}
 
 	async dispose(): Promise<void> {
@@ -239,6 +304,10 @@ export class EvalDetachedCellManager {
 		this.#refreshTerminalSnapshot(cell);
 		if (cell.wasDetached) {
 			this.#detached.delete(cell.cellId);
+			const settling =
+				cell.finalResult === undefined || cell.notificationQueued
+					? undefined
+					: { ready: cell.finalResult, onDelivered: this.#settling.hold(cell) };
 			this.#emitStatus();
 			if (!cell.notificationQueued) {
 				cell.notificationQueued = true;
@@ -247,6 +316,7 @@ export class EvalDetachedCellManager {
 						await cell.interruptOutcome?.promise;
 						return this.#snapshot(cell);
 					},
+					...settling,
 				});
 			}
 		}
@@ -297,6 +367,14 @@ export class EvalDetachedCellManager {
 		}
 	}
 
+	#amend(cell: ManagedCell, result: AgentToolResult<EvalToolDetails> | undefined): void {
+		if (this.#amending.get(cell.cellId) !== cell) return;
+		this.#amending.delete(cell.cellId);
+		if (result === undefined) return;
+		cell.terminalResult = result;
+		this.#refreshTerminalSnapshot(cell);
+	}
+
 	#refreshTerminalSnapshot(cell: ManagedCell): void {
 		if (!this.#cells.has(cell.cellId)) this.#terminalSnapshots.remember(this.#snapshot(cell));
 	}
@@ -308,7 +386,7 @@ export class EvalDetachedCellManager {
 	}
 
 	#emitWakeSourceState(liveCells: readonly ManagedCell[]): void {
-		this.#onWakeSourceState?.(detachedWakeSourceState(liveCells));
+		this.#onWakeSourceState?.(detachedWakeSourceState([...liveCells, ...this.#settling.values()]));
 	}
 
 	#snapshot(cell: ManagedCell): EvalDetachedCellSnapshot {
@@ -317,7 +395,14 @@ export class EvalDetachedCellManager {
 
 	#terminal(cellId: string): EvalDetachedCellSnapshot {
 		const snapshot = this.#terminalSnapshots.get(cellId);
-		if (snapshot === undefined) throw new EvalCellNotFoundError(cellId);
+		if (snapshot === undefined) {
+			const known = new Set([
+				...this.#cells.keys(),
+				...this.#interrupting.keys(),
+				...this.#terminalSnapshots.list().map((entry) => entry.cellId),
+			]);
+			throw new EvalCellNotFoundError(cellId, closestCellId(cellId, known));
+		}
 		return snapshot;
 	}
 }

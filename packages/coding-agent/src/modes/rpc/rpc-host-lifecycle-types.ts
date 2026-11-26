@@ -108,9 +108,24 @@ export interface RpcSubscriptionLimitsEvent {
 		readonly resetsAt?: string;
 	}>;
 	readonly reportedAt: string;
+	/** The plan the usage endpoint names, when it names one (senpi#3684). */
+	readonly plan?: string;
+	/** Why the last usage poll failed; the windows beside it are the last ones reported (senpi#3684). */
+	readonly error?: string;
+}
+
+/**
+ * The host is about to exit with `exitCode` because a worker it ended after a telemetry revocation was not seen to
+ * stop (senpi#7446): every session on this host ends with it. Sent to every connection before the exit.
+ */
+export interface RpcHostTelemetryContainmentEvent {
+	readonly type: "host_telemetry_containment";
+	readonly sessionId: string;
+	readonly exitCode: number;
 }
 
 export type RpcHostLifecycleEvent =
+	| RpcHostTelemetryContainmentEvent
 	| RpcSubscriptionLimitsEvent
 	| RpcHostSupersededEvent
 	| RpcHostStalledEvent

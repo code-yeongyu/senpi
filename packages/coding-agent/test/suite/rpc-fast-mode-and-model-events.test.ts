@@ -283,13 +283,21 @@ describe("RPC fast-mode commands and model/tier events", () => {
 		await rpc.send({ type: "set_fast_mode", enabled: true });
 
 		// when
+		let now = 1_800_000_000_000;
+		vi.spyOn(Date, "now").mockImplementation(() => now++);
 		const fromGetState = (await rpc.send({ type: "get_state" })).data;
 		const fromBuilder = buildRpcSessionState(rpc.harness.session);
 
-		// then: identical once both have crossed JSON (which drops undefined-valued fields)
+		// then: compare all state fields, excluding only per-delivery lifecycle metadata
 		expect(fromBuilder.fastMode).toBe(true);
 		expect(fromBuilder.serviceTier).toBe("priority");
-		expect(JSON.parse(JSON.stringify(fromBuilder))).toEqual(fromGetState);
+		if (!fromGetState) throw new Error("Missing get_state response data");
+		const { observedAt: _builderObservedAt, ...builderLifecycle } = fromBuilder.lifecycle;
+		const { observedAt: _getObservedAt, ...getLifecycle } = fromGetState.lifecycle as Record<string, unknown>;
+		expect(JSON.parse(JSON.stringify({ ...fromBuilder, lifecycle: builderLifecycle }))).toEqual({
+			...fromGetState,
+			lifecycle: getLifecycle,
+		});
 	});
 
 	it("roundtrips set_fast_mode / get_fast_mode and persists per model", async () => {

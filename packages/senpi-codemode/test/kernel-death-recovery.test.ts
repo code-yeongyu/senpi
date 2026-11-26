@@ -77,8 +77,11 @@ async function killAndAwaitReap(pid: number): Promise<void> {
 	throw new Error(`interpreter ${pid} was not reaped`);
 }
 
-const restartNotice = (language: string): string =>
-	`[${language} kernel was restarted after signal 9; every global is lost]`;
+// A SIGKILL nobody in senpi sent names the likely cause and, when readable, the host's memory state (senpi#3612).
+const restartNotice = (language: string): RegExp =>
+	new RegExp(
+		`^\\[${language} kernel was restarted after signal 9, probably killed by the system, most often under memory pressure( \\([^)]*\\))?; every global is lost\\]$`,
+	);
 
 describe("a kernel whose interpreter dies is replaced once and keeps its queue", () => {
 	it.skipIf(!ruby.ok)(
@@ -91,7 +94,7 @@ describe("a kernel whose interpreter dies is replaced once and keeps its queue",
 			const next = await submit(manager, "rb", "1 + 1");
 
 			expect(next).toMatchObject({ ok: true, valueRepr: "2" });
-			expect(next.notice).toBe(restartNotice("rb"));
+			expect(next.notice).toMatch(restartNotice("rb"));
 			expect(interpreterPid(await submit(manager, "rb", "Process.pid"))).not.toBe(pid);
 		},
 		60_000,
@@ -107,7 +110,7 @@ describe("a kernel whose interpreter dies is replaced once and keeps its queue",
 			const next = await submit(manager, "jl", "1 + 1");
 
 			expect(next).toMatchObject({ ok: true, valueRepr: "2" });
-			expect(next.notice).toBe(restartNotice("jl"));
+			expect(next.notice).toMatch(restartNotice("jl"));
 		},
 		180_000,
 	);
@@ -133,7 +136,7 @@ describe("a kernel whose interpreter dies is replaced once and keeps its queue",
 				kernelState: "lost",
 			});
 			expect(first).toMatchObject({ ok: true, valueRepr: "42", kernelState: "restarted" });
-			expect(first.notice).toBe(restartNotice("py"));
+			expect(first.notice).toMatch(restartNotice("py"));
 			expect(second).toMatchObject({ ok: true, valueRepr: "41" });
 			expect(second.kernelState).toBeUndefined();
 			expect(second.notice).toBeUndefined();
@@ -164,7 +167,7 @@ describe("a kernel whose interpreter dies is replaced once and keeps its queue",
 			});
 			const recovered = await submit(manager, "py", "1 + 1");
 			expect(recovered).toMatchObject({ ok: true, valueRepr: "2" });
-			expect(recovered.notice).toBe(restartNotice("py"));
+			expect(recovered.notice).toMatch(restartNotice("py"));
 		},
 		60_000,
 	);

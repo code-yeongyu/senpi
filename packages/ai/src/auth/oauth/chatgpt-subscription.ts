@@ -18,7 +18,8 @@ import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import { getWireIdentity } from "../../wire-identity.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
-import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.ts";
+import { waitForCallbackOrManualInput } from "./callback-server.ts";
+import { type ChatGptCallback, startChatGptCallback } from "./chatgpt-subscription-callback.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { generatePKCE } from "./pkce.ts";
 
@@ -278,16 +279,16 @@ async function pollChatGptSubscriptionDeviceAuth(
 	});
 }
 
-async function createAuthorizationFlow(
+function buildAuthorizationUrl(
+	state: string,
+	challenge: string,
+	redirectUri: string,
 	originator: string = getWireIdentity(),
-): Promise<{ verifier: string; state: string; url: string }> {
-	const { verifier, challenge } = await generatePKCE();
-	const state = createState();
-
+): string {
 	const url = new URL(AUTHORIZE_URL);
 	url.searchParams.set("response_type", "code");
 	url.searchParams.set("client_id", CLIENT_ID);
-	url.searchParams.set("redirect_uri", REDIRECT_URI);
+	url.searchParams.set("redirect_uri", redirectUri);
 	url.searchParams.set("scope", SCOPE);
 	url.searchParams.set("code_challenge", challenge);
 	url.searchParams.set("code_challenge_method", "S256");
@@ -296,7 +297,7 @@ async function createAuthorizationFlow(
 	url.searchParams.set("codex_cli_simplified_flow", "true");
 	url.searchParams.set("originator", originator);
 
-	return { verifier, state, url: url.toString() };
+	return url.toString();
 }
 
 function getAccountId(accessToken: string): string | null {
@@ -346,28 +347,26 @@ async function loginChatGptSubscriptionDeviceCode(interaction: ProviderAuthInter
 }
 
 async function loginChatGptSubscription(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
-	const { verifier, state, url } = await createAuthorizationFlow();
-	// Port 1455 is shared with the Codex CLI; when it is taken, fall back to the pasted redirect URL.
-	const callback = await startOAuthCallbackServer({
-		providerName: "OpenAI",
-		host: getCallbackHost(),
-		port: 1455,
-		path: "/auth/callback",
-		state,
-		complete: async (code) => code,
-		signal: interaction.signal,
-	}).catch(() => undefined);
-
-	interaction.notify({
-		type: "auth_url",
-		url,
-		instructions: "A browser window should open. Complete login to finish.",
-	});
-
+	// PKCE first: it awaits the lazily imported node:crypto that createState() needs.
+	const { verifier, challenge } = await generatePKCE();
+	const state = createState();
+	let callback: ChatGptCallback | undefined;
 	try {
-		const result = await waitForCallbackOrManualInput(interaction, callback, {
+		callback = await startChatGptCallback({ host: getCallbackHost(), state, signal: interaction.signal });
+		const redirectUri = callback?.redirectUri ?? REDIRECT_URI;
+		const url = buildAuthorizationUrl(state, challenge, redirectUri);
+
+		interaction.notify({
+			type: "auth_url",
+			url,
+			instructions: callback
+				? "A browser window should open. Complete login to finish."
+				: "Another sign-in on this computer is holding the login ports, so the browser cannot hand the result back here. After you sign in, copy the address from the browser and paste it below.",
+		});
+
+		const result = await waitForCallbackOrManualInput(interaction, callback?.server, {
 			message: "Complete login in your browser, or paste the authorization code / redirect URL here:",
-			placeholder: REDIRECT_URI,
+			placeholder: redirectUri,
 		});
 		let code: string | undefined;
 		if (result.type === "callback") {
@@ -379,9 +378,9 @@ async function loginChatGptSubscription(interaction: ProviderAuthInteraction): P
 		}
 
 		if (!code) throw new Error("Missing authorization code");
-		return await exchangeAuthorizationCodeForCredentials(code, verifier, REDIRECT_URI, interaction.signal);
+		return await exchangeAuthorizationCodeForCredentials(code, verifier, redirectUri, interaction.signal);
 	} finally {
-		callback?.close();
+		callback?.server.close();
 	}
 }
 

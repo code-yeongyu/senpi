@@ -127,3 +127,13 @@ function parseAllowlist(text: string, sha: string): AllowlistNodes {
 	if (!Check(allowlistSchema, value)) throw new GateInputError(`allowlist at merge base ${sha}`);
 	return value;
 }
+
+/**
+ * The committed baseline is recorded only on Linux, the CI image the gate runs on. Another host
+ * measures different import sizes and OS-specific contract outcomes, so a baseline written there
+ * would make every Linux run report drift that never happened.
+ */
+export function baselineHostRefusal(platform: string): string | undefined {
+	if (platform === "linux") return undefined;
+	return `refusing to write the baseline on ${platform}: record it on Linux (the CI image) only`;
+}

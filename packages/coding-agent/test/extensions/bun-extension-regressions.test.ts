@@ -95,7 +95,7 @@ for (let n = 0; n < 2000; n++) createBunExtensionImporter({});
 // reachable from the runtime for one turn after it was dropped, so a GC right after a single
 // turn finds it alive even though nothing in the importer retains it (#2521). A real retention
 // path survives any number of turns and still fails this assertion.
-// Cross them through the timer queue, not setImmediate: on macOS arm64, Bun 1.4.2 (the CI pin)
+// Cross them through the timer queue, not setImmediate: on macOS arm64, Bun 1.4.2 (measured there; the CI pin at the time)
 // keeps one extra extension graph reachable from its immediate queue after every importer that
 // owned it is collected, so setImmediate turns left 2 generations while timer turns leave 1
 // (#3438). The assertion is unchanged: keep-all still gives 2001 and keep-last 2.

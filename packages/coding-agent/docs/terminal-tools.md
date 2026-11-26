@@ -12,14 +12,36 @@ platform/runtime).
 |------|---------|
 | `bash` | Run a command in a PTY. `run_in_background: true` starts a persistent session and returns a `bash_id` immediately. Foreground `timeout` (seconds) is a kill deadline. |
 | `bash_output` | Peek at a session without blocking: new output since the last read, or the status line. `filter` regex-filters lines; `view: "screen"` returns the rendered xterm grid. |
-| `monitor` | Watch a change and inject it as coalesced events, passing `command` XOR `path`: a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) injects matching PTY output lines, while a file (`description`, `path`, `event?`, `persistent?`) fires once natively. Every call returns a stable `mon_` id (with the runtime `bash_N` handle as `details.bash_id`); either id addresses the watch. While watches are live, the interactive footer shows a brief `watching …` status (descriptions, count, paused markers). |
-| `bash_input` | Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
-| `bash_resize` | Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
+| `monitor` | Watch a change and inject it as coalesced events, passing exactly one source - `command`, `path` or `target`: a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) injects matching PTY output lines, a file (`description`, `path`, `event?`, `persistent?`) fires once natively, and sessions (`type: "rpc"`, `target`, `events?`, `exclude?`, `filter?`, `persistent?`) report status changes, effect receipts and, opted in, content from every RPC host and terminal. Every call returns a stable `mon_` id (with the runtime `bash_N` handle as `details.bash_id`); either id addresses the watch. While watches are live, the interactive footer shows a brief `watching …` status (descriptions, count, paused markers). |
+| `bash_input` | Search-exposed: activates on its first call. Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
+| `bash_resize` | Search-exposed: activates on its first call. Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
 | `kill_bash` | Tree-kill one session (`bash_id`) or all (`all: true`), leaving no orphans. |
 
 Background sessions are NEVER killed by `timeout` (they live until they exit or you
 call `kill_bash`), even though the bash-timeout extension injects a default `timeout`
 into every `bash` call. Foreground calls behave like the classic `bash` tool.
+
+### Long-running background sessions
+
+A background session that is still running (started with `run_in_background`, or a
+foreground command that auto-detached) is reported once it has run 10 minutes, then
+every 30 minutes after that (10, 40, 70, ... minutes). Each report names the session's
+`bash_id` and its command or label, says how long it has been running, and gives the
+call that stops it (`kill_bash({ bash_id })`). It reaches the agent like a completion
+notice (subject to `notify`), shows in the TUI, and goes to RPC clients as the
+`terminal_background_age` event ([RPC](rpc.md#background-session-age)). A report that came
+due while the machine slept is sent once, not once per missed interval.
+
+Nothing is stopped automatically by default. To stop long sessions at a set age, opt in
+with the `terminal.backgroundAutoReapMinutes` setting, or per call with the `bash`
+parameter `auto_reap_minutes` (which wins over the setting; `0` turns it off for that
+call). At that age the session is stopped the way `kill_bash` stops it (TERM to its
+process group, then KILL after a grace), its completion notice says it was stopped
+automatically, and a `terminal_background_age` event with `kind: "reaped"` is sent.
+It counts as reaped only once that stop has really ended the session. If the stop fails
+or the session survives it, one notice (and a `kind: "reap_failed"` event) says
+auto-reap failed and why; the session keeps running, its age reports go on, and the
+auto-reap does not retry.
 
 Background sessions and monitors also survive a session reload (`/reload`): existing
 `bash_N` ids stay addressable, watchers keep injecting events, and completion
@@ -121,7 +143,7 @@ fires only when the file appears after registration; to watch a file that
 already exists, pass `event: "modify"`. Registration needs the parent directory
 (`dist/` here) to exist already, and the target must be a regular file, not a
 symlink — when the build creates the directory too, keep a command poll loop
-like the port recipe below. This branch is XOR with `command` and takes no
+like the port recipe below. This branch is one source of three and takes no
 `filter`. Expected event: one hit when the file lands, then the watch is done.
 Consume the artifact. Add `persistent: true` to make it a standing watch that
 survives a restart and reports a change it missed while detached.
@@ -148,6 +170,32 @@ monitor({ description: "subtask done",
 Expected event: `READY` once the child flips its status file. Read the child's
 results and integrate. Exits on its own; no cleanup.
 
+### Session status (rpc branch)
+
+```ts
+monitor({ type: "rpc", target: "children", description: "children status" })
+```
+
+The result lists every matched session (`<label> <status> (<n> attached, model <id>)`); after that each
+status change arrives as `rpc <label> status <from> -> <to> (<cause>, by <by>) seq=<n>` and each effect
+receipt as `rpc <label> effect <kind> <id tail> <state> (<disposition|reason>)`. `target` is
+`"children"` (matched by the host, so children spawned after arming appear), `"all"` (every session of
+every host and terminal endpoint you run) or one session id, path or `st_` task id; a session on another
+device is `<device>/<session>` (e.g. `"laptop/abc123"`). `events` names any
+RPC record kinds (default `["session_status"]`, children add `"effect_status"`); `"all"` adds content,
+with streaming collapsed to `rpc <label> streaming +<n> deltas (last: "...")` per session per 2 s and
+`exclude` dropping kinds. Content is a `mirror` opt-in: the monitor never attaches, so the session's
+`attachments` count does not change. `persistent: true` survives a restart and reports what moved while
+detached (`changed while detached`, `closed (gone while detached)`, `host ... restarted (generation a -> b)`).
+
+A session on another device is `<device>/<session>` (or `<device>/*` for every session there) when an
+extension registered a remote source with `pi.registerRpcRemoteSource`; without one such a target is
+refused. Its lines read exactly like local ones. A lost device is said once
+(`rpc device <device> unreachable (<reason>); re-watching`), the resync after the gap reports each change
+once, each settled turn the resync names is reported once (`rpc <label> turn <id> settled while detached`)
+while a live turn end is rendered as it arrives, and an
+access that ended for good settles the watch (`rpc <device>/<session> access ended (<reason>)`).
+
 ### Anti-patterns
 
 | Anti-pattern | Do instead |
@@ -163,7 +211,7 @@ results and integrate. Exits on its own; no cleanup.
 | Polling `test -f` in a command to await one file | Use the file branch: `monitor({ description, path, event? })` |
 | `event: "create"` on a file that already exists | `create` fires only on appearance; use `event: "modify"` |
 | `path` whose parent directory the build has yet to create | Registration fails; poll for it with a `command` watch instead |
-| Passing `command` and `path` in one call | They are XOR; pick the branch that matches what you await |
+| Passing two of `command`, `path`, `target` in one call | One source per call; pick the branch that matches what you await |
 | Monitoring sub-minute deterministic work | Run it directly in the foreground |
 | Rearming a monitor that was never paused | Rearm only a `bash_id` named in a pause notice |
 
@@ -189,7 +237,8 @@ Configure the suite under `terminal` in `settings.json` (global
     "scrollback": 10000,
     "maxSessions": 32,
     "timeoutAction": "background",
-    "notify": "wake"
+    "notify": "wake",
+    "backgroundAutoReapMinutes": 120
   }
 }
 ```
@@ -198,7 +247,9 @@ Configure the suite under `terminal` in `settings.json` (global
 - `scrollback` — xterm scrollback lines per session (default 10000).
 - `maxSessions` — concurrent sessions before least-recently-used exited sessions are pruned (default 32).
 - `timeoutAction` — fate of a foreground timeout (default `background`).
+- `backgroundAutoReapMinutes` — stop a background session once it has run this many minutes (default unset: never). A whole number of minutes of at least 1 turns it on; `0` or any other value leaves it off. The `bash` parameter `auto_reap_minutes` overrides it per call.
 - `notify` — async completion behavior: `wake` (wake an idle interactive agent once), `next-turn`, or `off` (default `wake`). Non-interactive `-p` / `--print` / `--mode json` runs never wake.
+- `killGuard` — `on` (default) or `off`, read from the global settings file only (a project value is ignored). While on, an agent command or eval cell that would signal every process (`kill -1`, a `pkill` pattern such as `a||b`, `.*` or one letter), a protected process (pid 1, the agent, its ancestors, the user's service manager) or a process group holding one is refused before it runs with a `[senpi:kill-guard]` message naming the rule and a narrow alternative. Narrow kills by pid, exact name (`pkill -x`) or anchored pattern run as before. Values only known when a command runs (`pkill -f "$P"`, `xargs kill`, a script's `kill $PID`) are judged then: on macOS and Linux every agent shell, monitor and eval kernel gets `kill`, `pkill` and `killall` shims first on `PATH` (in `<agent dir>/kill-guard/<version>/`) and a `BASH_ENV` that wraps bash's builtin `kill`, chaining any `BASH_ENV` you already set; an interactive bash the agent starts gets the same wrapper from a `PROMPT_COMMAND` hook before its first prompt, after your startup files, and your own `PROMPT_COMMAND` still runs after it; a refused command exits 126 with the same message. This also judges what the agent types into a running shell with `bash_input` (edited, recalled or history-expanded lines included), because the shell judges the line it actually runs. Builtin `kill` in dash or zsh, in `bash --posix -c` and in `bash -i -c`, in an interactive bash whose startup files replace `PROMPT_COMMAND`, and a `kill` named by absolute path, are judged only from the command text. A command you type yourself with `!` is never judged and gets no shims. `off` restores the unguarded behavior (no shims, no `BASH_ENV`, `PROMPT_COMMAND` left as you set it) and shows one notice per session.
 
 ## Windows
 

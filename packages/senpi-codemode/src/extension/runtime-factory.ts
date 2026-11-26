@@ -1,4 +1,11 @@
-import { type ExtensionContext, withBundledBunCommands } from "@code-yeongyu/senpi";
+import {
+	activeKillGuardEnvironment,
+	childEnvironmentOf,
+	type ExtensionContext,
+	readKillGuardSetting,
+	withBundledBunCommands,
+	withCredentialProxy,
+} from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
@@ -21,7 +28,11 @@ import {
 import { processRuntimeInfo } from "../kernels/js/process-worker.ts";
 import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
+import { toolResultIsError } from "../tool/tool-result-marshal.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
+import { createGitRunner, createNodeFsAccess } from "../written-files/scan-boundaries.ts";
+import { WrittenFiles } from "../written-files/written-files.ts";
+import { reachableToolNames } from "./reachable-tools.ts";
 import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
 import {
 	type CodemodeSessionManager,
@@ -33,6 +44,8 @@ export interface CodemodeRuntimeAPI {
 	readonly executeTool: AgentExecuteTool;
 	getActiveTools(): string[];
 	getAllTools(): readonly EvalSchemaToolInfo[];
+	/** True on a hand whose loop runs elsewhere; a host without it is never one. */
+	isLoopRemote?(): boolean;
 }
 
 export interface RuntimeFactoryOptions {
@@ -54,6 +67,7 @@ export type SessionRuntime = {
 	readonly spawns: boolean;
 	readonly pythonEnvironments?: PythonEnvironments;
 	readonly jsEnvironments: JsEnvironments;
+	readonly writtenFiles: WrittenFiles;
 };
 
 export async function createRuntime(
@@ -85,11 +99,27 @@ export async function createRuntime(
 	const enabledLanguages = enabledLanguagesFrom(settings, availability);
 	const jsProcessIsolation = resolveJsIsolation(settings) === "process";
 	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
-	const activeTools = new Set(pi.getActiveTools());
-	const executeTool = createExecuteTool(pi, activeTools);
+	const activeTools = reachableToolNames(pi);
+	// Kernels and their children never see the RPC host's supervisor hand-off (senpi#5635).
+	const inheritedEnv = () => childEnvironmentOf(process.env);
+	const writtenFiles = new WrittenFiles({
+		cwd: ctx.cwd,
+		artifactsDir: artifacts.dir,
+		git: createGitRunner(inheritedEnv),
+		fs: createNodeFsAccess(),
+		hooksRunHere: () => pi.isLoopRemote?.() !== true,
+	});
+	const executeTool = createExecuteTool(pi, activeTools, (toolName, params) =>
+		writtenFiles.noteToolCall(toolName, params),
+	);
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
 	const sessionId = sessionIdFrom(event);
-	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...bundledBunPathEntry() };
+	const killGuard = readKillGuardSetting(ctx.cwd, ctx.agentDir) === "on";
+	const pathEntry = bundledBunPathEntry();
+	// The kill guard's runtime layer (senpi#5349): kernels and their children get the shims first on PATH and
+	// bash's BASH_ENV wrapper, as the bash tool does.
+	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...pathEntry }) : {};
+	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...pathEntry, ...killGuardEnv, ...withheldCredentialEntries() };
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const pythonEnvironments =
@@ -99,6 +129,7 @@ export async function createRuntime(
 					cwd: ctx.cwd,
 					interpreter: availability.py.detected.path,
 					settings,
+					inheritedEnv,
 				})
 			: undefined;
 	const manager = await create({
@@ -106,6 +137,8 @@ export async function createRuntime(
 		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
 		sessionEnv,
+		inheritedEnv,
+		killGuard,
 		settings,
 		availability,
 		artifactsDir: artifacts.dir,
@@ -134,9 +167,10 @@ export async function createRuntime(
 			artifactsDir: artifacts.dir,
 			cwd: ctx.cwd,
 			runtime: jsRuntimeInfo().name,
-			env: { ...process.env, ...sessionEnv },
+			env: { ...inheritedEnv(), ...sessionEnv },
 			settings,
 		}),
+		writtenFiles,
 		...(pythonEnvironments === undefined ? {} : { pythonEnvironments }),
 	};
 }
@@ -149,13 +183,35 @@ function reportSettingsProblems(ctx: ExtensionContext, problems: readonly string
 	}
 }
 
-export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: ReadonlySet<string>): AgentExecuteTool {
+// The OmO desktop renders a page only from a top-level show_html_page call; one made from a cell is recorded inside
+// the eval call, so the page was never shown while the tool told the model it was (senpi#6391).
+const TOP_LEVEL_ONLY_TOOL_REFUSALS: ReadonlyMap<string, string> = new Map([
+	[
+		"show_html_page",
+		"show_html_page cannot run inside eval: a page shown from a cell never reaches the reader. Build the HTML in the cell if you like, then call show_html_page directly as its own tool call.",
+	],
+]);
+
+export function createExecuteTool(
+	pi: CodemodeRuntimeAPI,
+	activeTools?: ReadonlySet<string>,
+	/** Told of each call that completed through the session's hooks without an error. */
+	onCompleted?: (toolName: string, params: unknown) => Promise<void>,
+): AgentExecuteTool {
 	// A cell names tools directly and cannot run tool_search first, so eval opts in to
 	// lazy activation. Eligibility still belongs to the extension that registered the tool.
-	const executeTool: AgentExecuteTool = (toolName, params, executeOptions) =>
-		pi.executeTool(toolName, params, { ...executeOptions, activateInactiveTool: true });
+	const executeTool: AgentExecuteTool = (toolName, params, executeOptions) => {
+		const refusal = TOP_LEVEL_ONLY_TOOL_REFUSALS.get(toolName);
+		if (refusal !== undefined) return Promise.reject(new Error(refusal));
+		const call = pi.executeTool(toolName, params, { ...executeOptions, activateInactiveTool: true });
+		if (onCompleted === undefined) return call;
+		return call.then(async (result) => {
+			if (!toolResultIsError(result)) await onCompleted(toolName, params);
+			return result;
+		});
+	};
 	return Object.assign(executeTool, {
-		isToolAvailable: (name: string): boolean => activeTools?.has(name) ?? pi.getActiveTools().includes(name),
+		isToolAvailable: (name: string): boolean => (activeTools ?? reachableToolNames(pi)).has(name),
 	});
 }
 
@@ -168,6 +224,15 @@ function bundledBunPathEntry(): Record<string, string> {
 	const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const value = env[pathKey];
 	return value === undefined ? {} : { [pathKey]: value };
+}
+
+// senpi#6820: kernels and their children get the bash tool's view of declared credentials (a placeholder plus the
+// proxy route). The session environment overrides each kernel's inherited environment, so the value never reaches one.
+function withheldCredentialEntries(): Record<string, string> {
+	const entries: Record<string, string> = {};
+	for (const [name, value] of Object.entries(withCredentialProxy(process.env)))
+		if (value !== undefined && value !== process.env[name]) entries[name] = value;
+	return entries;
 }
 
 function sessionIdFrom(event: unknown): string {

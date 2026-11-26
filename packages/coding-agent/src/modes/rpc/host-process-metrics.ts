@@ -17,6 +17,7 @@
  * asking what a daemon is doing must still get its identity and its sessions.
  */
 import { readdir } from "node:fs/promises";
+import type { readProcessFootprint as ReadProcessFootprint } from "../../core/process-footprint.ts";
 import { loadProcessTableReader, type ProcessTableReader, type ProcessTableRow } from "./host-process-table.ts";
 
 export interface HostProcessMetrics {
@@ -28,16 +29,41 @@ export interface HostProcessMetrics {
 	 * shows for those pids and the one the host's memory sampler reads (senpi#2207).
 	 */
 	readonly host_rss_mb: number | null;
+	/**
+	 * Memory footprint of the same supervisor and host processes, read from the kernel counter the host's
+	 * own sampler uses (`phys_footprint` on macOS, `RssAnon` on Linux). Unlike RSS it keeps counting pages
+	 * that were compressed or swapped out, so a host that RSS shows at 1.3 GB can be holding 14 GB
+	 * (senpi#3110). `null` when any of those processes has no readable counter.
+	 */
+	readonly host_footprint_mb: number | null;
 	/** Open descriptors across the tree. `/proc`-only, so `null` off Linux. */
 	readonly open_fds: number | null;
 	/** Processes in the tree that have exited and whose status nobody collected. */
 	readonly zombies: number | null;
 }
 
-const UNOBSERVED: HostProcessMetrics = { rss_mb: null, host_rss_mb: null, open_fds: null, zombies: null };
+const UNOBSERVED: HostProcessMetrics = {
+	rss_mb: null,
+	host_rss_mb: null,
+	host_footprint_mb: null,
+	open_fds: null,
+	zombies: null,
+};
 
 /** Resolved once per platform; `undefined` on runtimes that cannot read the table without spawning. */
 const readers = new Map<string, Promise<ProcessTableReader | undefined>>();
+
+/**
+ * The footprint reader is loaded on the first status read, not imported: this module sits in the lifecycle
+ * supervisor's static graph (host-lifecycle -> ... -> host-generations -> here), and `core/` is outside that
+ * graph's allowlist (test/supervisor-import-graph.test.ts).
+ */
+let footprintReader: Promise<typeof ReadProcessFootprint> | undefined;
+
+function loadFootprintReader(): Promise<typeof ReadProcessFootprint> {
+	footprintReader ??= import("../../core/process-footprint.ts").then((module) => module.readProcessFootprint);
+	return footprintReader;
+}
 
 function tableReader(platform: NodeJS.Platform): Promise<ProcessTableReader | undefined> {
 	const cached = readers.get(platform);
@@ -58,9 +84,11 @@ export async function readHostProcessMetrics(
 	if (rows === undefined) return UNOBSERVED;
 	const tree = descendants(rows, pid);
 	if (tree.length === 0) return UNOBSERVED;
+	const hostRows = tree.filter((row) => row.pid === pid || row.ppid === pid);
 	return {
 		rss_mb: residentMegabytes(tree),
-		host_rss_mb: residentMegabytes(tree.filter((row) => row.pid === pid || row.ppid === pid)),
+		host_rss_mb: residentMegabytes(hostRows),
+		host_footprint_mb: footprintMegabytes(hostRows, await loadFootprintReader()),
 		open_fds: platform === "linux" ? await openDescriptors(tree) : null,
 		zombies: tree.filter((row) => row.state.startsWith("Z")).length,
 	};
@@ -69,6 +97,21 @@ export async function readHostProcessMetrics(
 function residentMegabytes(rows: readonly ProcessTableRow[]): number {
 	return Math.round(rows.reduce((total, row) => total + row.rssKb, 0) / KILOBYTES_PER_MEGABYTE);
 }
+
+function footprintMegabytes(
+	rows: readonly ProcessTableRow[],
+	readProcessFootprint: typeof ReadProcessFootprint,
+): number | null {
+	let bytes = 0;
+	for (const row of rows) {
+		const reading = readProcessFootprint(row.pid);
+		if (reading === undefined) return null;
+		bytes += reading.bytes;
+	}
+	return Math.round(bytes / BYTES_PER_MEGABYTE);
+}
+
+const BYTES_PER_MEGABYTE = 1024 * 1024;
 
 function descendants(rows: readonly ProcessTableRow[], root: number): readonly ProcessTableRow[] {
 	const tree = rows.filter((row) => row.pid === root);

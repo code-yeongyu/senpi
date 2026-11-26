@@ -589,6 +589,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "senpi-socket-secret"
+version = "0.0.0"
+dependencies = [
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "windows-sys",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"

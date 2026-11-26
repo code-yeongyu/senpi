@@ -38,9 +38,9 @@ it.each(["in-process", "worker"] as const)(
 			if (typeof response !== "object" || response === null || !("data" in response))
 				throw new Error("Missing protocol response");
 			expect(parseHostProtocolInfo(response.data)?.capabilities).toContain("session_held");
-			expect(multiSessionHostCapabilities({ warm: runtime === "in-process", negotiated: [] })).toContain(
-				"session_held",
-			);
+			expect(
+				multiSessionHostCapabilities({ warm: runtime === "in-process", toolRuntime: "in-process", negotiated: [] }),
+			).toContain("session_held");
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

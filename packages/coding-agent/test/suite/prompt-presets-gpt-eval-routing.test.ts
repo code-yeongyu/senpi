@@ -47,7 +47,8 @@ describe("GPT eval tool routing", () => {
 			throw new Error(`expected ${presetName} preset to resolve`);
 		}
 		expect(preset.prompt).toContain(evalGuideline);
-		expect(preset.prompt).toContain(buildGptEvalRoutingTuning());
+		// The Astra core states eval routing as its own tool-bound rule and renders no bridge sentence.
+		expect(preset.prompt.includes(buildGptEvalRoutingTuning())).toBe(presetName !== "gpt-6-astra");
 		for (const removedTool of REMOVED_CODE_MODE_TOOLS) {
 			expect(buildGptEvalRoutingTuning()).not.toContain(removedTool);
 		}

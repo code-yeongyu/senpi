@@ -4,9 +4,12 @@ import {
 	categoryForProviderCode,
 	categoryForProviderStatus,
 	categoryForTransportCode,
+	isOpaqueProviderCode,
 	isProviderCodeStatusCompatible,
 	isProviderDiagnosticCategory,
+	isProviderDiagnosticResetsAt,
 	isProviderDiagnosticStatus,
+	isTlsChainVerificationCode,
 	PROVIDER_DIAGNOSTIC_MAX_BYTES,
 } from "./utils/provider-diagnostic-vocabulary.ts";
 
@@ -26,22 +29,32 @@ export type ProviderDiagnosticEvidence = "structured_status" | "structured_code"
 
 /**
  * Bounded, redaction-safe classification of a provider rejection, minted only by
- * a provider adapter from structured metadata (the SDK HTTP error its own
- * transport call raised, or an explicit SSE error envelope). It is additive: it
- * never changes `errorMessage`, retries, fallback, or exit codes.
+ * a provider adapter from structured metadata (its own HTTP response, an SDK
+ * transport error, or an explicit SSE error envelope). The diagnostic leaves
+ * `errorMessage` unchanged but can inform retry decisions.
  */
 export interface ProviderDiagnostic {
 	category: ProviderDiagnosticCategory;
-	/** Integer 400..599. Absent for an error delivered inside an HTTP 200 stream. */
+	/**
+	 * Integer 400..599. Absent for an error delivered inside an HTTP 200 stream.
+	 * A 408 makes an otherwise non-terminal failure eligible for same-model retry.
+	 */
 	httpStatus?: number;
 	/** Provider token from the closed allowlist, never raw provider text. */
 	code?: string;
 	evidence: ProviderDiagnosticEvidence;
+	/** Adapter-selected SIWC route; keeps direct-admission policy separate from API-key routes. */
+	route?: "siwc";
+	/** When a `quota` or `rate_limit` failure resets (epoch ms), when the provider named it. */
+	resetsAt?: number;
 }
 
-export { PROVIDER_DIAGNOSTIC_MAX_BYTES };
+export { isTlsChainVerificationCode, PROVIDER_DIAGNOSTIC_MAX_BYTES };
 
-function readField(value: object, key: "category" | "evidence" | "httpStatus" | "code"): unknown {
+function readField(
+	value: object,
+	key: "category" | "evidence" | "httpStatus" | "code" | "resetsAt" | "route",
+): unknown {
 	return Reflect.get(value, key);
 }
 
@@ -57,12 +70,18 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 		const evidence = readField(value, "evidence");
 		const httpStatus = readField(value, "httpStatus");
 		const code = readField(value, "code");
+		const resetsAt = readField(value, "resetsAt");
+		const route = readField(value, "route");
+		if (route !== undefined && route !== "siwc") return undefined;
+		const routed = route === "siwc" ? ({ route } as const) : {};
 		if (!isProviderDiagnosticCategory(category)) return undefined;
 		if (httpStatus !== undefined && !isProviderDiagnosticStatus(httpStatus)) return undefined;
+		if (resetsAt !== undefined && !isProviderDiagnosticResetsAt(resetsAt)) return undefined;
+		const reset = resetsAt === undefined ? {} : { resetsAt };
 		if (evidence === "structured_status") {
 			if (code !== undefined || !isProviderDiagnosticStatus(httpStatus)) return undefined;
 			if (category !== categoryForProviderStatus(httpStatus)) return undefined;
-			return buildProviderDiagnostic({ category, httpStatus, evidence });
+			return buildProviderDiagnostic({ category, httpStatus, evidence, ...reset, ...routed });
 		}
 		if (evidence === "structured_transport") {
 			if (httpStatus !== undefined || typeof code !== "string") return undefined;
@@ -70,6 +89,10 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 			return buildProviderDiagnostic({ category, code, evidence });
 		}
 		if (evidence !== "structured_code" || typeof code !== "string") return undefined;
+		if (isOpaqueProviderCode(code)) {
+			if (category !== "unknown" || httpStatus !== undefined) return undefined;
+			return buildProviderDiagnostic({ category, code, evidence });
+		}
 		if (categoryForProviderCode(code) !== category) return undefined;
 		if (httpStatus !== undefined && !isProviderCodeStatusCompatible(code, httpStatus)) return undefined;
 		return buildProviderDiagnostic({
@@ -77,6 +100,8 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 			...(httpStatus === undefined ? {} : { httpStatus }),
 			code,
 			evidence,
+			...reset,
+			...routed,
 		});
 	} catch {
 		return undefined;

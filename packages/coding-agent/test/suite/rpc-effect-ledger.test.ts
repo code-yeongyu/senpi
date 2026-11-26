@@ -172,7 +172,9 @@ describe("RPC effect ledger", () => {
 		const fixture = await setup();
 		const info = (await fixture.bind().send({ type: "get_protocol_info" })) as Wire;
 		expect(info.data?.capabilities).toContain(EFFECT_LEDGER_CAPABILITY);
-		expect(multiSessionHostCapabilities({ warm: false, negotiated: [] })).toContain(EFFECT_LEDGER_CAPABILITY);
+		expect(multiSessionHostCapabilities({ warm: false, toolRuntime: "in-process", negotiated: [] })).toContain(
+			EFFECT_LEDGER_CAPABILITY,
+		);
 	});
 
 	it("writes nothing for an abort without effectId", async () => {

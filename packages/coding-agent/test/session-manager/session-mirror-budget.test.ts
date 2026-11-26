@@ -144,7 +144,7 @@ describe("SessionManager resident mirror", () => {
 
 	it("resets trimmed state when replacing the session with a branched file", () => {
 		const session = SessionManager.create(tempDir, tempDir);
-		session.appendMessage(assistantMsg("ready"));
+		const readyId = session.appendMessage(assistantMsg("ready"));
 		const firstKeptEntryId = session.appendMessage(userMsg("before"));
 		session.appendMessage(assistantMsg("after"));
 		session.appendCompaction("summary", firstKeptEntryId, 100);
@@ -152,7 +152,8 @@ describe("SessionManager resident mirror", () => {
 
 		const branchedFile = session.createBranchedSession(firstKeptEntryId);
 		expect(branchedFile).toBeDefined();
-		expect(session.getEntries().map((entry) => entry.id)).toEqual([firstKeptEntryId]);
+		// The branch keeps the whole path, including what the compaction trimmed from the mirror (senpi#3519).
+		expect(session.getEntries().map((entry) => entry.id)).toEqual([readyId, firstKeptEntryId]);
 	});
 
 	it("bounds standalone resident stores when a backing directory exists", () => {

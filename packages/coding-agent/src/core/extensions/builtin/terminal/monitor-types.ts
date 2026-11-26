@@ -14,6 +14,8 @@ export interface MonitorLineEvent {
 	readonly id: string;
 	readonly description: string;
 	readonly line: string;
+	/** The line came from a human-input watch: a person's words, not machine status. */
+	readonly humanInput?: true;
 }
 
 export interface MonitorSummaryEvent {
@@ -96,4 +98,6 @@ export interface MonitorSourceHost {
 	emitRaw(event: MonitorEvent): void;
 	ended(record: MonitorRecordBase, reason: MonitorEndedReason, exitCode: number | null): void;
 	changed(): void;
+	/** The current runaway-guard thresholds (settings can change across a reload). */
+	runawayGuard(): { readonly linesPerMinute: number; readonly minutes: number };
 }

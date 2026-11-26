@@ -14,7 +14,7 @@ const codingAgentPackage = JSON.parse(
 
 describe("binary release workflow", () => {
 	it("pins a stable Bun release with downloadable cross-compile executables", () => {
-		assert.match(workflow, /bun-version:\s*['"]1\.4\.2['"]/);
+		assert.match(workflow, /bun-version:\s*['"]1\.4\.4['"]/);
 		assert.doesNotMatch(workflow, /bun-version:\s*canary/);
 	});
 
@@ -42,11 +42,11 @@ describe("binary release workflow", () => {
 
 	it("stages the codemode sidecar before executing the release smoke", () => {
 		// Given: the release driver's executable Node script invocations.
-		const scripts = [...buildScript.matchAll(/^\s*node\s+"?([^"\s]+\.mjs)"?/gm)]
-			.map((match) => basename(match[1]));
+		const scripts = [...buildScript.matchAll(/^\s*node\s+"?([^"\s]+\.mjs)"?/gm)].map((match) => basename(match[1]));
 		// When: selecting the staging and smoke commands in execution order.
 		const codemodePipeline = scripts.filter((script) =>
-			["copy-codemode-sidecar.mjs", "smoke-standalone-binary.mjs"].includes(script));
+			["copy-codemode-sidecar.mjs", "smoke-standalone-binary.mjs"].includes(script),
+		);
 		// Then: the payload exists before smoke. The CI release-graph gate checks bundle bytes.
 		assert.deepEqual(codemodePipeline, ["copy-codemode-sidecar.mjs", "smoke-standalone-binary.mjs"]);
 		assert.match(codingAgentPackage.scripts["copy-binary-assets"], /copy-codemode-sidecar\.mjs dist/);

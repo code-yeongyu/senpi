@@ -57,6 +57,7 @@ const packageRoot = join(__dirname, "..");
 
 function readGeneratorOptions(args: string[]): {
 	strict: boolean;
+	keepLastGoodOpenGateway: boolean;
 	dataOnly: boolean;
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
@@ -65,6 +66,7 @@ function readGeneratorOptions(args: string[]): {
 	generatedAt: string | undefined;
 } {
 	let strict = false;
+	let keepLastGoodOpenGateway = false;
 	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
@@ -76,6 +78,11 @@ function readGeneratorOptions(args: string[]): {
 		const arg = args[index];
 		if (arg === "--strict") {
 			strict = true;
+			continue;
+		}
+		// senpi#4067: release generation keeps the committed OpenGateway catalog when the feed fails.
+		if (arg === "--keep-last-good-opengateway") {
+			keepLastGoodOpenGateway = true;
 			continue;
 		}
 		if (arg === "--data-only") {
@@ -121,7 +128,15 @@ function readGeneratorOptions(args: string[]): {
 	if (providerIds && (dataOnly || jsonOnly || jsonOutputDir)) {
 		throw new Error("--providers cannot be combined with --data-only or JSON catalog output");
 	}
-	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
+	// A provider-scoped run is a refresh whose failure must stay visible, never a release regeneration.
+	if (providerIds && keepLastGoodOpenGateway) {
+		throw new Error("--keep-last-good-opengateway cannot be combined with --providers");
+	}
+	// Without --strict every OpenGateway failure already keeps the committed catalog, so the flag would be a no-op.
+	if (keepLastGoodOpenGateway && !strict) {
+		throw new Error("--keep-last-good-opengateway requires --strict");
+	}
+	return { strict, keepLastGoodOpenGateway, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -345,6 +360,7 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4.5",
 ]);
 const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
+	"claude-fable-5-2": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-fable-5-1": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5-5": ["claude-opus-4-8", "claude-opus-5"],
@@ -422,6 +438,24 @@ const KIMI_K3_COST = {
 	cacheRead: 0.3,
 	cacheWrite: 3,
 } as const;
+// Official Moonshot API prices for the K3 series per 1M tokens (platform.kimi.ai/docs/pricing/chat, checked
+// 2026-10-27). Both Moonshot providers bill these USD list prices; models.dev carries a currency-converted
+// price for moonshotai-cn that drifts daily. K3.1 Pro shares K3's request contract
+// (platform.kimi.ai/docs/api/models-overview: "the same parameter constraints as kimi-k3").
+const MOONSHOT_KIMI_K3_SERIES_COSTS: Record<string, Model<Api>["cost"]> = {
+	"kimi-k3": KIMI_K3_COST,
+	"kimi-k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+	"kimi-k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
+};
+const MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: null,
+	high: "high",
+	xhigh: null,
+	max: "max",
+} as const;
 const KIMI_CODING_STABLE_MODELS = {
 	"kimi-for-coding": {
 		id: "kimi-for-coding",
@@ -444,6 +478,8 @@ const KIMI_CODING_STABLE_MODELS = {
 // equivalent Moonshot API rates to estimate the value of subscription usage.
 const KIMI_CODING_IMPLIED_COSTS: Record<string, Model<Api>["cost"]> = {
 	k3: KIMI_K3_COST,
+	"k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+	"k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
 	"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 	"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
 	"kimi-k2-thinking": { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 },
@@ -469,6 +505,8 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -476,12 +514,17 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 ]);
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
+// GPT-6.1 Terra is listed for the subscription only, as in upstream pi's Codex rows (#4578); the API-key row
+// keeps its current flags until it is verified separately.
 const CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
+	"gpt-6.1-terra",
 	"gpt-6-sol",
 	"gpt-6-luna",
 ]);
@@ -496,38 +539,58 @@ const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 // Flagship default context windows. OpenAI documents a 1,050,000-token window for every one of
 // these models; the project deliberately ships cost-tier prompt budgets (users widen through model
-// overrides): GPT-5.6 Sol keeps 650,000; GPT-6 Astra keeps 600,000; GPT-6 Sol and GPT-6.1 Sol
-// ship 400,000 (same price tier, developers.openai.com/api/docs/models/gpt-6.1-sol documents the
-// same 1,050,000 window and 922,000 input cap); GPT-6 Luna ships the full 922,000 input cap.
+// overrides): GPT-5.6 Sol keeps 650,000; GPT-6 Astra and GPT-6.2 Astra keep 600,000; GPT-6 Sol,
+// GPT-6.1 Sol and GPT-6.2 Sol ship 400,000 (same price tier, developers.openai.com/api/docs/models/gpt-6.1-sol
+// and gpt-6.2-sol document the same 1,050,000 window and 922,000 input cap); GPT-6 Luna ships the full
+// 922,000 input cap.
 const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 600000;
 const GPT_6_SOL_DEFAULT_CONTEXT_WINDOW = 400000;
 // Live Codex catalog, 2026-10-12T00:15Z: subscription default only; API budgets stay unchanged (#3150).
-const CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW = 500000;
+// GPT-6.1 Terra ships with the same 500k on the subscription, as upstream pi's Codex list does (#4578).
+// GPT-6.2 Sol takes the same 500k: openai/codex's models.json gives it context_window 500000, as it does 6.1 Sol.
+const CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW = 500000;
 const GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW = OPENAI_MAX_CONTEXT_INPUT_CAP;
 const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 	["gpt-5.6-sol", 650000],
 	["gpt-6-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
+	["gpt-6.2-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6.1-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
+	["gpt-6.2-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-luna", GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW],
 ]);
 const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 650000;
 // Every GPT-6 tier id, in the order a prefixed or suffixed id is matched (gpt-6-astra-fast,
 // openai/gpt-6-sol, openai-gpt-6-luna, openai/gpt-6.1-sol). Venice drops the point-release dot
-// (openai-gpt-61-sol, as it does for openai-gpt-56-sol), so the dotless marker is listed too.
-// Bare "gpt-6" and "gpt-6.1" stay out so an unknown sibling is not stamped with a tier it
-// does not have.
+// (openai-gpt-61-sol, openai-gpt-62-astra, as it does for openai-gpt-56-sol), so the dotless markers
+// are listed too. Bare "gpt-6", "gpt-6.1" and "gpt-6.2" stay out so an unknown sibling is not stamped
+// with a tier it does not have.
 const GPT_6_FAMILY_DEFAULT_CONTEXT_WINDOWS: ReadonlyArray<readonly [marker: string, contextWindow: number]> = [
 	["gpt-6-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
+	["gpt-6.2-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
+	["gpt-62-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6.1-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-61-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
+	["gpt-6.2-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
+	["gpt-62-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-sol", GPT_6_SOL_DEFAULT_CONTEXT_WINDOW],
 	["gpt-6-luna", GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW],
 ];
 
-/** GPT-6.1 Sol under either id spelling: `gpt-6.1-sol` or Venice's dotless `gpt-61-sol`. */
-function isGpt61SolId(modelId: string): boolean {
-	return modelId.includes("gpt-6.1-sol") || modelId.includes("gpt-61-sol");
+// GPT-6 Astra, GPT-6.1 Sol and both GPT-6.2 tiers document no `none` effort; the dotless entries are
+// Venice's spellings of the point releases.
+const GPT_6_NO_NONE_EFFORT_MARKERS = [
+	"gpt-6-astra",
+	"gpt-6.1-sol",
+	"gpt-61-sol",
+	"gpt-6.2-astra",
+	"gpt-62-astra",
+	"gpt-6.2-sol",
+	"gpt-62-sol",
+];
+
+function isGpt6NoNoneEffortId(modelId: string): boolean {
+	return GPT_6_NO_NONE_EFFORT_MARKERS.some((marker) => modelId.includes(marker));
 }
 
 function gpt6FamilyDefaultContextWindow(modelId: string): number | undefined {
@@ -544,6 +607,8 @@ const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -557,6 +622,8 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -590,8 +657,15 @@ function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cos
 
 // GPT-6 Sol / Luna list prices (developers.openai.com/api/docs/models/gpt-6-sol, gpt-6-luna).
 // GPT-6.1 Sol (2026-09-29) keeps Sol's input/output rates and halves cached input to 0.10
-// (developers.openai.com/api/docs/models/gpt-6.1-sol).
+// (developers.openai.com/api/docs/models/gpt-6.1-sol). GPT-6.2 Sol (2026-11-17) keeps 6.1 Sol's rates; GPT-6.2
+// Astra lists 8 / 40 with cached input 0.4 and cache writes 10 (developers.openai.com/api/docs/models/gpt-6.2-sol,
+// gpt-6.2-astra).
+// GPT-6.1 Terra list price (models.dev, matches upstream pi). Only the subscription row reads it here;
+// the API row keeps its models.dev metadata.
+const CHATGPT_SUBSCRIPTION_GPT_61_TERRA_COST: ModelCost = { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 };
 const OPENAI_GPT_6_STANDARD_COSTS: Record<string, ModelCost> = {
+	"gpt-6.2-astra": { input: 8, output: 40, cacheRead: 0.4, cacheWrite: 10 },
+	"gpt-6.2-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 	"gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 	"gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 	"gpt-6-luna": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
@@ -624,6 +698,8 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 // OpenAI models with Priority processing support, per the OpenAI pricing page's
 // Priority table. `-fast` catalog variants are generated for exactly this set.
 const OPENAI_PRIORITY_TIER_MODEL_IDS = new Set([
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -653,6 +729,8 @@ const OPENAI_PRIORITY_TIER_MODEL_IDS = new Set([
 // the Codex Responses API; older Codex-only SKUs (gpt-5.3-codex-spark) are
 // Priority-ineligible.
 const CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS = new Set([
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
 	"gpt-6-sol",
@@ -670,7 +748,27 @@ const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
 // Documented per-model xAI reasoning specifications. Grok 4.6 exposes low/medium/high/xhigh;
 // the fixed-reasoning Grok 4.20 variant exposes only `high`. Models without an entry fall back
 // to `applyThinkingLevelMetadata()`'s "no verified effort options" defaults.
+// Grok 4.3 and 4.5 are pinned here rather than taken from models.dev: xAI's reasoning guide documents `xhigh` only on
+// grok-4.6 and later (grok-4.5 treats it as `high`), so neither model offers `xhigh` until xAI's API is verified to accept it.
 const XAI_THINKING_LEVEL_MAPS: Record<string, NonNullable<Model<"openai-responses">["thinkingLevelMap"]>> = {
+	"grok-4.3": {
+		off: "none",
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
+	"grok-4.5": {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
 	"grok-4.6": {
 		off: null,
 		minimal: null,
@@ -740,6 +838,50 @@ const modelsDevReasoningOptions = new Map<string, ModelsDevReasoningOption[]>();
 
 function getModelKey(model: Pick<Model<Api>, "provider" | "id">): string {
 	return `${model.provider}:${model.id}`;
+}
+
+// OpenGateway enriches `x-ai/<id>` from models.dev too: drop the efforts the xAI pin rejects so both routes agree.
+function withXaiThinkingPin<T extends { reasoning_options?: ModelsDevReasoningOption[] }>(id: string, source: T): T {
+	const pin = XAI_THINKING_LEVEL_MAPS[id.replace(/^x-ai\//, "")];
+	if (!pin || source.reasoning_options === undefined) return source;
+	const allowed = (value: string | null): boolean =>
+		value === null || value === "default" || (value === "none" ? pin.off !== null : pin[value as keyof typeof pin] != null);
+	return {
+		...source,
+		reasoning_options: source.reasoning_options.map((option) =>
+			option.type === "effort" ? { ...option, values: option.values.filter(allowed) } : option,
+		),
+	};
+}
+
+// models.dev marks a model `deprecated` while the provider still serves it. A deprecated row the previous
+// generated catalog already shipped stays, labeled `deprecated: true`, so nobody loses a working model; a
+// deprecated row the catalog did not ship is skipped as before, and a row gone from models.dev drops out.
+const deprecatedUpstreamModels = new Set<string>();
+const previouslyShippedModels = readPreviouslyShippedModelKeys();
+function readPreviouslyShippedModelKeys(): Set<string> {
+	const keys = new Set<string>();
+	const dataDir = join(packageRoot, "src/providers/data");
+	if (!existsSync(dataDir)) return keys;
+	for (const file of readdirSync(dataDir)) {
+		if (!file.endsWith(".json") || file === MODEL_DATA_MANIFEST_FILE) continue;
+		const groups = JSON.parse(readFileSync(join(dataDir, file), "utf8")) as Record<string, Record<string, { id?: unknown; provider?: unknown }>>;
+		for (const rows of Object.values(groups)) {
+			for (const row of Object.values(rows)) {
+				if (typeof row.id === "string" && typeof row.provider === "string") keys.add(`${row.provider}:${row.id}`);
+			}
+		}
+	}
+	return keys;
+}
+function keepDeprecatedUpstream(provider: string, modelId: string): boolean {
+	const key = `${provider}:${modelId}`;
+	if (!previouslyShippedModels.has(key)) return false;
+	deprecatedUpstreamModels.add(key);
+	return true;
+}
+function applyDeprecatedUpstreamMetadata(model: Model<Api>): void {
+	if (deprecatedUpstreamModels.has(`${model.provider}:${model.id}`)) model.deprecated = true;
 }
 
 function recordModelsDevReasoningOptions(provider: string, id: string, sourceModel: ModelsDevModel): void {
@@ -855,7 +997,7 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	return (
 		/^claude-opus-5(?:[.-]5)?(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(id) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
+		/^claude-(?:fable|mythos)-5[.-][12](?:-\d{8})?$/.test(id)
 	);
 }
 
@@ -868,6 +1010,7 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 	return (
 		modelId.includes("fable-5") ||
+		modelId.includes("mythos-5") ||
 		modelId.includes("opus-5-5") ||
 		modelId.includes("opus-5.5") ||
 		modelId.includes("sonnet-5-5") ||
@@ -881,12 +1024,13 @@ function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 	return (
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(modelId) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
+		/^claude-(?:fable|mythos)-5(?:[.-][12])?(?:-\d{8})?$/.test(modelId)
 	);
 }
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
+		modelId.includes("mythos-5") ||
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
@@ -942,6 +1086,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	zaiToolStream: false,
 	supportsStrictMode: false,
 	supportsOpenAIGrammarTools: false,
+	mixedStrictTools: true,
 	supportsMidConvoSystemMessages: false,
 	supportsMidConvoToolAdditions: false,
 	sendSessionAffinityHeaders: false,
@@ -1051,6 +1196,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		zaiToolStream: false,
 		// Preserve built-in behavior as explicit metadata against the conservative runtime default.
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isCerebras,
+		mixedStrictTools: true,
 		supportsOpenAIGrammarTools: false,
 		supportsMidConvoSystemMessages: false,
 		supportsMidConvoToolAdditions: false,
@@ -1187,7 +1333,11 @@ function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
 function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
 	const isChatGptSubscription = model.provider === "chatgpt-subscription" && model.api === "openai-codex-responses";
-	if (!(isOpenAIResponses || isChatGptSubscription) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
+	const supportsToolSearch =
+		(isOpenAIResponses && OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) ||
+		(isChatGptSubscription &&
+			(OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id) || CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)));
+	if (!supportsToolSearch) return;
 	const supportsAdditionalTools =
 		(isOpenAIResponses && OPENAI_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)) ||
 		(isChatGptSubscription && CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
@@ -1206,7 +1356,7 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
 	if (model.api !== "openai-completions") return;
 	const isKimiK3 =
-		(model.provider.startsWith("moonshot") && model.id === "kimi-k3") ||
+		(model.provider.startsWith("moonshot") && Object.hasOwn(MOONSHOT_KIMI_K3_SERIES_COSTS, model.id)) ||
 		(model.provider === "fireworks" && model.id.includes("kimi-k3")) ||
 		((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "kimi-k3");
 	const isMoonshotKimiK2 =
@@ -1238,10 +1388,10 @@ function applyOpenAIResponsesTranscriptMetadata(model: Model<Api>): void {
 	const isChatGptSubscription = model.provider === "chatgpt-subscription" && model.api === "openai-codex-responses";
 	const isProxiedResponses =
 		OPENAI_RESPONSES_PROXY_PROVIDERS.has(model.provider) && model.api === "openai-responses";
-	if (
-		!(isOpenAIResponses || isChatGptSubscription || isProxiedResponses) ||
-		!OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS.has(model.id)
-	) {
+	const supportsMidConvo =
+		OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS.has(model.id) ||
+		(isChatGptSubscription && CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
+	if (!(isOpenAIResponses || isChatGptSubscription || isProxiedResponses) || !supportsMidConvo) {
 		return;
 	}
 	model.compat = {
@@ -1270,10 +1420,15 @@ function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 // prefix; a new top-level `reasoning.effort` reports `reasoning_effort_changed` and caches 0.
 // The direct API accepts the item on the same GPT-5.6+ family that prices cache writes
 // (measured 2026-09-24 on gpt-6-luna and gpt-5.6-luna). The Codex backend was verified on
-// gpt-6-astra; gpt-6.1-sol joins because openai/codex's models.json flags exactly these two ids
-// `supports_reasoning_effort_updates: true` (gpt-6-sol and gpt-6-luna are not flagged), so the
+// gpt-6-astra; gpt-6.1-sol, gpt-6.2-astra and gpt-6.2-sol join because openai/codex's models.json flags
+// them `supports_reasoning_effort_updates: true` (gpt-6-sol and gpt-6-luna are not flagged), so the
 // ChatGPT subscription lane stays limited to those ids.
-const CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6.1-sol"]);
+const CHATGPT_SUBSCRIPTION_CONFIGURATION_UPDATE_MODEL_IDS = new Set([
+	"gpt-6-astra",
+	"gpt-6.1-sol",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
+]);
 
 function applyOpenAIConfigurationUpdateMetadata(model: Model<Api>): void {
 	const isOpenAI = model.provider === "openai" && model.api === "openai-responses" && model.cost.cacheWrite > 0;
@@ -1294,8 +1449,8 @@ function applyOpenAIConfigurationUpdateMetadata(model: Model<Api>): void {
 // first-party OpenAI catalogs carry the input cap, so the effective Astra budget
 // changed with the provider that routed the request.
 function applyGpt6ContextWindow(model: Model<Api>): void {
-	if (model.provider === "chatgpt-subscription" && model.id === "gpt-6.1-sol") {
-		model.contextWindow = CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW;
+	if (model.provider === "chatgpt-subscription" && (model.id === "gpt-6.1-sol" || model.id === "gpt-6.2-sol")) {
+		model.contextWindow = CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW;
 		return;
 	}
 	const contextWindow = gpt6FamilyDefaultContextWindow(model.id);
@@ -1310,10 +1465,10 @@ const GPT_6_THINKING_LEVEL_APIS = new Set<Api>([
 	"openai-completions",
 ]);
 
-// The documented GPT-6 ladder is low/medium/high/xhigh/max with no `minimal`; Astra and GPT-6.1 Sol
-// also omit `none` (GPT-6 guide, Limitations), so `off` stays whatever the provider rules set for
-// GPT-6 Sol and Luna ("none" on the direct OpenAI provider, absent elsewhere) and is forced off for
-// Astra and GPT-6.1 Sol.
+// The documented GPT-6 ladder is low/medium/high/xhigh/max with no `minimal`; Astra, GPT-6.1 Sol, GPT-6.2
+// Astra and GPT-6.2 Sol also omit `none` (GPT-6 guide, Limitations; GPT-6.2 model pages), so `off` stays
+// whatever the provider rules set for GPT-6 Sol and Luna ("none" on the direct OpenAI provider, absent
+// elsewhere) and is forced off for those ids.
 function applyGpt6ThinkingLevels(model: Model<Api>): void {
 	if (!isGpt6FamilyId(model.id) || !GPT_6_THINKING_LEVEL_APIS.has(model.api)) return;
 	mergeThinkingLevelMap(model, {
@@ -1324,7 +1479,7 @@ function applyGpt6ThinkingLevels(model: Model<Api>): void {
 		xhigh: "xhigh",
 		max: "max",
 	});
-	if (model.id.includes("gpt-6-astra") || isGpt61SolId(model.id)) {
+	if (isGpt6NoNoneEffortId(model.id)) {
 		mergeThinkingLevelMap(model, { off: null });
 	}
 }
@@ -1399,14 +1554,16 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		(model.id === "gpt-6-astra" ||
 			model.id === "gpt-6-sol" ||
 			model.id === "gpt-6-luna" ||
-			model.id === "gpt-6.1-sol") &&
+			model.id === "gpt-6.1-sol" ||
+			model.id === "gpt-6.2-astra" ||
+			model.id === "gpt-6.2-sol") &&
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses")
 	) {
 		mergeThinkingLevelMap(model, {
-			// GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none".
-			off: model.id === "gpt-6-astra" || model.id === "gpt-6.1-sol" ? null : "none",
+			// GPT-6 Astra, GPT-6.1 Sol and both GPT-6.2 tiers reject reasoning.effort "none".
+			off: isGpt6NoNoneEffortId(model.id) ? null : "none",
 			minimal: null,
 			low: "low",
 			medium: "medium",
@@ -1941,7 +2098,7 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 	const models: Model<Api>[] = [];
 
 	for (const [modelId, model] of Object.entries(provider.models)) {
-		if (model.status === "deprecated") continue;
+		if (model.status === "deprecated" && !keepDeprecatedUpstream("baseten", modelId)) continue;
 
 		const reasoning = model.reasoning === true;
 		const reasoningOptions = model.reasoning_options ?? [];
@@ -2210,6 +2367,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.anthropic.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("anthropic", modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -2452,7 +2610,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
-				recordModelsDevReasoningOptions("xai", modelId, m);
+				if (!thinkingLevelMap) recordModelsDevReasoningOptions("xai", modelId, m);
 			}
 		}
 
@@ -2643,7 +2801,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(togetherProvider.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("together", modelId)) continue;
 
 				const reasoning = m.reasoning === true;
 				const thinkingLevelMap = getTogetherThinkingLevelMap(modelId, reasoning);
@@ -2677,7 +2835,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.venice.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("venice", modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -2720,7 +2878,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data[variant.key].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream(variant.provider, modelId)) continue;
 
 				const npm = m.provider?.npm;
 				let api: Api;
@@ -2823,7 +2981,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["github-copilot"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("github-copilot", modelId)) continue;
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
 				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
@@ -2989,7 +3147,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, m] of Object.entries(moonshotModels[key])) {
 				if (m.tool_call !== true) continue;
 
-				const isKimiK3 = modelId === "kimi-k3";
+				const kimiK3SeriesCost = MOONSHOT_KIMI_K3_SERIES_COSTS[modelId];
+				const isKimiK3 = kimiK3SeriesCost !== undefined;
 				const compat = isKimiK3 ? { ...moonshotCompat } : moonshotCompat;
 				if (isKimiK3) {
 					compat.requiresReasoningContentOnAssistantMessages = true;
@@ -3004,15 +3163,18 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl,
 					reasoning: isKimiK3 || m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					cost: {
-						input: m.cost?.input || (isKimiK3 ? KIMI_K3_COST.input : 0),
-						output: m.cost?.output || (isKimiK3 ? KIMI_K3_COST.output : 0),
-						cacheRead: m.cost?.cache_read || (isKimiK3 ? KIMI_K3_COST.cacheRead : 0),
-						cacheWrite: m.cost?.cache_write || (isKimiK3 ? KIMI_K3_COST.cacheWrite : 0),
-					},
+					cost: kimiK3SeriesCost
+						? { ...kimiK3SeriesCost }
+						: {
+								input: m.cost?.input || 0,
+								output: m.cost?.output || 0,
+								cacheRead: m.cost?.cache_read || 0,
+								cacheWrite: m.cost?.cache_write || 0,
+							},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					compat,
+					...(isKimiK3 ? { thinkingLevelMap: { ...MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP } } : {}),
 				});
 				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
@@ -3053,7 +3215,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream(provider, modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -3290,15 +3452,39 @@ const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-worke
 // Static OpenAI image models. OpenRouter's image listing stays the only live
 // source; these entries are hand-authored because OpenAI's own API exposes no
 // public image-model catalog to fetch from.
-// Source: platform.openai.com model pages, verified 2026-09-09:
+// Source: platform.openai.com model pages, verified 2026-09-09 (2.6 entries 2026-11-05):
+// https://platform.openai.com/docs/models/gpt-image-2.6-sunburst
+// https://platform.openai.com/docs/models/gpt-image-2.6-flare
 // https://platform.openai.com/docs/models/gpt-image-2.5-sunburst
 // https://platform.openai.com/docs/models/gpt-image-2.5-flare
 // https://platform.openai.com/docs/models/gpt-image-2
-// GPT Image 2/2.5: $5 text input / $8 image input / $30 image output / $1.25
+// GPT Image 2/2.5/2.6: $5 text input / $8 image input / $30 image output / $1.25
 // cache-read per 1M tokens (`imageInput` prices reference and edit inputs).
 // Keep the existing gpt-image-1.5 zero-filled pricing unchanged.
-// GPT Image 2/2.5 accept text generation and reference images via /images/edits.
+// GPT Image 2/2.5/2.6 accept text generation and reference images via /images/edits.
 const OPENAI_IMAGE_MODELS: ImageModel<"openai-images">[] = [
+	{
+		type: "image",
+		id: "gpt-image-2.6-sunburst",
+		name: "GPT Image 2.6 Sunburst",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
+	},
+	{
+		type: "image",
+		id: "gpt-image-2.6-flare",
+		name: "GPT Image 2.6 Flare",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
+	},
 	{
 		type: "image",
 		id: "gpt-image-2.5-sunburst",
@@ -3358,8 +3544,8 @@ async function generateModels() {
 	const aiGatewayCatalog = await fetchAiGatewayModels();
 	const radiusModels = await fetchRadiusModels();
 	const openGatewayModels = await fetchOpenGatewayModels(
-		(id, source) => recordModelsDevReasoningOptions("opengateway", id, source),
-		{ strict: generatorOptions.strict },
+		(id, source) => recordModelsDevReasoningOptions("opengateway", id, withXaiThinkingPin(id, source)),
+		{ strict: generatorOptions.strict, keepLastGoodOnFailure: generatorOptions.keepLastGoodOpenGateway },
 	);
 
 	// Combine chat models (models.dev has priority where sources overlap).
@@ -4071,6 +4257,30 @@ async function generateModels() {
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
+			id: "gpt-6.2-astra",
+			name: "GPT-6.2 Astra",
+			api: "openai-codex-responses",
+			provider: "chatgpt-subscription",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_6_STANDARD_COSTS["gpt-6.2-astra"]),
+			contextWindow: GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-6.2-sol",
+			name: "GPT-6.2 Sol",
+			api: "openai-codex-responses",
+			provider: "chatgpt-subscription",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing(OPENAI_GPT_6_STANDARD_COSTS["gpt-6.2-sol"]),
+			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
 			id: "gpt-6-astra",
 			name: "GPT-6 Astra",
 			api: "openai-codex-responses",
@@ -4092,8 +4302,30 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_GPT_6_STANDARD_COSTS["gpt-6.1-sol"]),
-			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW,
+			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-6.1-terra",
+			name: "GPT-6.1 Terra",
+			api: "openai-codex-responses",
+			provider: "chatgpt-subscription",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing(CHATGPT_SUBSCRIPTION_GPT_61_TERRA_COST),
+			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW,
+			maxTokens: CODEX_MAX_TOKENS,
+			// Terra accepts reasoning.effort "none" and rejects "minimal" (upstream pi, verified on Codex Oct 2026).
+			thinkingLevelMap: {
+				off: "none",
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			},
 		},
 		{
 			id: "gpt-6-sol",
@@ -4256,6 +4488,7 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
+		applyDeprecatedUpstreamMetadata(model);
 		applyOpenAiInputCap(model);
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
@@ -4312,7 +4545,9 @@ async function generateModels() {
 	// Clone after metadata application, just like the Priority variants above.
 	const codexUltrafastVariants: Model<Api>[] = [];
 	for (const model of allModels) {
-		if (model.provider !== "chatgpt-subscription" || model.id !== "gpt-6.1-sol") continue;
+		if (model.provider !== "chatgpt-subscription" || (model.id !== "gpt-6.1-sol" && model.id !== "gpt-6.2-sol")) {
+			continue;
+		}
 		codexUltrafastVariants.push({
 			...model,
 			id: `${model.id}-ultrafast`,

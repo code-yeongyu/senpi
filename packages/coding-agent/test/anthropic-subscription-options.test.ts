@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { claudeCodeMaxContextTokens } from "../src/core/extensions/builtin/anthropic-subscription/context-window.ts";
 import { resetPresetAppendDeprecation } from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
 import {
 	type AnthropicSubscriptionAuthLane,
@@ -226,9 +227,14 @@ describe("Claude SDK OAuth query options", () => {
 	});
 
 	// Claude Code's per-turn token reminder rewrites the prompt each turn and defeats prompt-cache reuse.
-	it("turns Claude Code's total-tokens reminder off only while senpi owns compaction", () => {
-		expect(optionsFor({}).env).toEqual({ CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off" });
-		expect(optionsFor({ compactionOwner: "sdk" }).env).toBeUndefined();
+	it("turns Claude Code's total-tokens reminder and compaction off, at senpi's window, only while senpi owns compaction", () => {
+		expect(optionsFor({}).env).toEqual({
+			CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH: "16384",
+			CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off",
+			CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(claudeCodeMaxContextTokens(model().contextWindow)),
+			DISABLE_COMPACT: "1",
+		});
+		expect(optionsFor({ compactionOwner: "sdk" }).env).toEqual({ CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH: "16384" });
 	});
 
 	it("keeps preset-append as the Claude Code preset with the three extracted blocks joined", () => {

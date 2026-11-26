@@ -1,25 +1,13 @@
 import type { AgentSession } from "../../core/agent-session.ts";
-import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
-import { ModelSwitchAuthError } from "../../core/model-switch-auth-error.ts";
 import { ABORT_DEFAULT_GRACE_MS, ABORT_MAX_GRACE_MS, isAbortGraceInRange } from "./abort-grace.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { type EffectBegin, EffectLedger } from "./effect-ledger.ts";
-import {
-	contextBudgetOutcome,
-	EFFECT_OUTCOMES,
-	modelSwitchErrorOutcome,
-	providerUnavailableOutcome,
-	unknownModelOutcome,
-	unsupportedThinkingLevelOutcome,
-} from "./effect-outcome-copy.ts";
+import { EFFECT_OUTCOMES, unsupportedThinkingLevelOutcome } from "./effect-outcome-copy.ts";
 import { type EffectActor, type EffectCommandKind, EffectIdConflict, type EffectStatus } from "./effect-record.ts";
 import { lookupEffectInTranscript, TranscriptUnreadable } from "./effect-transcript-lookup.ts";
 import {
-	RPC_ERROR_CONTEXT_BUDGET,
 	RPC_ERROR_EFFECT_ID_CONFLICT,
 	RPC_ERROR_INVALID_ARGUMENT,
-	RPC_ERROR_MODEL_NOT_FOUND,
-	RPC_ERROR_PROVIDER_UNAVAILABLE,
 	RPC_ERROR_TRANSCRIPT_UNREADABLE,
 	type RpcCommand,
 	type RpcEffectAnswer,
@@ -51,11 +39,11 @@ type EffectResponse = Extract<
 >;
 type ResponsePayload<T> = T extends EffectResponse ? Omit<T, "id" | "type" | "success"> : never;
 
-function respond(id: string | undefined, response: ResponsePayload<EffectResponse>): RpcResponse {
+export function respond(id: string | undefined, response: ResponsePayload<EffectResponse>): RpcResponse {
 	return { ...response, id, type: "response", success: true };
 }
 
-function refuse(
+export function refuse(
 	id: string | undefined,
 	command: string,
 	message: string,
@@ -208,14 +196,23 @@ export async function runQueuedInputChange(
 			data: {
 				queuedId,
 				status: replayedStatus(begun.replay, command.type),
+				...begun.replay.answer,
+				...(begun.replay.outcome === undefined
+					? {}
+					: { reason: begun.replay.outcome.reason, action: begun.replay.outcome.action }),
 				...effectAnswer(begun.replay, ctx.sessionId, true),
 			},
 		});
 	const clientMessageId = ctx.session.getQueuedInputs().find((input) => input.queuedId === queuedId)?.clientMessageId;
-	const status =
-		command.type === "dequeue_message"
-			? ctx.session.dequeueQueuedInput(queuedId)
-			: ctx.session.editQueuedInput(queuedId, command.text);
+	const expected = command.expectedRevision === undefined ? undefined : { expectedRevision: command.expectedRevision };
+	const status = await ctx.session.changeQueuedInput(
+		queuedId,
+		command.type === "dequeue_message" ? undefined : command.text,
+		{ ...expected, ...(effectId === undefined ? {} : { effectId }) },
+	);
+	// Read right after the change, before anything else on this command: the revision the answer reports is the one
+	// it made or met.
+	const current = ctx.session.getQueuedInputs().find((input) => input.queuedId === queuedId);
 	// A durable input is restored from its admission record on reopen: that record must carry the edit too.
 	if (status === "edited" && clientMessageId !== undefined && command.type === "edit_queued_message")
 		ClientAdmissions.forSession(ctx.session).editQueuedText(clientMessageId, command.text);
@@ -224,19 +221,30 @@ export async function runQueuedInputChange(
 			? EFFECT_OUTCOMES.queuedInputAlreadyDelivered
 			: status === "not_found"
 				? EFFECT_OUTCOMES.queuedInputNotFound
+				: status === "conflict"
+					? EFFECT_OUTCOMES.queuedInputConflict
+					: undefined;
+	const answer =
+		status === "edited" && current !== undefined
+			? { text: current.text, revision: current.revision }
+			: status === "conflict" && current !== undefined
+				? { currentRevision: current.revision }
 				: undefined;
+	// The receipt keeps the answer too: a same-id retry after a dropped response must answer exactly as this call did.
+	const stored = answer === undefined ? {} : { answer };
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	const recorded =
 		effectId === undefined || ledger === undefined
 			? undefined
 			: outcome === undefined
-				? ledger.transition(effectId, "done", { disposition: status })
-				: ledger.transition(effectId, "failed", { outcome });
+				? ledger.transition(effectId, "done", { disposition: status, ...stored })
+				: ledger.transition(effectId, "failed", { outcome, ...stored });
 	return respond(command.id, {
 		command: command.type,
 		data: {
 			queuedId,
 			status,
+			...answer,
 			...(outcome === undefined ? {} : { reason: outcome.reason, action: outcome.action }),
 			...(recorded === undefined ? {} : effectAnswer(recorded, ctx.sessionId)),
 		},
@@ -244,75 +252,13 @@ export async function runQueuedInputChange(
 }
 
 function replayedStatus(status: EffectStatus, command: "dequeue_message" | "edit_queued_message") {
-	if (status.outcome?.kind === "already_delivered" || status.outcome?.kind === "not_found") return status.outcome.kind;
+	if (
+		status.outcome?.kind === "already_delivered" ||
+		status.outcome?.kind === "not_found" ||
+		status.outcome?.kind === "conflict"
+	)
+		return status.outcome.kind;
 	return command === "dequeue_message" ? ("removed" as const) : ("edited" as const);
-}
-
-export async function runSetModel(ctx: EffectCommandContext, command: Command<"set_model">): Promise<RpcResponse> {
-	const { effectId } = command;
-	const begun = effectId === undefined ? undefined : await beginEffect(ctx, "set_model", { ...command, effectId });
-	if (begun !== undefined && isResponse(begun)) return begun;
-	if (begun !== undefined && "replay" in begun)
-		return respond(command.id, { command: "set_model", data: effectAnswer(begun.replay, ctx.sessionId, true) });
-	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
-	const models = await ctx.session.modelRegistry.getAvailable();
-	const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
-	if (!model) {
-		const message = `Model not found: ${command.provider}/${command.modelId}`;
-		const failed =
-			effectId === undefined
-				? undefined
-				: ledger?.transition(effectId, "failed", {
-						outcome: unknownModelOutcome(command.provider, command.modelId),
-					});
-		return refuse(
-			command.id,
-			"set_model",
-			message,
-			RPC_ERROR_MODEL_NOT_FOUND,
-			failed && effectAnswer(failed, ctx.sessionId),
-		);
-	}
-	if (effectId === undefined || ledger === undefined) {
-		const systemPromptChange = await ctx.session.setModel(model, { source: "rpc" });
-		return respond(command.id, {
-			command: "set_model",
-			data: { ...model, systemPromptName: systemPromptChange?.systemPromptName },
-		});
-	}
-	let systemPromptName: string | undefined;
-	try {
-		systemPromptName = (await ctx.session.setModel(model, { source: "rpc", effectId }))?.systemPromptName;
-	} catch (cause) {
-		if (!(cause instanceof ModelUsabilityBudgetError) && !(cause instanceof ModelSwitchAuthError)) {
-			ledger.transition(effectId, "failed", {
-				outcome: modelSwitchErrorOutcome(cause instanceof Error ? cause.message : String(cause)),
-			});
-			throw cause;
-		}
-		const budget = cause instanceof ModelUsabilityBudgetError;
-		const failed = ledger.transition(effectId, "failed", {
-			outcome: budget ? contextBudgetOutcome(cause.message) : providerUnavailableOutcome(cause.message),
-		});
-		return refuse(
-			command.id,
-			"set_model",
-			cause.message,
-			budget ? RPC_ERROR_CONTEXT_BUDGET : RPC_ERROR_PROVIDER_UNAVAILABLE,
-			effectAnswer(failed, ctx.sessionId),
-		);
-	}
-	// `done` was written by the ledger when `model_changed` carried this id; a switch held for compaction
-	// stays `accepted` until it lands.
-	const status = ledger.status(effectId);
-	return respond(command.id, {
-		command: "set_model",
-		data: {
-			...model,
-			systemPromptName,
-			...(status === undefined ? {} : effectAnswer(status, ctx.sessionId)),
-		},
-	});
 }
 
 export async function runSetThinkingLevel(ctx: EffectCommandContext, command: Command<"set_thinking_level">) {

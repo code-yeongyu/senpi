@@ -40,9 +40,9 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
 
-      # `npm run check` is read-only (#1443): its biome invocation reports format
+      # `npm run check` is read-only (#1443): its `oxfmt --check` step reports format
       # drift instead of silently rewriting it, so the gate can fail here.
       - name: Check
         run: npm run check
@@ -76,7 +76,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.2'
+          bun-version: '1.4.4'
 
       - name: Install system dependencies
         run: |
@@ -89,9 +89,11 @@ jobs:
         run: npm ci --ignore-scripts
 
       # Same invocation scripts/release.mjs and scripts/local-release.mjs use.
-      # Needs network: the generator queries provider model APIs with --strict.
+      # Needs network: the generator queries provider model APIs with --strict. Like the release, it keeps
+      # the committed OpenGateway catalog on a feed break (a warning annotation); the OpenGateway catalog
+      # refresh workflow is the job that fails on it (senpi#4067).
       - name: Regenerate model catalog
-        run: npm --prefix packages/ai run generate-models
+        run: npm --prefix packages/ai run generate-models -- --keep-last-good-opengateway
 
       # #698: regeneration removed a model and the drift only surfaced at release time. Drift is
       # recorded here and reported as an advisory warning after the checks below, which run on the

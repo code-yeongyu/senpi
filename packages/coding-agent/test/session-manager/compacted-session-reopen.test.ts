@@ -60,10 +60,15 @@ describe("reopening a long session after compaction", () => {
 
 		expect(laterId).not.toBe(trimmedId);
 		const reopened = SessionManager.open(session.getSessionFile()!, dir);
+		// The reopened mirror holds the compaction window (senpi#3519); the full history is read from the file.
+		const historyTexts = reopened
+			.getEntries()
+			.flatMap((entry) => (entry.type === "message" ? [textOf(entry.message)] : []));
+		expect(historyTexts[0]).toBe("an early request that compaction trims");
+		expect(historyTexts.at(-1)).toBe("its answer");
 		const branchTexts = reopened
 			.getBranch()
 			.flatMap((entry) => (entry.type === "message" ? [textOf(entry.message)] : []));
-		expect(branchTexts[0]).toBe("an early request that compaction trims");
 		expect(branchTexts.at(-1)).toBe("its answer");
 		const contextTexts = reopened.buildSessionContext().messages.map(textOf);
 		expect(contextTexts).toContain("a request after compaction");

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { getMcpCatalogCachePath } from "../../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
+import { getProjectMcpAuthority } from "../../../src/core/extensions/builtin/mcp/project-skill-policy.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
 import { parseSkillMcpDeclarations, type SkillLike } from "../../../src/core/extensions/builtin/mcp/skills.ts";
 import { MCP_STARTUP_TIMEOUT_ENV } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
@@ -229,6 +230,13 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 
 			// When: a real builtin-only loader loads before SDK session creation, outside a provider scope.
 			let registered = Promise.withResolvers<void>();
+			// #3796: exercise the real loader with the ownership-relevant builtins.
+			// Cold-compiling unrelated bundled extensions can exhaust this test's
+			// deadline before the child ever attaches to MCP.
+			writeFileSync(
+				join(root.agentDir, "settings.json"),
+				JSON.stringify({ enabledBuiltinExtensions: ["tool-search", "mcp"] }),
+			);
 			const settingsManager = SettingsManager.create(root.cwd, root.agentDir);
 			const childLoader = new DefaultResourceLoader({
 				cwd: root.cwd,
@@ -499,6 +507,41 @@ async function twoHttpSessions(): Promise<{ alphaPi: CapturingPi; bravoPi: Captu
 }
 
 describe("senpi#2514: the shared service keeps sessions apart under concurrency and failure", () => {
+	// senpi#4210: default readiness checks must not read the released declarer's extension context.
+	it("keeps a peer's in-flight call and subsequent tools live after the original declarer quits", async () => {
+		const fixture = await httpServer();
+		const alpha = await openSession();
+		const bravo = await openSession();
+		const tool = "mcp_fx_echo";
+		await untilToolRegistered(bravo, tool);
+		const service = getMcpService();
+		const connection = service.getConnection("fx");
+		if (connection === undefined) throw new Error("Missing shared connection");
+		const generation = connection.generation;
+		const lifetime = connection.requestLifetimeSignal;
+		const entered = fixture.holdCalls(1);
+		const inFlight = bravo.session.executeTool(tool, { value: "in-flight" });
+		const completed = expect(inFlight).resolves.toMatchObject({
+			content: [{ type: "text", text: JSON.stringify({ value: "in-flight" }) }],
+		});
+		try {
+			await entered;
+			await shutDown(alpha, "quit");
+			expect(service.getConnection("fx")).toBe(connection);
+			expect(connection.generation).toBe(generation);
+			expect(lifetime.aborted).toBe(false);
+		} finally {
+			fixture.releaseCalls();
+			await completed;
+		}
+		expect(getMessageText(await bravo.session.executeTool(tool, { value: "after-release" }))).toBe(
+			JSON.stringify({ value: "after-release" }),
+		);
+		expect(connection.state).toBe("connected");
+		expect(connection.generation).toBe(generation);
+		expect(fixture.connects).toBe(1);
+	});
+
 	it("gives each session without its own tool-search service a separate fallback service", async () => {
 		// Given: two sessions whose extension loads own no tool-search service attach to the shared service.
 		configureServer();
@@ -703,7 +746,11 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		// session's env, and the servers' credentials resolve in its agent dir, never the trusted peer's.
 		const service = getMcpService();
 		expect(warnings).toEqual([expect.stringContaining("trust the project")]);
-		expect(service.getAuthTarget("fxp")?.config.env).toEqual({ SENPI_2986_SECRET: SECRET_EXPR });
+		// Project servers materialize their child env at spawn (senpi#3796); the declared value stays literal there.
+		const projectConfig = service.getAuthTarget("fxp")?.config;
+		const projectEnv = projectConfig === undefined ? undefined : getProjectMcpAuthority(projectConfig)?.initial.env;
+		expect(projectEnv).toMatchObject({ SENPI_2986_SECRET: SECRET_EXPR });
+		expect(Object.values(projectEnv ?? {})).not.toContain("alpha-secret");
 		expect(service.getAuthTarget("fxu")?.config.env).toEqual({ SENPI_2986_SECRET: "alpha-secret" });
 		expect(service.getAuthTarget("fxu")).toMatchObject({
 			agentDir: root.agentDir,
@@ -755,6 +802,35 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		expect(bravoResult).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "b" }) }] });
 		expect(fixture.callAuthorizations).toEqual(["Bearer bravo-token"]);
 	});
+
+	// senpi#3001 item 1: the per-owner check in #captureWireStatusServer must keep a peer's catalog out of a
+	// session's MCP status, even though both sessions share the one connection the peer's token created.
+	it("never shows a session a peer's catalog in its MCP status when the shared connection carries the peer's credentials", async () => {
+		// Given: an http server whose bearer token comes from each session's own env, and two sessions with ids.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
+		});
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProjectWithEnv(alphaPi, root, "alpha", { SENPI_3001_TOKEN: "alpha-token" });
+		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+		// The peer's attach re-keys the shared connection to its own token.
+		await attachInProjectWithEnv(bravoPi, root, "bravo", { SENPI_3001_TOKEN: "bravo-token" });
+		await getMcpService().whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		await untilFakeRegistered(bravoPi, "mcp_fx_echo");
+
+		// When: each session refreshes its MCP status.
+		const alpha = await getMcpService().refreshWireStatusSnapshot("alpha");
+		const bravo = await getMcpService().refreshWireStatusSnapshot("bravo");
+
+		// Then: the first session sees its server with no tools from the peer's connection; the peer sees its own.
+		expect(alpha.servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(alpha.servers[0]?.tools).toEqual([]);
+		expect(bravo.servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(bravo.servers[0]?.tools.map((tool) => tool.name)).toEqual(["echo"]);
+	});
 });
 
 /** The shared `fx` for every session, plus `extra` declared only by the project at `root.cwd`; returns a peer project. */
@@ -773,6 +849,17 @@ async function attachInProject(
 	sessionId: string,
 	reason: "startup" | "reload" = "startup",
 ): Promise<void> {
+	await attachInProjectWithEnv(pi, project, sessionId, {}, reason);
+}
+
+/** Like `attachInProject`, but the session resolves `${VAR}` credentials from its own `env`. */
+async function attachInProjectWithEnv(
+	pi: CapturingPi,
+	project: TestRoot,
+	sessionId: string,
+	env: Record<string, string>,
+	reason: "startup" | "reload" = "startup",
+): Promise<void> {
 	await getMcpService().attachSession(
 		{ type: "session_start", reason },
 		{
@@ -782,7 +869,7 @@ async function attachInProject(
 			sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
 		},
 		pi,
-		{ agentDir: root.agentDir },
+		{ agentDir: root.agentDir, env },
 	);
 }
 
@@ -964,6 +1051,61 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(service.getWireStatusSnapshot("bravo").servers.map((server) => server.name)).toEqual(["fx"]);
 	});
 
+	// senpi#3001 item 3: a caller that passes no session id must get no peer data while more than one session is
+	// live. The per-session snapshots stay intact, and the lifecycle-only server snapshots still list the merged
+	// config when no session is given; scoping them to a session is a separate opt-in.
+	it("gives a caller without a session id no peer data while more than one session is live", async () => {
+		// Given: two live sessions with their own session ids and captured MCP statuses.
+		const peer = configureExtraForRootProject();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProject(alphaPi, root, "alpha");
+		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+		await attachInProject(bravoPi, peer, "bravo");
+		await untilFakeRegistered(bravoPi, TOOL);
+		await service.refreshWireStatusSnapshot("alpha");
+		await service.refreshWireStatusSnapshot("bravo");
+
+		// When: a caller asks for the wire status without a session id, and for server snapshots by session.
+		const noId = service.getWireStatusSnapshot();
+		const noIdRefreshed = await service.refreshWireStatusSnapshot();
+
+		// Then: the id-less caller gets nothing, while each session still sees only its own servers.
+		expect(noId).toEqual({ servers: [] });
+		expect(noIdRefreshed).toEqual({ servers: [] });
+		expect(service.getWireStatusSnapshot("alpha").servers.map((server) => server.name)).toEqual(["extra", "fx"]);
+		expect(service.getWireStatusSnapshot("bravo").servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(service.getServerSnapshots("alpha").map((server) => server.name)).toEqual(["extra", "fx"]);
+		expect(service.getServerSnapshots("bravo").map((server) => server.name)).toEqual(["fx"]);
+		expect(service.getServerSnapshots("unknown").map((server) => server.name)).toEqual([]);
+		expect(service.getServerSnapshots().map((server) => server.name)).toEqual(["extra", "fx"]);
+	});
+
+	// senpi#3001 follow-up (review of #6169): releasing a session with no reason must not leave its status
+	// behind in the single-session fallback. The id-less read has to become the remaining session's own.
+	it("returns the remaining session's status, not a released peer's, after a release with no reason", async () => {
+		// Given: alpha declares `extra` beside the shared `fx`, bravo declares only `fx`; alpha captures last.
+		const peer = configureExtraForRootProject();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProject(alphaPi, root, "alpha");
+		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+		await attachInProject(bravoPi, peer, "bravo");
+		await untilFakeRegistered(bravoPi, TOOL);
+		await service.refreshWireStatusSnapshot("bravo");
+		await service.refreshWireStatusSnapshot("alpha");
+
+		// When: alpha is released with no reason (the reload/new/resume path), leaving bravo alone.
+		await service.releaseSession(alphaPi);
+
+		// Then: the id-less read is bravo's own status, not alpha's departed `extra`.
+		expect(service.getWireStatusSnapshot().servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(service.getWireStatusSnapshot("bravo").servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(service.getWireStatusSnapshot("alpha")).toEqual({ servers: [] });
+	});
+
 	// The FIFO holds the attach's catalog-cache read, after it bound, until the test writes it.
 	it.skipIf(process.platform === "win32")(
 		"stores no MCP status for a session that quits while its own attach is running",
@@ -1137,6 +1279,51 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		await assertProcessDead(fxPid);
 		await assertProcessDead(extraPid);
 		expect(await readCounter(spawnCounter)).toBe(1);
+	});
+
+	// senpi#3001 item 2: the re-sync that runs after a credential rotation tears the old connection down before
+	// creating the new one; disposing the service in between must stop the re-sync creating a connection in a
+	// disposed service. Two guards carry this invariant together: the post-teardown check in #syncFromConfig,
+	// and the re-check in the connect loop after the cache adoption. The old connection's `disabled` state is
+	// the release point: it fires synchronously when its dispose starts, before the teardown's await resolves.
+	it("creates no connection when the service is disposed while a credential re-sync is stopping the old connection", async () => {
+		// Given: an http `fx` whose bearer token comes from each session's own env; the peer's token owns the
+		// shared connection.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
+		});
+		const service = getMcpService();
+		const bravoEnv: Record<string, string> = { SENPI_3001_TOKEN: "bravo-token" };
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProjectWithEnv(alphaPi, root, "alpha", { SENPI_3001_TOKEN: "alpha-token" });
+		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+		await attachInProjectWithEnv(bravoPi, root, "bravo", bravoEnv);
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		await untilFakeRegistered(bravoPi, "mcp_fx_echo");
+		const fx = service.getConnection("fx");
+		expect(fx).toBeDefined();
+		const fxStopping = new Promise<void>((resolve) => {
+			const unsubscribe = fx?.onStateChange((event) => {
+				if (event.state !== "disabled") return;
+				unsubscribe?.();
+				resolve();
+			});
+		});
+
+		// When: the peer's token rotates, and the service is disposed while the re-sync is stopping the old
+		// connection, before it can create the re-keyed one.
+		bravoEnv.SENPI_3001_TOKEN = "bravo-rotated";
+		const resync = service.reconnectServer("fx");
+		await fxStopping;
+		await service.dispose("quit");
+		await resync;
+
+		// Then: the disposed service holds no connection, and no re-keyed connection was created after dispose.
+		expect(service.getSnapshot()).toMatchObject({ disposed: true, connectionCount: 0 });
+		expect(service.getConnection("fx")).toBeUndefined();
 	});
 });
 

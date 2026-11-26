@@ -166,6 +166,7 @@ function identityDrift(
 function retryCheckpointDecision(
 	input: ContinuityDecisionInput,
 	binding: ContinuityBindingSnapshot,
+	reason: "timeout_retry" | "account_changed",
 ): ContinuityDecision | undefined {
 	if (binding.unansweredTurnDigest === undefined) return undefined;
 	if (sentHashPrefixDigest(input.currentHashes, input.currentHashes.length) !== binding.unansweredTurnDigest) {
@@ -182,13 +183,13 @@ function retryCheckpointDecision(
 	const boundary = binding.lastAssistantUuid
 		? { index: binding.sentCount, uuid: binding.lastAssistantUuid }
 		: newestBoundaryWithin(binding.assistantUuidByIndex, binding.sentCount);
-	if (!boundary) return { kind: "flatten", reason: "timeout_retry" };
+	if (!boundary) return { kind: "flatten", reason };
 	return {
 		kind: "fork",
 		sdkSessionId: binding.sdkSessionId,
 		atUuid: boundary.uuid,
 		from: boundary.index,
-		reason: "timeout_retry",
+		reason,
 	};
 }
 
@@ -224,7 +225,15 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
 	// (oh-my-openagent#7884) - a restart has no live query, so the resume builds a
 	// fresh query carrying the CURRENT options and hooks, and flattening would
 	// re-send the whole conversation for drift the SDK applies per-query anyway.
-	const retry = retryCheckpointDecision(input, binding);
+	// The boundary choice stays the checkpoint's (senpi#1973, senpi#1974); only the label changes.
+	// A same-turn retry that landed on ANOTHER seat is a seat switch: prompt caches never cross
+	// accounts, so it writes the whole prefix and must not read as a same-seat timeout retry
+	// (oh-my-openagent#10304).
+	const retry = retryCheckpointDecision(
+		input,
+		binding,
+		drift === "account_changed" ? "account_changed" : "timeout_retry",
+	);
 	if (retry) return retry;
 	if (binding.sentPrefixHash !== undefined) {
 		const prefixMatches =

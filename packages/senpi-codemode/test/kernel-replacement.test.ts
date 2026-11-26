@@ -163,7 +163,9 @@ describe("a replaceable kernel", () => {
 
 	it("never submits a queued cell cancelled while the replacement starts", async () => {
 		const kernels = fleet();
-		const kernel = await ReplaceableKernel.create("rb", kernels.start);
+		const kernel = await ReplaceableKernel.create("rb", kernels.start, {
+			readHostMemory: async () => "system memory pressure critical",
+		});
 		const first = instance(kernels, 0);
 		const opening = Promise.withResolvers<void>();
 		kernels.gate = opening.promise;
@@ -182,7 +184,8 @@ describe("a replaceable kernel", () => {
 		instance(kernels, 1).finishActive("ok");
 		await expect(kept).resolves.toMatchObject({
 			ok: true,
-			notice: "[rb kernel was restarted after signal 9; every global is lost]",
+			notice:
+				"[rb kernel was restarted after signal 9, probably killed by the system, most often under memory pressure (system memory pressure critical); every global is lost]",
 		});
 	});
 

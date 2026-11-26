@@ -184,7 +184,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	let awaitingHandoff: ReloadHandoff | undefined;
 	let changeChain: Promise<void> = Promise.resolve();
 
-	// Cancel registrations synchronously; session_shutdown joins every disposer.
+	// Cancel registrations synchronously; session_shutdown joins every disposer except on quit.
 	const closeWatchers = (): void => {
 		if (!engine) return;
 		watcherClosures.push(Promise.allSettled([engine.close()]));
@@ -564,10 +564,28 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		awaitingHandoff = undefined;
 		nextReloadChain = undefined;
 		if (event.reason !== "reload" && closingContext) reloadHandoffs.delete(handoffKey(closingContext));
-		const results = (await Promise.all(watcherClosures.splice(0))).flat();
-		const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+		const teardownErrors = watcherTeardownErrors(watcherClosures.splice(0));
+		// Quit never waits on watch-worker teardown: terminate() cannot return while the worker is blocked in a native
+		// call (senpi#3711). Nothing needs the join: the watches are cancelled synchronously above, so no late event can
+		// start reload work, and the unref'd worker finishes stopping on its own whether the process exits (CLI quit) or
+		// keeps running (an RPC host closing one session). Late failures still reach the log.
+		if (event.reason === "quit") {
+			void teardownErrors.then((errors) => {
+				for (const error of errors)
+					logger.error("watcher_error", { path: "shutdown", message: errorMessage(error) });
+			});
+			return;
+		}
+		const errors = await teardownErrors;
 		if (errors.length > 0) throw new AggregateError(errors, "Config watcher shutdown failed");
 	});
+
+	async function watcherTeardownErrors(
+		closures: ReadonlyArray<Promise<PromiseSettledResult<void>[]>>,
+	): Promise<unknown[]> {
+		const results = (await Promise.all(closures)).flat();
+		return results.filter((result) => result.status === "rejected").map((result) => result.reason);
+	}
 
 	function canRequestReload(ctx: ExtensionContext): boolean {
 		return (

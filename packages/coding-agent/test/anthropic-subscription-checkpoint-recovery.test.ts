@@ -139,14 +139,22 @@ async function rollbackAfterRejectedBoundary(transcriptFor: (sdkSessionId: strin
 	);
 	const options = { sessionId: SESSION_ID, streamKind: "main" as const };
 	for (const length of [1, 3, 5, 7]) {
-		await streamAnthropicSubscription(model, { messages: turnFour.slice(0, length) }, options).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: turnFour.slice(0, length) },
+			{ cwd: process.cwd(), ...options },
+		).result();
 	}
 	const entry = getSession(SESSION_ID);
 	const live = entry?.assistantUuidByIndex.get(1);
 	rejected = entry?.assistantUuidByIndex.get(2);
 	if (!entry || !live || !rejected) throw new Error("fixture did not map the assistant boundaries");
 	transcript = transcriptFor(entry.sdkSessionId, live);
-	const result = await streamAnthropicSubscription(model, { messages: turnFour.slice(0, 5) }, options).result();
+	const result = await streamAnthropicSubscription(
+		model,
+		{ messages: turnFour.slice(0, 5) },
+		{ cwd: process.cwd(), ...options },
+	).result();
 	return { queries, result, live, rejected };
 }
 

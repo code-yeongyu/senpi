@@ -43,7 +43,7 @@ import {
 	sameEndpoint,
 } from "./host-daemon-paths.ts";
 import { isRecord, parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
-import { pruneDeadGenerations } from "./host-generations.ts";
+import { endClaimsOfEndedGenerations, pruneDeadGenerations } from "./host-generations.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
@@ -84,7 +84,19 @@ export interface RegisteredHost {
 export async function readHostRegistration(paths: HostDaemonPaths): Promise<RegisteredHost | undefined> {
 	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
 	if (!pointer || typeof pointer.instance_id !== "string") return undefined;
-	const text = await readFileOrUndefined(generationPaths(paths, pointer.instance_id).pidFile);
+	return readGenerationRegistration(paths, pointer.instance_id);
+}
+
+/**
+ * One NAMED generation's record, whatever the pointer says: a caller asking a superseded generation
+ * to drain addresses it by instance id (#3653). The record proves nothing by itself; `provenOwner`
+ * still decides whether it names a live process serving this endpoint.
+ */
+export async function readGenerationRegistration(
+	paths: HostDaemonPaths,
+	instanceId: string,
+): Promise<RegisteredHost | undefined> {
+	const text = await readFileOrUndefined(generationPaths(paths, instanceId).pidFile);
 	const record = text === undefined ? undefined : parseDaemonPidFile(text);
 	if (record === undefined) return undefined;
 	const parsed = parseJson(text) ?? {};
@@ -93,7 +105,7 @@ export async function readHostRegistration(paths: HostDaemonPaths): Promise<Regi
 		record,
 		...(writer && { writer }),
 		...(typeof parsed.socket === "string" && { socket: parsed.socket }),
-		instanceId: pointer.instance_id,
+		instanceId,
 		generation: typeof parsed.generation === "number" ? parsed.generation : 0,
 	};
 }
@@ -159,6 +171,7 @@ export async function clearHostRegistration(paths: HostDaemonPaths): Promise<voi
 	if (typeof pointer?.instance_id === "string") {
 		if (await hostChildAlive(generationPaths(paths, pointer.instance_id)))
 			throw new Error(`refusing to clear generation ${pointer.instance_id} with a live host child`);
+		await endClaimsOfEndedGenerations(paths, new Set([pointer.instance_id]));
 		await rm(generationPaths(paths, pointer.instance_id).dir, { recursive: true, force: true });
 	}
 	await rm(paths.settingsFile, { force: true });
@@ -264,6 +277,11 @@ export function thisProcessStartTime(): Promise<string | null> {
 		() => null,
 	);
 	return selfStartTime;
+}
+
+/** A caller-supplied instance id names a directory under `generations/`: never a path of its own. */
+export function isGenerationId(instanceId: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(instanceId) && !instanceId.includes("..");
 }
 
 /** A record from a host started before writer stamps existed simply has no writer: it reads as foreign. */

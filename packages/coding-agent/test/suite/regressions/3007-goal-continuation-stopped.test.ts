@@ -3,10 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerGoalCommand } from "../../../src/core/extensions/builtin/goal/command-registration.ts";
 import type { GoalContinuationInput } from "../../../src/core/extensions/builtin/goal/continuation.ts";
 import { goalLiveElapsedSeconds } from "../../../src/core/extensions/builtin/goal/elapsed-ticker.ts";
-import {
-	admitAndQueueGoalContinuation,
-	queueGoalContinuation,
-} from "../../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
+import { admitAndQueueGoalContinuation } from "../../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
+import { queueGoalContinuation } from "../../../src/core/extensions/builtin/goal/session-start-continuation.ts";
 import {
 	accountGoalUsage,
 	createGoal,
@@ -90,6 +88,7 @@ describe("senpi#3007 goal stop decisions", () => {
 					reason: "stale",
 					consecutiveContinuations: 2,
 					unattendedContinuations: 4,
+					noProgressContinuations: 0,
 					at: 110_000,
 				},
 			},
@@ -112,13 +111,13 @@ describe("senpi#3007 goal stop decisions", () => {
 
 	it.each([
 		["cap", { consecutiveContinuations: 8 }],
-		["unattended", {}],
+		["no-progress", {}],
 		["repetition", { recentNormalizedOutputHashes: ["a", "a", "a"] }],
 		["length-exhausted", { currentSignature: "new", lastStopReason: "length", consecutiveLengthRecoveries: 1 }],
 		["context-overflow", { lastTurnStuckOnContextOverflow: true }],
 	] as const)("records the %s guard once even when the same active snapshot is retried", async (reason, overrides) => {
 		const f = await fixture();
-		const candidate = reason === "unattended" ? { ...f.active, unattendedContinuations: 150 } : f.active;
+		const candidate = reason === "no-progress" ? { ...f.active, noProgressContinuations: 60 } : f.active;
 		await writeGoal(f.ref, candidate);
 		await f.deny(candidate, overrides);
 		await f.deny(candidate, overrides);
@@ -130,6 +129,7 @@ describe("senpi#3007 goal stop decisions", () => {
 					reason,
 					consecutiveContinuations: reason === "cap" ? 8 : 2,
 					unattendedContinuations: candidate.unattendedContinuations,
+					noProgressContinuations: candidate.noProgressContinuations,
 					at: expect.any(Number),
 				},
 			},

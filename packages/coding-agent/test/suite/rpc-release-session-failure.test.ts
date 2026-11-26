@@ -9,18 +9,22 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../src/core/agent-session.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { type MoveId, SessionMovedAwayError } from "../../src/core/session-move/ownership.ts";
 import { SESSION_RELEASED_ENTRY_TYPE } from "../../src/modes/rpc/session-release.ts";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
 
 const WRITE_FAILURE = "EACCES: permission denied, open 'session.jsonl'";
 
-function failReleasedEntryWrite(session: AgentSession): { restore: () => void } {
+function failReleasedEntryWrite(
+	session: AgentSession,
+	failure: () => Error = () => Object.assign(new Error(WRITE_FAILURE), { code: "EACCES" }),
+): { restore: () => void } {
 	const manager = session.sessionManager;
 	const persist = manager._persist.bind(manager);
 	const spy = vi.spyOn(manager, "_persist").mockImplementation((entry) => {
 		if (entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE) {
-			throw Object.assign(new Error(WRITE_FAILURE), { code: "EACCES" });
+			throw failure();
 		}
 		persist(entry);
 	});
@@ -118,5 +122,41 @@ describe("release_session when its entry cannot be written (real host)", () => {
 			data: { admitted: [{ delivery_id: "after-failure" }] },
 		});
 		expect(gateway.outcomes.filter((outcome) => outcome.includes(":refused:"))).toEqual([]);
+	});
+
+	it("#given an interrupt and a file that was moved away #then the session_moved_away refusal still reports the queued text it took (senpi#3662)", async () => {
+		// Given: a turn running with user text queued behind it, and a write guard that finds the session moved away.
+		const gateway = gatewayFixture();
+		await using host = await startReleaseHost(gateway.extension);
+		host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
+		const { sessionId, sessionPath, session } = await host.open("moved-away-interrupt");
+		const started = nextEvent(session, "agent_start");
+		await host.send({ type: "prompt", id: "work", sessionId, message: "long work" });
+		await started;
+		await host.send({ type: "follow_up", id: "f", sessionId, message: "USER FOLLOW TEXT" });
+		const failing = failReleasedEntryWrite(
+			session,
+			() =>
+				new SessionMovedAwayError(sessionPath, {
+					writable: false,
+					state: "moving",
+					moveId: "move-other" as MoveId,
+					target: "laptop",
+				}),
+		);
+
+		// When: it is released with interrupt.
+		const reply = await host.release(sessionId, { interrupt: true });
+		failing.restore();
+
+		// Then: the moved-away refusal carries what the interrupt took out of the queues.
+		expect(reply).toMatchObject({
+			success: false,
+			error: "session_moved_away",
+			errorData: {
+				interrupted: true,
+				dropped: { deliveries: [], user_messages: ["USER FOLLOW TEXT"] },
+			},
+		});
 	});
 });
