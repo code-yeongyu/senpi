@@ -6,17 +6,16 @@
  * survives the next generation overwriting the boot copy.
  *
  * The three primitives below are shared with `host-daemon-registration.ts`: a write that carries the
- * 0600 mode and names the path it failed on, a read that treats a missing file as "no state" rather
- * than an error, and the JSON narrowing both sides parse records with. WHERE any of these files live
+ * 0600 mode, replaces the file by rename and names the path it failed on, a read that treats a missing
+ * file as "no state" rather than an error, and the JSON narrowing both sides parse records with. WHERE any of these files live
  * is `host-daemon-paths.ts`; nothing here builds a path of its own.
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { processStartTimeMs, readProcessIdentity, sameProcessStartMs } from "../../utils/process-identity.ts";
 import {
 	createGenerationDirectory,
 	generationPaths,
-	HOST_STATE_FILE_MODE,
 	type HostDaemonPaths,
 	HostDaemonStateError,
 } from "./host-daemon-paths.ts";
@@ -126,9 +125,15 @@ export async function readHostSettings(
 	};
 }
 
+/**
+ * Replaces `path` by rename. These files are read without a lock (`host status`, the prune, the pointer
+ * election) while their writer is running, and a write in place truncates first: a reader in between, or
+ * any reader after a writer that ended there, found no record and reported a live generation as absent
+ * (senpi#3305).
+ */
 export async function writeStateFile(path: string, content: unknown): Promise<void> {
 	try {
-		await writeFile(path, `${JSON.stringify(content)}\n`, { mode: HOST_STATE_FILE_MODE });
+		await writeJsonAtomic(path, content);
 	} catch (cause) {
 		throw new HostDaemonStateError(path, cause);
 	}

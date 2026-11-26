@@ -5,60 +5,48 @@
  * the generation serving the socket was missing from the report, and a caller waiting for its row
  * (`rpc-host-handoff-clientless.test.ts`) asked the successor again and was refused `stale_generation`.
  *
- * The fault is injected at the file system: the write under way truncates its target and then fails,
- * which is what a reader observes when the writer is cut off after the truncate.
+ * Storage contract under test: a record is REPLACED, never written through. A hard link to the record
+ * stands in for a reader that holds it while the rewrite runs: a rewrite in place changes what that
+ * reader holds (and empties it first), a replacement leaves it the complete previous record.
  */
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { link, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { writeGenerationRecord, writeHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { readGenerationRows } from "../../../src/modes/rpc/host-generations.ts";
 
-const fault = vi.hoisted(() => ({ cutWritesShort: false }));
-
-vi.mock("node:fs/promises", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	const writeFile: typeof actual.writeFile = async (file, data, options) => {
-		if (!fault.cutWritesShort || typeof file !== "string") return actual.writeFile(file, data, options);
-		await (await actual.open(file, "w")).close();
-		throw new Error("the writer was cut off after truncating its target");
-	};
-	return { ...actual, default: { ...actual, writeFile }, writeFile };
-});
-
 const roots: string[] = [];
 
 afterEach(async () => {
-	fault.cutWritesShort = false;
 	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-describe.skipIf(process.platform === "win32")("a generation record rewrite that is cut short (senpi#3305)", () => {
-	it("leaves the running generation in the rows `host status` reports", async () => {
+describe.skipIf(process.platform === "win32")("rewriting a running generation's record (senpi#3305)", () => {
+	it("replaces the record, so a reader holding the previous one never sees it emptied or changed", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-3305-"));
 		roots.push(root);
 		const socket = join(root, "rpc.sock");
 		const paths = createHostDaemonPaths({ socket, agentDir: root });
-		const registration = {
+		const spawned = {
 			record: { pid: process.pid, processStartTime: null },
 			socket,
 			instanceId: "successor",
 			generation: 2,
 			launchProfileId: "profile",
 		};
-		await writeGenerationRecord(paths, registration);
+		await writeGenerationRecord(paths, spawned);
+		const heldByReader = join(root, "held-by-reader");
+		await link(generationPaths(paths, "successor").pidFile, heldByReader);
+		const previous = await readFile(heldByReader, "utf8");
 
-		fault.cutWritesShort = true;
-		await expect(writeHostRegistration(paths, registration)).rejects.toThrow();
-		fault.cutWritesShort = false;
+		await writeHostRegistration(paths, { ...spawned, build: { text: "2026.11.26", ordinal: [2026, 11, 26, 0, 0] } });
 
+		expect(await readFile(heldByReader, "utf8")).toBe(previous);
 		const rows = await readGenerationRows(paths);
-		expect(rows.map((row) => ({ instanceId: row.instanceId, generation: row.generation, alive: row.alive }))).toEqual(
-			[{ instanceId: "successor", generation: 2, alive: true }],
-		);
-		const left = await readdir(generationPaths(paths, "successor").dir);
-		expect(left.filter((name) => name.endsWith(".tmp"))).toEqual([]);
+		expect(rows.map((row) => [row.instanceId, row.generation, row.engineVersion, row.current, row.alive])).toEqual([
+			["successor", 2, "2026.11.26", true, true],
+		]);
 	});
 });
