@@ -56,6 +56,7 @@ function createTodoHarness(
 			tool = definition;
 		},
 		appendEntry: () => {},
+		events: { on: () => () => {}, emit: () => {} },
 	} as unknown as ExtensionAPI;
 	const ctx = {
 		ui: {
@@ -71,9 +72,12 @@ function createTodoHarness(
 			getSessionFile: () => undefined,
 			getBranch: () => [],
 		},
+		isIdle: () => false,
 	} as unknown as ExtensionContext;
 
 	todotoolsExtension(pi);
+	// The todo tool runs inside a turn, so the widget draws its active item (senpi#1146).
+	for (const handler of handlers.get("agent_start") ?? []) void handler({ type: "agent_start" }, ctx);
 
 	return {
 		ctx,

@@ -18,6 +18,8 @@ afterEach(() => {
 
 const LOOP_EVENTS = [
 	"agent_end",
+	"agent_settled",
+	"agent_start",
 	"before_agent_start",
 	"before_provider_request",
 	"message_end",
@@ -118,7 +120,8 @@ describe("todo on a split session (S39)", () => {
 
 		await harness.session.prompt("plan it");
 
-		expect(renders.filter((key) => key === "todo-sidebar")).toHaveLength(3);
+		// Each list once, plus the paused redraw when the turn settles with work open (senpi#1146).
+		expect(renders.filter((key) => key === "todo-sidebar")).toHaveLength(4);
 		expect(await viewPhases(harness)).toEqual([
 			{
 				name: "Setup",
@@ -217,7 +220,8 @@ describe("todo on a split session (S39)", () => {
 
 		await harness.session.prompt("plan it");
 
-		expect(renders.filter((key) => key === "todo-sidebar")).toHaveLength(2);
+		// The list once, plus the paused redraw when the turn settles with work open (senpi#1146).
+		expect(renders.filter((key) => key === "todo-sidebar")).toHaveLength(3);
 		expect(await viewPhases(harness)).toEqual([
 			{ name: "Setup", tasks: [{ content: "one task", status: "in_progress" }] },
 		]);
