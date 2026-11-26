@@ -3,12 +3,12 @@ import { closeSync, mkdtempSync, openSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LAUNCH_KEY_FAILED_EXIT_CODE } from "../../src/cli/launch-key.ts";
 import { launchHand, launchHeadless, launchInteractive, launchPrint, launchRpc } from "../../src/engine/launch.ts";
 import type { LaunchPrintEvent } from "../../src/engine/launch-print-stream.ts";
 import type { LaunchPorts } from "../../src/engine/launch-process.ts";
-import { CLI, CLI_MAIN, realEngine } from "./real-engine.ts";
+import { CLI, CLI_MAIN, realEngine, runsStillAlive } from "./real-engine.ts";
 
 const FAKE_ENGINE = join(__dirname, "..", "fixtures", "engine-launch-fake.ts");
 const KEY = () => Readable.from([Buffer.from("sk-canary-key-failure-7451")]);
@@ -20,6 +20,7 @@ beforeEach(() => {
 });
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterAll(() => expect(runsStillAlive()).toEqual([]));
 
 /** An engine that refused its key: it exits with the engine's launch-key failure code, as `main()` does. */
 function refusingEngine(): LaunchPorts {

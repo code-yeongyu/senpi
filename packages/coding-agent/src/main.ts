@@ -822,6 +822,11 @@ async function promptForMissingSessionCwd(
 
 export interface MainOptions {
 	extensionFactories?: InlineExtension[];
+	/**
+	 * Called once the first-token answers (help, version) are behind and the invocation is about to reach main()'s
+	 * action branches. A caller that drives main() in process observes that point here; the binary passes nothing.
+	 */
+	beforeActions?: () => void;
 }
 
 /**
@@ -1191,6 +1196,7 @@ export async function main(args: string[], options?: MainOptions) {
 	const metaRequest = firstTokenMetaRequest(args);
 	if (metaRequest === "version") await printThenExit(() => console.log(DISPLAY_VERSION), 0);
 	if (metaRequest === "help") await answerHelp(parseArgs(args), process.cwd(), getAgentDir(), extensionFactories);
+	options?.beforeActions?.();
 	const offlineMode =
 		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
 	if (offlineMode) {

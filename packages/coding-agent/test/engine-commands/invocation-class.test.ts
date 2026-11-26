@@ -1,12 +1,13 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseArgs } from "../../src/cli/args.ts";
+import { stripVTControlCharacters } from "node:util";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseArgs, printHelp } from "../../src/cli/args.ts";
 import { classifyInvocation, INVOCATION_CLASSES } from "../../src/cli/invocation-class.ts";
 import { LAUNCH_KEY_FAILED_EXIT_CODE } from "../../src/cli/launch-key.ts";
 import { ENGINE_COMMANDS } from "../../src/engine/metadata.ts";
-import { CLI, CLI_MAIN, type RealEngineOptions, type RealEngineRun, realEngine } from "./real-engine.ts";
+import { CLI, CLI_MAIN, type RealEngineRun, realEngine, runsStillAlive } from "./real-engine.ts";
 
 const EXEMPT: ReadonlyArray<readonly string[]> = [
 	["--version"],
@@ -189,47 +190,27 @@ describe("the real parser agrees with every root exemption, in the safe directio
 	});
 });
 
-/** The plain help or version answer of an entry, run once and shared by every row that compares against it. */
-const referenceAnswers = new Map<string, Promise<{ readonly run: RealEngineRun; readonly ms: number }>>();
-function timedReference(flag: "--help" | "--version", entry: string) {
-	const key = `${entry}\0${flag}`;
-	let answer = referenceAnswers.get(key);
-	if (answer === undefined) {
-		const started = performance.now();
-		answer = realEngine([flag], { root, table: undefined, entry }).then((run) => ({
-			run,
-			ms: performance.now() - started,
-		}));
-		referenceAnswers.set(key, answer);
-	}
-	return answer;
-}
-async function referenceAnswer(flag: "--help" | "--version", entry: string): Promise<RealEngineRun> {
-	return (await timedReference(flag, entry)).run;
-}
-
-/**
- * How long a real-entry run may take: a multiple of the time the same entry took to answer plain `--help` in this run,
- * so the bound follows the host's load instead of a fixed wall clock, and a run that never answers still fails.
- */
-const BOUND_FACTOR = 20;
-async function boundFor(entry: string): Promise<number> {
-	return Math.ceil((await timedReference("--help", entry)).ms * BOUND_FACTOR);
-}
-
 function firstLine(output: string): string {
-	return output.split("\n", 1)[0] ?? "";
+	return stripVTControlCharacters(output.split("\n", 1)[0] ?? "");
 }
+
+/** The help screen's first line as printHelp renders it, read in process (it does not depend on extension flags). */
+function helpScreenFirstLine(): string {
+	const lines: string[] = [];
+	const log = console.log;
+	console.log = (...parts: unknown[]) => {
+		lines.push(parts.map(String).join(" "));
+	};
+	try {
+		printHelp([]);
+	} finally {
+		console.log = log;
+	}
+	return firstLine(lines.join("\n"));
+}
+const HELP_SCREEN_FIRST_LINE = helpScreenFirstLine();
 
 /** Every option of the engine's root command forms, with a value operand where it takes one. */
-function rootFlags(): string[][] {
-	const seen = new Map<string, boolean>();
-	for (const command of ENGINE_COMMANDS.filter((form) => form.argv.length === 0))
-		for (const flag of command.flags) for (const name of flag.names) seen.set(name, flag.takesValue === true);
-	return [...seen]
-		.filter(([name]) => name.startsWith("-") && name !== "-")
-		.map(([name, takesValue]) => (takesValue ? [name, "x"] : [name]));
-}
 
 function valueOptionsOfRootForms(): string[] {
 	return [
@@ -277,81 +258,121 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-describe.each(ENTRIES)("the real %s entry", { timeout: 0 }, (_name, entry) => {
-	// Every run here is bounded by the entry's own answer (boundFor), not by the runner's per-test wall clock.
-	const run = async (args: readonly string[], options: Omit<RealEngineOptions, "entry" | "boundMs">) =>
-		realEngine(args, { ...options, entry, boundMs: await boundFor(entry) });
+// The options whose help-first invocation took an action branch before the first-token answer (measured red against
+// aa140b8cd9). Every root option is covered in process (help-first-in-process.test.ts); these stay at the real entry,
+// with the plain --help that proves the binary reaches main()'s answer.
+const HELP_FIRST_REDS: ReadonlyArray<readonly string[]> = [
+	["--help"],
+	["--help", "--hand"],
+	["--help", "--headless"],
+	["--help", "--export", "x"],
+	["-h", "--export", "x"],
+	["--help", "--mcp-presenter-fd", "x"],
+	["--help", "--mode", "x"],
+	["--help", "--session-runtime", "x"],
+	["--help", "--spawned-by", "x"],
+	["--help", "--thinking", "x"],
+	["--help", "--tool-runtime", "x"],
+	["--help", "--tui-mode", "x"],
+];
+
+afterAll(() => expect(runsStillAlive()).toEqual([]));
+
+describe.each(ENTRIES)("the real %s entry", (_name, entry) => {
+	const BROKEN = '{"presenter":4,';
+	const run = (args: readonly string[], table: string | undefined) => realEngine(args, { root, table, entry });
+	// A comparison of a broken-table run with a bare run is two tests of one process each: the bare answer is recorded
+	// first and the broken run is compared with it, so no test depends on two processes fitting its timeout together.
+	// Each test has its own root, so the root a run printed is replaced before the two answers are compared.
+	const rootless = (answer: RealEngineRun): RealEngineRun => ({
+		code: answer.code,
+		output: answer.output.replaceAll(root, "<root>"),
+	});
+	const bareAnswers = new Map<string, RealEngineRun>();
+	const bareKey = (args: readonly string[]) => args.join("\0");
+	const recordBare = async (args: readonly string[]) => {
+		bareAnswers.set(bareKey(args), rootless(await run(args, undefined)));
+	};
+	const bareAnswer = (args: readonly string[]) => {
+		const answer = bareAnswers.get(bareKey(args));
+		if (answer === undefined) throw new Error(`no bare answer recorded for ${args.join(" ")}`);
+		return answer;
+	};
+	const exemptClassRows = EXEMPT.flatMap((args) => [
+		args,
+		[...args, "--attach", "unix:///tmp/e1as-none.sock", "--session", "s-1"],
+	]).filter((args) => classifyInvocation(args) === "no_session");
+
+	it.each(exemptClassRows.map((args) => [args.join(" "), args] as const))(
+		"the bare answer of %s (the reference for its class row)",
+		async (_args, args) => recordBare(args),
+	);
+
 	it.each(
 		EXEMPT.flatMap((args) => [args, [...args, "--attach", "unix:///tmp/e1as-none.sock", "--session", "s-1"]]).map(
 			(args) => [args.join(" "), args] as const,
 		),
 	)("the class of %s is the branch main() takes (review 6069794971)", async (_args, args) => {
-		const broken = await run(args, { root, table: '{"presenter":4,' });
+		const broken = await run(args, BROKEN);
 		if (classifyInvocation(args) === "reads_table") {
 			expect(broken.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
 			return;
 		}
-		expect(broken).toEqual(await run(args, { root, table: undefined }));
+		expect(rootless(broken)).toEqual(bareAnswer(args));
 	});
 
-	// Review 6070848877 (F1b), widened to the class: help first and then ANY root option must still be help at the real
-	// entry, or the classifier must refuse it, so no branch main() takes before help reads a broken table.
-	it.each(
-		[
-			...rootFlags().map((flag) => ["--help", ...flag]),
-			["-h", "--export", "x"],
-			["--help", "--internal-rpc-host-supervisor"],
-		].map((args) => [args.join(" "), args] as const),
-	)("help first, then %s: the answer is help, or the classifier refuses", async (_args, args) => {
-		if (entry !== CLI_MAIN) return;
-		const broken = await run(args, { root, table: '{"presenter":4,' });
-		if (classifyInvocation(args) === "reads_table") {
-			expect(broken.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
-			return;
-		}
-		// Comparing with a run without a table cannot see a branch that fails the same way either way (an export of a
-		// missing session): an exempt help-first invocation must answer with the help screen itself.
-		const help = await referenceAnswer("--help", entry);
-		expect({ code: broken.code, first: firstLine(broken.output) }).toEqual({
-			code: 0,
-			first: firstLine(help.output),
-		});
-	});
-
-	it.each(
-		[...rootFlags().map((flag) => ["--version", ...flag]), ["-v", "--export", "x"]].map(
-			(args) => [args.join(" "), args] as const,
-		),
-	)("version first, then %s: the answer is the version", async (_args, args) => {
-		if (entry !== CLI_MAIN) return;
-		const broken = await run(args, { root, table: '{"presenter":4,' });
-		const version = await referenceAnswer("--version", entry);
-		expect({ code: broken.code, output: broken.output }).toEqual({ code: 0, output: version.output });
-	});
+	// Review 6070848877 (F1b): help first must still be help at the real entry, or the classifier must refuse it.
+	it.each(HELP_FIRST_REDS.map((args) => [args.join(" "), args] as const))(
+		"help first, then %s: the answer is help, or the classifier refuses",
+		async (_args, args) => {
+			if (entry !== CLI_MAIN) return;
+			const broken = await run(args, BROKEN);
+			if (classifyInvocation(args) === "reads_table") {
+				expect(broken.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+				return;
+			}
+			// Comparing with a run without a table cannot see a branch that fails the same way either way (an export of a
+			// missing session): an exempt help-first invocation must answer with the help screen itself.
+			expect({ code: broken.code, first: firstLine(broken.output) }).toEqual({
+				code: 0,
+				first: HELP_SCREEN_FIRST_LINE,
+			});
+		},
+	);
 
 	// Help in a LATER position keeps the owner's rule: the command decides, so a start refuses on a broken table.
+	const HELP_LATER: ReadonlyArray<readonly string[]> = [
+		["--hand", "--help"],
+		["--headless", "--help"],
+		["--export", "x", "--help"],
+		["-p", "x", "--help"],
+		["--mode", "rpc", "--help"],
+	];
 	it.each(
-		[
-			["--hand", "--help"],
-			["--headless", "--help"],
-			["--export", "x", "--help"],
-			["-p", "x", "--help"],
-			["--mode", "rpc", "--help"],
-		].map((args) => [args.join(" "), args] as const),
-	)("help later, %s: the command's class decides", async (_args, args) => {
+		HELP_LATER.filter((args) => classifyInvocation(args) === "no_session").map(
+			(args) => [args.join(" "), args] as const,
+		),
+	)("the bare answer of %s (the reference for its help-later row)", async (_args, args) => {
 		if (entry !== CLI_MAIN) return;
-		const broken = await run(args, { root, table: '{"presenter":4,' });
-		if (classifyInvocation(args) === "reads_table") {
-			expect(broken.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
-			return;
-		}
-		expect(broken).toEqual(await run(args, { root, table: undefined }));
+		await recordBare(args);
 	});
+	it.each(HELP_LATER.map((args) => [args.join(" "), args] as const))(
+		"help later, %s: the command's class decides",
+		async (_args, args) => {
+			if (entry !== CLI_MAIN) return;
+			const broken = await run(args, BROKEN);
+			if (classifyInvocation(args) === "reads_table") {
+				expect(broken.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+				return;
+			}
+			expect(rootless(broken)).toEqual(bareAnswer(args));
+		},
+	);
 
 	it.each(
 		REFUSED.flatMap((args) => UNREADABLE.map(([shape, table]) => [args.join(" "), shape, args, table] as const)),
 	)("refuses %s on a table %s with exit 78", async (_args, _shape, args, table) => {
-		const refused = await run(args, { root, table });
+		const refused = await run(args, table);
 		expect(refused.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
 		expect(refused.output).toContain("launch_key_unreadable: the private descriptor table could not be read");
 		expect(refused.output).not.toContain("presenter");
@@ -360,9 +381,8 @@ describe.each(ENTRIES)("the real %s entry", { timeout: 0 }, (_name, entry) => {
 	it.each(EXEMPT.map((args) => [args.join(" "), args] as const))(
 		"answers %s byte-identically with and without an unreadable table",
 		async (_args, args) => {
-			const bare = await run(args, { root, table: undefined });
-			const broken = await run(args, { root, table: '{"presenter":4,' });
-			expect(broken).toEqual(bare);
+			const broken = await run(args, BROKEN);
+			expect(rootless(broken)).toEqual(bareAnswer(args));
 			expect(broken.output).not.toContain("launch_key_");
 		},
 	);
