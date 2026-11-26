@@ -109,7 +109,11 @@ pub(crate) fn order_candidates(files: &mut Vec<Candidate>) {
     files.retain(|file| seen.insert(file.path.clone()));
 }
 
-pub(crate) fn collect(options: &GrepOptions, cancel: &CancelToken) -> Result<Candidates, GrepError> {
+pub(crate) fn collect(
+    options: &GrepOptions,
+    cancel: &CancelToken,
+    excluded_directories: &[String],
+) -> Result<Candidates, GrepError> {
     if options.paths.is_empty() || options.paths.iter().any(|path| !Path::new(path).is_absolute()) {
         return Err(GrepError::PathNotFound(
             "paths must contain at least one absolute path".into(),
@@ -135,6 +139,12 @@ pub(crate) fn collect(options: &GrepOptions, cancel: &CancelToken) -> Result<Can
             .and_then(|metadata| fs::canonicalize(root).map(|canonical| (metadata, canonical)))
         {
             Ok((metadata, canonical)) => {
+                if excluded_directories.iter().any(|p| canonical.starts_with(p)) {
+                    return Err(GrepError::EngineUnavailable(format!(
+                        "IDENTITY_FILE_REFUSED {}",
+                        canonical.display()
+                    )));
+                }
                 existing += 1;
                 single_file = metadata.is_file();
                 roots.insert(Path::new(root), canonical);
@@ -167,6 +177,17 @@ pub(crate) fn collect(options: &GrepOptions, cancel: &CancelToken) -> Result<Can
     let files = Mutex::new(Vec::new());
     let warnings = Mutex::new(Vec::new());
     let gitignore = options.gitignore.unwrap_or(true);
+    let excluded: Vec<PathBuf> = roots
+        .iter()
+        .flat_map(|(alias, canonical)| {
+            excluded_directories.iter().filter_map(move |dir| {
+                Path::new(dir)
+                    .strip_prefix(canonical)
+                    .ok()
+                    .map(|suffix| alias.join(suffix))
+            })
+        })
+        .collect();
     let mut builder = WalkBuilder::from_iter(roots.keys());
     builder
         .threads(std::thread::available_parallelism().map_or(1, |n| n.get()))
@@ -178,7 +199,9 @@ pub(crate) fn collect(options: &GrepOptions, cancel: &CancelToken) -> Result<Can
         .require_git(false)
         .follow_links(false)
         .types(types.clone())
-        .filter_entry(|entry| !in_git(entry.path()));
+        // filter_entry is evaluated before a child is scheduled. A visitor-only
+        // filter is too late: the walker has already loaded that directory's rules.
+        .filter_entry(move |entry| !in_git(entry.path()) && !excluded.iter().any(|dir|entry.path().starts_with(dir)));
     builder.build_parallel().run(|| {
         Box::new(|entry| {
             if cancel.check(Checkpoint::Walk).is_err() {

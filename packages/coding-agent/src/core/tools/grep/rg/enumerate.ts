@@ -1,4 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
+import { identityWalk } from "@code-yeongyu/senpi-machine-ops";
 import { basename, dirname, relative, resolve } from "node:path";
 import { GrepEngineError, type GrepEngineRequest, type GrepEngineResult } from "../engine.ts";
 import { containsNul } from "./pinned-files.ts";
@@ -64,9 +65,15 @@ export async function enumerateCandidates({
 }): Promise<Candidate[]> {
 	const candidates = new Map<string, Omit<Candidate, "ordinal" | "binary">>();
 	for (const root of roots) {
+		const policy = await identityWalk(root.path);
+		const prune = policy.globs.flatMap((glob) => ["-g", "!" + glob]);
+		// rg --sort uses the serial ignore walker. Even a skipped directory gets
+		// add_child() there, which opens its rule files. The parallel walker filters
+		// the child before scheduling it. Candidate order is established below.
+		const order = prune.length ? ["--threads", "2"] : ["--sort", "path"];
 		const listed = root.file
 			? [root.path]
-			: (await run(["--files", "--null", "--sort", "path", ...walk, "--", root.path], root.cwd))
+			: (await run(["--files", "--null", ...order, ...walk, ...prune, "--", root.path], root.cwd))
 					.toString("utf8")
 					.split("\0")
 					.filter(Boolean);

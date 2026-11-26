@@ -5,6 +5,8 @@ import { createInterface } from "node:readline";
 import path from "node:path";
 import { MachineOpError } from "../errors.ts";
 import type { GlobResult } from "../types.ts";
+import { identityWalk } from "./identity-walk.ts";
+import { canonicalizeFilesystemPath } from "../policy/filesystem.ts";
 
 /** Resolves the `fd` binary; undefined means fd is unavailable. */
 export type FdResolver = () => Promise<string | undefined>;
@@ -63,6 +65,10 @@ function runFdGlob(
 ): Promise<GlobResult> {
 	return (async () => {
 		const args: string[] = ["--glob", "--color=never", "--hidden"];
+		const walk = await identityWalk(searchPath);
+		// Preserve ENOENT for a missing search root rather than reporting a missing fd executable.
+		await stat(walk.start);
+		for (const glob of walk.globs) args.push("--exclude", glob);
 		// fd normally ignores .gitignore outside git repos, so keep --no-require-git there. Inside repos, use fd's
 		// default git-aware behavior so parent .gitignore rules stop at nested repo boundaries:
 		// https://github.com/earendil-works/pi/issues/5960
@@ -94,7 +100,7 @@ function runFdGlob(
 		if (signal.aborted) throw new MachineOpError("aborted", "Operation aborted");
 
 		const lines = await new Promise<string[]>((resolve, reject) => {
-			const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+			const child = spawn(fdPath, args, { cwd: walk.start, stdio: ["ignore", "pipe", "pipe"] });
 			const rl = createInterface({ input: child.stdout });
 			let stderr = "";
 			const collected: string[] = [];
@@ -134,7 +140,8 @@ function runFdGlob(
 		const entries: { path: string }[] = [];
 		for (const rawLine of lines) {
 			const line = rawLine.replace(/\r$/, "").trim();
-			if (line) entries.push({ path: line });
+			if (line && !walk.hidden(await canonicalizeFilesystemPath(path.resolve(searchPath, line))))
+				entries.push({ path: line });
 		}
 		return { entries, truncated: entries.length >= limit };
 	})();
@@ -181,6 +188,7 @@ async function walkGlob(pattern: string, searchPath: string, limit: number, sign
 	const matchBasename = !pattern.includes("/");
 	const entries: { path: string }[] = [];
 	const pending = [searchPath];
+	const walk = await identityWalk(searchPath);
 	await stat(searchPath);
 	while (pending.length > 0 && entries.length < limit) {
 		if (signal.aborted) throw new MachineOpError("aborted", "Operation aborted");
@@ -194,6 +202,8 @@ async function walkGlob(pattern: string, searchPath: string, limit: number, sign
 		for (const dirent of dirents) {
 			if (WALK_SKIP.has(dirent.name)) continue;
 			const full = path.join(dir, dirent.name);
+			if (walk.hidden(path.resolve(walk.start, path.relative(searchPath, full)))) continue;
+			if (dirent.isSymbolicLink() && walk.hidden(await canonicalizeFilesystemPath(full))) continue;
 			const relative = path.relative(searchPath, full).split(path.sep).join("/");
 			if (matcher.test(matchBasename ? dirent.name : relative)) {
 				entries.push({ path: full });

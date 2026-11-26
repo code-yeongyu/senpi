@@ -7,6 +7,7 @@ export {
 	withResolutionDeadline,
 } from "./files/bounded-realpath.ts";
 export { type FdResolver, globToRegExp } from "./files/glob.ts";
+export { identityWalk } from "./files/identity-walk.ts";
 export {
 	checkIdentityAccess,
 	identityFilesForNativeSearch,

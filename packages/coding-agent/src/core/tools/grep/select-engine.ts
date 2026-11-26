@@ -1,5 +1,5 @@
 import { type GrepEngine, GrepEngineError } from "./engine.ts";
-import { identityFilesForNativeSearch } from "@code-yeongyu/senpi-machine-ops";
+import { identityFilesForNativeSearch, identityWalk } from "@code-yeongyu/senpi-machine-ops";
 import type { NativeGrepLoaderOptions } from "./native-loader.ts";
 
 export type GrepEngineSelectorOptions = NativeGrepLoaderOptions;
@@ -52,7 +52,15 @@ async function loadNativeEngine(options: GrepEngineSelectorOptions, env: NodeJS.
 		);
 	return createNativeEngine({
 		...loaded.native,
-		grep: async (options, signal) => guarded(options, await identityFilesForNativeSearch(), signal),
+		grep: async (options, signal) => {
+			const policies = await Promise.all(options.paths.map(identityWalk));
+			return guarded(
+				options,
+				await identityFilesForNativeSearch(),
+				[...new Set(policies.flatMap((p) => p.dirs))],
+				signal,
+			);
+		},
 	});
 }
 

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_LIMITS, IdentityOutputStream } from "../src/index.ts";
+import { mountedIdentityAliases } from "../src/files/identity-walk.ts";
 import { createLocalMachineOps } from "../src/local.ts";
 import { createInProcessHolderLink } from "../src/process/in-process-holder.ts";
 import type { OpContext } from "../src/types.ts";
@@ -88,6 +89,37 @@ describe("file effects refuse the identity before exposing bytes or metadata", (
 });
 
 describe("ordinary file operations keep their filesystem semantics", () => {
+	it.skipIf(process.platform !== "linux")(
+		"maps bind roots and submounts without excluding an unrelated sibling mount",
+		() => {
+			const table = [
+				"1 0 8:1 / / rw - ext4 x rw",
+				"2 1 8:1 /home/u /alias-home rw - ext4 x rw",
+				"3 1 8:1 /home/u/.omo/child /alias-child rw - ext4 x rw",
+				"4 1 8:1 /home/unrelated /unrelated rw - ext4 x rw",
+			].join("\n");
+			expect(mountedIdentityAliases(["/home/u/.omo"], table).sort()).toEqual(["/alias-child", "/alias-home/.omo"]);
+		},
+	);
+	it("list, glob and grep omit the protected subtree but keep its ordinary namesake", async () => {
+		const root = join(home, "walk"),
+			privateDir = join(root, "nested/private[1]");
+		vi.stubEnv("OMO_DEVICE_SERVICE_STATE_DIR", privateDir);
+		mkdirSync(privateDir, { recursive: true });
+		mkdirSync(join(root, "other/private[1]"), { recursive: true });
+		for (const f of [".gitignore", ".ignore", ".fdignore", "not-for-discovery"])
+			writeFileSync(join(privateDir, f), "fixture-marker\n");
+		writeFileSync(join(root, "other/private[1]/visible"), "fixture-marker\n");
+		const listing = await ops.files.list({ path: join(root, "nested") }, ctx);
+		expect(listing.entries).toHaveLength(0);
+		const names = (await ops.files.glob({ cwd: root, pattern: "*" }, ctx)).entries.map((e) =>
+			e.path.replaceAll("\\", "/"),
+		);
+		expect(names.some((n) => n.includes("nested/private[1]"))).toBe(false);
+		expect(names.some((n) => n.endsWith("other/private[1]/visible"))).toBe(true);
+		const grep = await ops.files.grep({ path: root, pattern: "fixture-marker" }, ctx);
+		expect(grep.matches.map((m) => m.path)).toEqual([join(root, "other/private[1]/visible")]);
+	});
 	it("preserves unrelated names, contents and distinct case variants", async () => {
 		const path = join(home, "device-identity.json");
 		writeFileSync(path, "ordinary");

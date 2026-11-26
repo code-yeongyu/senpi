@@ -3,6 +3,7 @@ import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { MachineOpError } from "../errors.ts";
 import { checkIdentityAccess, openToolFile } from "./identity-access.ts";
+import { identityWalk } from "./identity-walk.ts";
 import type { GrepMatch, GrepResult } from "../types.ts";
 
 const DEFAULT_LIMIT = 100;
@@ -28,6 +29,7 @@ export async function localGrep(
 		throw new MachineOpError("invalid_argument", "limit must be a positive integer");
 	}
 	await checkIdentityAccess(root);
+	const walk = await identityWalk(root);
 	const info = await stat(root);
 	const files: string[] = [];
 	if (info.isFile()) {
@@ -51,6 +53,7 @@ export async function localGrep(
 			for (const dirent of dirents) {
 				if (WALK_SKIP.has(dirent.name)) continue;
 				const full = path.join(dir, dirent.name);
+				if (walk.hidden(path.resolve(walk.start, path.relative(root, full)))) continue;
 				if (dirent.isDirectory()) pending.push(full);
 				else if (dirent.isFile()) files.push(full);
 			}

@@ -25,6 +25,8 @@ import type {
 import { type FdResolver, localGlob } from "./glob.ts";
 import { localGrep } from "./grep.ts";
 import { checkIdentityAccess, openToolFile } from "./identity-access.ts";
+import { identityWalk } from "./identity-walk.ts";
+import { canonicalizeFilesystemPath } from "../policy/filesystem.ts";
 import { acquireFileMutationLock } from "./mutation-queue.ts";
 
 const ACCESS_MODES = {
@@ -226,9 +228,16 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 			await checkPath(path, "enumerate", "files.list", ctx);
 			return gated("files.list", req, ctx, async () => {
 				await checkIdentityAccess(path);
-				const dirents = await readdir(path, { withFileTypes: true });
-				for (const entry of dirents) await checkIdentityAccess(resolve(path, entry.name));
-				return { path, entries: dirents.map((dirent) => ({ name: dirent.name, type: entryType(dirent) })) };
+				const walk = await identityWalk(path);
+				const entries = [];
+				for (const entry of await readdir(path, { withFileTypes: true })) {
+					const file = resolve(walk.start, entry.name);
+					if (walk.hidden(file) || (entry.isSymbolicLink() && walk.hidden(await canonicalizeFilesystemPath(file))))
+						continue;
+					await checkIdentityAccess(file);
+					entries.push({ name: entry.name, type: entryType(entry) });
+				}
+				return { path, entries };
 			});
 		},
 	};

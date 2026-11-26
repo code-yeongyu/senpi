@@ -12,7 +12,12 @@ export const NATIVE_GREP_ABI_VERSION = "1";
 export interface NativeGrepBinding {
 	__senpiGrepAbi1(): string;
 	grep(options: GrepEngineRequest, signal?: AbortSignal): Promise<GrepEngineResult>;
-	grepGuarded?(options: GrepEngineRequest, identities: string[], signal?: AbortSignal): Promise<GrepEngineResult>;
+	grepGuarded?(
+		options: GrepEngineRequest,
+		identities: string[],
+		excludedDirectories: string[],
+		signal?: AbortSignal,
+	): Promise<GrepEngineResult>;
 }
 
 export interface NativeGrepCandidatePathOptions {

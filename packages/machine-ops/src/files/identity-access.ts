@@ -41,6 +41,10 @@ function names(): string[] {
 	];
 }
 
+export function identityDirectories(): string[] {
+	return [...new Set(names().map((name) => resolve(dirname(name))))];
+}
+
 function variant(name: string, base: string): boolean {
 	const device = base === "device-identity.json";
 	const stem = device ? "device-identity" : "identity";
