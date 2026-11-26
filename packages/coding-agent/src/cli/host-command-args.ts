@@ -21,6 +21,7 @@ export interface ParsedHostArgs {
 	readonly includeWorkers: boolean;
 	readonly all: boolean;
 	readonly drain: boolean;
+	readonly ifIdle?: boolean;
 	readonly force: boolean;
 	readonly expectedGeneration?: HostStopGeneration;
 	/** `stop --drain`: the generation to drain, by instance id. */
@@ -51,6 +52,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	let includeWorkers = false;
 	let all = false;
 	let drain = false;
+	let ifIdle = false;
 	let force = false;
 	let expectedGeneration: HostStopGeneration | undefined;
 	let instanceId: string | undefined;
@@ -105,6 +107,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 				return "Error: --expected-generation needs instanceId, generation, pid and processStartTime (null where the platform records none).";
 			index++;
 		} else if (flag === "--instance" && subcommand === "stop" && value !== undefined) {
+			if (value.length === 0 || value.startsWith("--")) return "Error: --instance requires an instance id.";
 			instanceId = value;
 			index++;
 		} else if (flag === "--wait-ms" && subcommand === "stop" && value !== undefined) {
@@ -112,6 +115,8 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 			index++;
 		} else if (flag === "--drain") {
 			drain = true;
+		} else if (flag === "--if-idle" && subcommand === "stop") {
+			ifIdle = true;
 		} else if (flag === "--force") {
 			force = true;
 		} else if (flag === "--launch-spec" && value !== undefined) {
@@ -133,6 +138,8 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	if ((instanceId !== undefined || waitMs !== undefined) && !drain) {
 		return `Error: "${APP_NAME} host stop" takes --instance and --wait-ms only with --drain.`;
 	}
+	if (ifIdle && (!drain || instanceId === undefined || instanceId.length === 0 || instanceId.startsWith("--")))
+		return "Error: --if-idle requires --drain and --instance <id>.";
 	const parsedWaitMs = waitMs === undefined ? undefined : Number(waitMs);
 	if (expectedGeneration !== undefined && drain)
 		return "Error: --expected-generation is for a hard stop, not --drain.";
@@ -151,6 +158,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		includeWorkers,
 		all,
 		drain,
+		...(ifIdle && { ifIdle: true }),
 		force,
 		...(expectedGeneration !== undefined && { expectedGeneration }),
 		...(instanceId !== undefined && { instanceId }),

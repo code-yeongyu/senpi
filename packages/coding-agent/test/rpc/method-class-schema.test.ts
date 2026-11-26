@@ -224,8 +224,8 @@ describe("K8: every record local clients send today is accepted (X14 corpus)", (
 			const { record } = corpusRequest(method, row, opened, tmp);
 			outcomes[method] = validateRpcInboundRecord({ ...record, id: `x14-${++serial}` });
 		}
-		const answerRecords = ["extension_ui_progress", "extension_ui_response", "host_response"];
-		expect([...Object.keys(TODAY), ...answerRecords].sort()).toEqual(Object.keys(RPC_METHOD_CLASS).sort());
+		const otherInboundRecords = ["drain_if_idle", "extension_ui_progress", "extension_ui_response", "host_response"];
+		expect([...Object.keys(TODAY), ...otherInboundRecords].sort()).toEqual(Object.keys(RPC_METHOD_CLASS).sort());
 		// senpi#6429 adds find_session to the table, so the corpus runs one record more.
 		expect(serial).toBe(134);
 		// X14 probes set_retry_fallback with an empty profile only to reach the host's "single-session only" refusal;

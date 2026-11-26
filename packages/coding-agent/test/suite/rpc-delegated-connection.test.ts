@@ -1,3 +1,4 @@
+// allow: SIZE_OK - One exhaustive method/grant corpus compares delegated replies against the same local baseline.
 /**
  * senpi#5632: a connection that proved the endpoint's launch key may declare, before its first ordinary record, that
  * it acts for a principal with a set of granted method classes (`declare_delegation`). From then on the ENGINE checks
@@ -43,7 +44,8 @@ import {
 // set_session_archived (drive) writes a session's archived flag; set_session_settled (drive) its Done flag.
 // omo-desktop-app#7981 adds read_user_skill_file and write_user_skill_file (device_admin).
 // senpi#6429 adds one device_admin command to the table, find_session, which moves the digest.
-const DIGEST_ON_BASE = "27c8b985864be3f3a7d9605f4f8476e423613eb9fa2bba9b6820e0d0c1d3f9a6";
+// senpi#6819 adds drain_if_idle (device_admin).
+const DIGEST_ON_BASE = "88f8da3a8cab7db8b5f19bb706c9c4e3c6e0355c8ebc841af744c958668fbefc";
 const FORWARDABLE = [
 	"observe",
 	"drive",
@@ -54,6 +56,7 @@ const FORWARDABLE = [
 /** The `connection_local` methods that reach beyond the asking connection: they need `device_admin`. */
 /** DS2b section 2c: the `connection_local` records that need a grant on a delegated connection; the rest act on it alone. */
 const CONNECTION_LOCAL_NEEDS: Partial<Record<RpcMethodType, RpcMethodClass>> = {
+	drain_if_idle: "device_admin",
 	subscribe_sessions: "observe",
 	record_user_activity: "drive",
 	release_session: "device_admin",
@@ -64,10 +67,11 @@ const CONNECTION_LOCAL_NEEDS: Partial<Record<RpcMethodType, RpcMethodClass>> = {
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 /**
- * The three inbound types that are not `RpcCommand`s answer a request by its `id`; each gets a record here, typed so a
+ * Inbound types outside `RpcCommand` each get a record here, typed so a
  * new non-command inbound type fails tsc until it has one.
  */
 const NON_COMMAND: { readonly [K in Exclude<RpcMethodType, RpcCommand["type"]>]: (sessionId: string) => WireRecord } = {
+	drain_if_idle: () => ({ instanceId: NO_ID }),
 	extension_ui_response: (sessionId) => ({ sessionId, uiRequestId: NO_ID, value: "x" }),
 	extension_ui_progress: (sessionId) => ({ sessionId, answers: {} }),
 	host_response: (sessionId) => ({ sessionId, data: {} }),

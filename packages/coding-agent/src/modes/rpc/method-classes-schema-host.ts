@@ -70,6 +70,7 @@ const MoveInlineFile = Type.Object({
 const { sessionPath: _sessionPath, cwd: _cwd, ...moveImportOpenProperties } = openProperties;
 
 export const HOST_RECORD_SCHEMAS = {
+	drain_if_idle: command("drain_if_idle", { instanceId: Id }),
 	get_protocol_info: command("get_protocol_info", {
 		auth: Opt(Type.Object({ client_nonce: Id })),
 		observe: OptBool,

@@ -46,6 +46,8 @@ export class RouterContext {
 
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
 	readonly opensByConnection = new Map<string, Set<Promise<void>>>();
+	/** Every physical open, including a clientless retained-session reopen before its registry row exists. */
+	opensInFlight = 0;
 
 	/** Connections whose socket has already been detached. */
 	readonly releasedConnections = new Set<string>();
@@ -107,6 +109,8 @@ export class RouterContext {
 	drainTimer: ReturnType<typeof setInterval> | undefined;
 
 	draining = false;
+	/** A conditional drain admits no further requests, including on already accepted connections. */
+	conditionalDrain = false;
 
 	handoffParks = 0;
 

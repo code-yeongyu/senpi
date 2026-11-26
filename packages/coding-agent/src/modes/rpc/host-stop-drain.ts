@@ -36,11 +36,14 @@ import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { provenLegacyOwner } from "./host-legacy.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { readDrainWatch, writeDrainRequest } from "./host-stop-intent.ts";
+import { isRecord, requestOnSocket } from "./host-socket-request.ts";
+import type { ConditionalDrainRefusal } from "./host-conditional-drain.ts";
 
 export interface DrainHostOptions {
 	readonly socket: string;
 	/** Drain this generation instead of the one the pointer names. */
 	readonly instanceId?: string;
+	readonly ifIdle?: boolean;
 	/** Wait up to this long for the drained generation to exit, and report whether it did. */
 	readonly waitMs?: number;
 	readonly timeoutMs?: number;
@@ -54,7 +57,7 @@ export type DrainHostResult =
 			/** Present when the caller waited: whether the generation's process exited within `waitMs`. */
 			readonly exited?: boolean;
 	  }
-	| { readonly action: "refuse"; readonly reason: "unknown_owner" | "drain_unsupported" };
+	| { readonly action: "refuse"; readonly reason: ConditionalDrainRefusal };
 
 const EXIT_POLL_MS = 100;
 
@@ -64,6 +67,27 @@ export async function drainHost(paths: HostDaemonPaths, options: DrainHostOption
 	const registered =
 		named === undefined ? await readHostRegistration(paths) : await readGenerationRegistration(paths, named);
 	const owner = await provenOwner(registered, options.socket);
+	if (options.ifIdle === true) {
+		if (named === undefined || owner === undefined) return { action: "refuse", reason: "unknown_owner" };
+		const reply = await requestOnSocket(
+			options.socket,
+			{ type: "drain_if_idle", instanceId: named },
+			options.timeoutMs ?? 10_000,
+		);
+		if (isRecord(reply)) {
+			if (reply.action === "drained") return drained(owner, options.waitMs);
+			if (
+				reply.action === "refuse" &&
+				(reply.reason === "unknown_owner" ||
+					reply.reason === "drain_unsupported" ||
+					reply.reason === "host_busy" ||
+					reply.reason === "host_attached")
+			)
+				return { action: "refuse", reason: reply.reason };
+		}
+		// No signal/file fallback: an older or unanswered host cannot prove it was idle.
+		return { action: "refuse", reason: "drain_unsupported" };
+	}
 	if (owner !== undefined) {
 		const generation = generationPaths(paths, owner.instanceId);
 		const watch = await readDrainWatch(generation.drainWatchFile);

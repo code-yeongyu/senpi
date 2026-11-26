@@ -80,6 +80,7 @@ type ConnectionLocalType = {
  * typecheck until it is placed.
  */
 const CONNECTION_LOCAL_REQUIREMENT = {
+	drain_if_idle: "device_admin",
 	set_client_info: "self",
 	subscribe_sessions: "observe",
 	unsubscribe_sessions: "self",

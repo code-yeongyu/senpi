@@ -94,6 +94,9 @@ export abstract class SessionEventWriterState {
 	get pendingCloseRecordCount(): number {
 		return this.reservedCloseRecords;
 	}
+	pendingQuestionCount(sessionId: string): number {
+		return this.fanout.pendingQuestionCount(sessionId) ?? 0;
+	}
 
 	get pendingCloseByteLength(): number {
 		return this.reservedCloseBytes;

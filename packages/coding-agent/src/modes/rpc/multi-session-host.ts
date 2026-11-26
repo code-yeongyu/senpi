@@ -252,6 +252,20 @@ export function createHostCore(
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), {
 		...hooks,
 		machineWork: machineOps,
+		conditionalDrain: (instanceId) => {
+			const decision = router.closeIdleDrainAdmission(instanceId);
+			switch (decision.action) {
+				case "drained":
+					machineOps.hold();
+					if (hooks.onConditionalDrain) hooks.onConditionalDrain();
+					else router.beginDrain();
+					return decision;
+				case "refuse":
+					return decision;
+				default:
+					throw new Error("Unknown conditional drain decision", { cause: decision satisfies never });
+			}
+		},
 	});
 	const handle = async (line: string): Promise<void> => {
 		const connection = writer.currentConnection();
@@ -463,6 +477,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				// A session the host closed itself (eviction, park) has left its owners' records by now.
 				occupancyWatch.refresh();
 			},
+			onConditionalDrain: () => drainForHandoff(),
 			// A draining predecessor parks its retained sessions for the successor and must not reopen
 			// them into its own registry (senpi#3282). Gate the reopen watch on not draining.
 			shouldReopenParked: () => !draining,

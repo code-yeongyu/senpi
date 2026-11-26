@@ -1999,6 +1999,28 @@ carries `exited`, `true` once the generation's process is gone (or its pid names
 bound, `false` otherwise - an identity that cannot be read is not an exit. A client that did not wait learns the
 same from `host status --json`: the drained generation leaves `generations` when it exits.
 
+For an update that must leave occupied generations untouched, use
+`host stop --drain --instance <id> --if-idle [--wait-ms <n>]` (`stopHost({ drain: true, instanceId, ifIdle: true })`).
+`--if-idle` requires both `--drain` and `--instance`; invalid combinations are usage errors (exit 2).
+The caller sends `drain_if_idle { instanceId }` over the authenticated host socket. This host-level command is
+`connection_local` and takes no session attachment or observer hold; a declared delegated connection needs
+the `device_admin` grant. It is available on
+Windows through the existing socket secret handshake and uses no signals or drain request files.
+
+The host child checks the named instance, in-flight requests and opens, the engine's handoff busy predicate
+(turns, standalone bash, compaction and session work), pending prompts and questions, and session attachments.
+Refusal returns exit 3 with exactly `{ "action": "refuse", "reason": "host_busy" }` or `host_attached`;
+an instance mismatch returns `unknown_owner`. A refusal changes no drain state and emits no handoff announcement.
+On success the child closes connection, request and attachment admission and holds unattended automatic turns
+without yielding, then runs the ordinary drain. The CLI returns exit 0 with `{ "action": "drained", "pid": N,
+"instanceId": "id" }`, adding `"exited": true|false` only with `--wait-ms`, using the same positive exit evidence.
+
+The conditional form fails closed with `drain_unsupported` when the command is unavailable or unanswered.
+A loaded worker isolate also refuses this form: its asynchronous activity snapshot cannot prove an idle check
+and automatic-turn admission closed in the same host-child step. Default socket hosts run sessions in process.
+The conditional form never falls back to an unconditional drain or follows a named generation to a successor.
+An older CLI rejects the unknown `--if-idle` flag with exit 2; callers must treat that as unsupported.
+
 `stopHost({ socket, agentDir, drain?, force? })` ends a generation: `drain: true` is always permitted (it
 ends no work, it only stops the host from taking new work), while a hard stop requires a host that reports
 no open sessions, or `force: true`. A hard stop also drops that generation's registration (the pointer and
@@ -2190,7 +2212,7 @@ daemon the same way instead of each re-implementing the decision:
 ```
 senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
-senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force]
+senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>] [--if-idle]] [--force]
                       [--expected-generation <json>] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
@@ -2392,7 +2414,8 @@ which prints the bare socket path).
   overrides after printing the same counts; `--drain` is always permitted, because it ends no work. It
   asks through the generation's drain request (SIGUSR1 only for a generation from before it), `--instance <id>`
   names a generation other than the current one, and `--wait-ms <n>` waits for it to exit and adds `exited` to
-  the answer; both need `--drain`.
+  the answer; both need `--drain`. `--if-idle` additionally requires `--instance` and refuses occupied generations
+  atomically in the child, as described in [Asking a named generation to drain](#asking-a-named-generation-to-drain).
 - `handoff` forces a generation handoff from THIS binary. A host that cannot drain and a platform that
   cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
   endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
