@@ -15,14 +15,9 @@ import {
 } from "../core/extensions/builtin/schedule/runner-lease.ts";
 import { resolveCliMainPath } from "../modes/rpc/host-lifecycle.ts";
 import { runtimeExecArgv } from "../utils/runtime-exec-argv.ts";
-import {
-	type DeferProbe,
-	type Delivery,
-	deferWhileSessionOpen,
-	execHookDelivery,
-	sessionResumeDelivery,
-} from "./schedule-delivery.ts";
-import { type RunDueResult, runDueJobs } from "./schedule-runner.ts";
+import type { DeferProbe, Delivery } from "../core/extensions/builtin/schedule/delivery-contract.ts";
+import { type RunDueResult, runDueJobs } from "../core/extensions/builtin/schedule/runner.ts";
+import { deferWhileSessionOpen, execHookDelivery, sessionResumeDelivery } from "./schedule-delivery.ts";
 
 export interface RunOptions {
 	readonly watch: boolean;

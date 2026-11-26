@@ -45,7 +45,13 @@ function leasePath(dir: string, pid: number): string {
 
 export async function writeRunnerLease(
 	dir: string,
-	lease: { readonly startedAt: number; readonly watch: boolean; readonly exec: string | null },
+	lease: {
+		readonly startedAt: number;
+		readonly watch: boolean;
+		readonly exec: string | null;
+		/** A live session's lease (senpi#4130): it delivers only its own jobs and beats no heartbeat. */
+		readonly holder?: "session";
+	},
 	now: number,
 ): Promise<void> {
 	await mkdir(runnersDir(dir), { recursive: true, mode: 0o700 });
@@ -68,6 +74,8 @@ export interface LiveRunner {
 	readonly beatAt: number;
 	readonly watch: boolean;
 	readonly exec: string | null;
+	/** `session`: an open session holding the lease while it delivers its own jobs (senpi#4130); else a runner. */
+	readonly holder: "runner" | "session";
 }
 
 function parseLease(raw: string): Omit<LiveRunner, "pid" | "processStartedAtMs"> | undefined {
@@ -78,7 +86,8 @@ function parseLease(raw: string): Omit<LiveRunner, "pid" | "processStartedAtMs">
 		if (typeof beatAt !== "number") return undefined;
 		const watch = "watch" in parsed && parsed.watch === true;
 		const exec = "exec" in parsed && typeof parsed.exec === "string" ? parsed.exec : null;
-		return { beatAt, watch, exec };
+		const holder = "holder" in parsed && parsed.holder === "session" ? "session" : "runner";
+		return { beatAt, watch, exec, holder };
 	} catch {
 		return undefined;
 	}

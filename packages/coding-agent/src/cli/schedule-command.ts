@@ -86,7 +86,8 @@ async function list(dir: string, json: boolean): Promise<number> {
 	const now = Date.now();
 	const runners = (await liveRunners(dir)).map((runner) => ({
 		...runner,
-		fresh: now - runner.beatAt <= RUNNER_HEARTBEAT_STALE_MS,
+		// A session's lease is held for as long as the session is open and never beats; only a runner can go stale.
+		fresh: runner.holder === "session" || now - runner.beatAt <= RUNNER_HEARTBEAT_STALE_MS,
 	}));
 	if (json) {
 		writeLine({
@@ -115,6 +116,9 @@ async function list(dir: string, json: boolean): Promise<number> {
 			? `Runner: active (pid ${watchers.map((runner) => runner.pid).join(", ")})`
 			: `Runner: none (start one with \`${APP_NAME} schedule run --watch\`)`,
 	);
+	const sessions = runners.filter((runner) => runner.holder === "session");
+	if (sessions.length > 0)
+		lines.push(`Open sessions delivering their own jobs: pid ${sessions.map((runner) => runner.pid).join(", ")}`);
 	process.stdout.write(`${lines.join("\n")}\n`);
 	return EXIT_OK;
 }

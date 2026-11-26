@@ -5,18 +5,28 @@
  */
 
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
-import { createNodeLiveTimer, type LiveTimerPort, registerLiveDelivery } from "./live-delivery.ts";
+import {
+	createNodeLiveTimer,
+	type LiveTimerPort,
+	type PendingWatchPort,
+	registerLiveDelivery,
+} from "./live-delivery.ts";
 import { registerScheduleTool } from "./tool.ts";
 
 export interface ScheduleExtensionDeps {
 	readonly now?: () => number;
 	readonly timer?: () => LiveTimerPort;
+	readonly watch?: PendingWatchPort;
 }
 
 export function createScheduleExtension(deps: ScheduleExtensionDeps = {}): ExtensionFactory {
 	const now = deps.now ?? (() => Date.now());
 	return (pi: ExtensionAPI): void => {
-		const liveDelivery = registerLiveDelivery(pi, { now, timer: deps.timer ?? createNodeLiveTimer });
+		const liveDelivery = registerLiveDelivery(pi, {
+			now,
+			timer: deps.timer ?? createNodeLiveTimer,
+			...(deps.watch === undefined ? {} : { watch: deps.watch }),
+		});
 		registerScheduleTool(pi, { now, liveDelivery });
 	};
 }

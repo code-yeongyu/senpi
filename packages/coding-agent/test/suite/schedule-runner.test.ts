@@ -4,20 +4,18 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	type Delivery,
-	type DeliveryResult,
-	deferWhileSessionOpen,
-	POSIX_GATE,
-	runDeliveryProcess,
-	type ScheduledPromptEvent,
-} from "../../src/cli/schedule-delivery.ts";
+import { deferWhileSessionOpen, POSIX_GATE, runDeliveryProcess } from "../../src/cli/schedule-delivery.ts";
+import type {
+	Delivery,
+	DeliveryResult,
+	ScheduledPromptEvent,
+} from "../../src/core/extensions/builtin/schedule/delivery-contract.ts";
 import {
 	ABANDONED_OCCURRENCE_ERROR,
 	DEFERRED_RETRY_MS,
 	type RunDueOptions,
 	runDueJobs,
-} from "../../src/cli/schedule-runner.ts";
+} from "../../src/core/extensions/builtin/schedule/runner.ts";
 import {
 	cancelScheduledJob,
 	claimOccurrence,
@@ -270,7 +268,7 @@ describe("schedule runner", () => {
 		const runnerA = pass(dir, { deliver: deliverA });
 		await gate.started;
 		const other = recordingDelivery();
-		const leaseA = { ...RUNNER_A, beatAt: T0, watch: true, exec: null };
+		const leaseA = { ...RUNNER_A, beatAt: T0, watch: true, exec: null, holder: "runner" as const };
 		const runnerB = await pass(dir, { deliver: other.deliver, owner: RUNNER_B, runners: async () => [leaseA] });
 		gate.release();
 		await runnerA;
@@ -435,7 +433,7 @@ describe("schedule runner", () => {
 		const dir = await tempScheduleDir();
 		const job = await createScheduledJob(dir, jobInput(), T0);
 		await claimOccurrence(dir, job, RUNNER_A);
-		const runnerA = { ...RUNNER_A, beatAt: T0, watch: true, exec: null };
+		const runnerA = { ...RUNNER_A, beatAt: T0, watch: true, exec: null, holder: "runner" as const };
 
 		const result = await pass(dir, {
 			deliver: recordingDelivery().deliver,

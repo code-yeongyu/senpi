@@ -15,13 +15,8 @@ import {
 	restoreAbandonedSchedule,
 	restorePending,
 	settleOccurrence,
-} from "../core/extensions/builtin/schedule/occurrences.ts";
-import {
-	acquireSessionDeliveryLock,
-	isOwnerAmong,
-	type LiveRunner,
-	liveRunners,
-} from "../core/extensions/builtin/schedule/runner-lease.ts";
+} from "./occurrences.ts";
+import { acquireSessionDeliveryLock, isOwnerAmong, type LiveRunner, liveRunners } from "./runner-lease.ts";
 import {
 	type InvalidJobFile,
 	isCancelled,
@@ -29,13 +24,9 @@ import {
 	listScheduledJobs,
 	type RunnerIdentity,
 	readJobFile,
-} from "../core/extensions/builtin/schedule/store.ts";
-import {
-	formatScheduledMessage,
-	nextRecurringDueAt,
-	type ScheduledJob,
-} from "../core/extensions/builtin/schedule/types.ts";
-import { type DeferProbe, type Delivery, type DeliveryResult, movedJobPaths } from "./schedule-delivery.ts";
+} from "./store.ts";
+import { formatScheduledMessage, nextRecurringDueAt, type ScheduledJob } from "./types.ts";
+import { type DeferProbe, type Delivery, type DeliveryResult, movedJobPaths } from "./delivery-contract.ts";
 
 export type RunnerEvent =
 	| {
