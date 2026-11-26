@@ -168,10 +168,11 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 	}
 }
 
-describe.each(["gpt-6.1-sol", "gpt-6.2-sol"] as const)("ChatGPT Subscription %s Ultrafast", (id) => {
-	it("ships a subscription-only alias with Sol capabilities and unchanged cost metadata", () => {
+// senpi#6956: Astra must resolve from the shipped catalog, not just from a synthetic adapter fixture.
+describe.each(["gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"] as const)("ChatGPT Subscription %s Ultrafast", (id) => {
+	it("ships a subscription-only alias with base capabilities and unchanged cost metadata", () => {
 		const base = getModel("chatgpt-subscription", id);
-		const ultrafast = getModel("chatgpt-subscription", `${id}-ultrafast`);
+		const ultrafast = getModels("chatgpt-subscription").find((model) => model.id === `${id}-ultrafast`);
 		expect(ultrafast).toEqual({
 			...base,
 			id: `${id}-ultrafast`,
@@ -181,7 +182,7 @@ describe.each(["gpt-6.1-sol", "gpt-6.2-sol"] as const)("ChatGPT Subscription %s 
 			defaultThinkingLevel: "xhigh",
 		});
 		expect(ultrafast?.cost).toEqual(EXPECTED[id].cost);
-		expect(ultrafast?.contextWindow).toBe(SUBSCRIPTION_SOL_CONTEXT_WINDOW);
+		expect(ultrafast?.contextWindow).toBe(expectedContextWindow("chatgpt-subscription", id));
 		expect(ultrafast && getSupportedThinkingLevels(ultrafast)).toEqual(["low", "medium", "high", "xhigh", "max"]);
 		expect(getModels("openai").some((model) => model.id === `${id}-ultrafast`)).toBe(false);
 	});
