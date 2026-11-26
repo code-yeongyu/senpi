@@ -12830,8 +12830,17 @@ export class AgentSession {
 							| { readonly kind: "complete"; readonly result: CompactionResult }
 							| { readonly kind: "error"; readonly error: Error }
 							| undefined;
+						const reportCompactFailure = (failure: unknown) =>
+							runner.emitError({
+								extensionPath: RUNTIME_EXTENSION_PATH,
+								event: "compact",
+								error: failure instanceof Error ? failure.message : String(failure),
+							});
 
+						// One lifetime finally over the operation and the callback, so neither a throwing observer nor a
+						// throwing callback skips the admission release and the queue recovery (senpi#7482 review).
 						try {
+							try {
 							await this._abortActiveAgentAndRetry("system");
 							this._emit({
 								type: "compaction_start",
@@ -12862,30 +12871,31 @@ export class AgentSession {
 							terminal = { kind: "error", error: err };
 							if (compactionExecutionOwnsTerminalTransition(error)) {
 								const aborted = isCompactionExecutionAborted(error);
-								this._emit({
-									type: "compaction_end",
-									reason: "extension",
-									result: undefined,
-									aborted,
-									willRetry: false,
-									requestId,
-									errorMessage: aborted
-										? undefined
-										: formatCompactionFailure("compaction", err.message, {
-												model: this._compactionFailureModel(),
-											}),
-								});
+								try {
+									this._emit({
+										type: "compaction_end",
+										reason: "extension",
+										result: undefined,
+										aborted,
+										willRetry: false,
+										requestId,
+										errorMessage: aborted
+											? undefined
+											: formatCompactionFailure("compaction", err.message, {
+													model: this._compactionFailureModel(),
+												}),
+									});
+								} catch (observerError) {
+									reportCompactFailure(observerError);
+								}
 							}
 						}
 						try {
 							if (terminal?.kind === "complete") options?.onComplete?.(terminal.result);
 							else if (terminal !== undefined) options?.onError?.(terminal.error);
 						} catch (callbackError) {
-							runner.emitError({
-								extensionPath: RUNTIME_EXTENSION_PATH,
-								event: "compact",
-								error: callbackError instanceof Error ? callbackError.message : String(callbackError),
-							});
+							reportCompactFailure(callbackError);
+						}
 						} finally {
 							if (
 								this._compactionAbortController === controller &&

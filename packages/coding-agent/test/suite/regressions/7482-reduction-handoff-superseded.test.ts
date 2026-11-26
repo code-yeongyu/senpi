@@ -196,6 +196,30 @@ describe("#7482 every terminal path of an extension compaction reports to its ca
 		expect(target.harness.eventsOfType("compaction_end")).toHaveLength(1);
 	});
 
+	it("a throwing observer of the failed compaction_end still lets onError reach the caller and the admission go", async () => {
+		const target = await setup();
+		harness = target.harness;
+		target.harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+		]);
+		const stop = target.harness.session.subscribe((event) => {
+			if (event.type !== "compaction_end" || event.errorMessage === undefined) return;
+			stop();
+			throw new Error("observer failed");
+		});
+		const reported = nextExtensionError(target);
+
+		const ending = target.nextEnding();
+		target.handoff.request(target.ctx);
+
+		expect(await ending).toBe("error");
+		expect(await reported).toMatchObject({ event: "compact", error: "observer failed" });
+		expect(target.endings).toEqual(["error"]);
+		await expectHandoffRecovers(target);
+	});
+
 	it("cancelled: onError once when the compaction is cancelled", async () => {
 		const target = await setup();
 		harness = target.harness;
