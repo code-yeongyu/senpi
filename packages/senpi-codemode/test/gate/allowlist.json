@@ -7211,6 +7211,26 @@
 			],
 			"reason": "senpi#7032 (oh-my-openagent#14291): contract test that the eval description names the session's eval-only tools within Claude Code's 4096-char MCP description cap even when the rest of the description is longer, by putting that line right after the first sentence. It passed in main's CI measurement. No prompt cell moves (240/240 match the baseline).",
 			"changes": []
+		},
+		"senpi#3989": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/kernel-path-env.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/kernel-path-env.ts",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) puts the Git Bash directory first on win32 so a bare bash resolves to Git Bash, not the WSL launcher",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) keeps the Git Bash directory once when PATH already lists it later",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) leaves PATH unchanged on win32 when no Git Bash is found",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) never prepends the WSL launcher the bash tool falls back to from PATH",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) puts the configured shellPath's Git bin first, over the default Git install, through getShellConfig",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) leaves PATH unchanged but still names the bash tool's bash when it lives in a usr\\bin with coreutils",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) leaves PATH unchanged but still names the bash tool's bash when no sh.exe sits beside it",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) leaves PATH unchanged on darwin",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) leaves PATH unchanged on linux",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelShellEnv (omo#10894) composes with the bundled bun PATH entry",
+				"legacyContracts/test/kernel-path-env.test.ts/sessionShellPath (omo#10894) reads the session's agent dir and, for a trusted project, its project setting, as the bash tool does",
+				"legacyContracts/test/kernel-path-env.test.ts/sessionShellPath (omo#10894) ignores an untrusted project's shellPath and keeps the session's agent-dir setting",
+				"legacyContracts/test/py-prelude-windows-bare-shell.test.ts/Python prelude bare bash/sh on Windows (omo#10894) runs the host-named bash tool's bash for a bare bash/sh and %%bash, with the bash tool's -c launch"
+			],
+			"reason": "senpi#3989 (fixes oh-my-openagent#10894): reviewed additive changes. The new kernel-path-env module enters the extension and first-kernel import scopes; it builds the kernel PATH entry (the bundled bun directory, plus on win32 the Git Bash bin directory of the bash the bash tool uses, only when it holds bash.exe and sh.exe and no coreutils). New contracts prove a bare bash resolves to Git Bash before the System32 WSL launcher, a configured shellPath wins, PATH is unchanged without a qualifying Git bin directory and off Windows, eval reads the same session settings as the bash tool (agent dir, project trust), and the Python prelude runs the host-named bash tool bash for a bare bash/sh and %%bash with -c. The frozen baseline and every existing contract remain unchanged."
 		}
 	}
 }

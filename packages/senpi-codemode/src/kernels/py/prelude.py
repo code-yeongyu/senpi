@@ -1688,7 +1688,10 @@ def _magic(name: str, args: str) -> Any:
 def _magic_cell(name: str, args: str, body: str) -> Any:
     if name in ("bash", "sh"):
         command = "\n".join(part for part in (args, body) if part)
-        return _shell(command)
+        if os.name != "nt":
+            return _shell(command)
+        # The bash tool's launch: its bash with `-c`. Without one, keep the cmd.exe shell rather than booting WSL.
+        return _shell(command) if _kernel_bash is None else _shell(command, [_kernel_bash, "-c", command])
     raise PreludeRuntimeError(f"Unsupported cell magic: %%{name}")
 
 
@@ -1797,10 +1800,63 @@ class ShellResult(list[str]):
         return " ".join(self)
 
 
-def _shell(command: str) -> ShellResult:
+_BARE_SHELL_NAMES = frozenset({"bash", "sh", "bash.exe", "sh.exe"})
+# The bash the session's bash tool runs, named by the host on Windows (omo#10894); None runs no differently.
+_kernel_bash: str | None = None
+
+
+def _windows_bare_shell_path(name: str, bash: str | None) -> str | None:
+    """The bash tool's bash for a bare `bash`/`sh` on Windows, else None (omo#10894).
+
+    CreateProcess searches System32 before PATH, so a bare `bash` reaches the WSL launcher even
+    though the host put the Git Bash directory first on this kernel's PATH.
+    """
+    return bash if bash and name.lower() in _BARE_SHELL_NAMES else None
+
+
+def _with_windows_bare_shell(args: Any, resolve: Callable[[str], str | None]) -> Any:
+    if isinstance(args, (list, tuple)) and args and isinstance(args[0], str):
+        shell_path = resolve(args[0])
+        return args if shell_path is None else [shell_path, *args[1:]]
+    if isinstance(args, str):
+        head, sep, rest = args.lstrip().partition(" ")
+        shell_path = resolve(head)
+        return args if shell_path is None else f"{subprocess.list2cmdline([shell_path])}{sep}{rest}"
+    return args
+
+
+def _bare_shell_popen(base: type, resolve: Callable[[str], str | None]) -> type:
+    class BareShellPopen(base):
+        def __init__(self, args: Any, *rest: Any, **kwargs: Any) -> None:
+            if not rest and not kwargs.get("shell") and kwargs.get("executable") is None:
+                args = _with_windows_bare_shell(args, resolve)
+            super().__init__(args, *rest, **kwargs)
+
+    return BareShellPopen
+
+
+def _install_windows_bare_shell_resolution() -> None:
+    global _kernel_bash
+    # Read once and removed, so the name reaches neither cells' environment nor their children.
+    bash = os.environ.pop("SENPI_KERNEL_BASH", None)
+    if os.name != "nt" or not bash:
+        return
+    _kernel_bash = bash
+
+    def resolve(name: str) -> str | None:
+        return _windows_bare_shell_path(name, bash)
+
+    subprocess.Popen = _bare_shell_popen(subprocess.Popen, resolve)
+    # asyncio's Windows transport spawns through its own Popen subclass, looked up at call time.
+    from asyncio import windows_utils
+
+    windows_utils.Popen = _bare_shell_popen(windows_utils.Popen, resolve)
+
+
+def _shell(command: str, argv: list[str] | None = None) -> ShellResult:
     process = subprocess.Popen(
-        command,
-        shell=True,
+        command if argv is None else argv,
+        shell=argv is None,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
@@ -2484,6 +2540,7 @@ def main() -> None:
     emit_status("kernel-startup", force=True, stage="host-init")
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     _start_parent_watch()
+    _install_windows_bare_shell_resolution()
     sys.stdout, sys.stderr = KERNEL_TOOL_STREAMS
     commands: queue.SimpleQueue[tuple[str, Any]] = queue.SimpleQueue()
     threading.Thread(target=_read_control, args=(commands,), name="senpi-control-reader", daemon=True).start()
