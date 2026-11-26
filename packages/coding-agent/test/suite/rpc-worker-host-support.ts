@@ -164,16 +164,14 @@ export async function startWorkerHost(
 		if (options.preload) process.stderr.write(`PRESSURE_REMOVED ${scratch}\n`);
 	};
 	if (options.socket || options.waitForReady) {
-		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
 			if (options.socket) {
+				// Exit-aware readiness (senpi#7141's contract): the host's own listening line or its exit settles the wait, and
+				// vitest's testTimeout is the outer bound. A host that dies at boot fails at once with its stderr.
 				await Promise.race([
 					ready,
-					new Promise<never>((_resolve, reject) => {
-						timer = setTimeout(
-							() => reject(new Error(`Listener deadline: ${stderr}`)),
-							options.waitForReady ? HOST_READY_TIMEOUT_MS : RPC_RESPONSE_TIMEOUT_MS,
-						);
+					exited.then(([code, signal]) => {
+						throw new Error(`Host exited (${code ?? signal}) before listening: ${stderr}`);
 					}),
 				]);
 			} else {
@@ -183,8 +181,6 @@ export async function startWorkerHost(
 		} catch (cause) {
 			await dispose();
 			throw cause;
-		} finally {
-			if (timer) clearTimeout(timer);
 		}
 	}
 	return {
