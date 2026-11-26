@@ -150,6 +150,52 @@ describe("#7482 every terminal path of an extension compaction reports to its ca
 		await expectHandoffRecovers(target);
 	});
 
+	function nextExtensionError(target: Awaited<ReturnType<typeof setup>>) {
+		const seen = Promise.withResolvers<{ event: string; error: string }>();
+		const stop = target.harness.getExtensionRunner().onError((error) => seen.resolve(error));
+		return seen.promise.finally(stop);
+	}
+
+	it("a throwing onComplete is reported as the caller's error: no onError, no failed compaction_end", async () => {
+		const target = await setup();
+		harness = target.harness;
+		target.harness.setResponses(summaries());
+		const reported = nextExtensionError(target);
+
+		target.ctx.compact({
+			onComplete: () => {
+				throw new Error("onComplete consumer failed");
+			},
+		});
+
+		expect(await reported).toMatchObject({ event: "compact", error: "onComplete consumer failed" });
+		expect(target.endings).toEqual(["complete"]);
+		const ends = target.harness.eventsOfType("compaction_end");
+		expect(ends).toHaveLength(1);
+		expect(ends[0]?.errorMessage).toBeUndefined();
+	});
+
+	it("a throwing onError on a failed compaction is called once and reported, never again", async () => {
+		const target = await setup();
+		harness = target.harness;
+		target.harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+		]);
+		const reported = nextExtensionError(target);
+
+		target.ctx.compact({
+			onError: () => {
+				throw new Error("onError consumer failed");
+			},
+		});
+
+		expect(await reported).toMatchObject({ event: "compact", error: "onError consumer failed" });
+		expect(target.endings).toEqual(["error"]);
+		expect(target.harness.eventsOfType("compaction_end")).toHaveLength(1);
+	});
+
 	it("cancelled: onError once when the compaction is cancelled", async () => {
 		const target = await setup();
 		harness = target.harness;
