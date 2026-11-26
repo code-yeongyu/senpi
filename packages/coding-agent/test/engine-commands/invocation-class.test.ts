@@ -216,37 +216,12 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-// The real entries start a process only where a process is what is tested (security owner's ruling on #7463): the plain
-// --help, the options whose help-first invocation took an action branch before the fix (measured red against
-// aa140b8cd9), and one row per entry file per answer class. Every other invocation is covered in process, once per
-// table shape, by the table-shape-*.test.ts files.
-const HELP_FIRST_REDS: ReadonlyArray<readonly string[]> = [
-	["--help"],
-	["--help", "--hand"],
-	["--help", "--headless"],
-	["--help", "--export", "x"],
-	["-h", "--export", "x"],
-	["--help", "--mcp-presenter-fd", "x"],
-	["--help", "--mode", "x"],
-	["--help", "--session-runtime", "x"],
-	["--help", "--spawned-by", "x"],
-	["--help", "--thinking", "x"],
-	["--help", "--tool-runtime", "x"],
-	["--help", "--tui-mode", "x"],
-];
+// The real entries start a process only where a process is what is tested (security owner's ruling on #7463): one row
+// per entry file per answer class. Every invocation, the options whose help-first invocation took an action branch
+// before the fix included, is covered in process, once per table shape, by the table-shape-*.test.ts files.
 const BROKEN = '{"presenter":4,';
 
 afterAll(() => expect(runsStillAlive()).toEqual([]));
-
-describe("the real cli-main entry, help first on an unreadable table (review 6070848877, F1b)", () => {
-	it.each(HELP_FIRST_REDS.map((args) => [args.join(" "), args] as const))(
-		"%s: the help screen",
-		async (_args, args) => {
-			const run = await realEngine(args, { root, table: BROKEN, entry: CLI_MAIN });
-			expect({ code: run.code, first: firstLine(run.output) }).toEqual({ code: 0, first: HELP_SCREEN_FIRST_LINE });
-		},
-	);
-});
 
 describe.each(ENTRIES)("the real %s entry, one row per answer class on an unreadable table", (_name, entry) => {
 	it("help: the help screen", async () => {
