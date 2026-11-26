@@ -3,7 +3,7 @@
  */
 
 import { homedir } from "node:os";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname } from "node:path";
 import {
 	type Component,
 	Container,
@@ -17,20 +17,21 @@ import {
 } from "@earendil-works/pi-tui";
 import { CONFIG_DIR_NAME } from "../../../config.ts";
 import type { PathMetadata, ResolvedPaths, ResolvedResource } from "../../../core/package-manager.ts";
-import type { PackageSource, SettingsManager } from "../../../core/settings-manager.ts";
+import { setResourceEnabled } from "../../../core/resource-overrides/global-toggle.ts";
+import {
+	itemScope,
+	type ResourceOverrideContext,
+	type ResourceType,
+} from "../../../core/resource-overrides/patterns.ts";
+import { ProjectResourceOverrides } from "../../../core/resource-overrides/project-overrides.ts";
+import type { SettingsManager } from "../../../core/settings-manager.ts";
 import { BUILTIN_PATH_PREFIX, type SourceScope } from "../../../core/source-info.ts";
-import { canonicalizePath, isLocalPath, resolvePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
-type ResourceType = "extensions" | "skills" | "prompts" | "themes";
 type ConfigWriteScope = "global" | "project";
-type SettingsScope = "user" | "project";
-type ProjectOverrideState = "inherit" | "load" | "unload";
 export type ScopedResolvedPaths = Record<ConfigWriteScope, ResolvedPaths>;
-
-const RESOURCE_TYPES = ["extensions", "skills", "prompts", "themes"] as const satisfies readonly ResourceType[];
 
 const RESOURCE_TYPE_LABELS: Record<ResourceType, string> = {
 	extensions: "Extensions",
@@ -185,6 +186,10 @@ function buildGroups(resolved: ResolvedPaths, agentDir: string): ResourceGroup[]
 	return groups;
 }
 
+function groupItems(groups: readonly ResourceGroup[]): ResourceItem[] {
+	return groups.flatMap((group) => group.subgroups.flatMap((subgroup) => subgroup.items));
+}
+
 type FlatEntry =
 	| { type: "group"; group: ResourceGroup }
 	| { type: "subgroup"; subgroup: ResourceSubgroup; group: ResourceGroup }
@@ -232,11 +237,9 @@ class ResourceList implements Component, Focusable {
 	private selectedIndex = 0;
 	private searchInput: Input;
 	private maxVisible: number;
-	private settingsManager: SettingsManager;
-	private cwd: string;
-	private agentDir: string;
+	private overrideContext: ResourceOverrideContext;
 	private writeScope: ConfigWriteScope;
-	private inheritedEnabledByKey: Map<string, boolean>;
+	private projectOverrides: ProjectResourceOverrides;
 
 	public onCancel?: () => void;
 	public onExit?: () => void;
@@ -261,11 +264,9 @@ class ResourceList implements Component, Focusable {
 		writeScope: ConfigWriteScope = "global",
 	) {
 		this.groupsByScope = groupsByScope;
-		this.settingsManager = settingsManager;
-		this.cwd = cwd;
-		this.agentDir = agentDir;
+		this.overrideContext = { settingsManager, cwd, agentDir };
 		this.writeScope = writeScope;
-		this.inheritedEnabledByKey = this.buildInheritedEnabledMap(groupsByScope.global);
+		this.projectOverrides = new ProjectResourceOverrides(this.overrideContext, groupItems(groupsByScope.global));
 		this.searchInput = new Input();
 		// 8 lines of chrome: top spacer + top border + spacer + header (2 lines) + spacer + bottom spacer + bottom border
 		const chrome = 8;
@@ -282,18 +283,6 @@ class ResourceList implements Component, Focusable {
 
 	private get groups(): ResourceGroup[] {
 		return this.groupsByScope[this.writeScope];
-	}
-
-	private buildInheritedEnabledMap(groups: ResourceGroup[]): Map<string, boolean> {
-		const result = new Map<string, boolean>();
-		for (const group of groups) {
-			for (const subgroup of group.subgroups) {
-				for (const item of subgroup.items) {
-					result.set(this.getResourceItemKey(item), item.enabled);
-				}
-			}
-		}
-		return result;
 	}
 
 	private buildFlatList(): void {
@@ -504,7 +493,7 @@ class ResourceList implements Component, Focusable {
 		}
 		if (data === " " || kb.matches(data, "tui.select.confirm")) {
 			const entry = this.filteredItems[this.selectedIndex];
-			if (entry?.type === "item" && (this.writeScope === "project" || this.getItemScope(entry.item) === "user")) {
+			if (entry?.type === "item" && (this.writeScope === "project" || itemScope(entry.item) === "user")) {
 				const newEnabled = this.toggleResource(entry.item);
 				if (newEnabled !== undefined) {
 					this.updateItem(entry.item, newEnabled);
@@ -521,130 +510,19 @@ class ResourceList implements Component, Focusable {
 
 	private toggleResource(item: ResourceItem): boolean | undefined {
 		if (this.writeScope === "project") {
-			const state = this.getNextOverrideState(item);
-			if (!this.setProjectResourceOverride(item, state)) return undefined;
-			return state === "inherit" ? this.getInheritedEnabled(item) : state === "load";
+			const state = this.projectOverrides.nextState(item);
+			if (!this.projectOverrides.set(item, state)) return undefined;
+			return this.projectOverrides.enabledIn(item, state);
 		}
 
 		const enabled = !item.enabled;
-		if (item.metadata.origin === "top-level") {
-			this.toggleTopLevelResource(item, enabled);
-		} else {
-			this.togglePackageResource(item, enabled);
-		}
+		setResourceEnabled(this.overrideContext, item, enabled);
 		return enabled;
-	}
-
-	private toggleTopLevelResource(item: ResourceItem, enabled: boolean): void {
-		const scope = item.metadata.scope as "user" | "project";
-		const settings =
-			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
-
-		const arrayKey = item.resourceType as "extensions" | "skills" | "prompts" | "themes";
-		const current = (settings[arrayKey] ?? []) as string[];
-
-		// Generate pattern for this resource
-		const pattern = this.getResourcePattern(item);
-		const disablePattern = `-${pattern}`;
-		const enablePattern = `+${pattern}`;
-
-		// Filter out existing patterns for this resource
-		const updated = current.filter((p) => {
-			const stripped = p.startsWith("!") || p.startsWith("+") || p.startsWith("-") ? p.slice(1) : p;
-			return stripped !== pattern;
-		});
-
-		if (enabled) {
-			updated.push(enablePattern);
-		} else {
-			updated.push(disablePattern);
-		}
-
-		if (scope === "project") {
-			if (arrayKey === "extensions") {
-				this.settingsManager.setProjectExtensionPaths(updated);
-			} else if (arrayKey === "skills") {
-				this.settingsManager.setProjectSkillPaths(updated);
-			} else if (arrayKey === "prompts") {
-				this.settingsManager.setProjectPromptTemplatePaths(updated);
-			} else if (arrayKey === "themes") {
-				this.settingsManager.setProjectThemePaths(updated);
-			}
-		} else {
-			if (arrayKey === "extensions") {
-				this.settingsManager.setExtensionPaths(updated);
-			} else if (arrayKey === "skills") {
-				this.settingsManager.setSkillPaths(updated);
-			} else if (arrayKey === "prompts") {
-				this.settingsManager.setPromptTemplatePaths(updated);
-			} else if (arrayKey === "themes") {
-				this.settingsManager.setThemePaths(updated);
-			}
-		}
-	}
-
-	private togglePackageResource(item: ResourceItem, enabled: boolean): void {
-		const scope = item.metadata.scope as "user" | "project";
-		const settings =
-			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
-
-		const packages = [...(settings.packages ?? [])] as PackageSource[];
-		const pkgIndex = packages.findIndex((pkg) => {
-			const source = typeof pkg === "string" ? pkg : pkg.source;
-			return source === item.metadata.source;
-		});
-
-		if (pkgIndex === -1) return;
-
-		let pkg = packages[pkgIndex];
-
-		// Convert string to object form if needed
-		if (typeof pkg === "string") {
-			pkg = { source: pkg };
-			packages[pkgIndex] = pkg;
-		}
-
-		// Get the resource array for this type
-		const arrayKey = item.resourceType as "extensions" | "skills" | "prompts" | "themes";
-		const current = (pkg[arrayKey] ?? []) as string[];
-
-		// Generate pattern relative to package root
-		const pattern = this.getPackageResourcePattern(item);
-		const disablePattern = `-${pattern}`;
-		const enablePattern = `+${pattern}`;
-
-		// Filter out existing patterns for this resource
-		const updated = current.filter((p) => {
-			const stripped = p.startsWith("!") || p.startsWith("+") || p.startsWith("-") ? p.slice(1) : p;
-			return stripped !== pattern;
-		});
-
-		if (enabled) {
-			updated.push(enablePattern);
-		} else {
-			updated.push(disablePattern);
-		}
-
-		(pkg as Record<string, unknown>)[arrayKey] = updated.length > 0 ? updated : undefined;
-
-		// Clean up empty filter object
-		const hasFilters = ["extensions", "skills", "prompts", "themes"].some(
-			(k) => (pkg as Record<string, unknown>)[k] !== undefined,
-		);
-		if (!hasFilters) {
-			packages[pkgIndex] = (pkg as { source: string }).source;
-		}
-
-		if (scope === "project") {
-			this.settingsManager.setProjectPackages(packages);
-		} else {
-			this.settingsManager.setPackages(packages);
-		}
 	}
 
 	private renderCheckbox(item: ResourceItem): string {
 		if (this.writeScope === "project") {
-			const state = this.getProjectOverrideState(item);
+			const state = this.projectOverrides.state(item);
 			if (state === "load") return theme.fg("success", "[+]");
 			if (state === "unload") return theme.fg("warning", "[-]");
 			return theme.fg("dim", item.enabled ? "[x]" : "[ ]");
@@ -654,221 +532,18 @@ class ResourceList implements Component, Focusable {
 
 	private getItemSuffix(item: ResourceItem): string {
 		if (this.writeScope !== "project") return "";
-		const state = this.getProjectOverrideState(item);
+		const state = this.projectOverrides.state(item);
 		if (state === "load") return theme.fg("muted", "  project load");
 		if (state === "unload") return theme.fg("muted", "  project unload");
-		return this.isInheritedGlobalItem(item) ? theme.fg("dim", "  inherited global") : "";
+		return this.projectOverrides.isInheritedGlobal(item) ? theme.fg("dim", "  inherited global") : "";
 	}
 
 	private isDimmedItem(item: ResourceItem): boolean {
 		return (
 			this.writeScope === "project" &&
-			this.isInheritedGlobalItem(item) &&
-			this.getProjectOverrideState(item) === "inherit"
+			this.projectOverrides.isInheritedGlobal(item) &&
+			this.projectOverrides.state(item) === "inherit"
 		);
-	}
-
-	private setProjectResourceOverride(item: ResourceItem, state: ProjectOverrideState): boolean {
-		return item.metadata.origin === "top-level"
-			? this.setProjectTopLevelOverride(item, state)
-			: this.setProjectPackageOverride(item, state);
-	}
-
-	private setProjectTopLevelOverride(item: ResourceItem, state: ProjectOverrideState): boolean {
-		const current = (this.settingsManager.getProjectSettings()[item.resourceType] ?? []) as string[];
-		const pattern = this.isInheritedGlobalItem(item) ? item.path : this.getResourcePatternForScope(item, "project");
-		const patterns = this.getTopLevelOverridePatterns(item, "project");
-		const updated = current.filter((entry) => {
-			const target = this.getPatternEntryTarget(entry);
-			if ((entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-")) && patterns.has(target))
-				return false;
-			return !(state === "inherit" && this.isInheritedGlobalItem(item) && target === pattern);
-		});
-		if (state !== "inherit") {
-			// Project entries name inherited files to override them. Built-in paths need no entry.
-			if (this.isInheritedGlobalItem(item) && item.metadata.source !== "builtin" && !updated.includes(pattern))
-				updated.push(pattern);
-			updated.push(`${state === "load" ? "+" : "-"}${pattern}`);
-		}
-		this.setProjectTopLevelPaths(item.resourceType, updated);
-		return true;
-	}
-
-	private setProjectTopLevelPaths(key: ResourceType, paths: string[]): void {
-		if (key === "extensions") this.settingsManager.setProjectExtensionPaths(paths);
-		else if (key === "skills") this.settingsManager.setProjectSkillPaths(paths);
-		else if (key === "prompts") this.settingsManager.setProjectPromptTemplatePaths(paths);
-		else this.settingsManager.setProjectThemePaths(paths);
-	}
-
-	private setProjectPackageOverride(item: ResourceItem, state: ProjectOverrideState): boolean {
-		const packages = [...(this.settingsManager.getProjectSettings().packages ?? [])] as PackageSource[];
-		let pkgIndex = packages.findIndex((pkg) =>
-			this.packageSourceStringMatches(
-				item.metadata.source,
-				this.getItemScope(item),
-				typeof pkg === "string" ? pkg : pkg.source,
-				"project",
-			),
-		);
-		if (pkgIndex === -1) {
-			if (state === "inherit") return false;
-			packages.push(this.createPackageOverrideSource(item));
-			pkgIndex = packages.length - 1;
-		}
-		let pkg = packages[pkgIndex];
-		if (pkg === undefined) return false;
-		if (typeof pkg === "string") {
-			pkg = { source: pkg };
-			packages[pkgIndex] = pkg;
-		}
-		const pattern = this.getPackageResourcePattern(item);
-		const updated = ((pkg[item.resourceType] ?? []) as string[]).filter(
-			(entry) => this.getPatternEntryTarget(entry) !== pattern,
-		);
-		if (state !== "inherit") updated.push(`${state === "load" ? "+" : "-"}${pattern}`);
-		(pkg as Record<string, unknown>)[item.resourceType] = updated.length > 0 ? updated : undefined;
-		if (!RESOURCE_TYPES.some((key) => (pkg as Record<string, unknown>)[key] !== undefined)) {
-			if (pkg.autoload === false) packages.splice(pkgIndex, 1);
-			else packages[pkgIndex] = pkg.source;
-		}
-		this.settingsManager.setProjectPackages(packages);
-		return true;
-	}
-
-	private getNextOverrideState(item: ResourceItem): ProjectOverrideState {
-		const state = this.getProjectOverrideState(item);
-		const inheritedEnabled = this.getInheritedEnabled(item);
-		if (state === "inherit") return inheritedEnabled ? "unload" : "load";
-		if (state === "unload") return inheritedEnabled ? "load" : "inherit";
-		return inheritedEnabled ? "inherit" : "unload";
-	}
-
-	private getProjectOverrideState(item: ResourceItem): ProjectOverrideState {
-		if (this.writeScope !== "project") return "inherit";
-		if (item.metadata.origin === "top-level") {
-			return this.getOverrideStateFromEntries(
-				(this.settingsManager.getProjectSettings()[item.resourceType] ?? []) as string[],
-				this.getTopLevelOverridePatterns(item, "project"),
-				false,
-			);
-		}
-		const pkg = this.findMatchingPackageSource(item, "project");
-		if (typeof pkg !== "object") return "inherit";
-		const entries = pkg[item.resourceType];
-		if (entries === undefined) return "inherit";
-		return this.getOverrideStateFromEntries(
-			entries,
-			new Set([this.getPackageResourcePattern(item)]),
-			pkg.autoload !== false,
-		);
-	}
-
-	private getOverrideStateFromEntries(
-		entries: string[],
-		patterns: Set<string>,
-		emptyArrayIsUnload: boolean,
-	): ProjectOverrideState {
-		if (entries.length === 0 && emptyArrayIsUnload) return "unload";
-		let state: ProjectOverrideState = "inherit";
-		for (const entry of entries) {
-			if (!patterns.has(this.getPatternEntryTarget(entry))) continue;
-			if (entry.startsWith("!") || entry.startsWith("-")) state = "unload";
-			else state = "load";
-		}
-		return state;
-	}
-
-	private getInheritedEnabled(item: ResourceItem): boolean {
-		return (
-			this.inheritedEnabledByKey.get(this.getResourceItemKey(item)) ??
-			(this.getItemScope(item) === "user" ? item.enabled : true)
-		);
-	}
-
-	private isInheritedGlobalItem(item: ResourceItem): boolean {
-		return this.getItemScope(item) === "user" || this.inheritedEnabledByKey.has(this.getResourceItemKey(item));
-	}
-
-	private getTopLevelOverridePatterns(item: ResourceItem, scope: SettingsScope): Set<string> {
-		const baseDir = this.getTopLevelBaseDir(scope);
-		const patterns = new Set<string>([
-			this.getResourcePatternForScope(item, scope),
-			item.path,
-			relative(baseDir, item.path),
-		]);
-		if (item.metadata.baseDir) patterns.add(relative(item.metadata.baseDir, item.path));
-		return patterns;
-	}
-
-	private getResourcePatternForScope(item: ResourceItem, scope: SettingsScope): string {
-		const sourceScope = this.getItemScope(item);
-		if (scope !== sourceScope || item.metadata.source === "builtin") return item.path;
-		const baseDir = item.metadata.baseDir ?? this.getTopLevelBaseDir(sourceScope);
-		return relative(baseDir, item.path);
-	}
-
-	private createPackageOverrideSource(item: ResourceItem): PackageSource {
-		const source = item.metadata.source;
-		if (!isLocalPath(source)) return { source, autoload: false };
-		const sourcePath = resolvePath(source, this.getTopLevelBaseDir(this.getItemScope(item)), { trim: true });
-		return { source: relative(this.getTopLevelBaseDir("project"), sourcePath) || ".", autoload: false };
-	}
-
-	private packageSourceStringMatches(
-		leftSource: string,
-		leftScope: SettingsScope,
-		rightSource: string,
-		rightScope: SettingsScope,
-	): boolean {
-		if (leftSource === rightSource) return true;
-		if (!isLocalPath(leftSource) || !isLocalPath(rightSource)) return false;
-		const left = resolvePath(leftSource, this.getTopLevelBaseDir(leftScope), { trim: true });
-		const right = resolvePath(rightSource, this.getTopLevelBaseDir(rightScope), { trim: true });
-		return left === right;
-	}
-
-	private findMatchingPackageSource(item: ResourceItem, targetScope: SettingsScope): PackageSource | undefined {
-		const settings =
-			targetScope === "project"
-				? this.settingsManager.getProjectSettings()
-				: this.settingsManager.getGlobalSettings();
-		return (settings.packages ?? []).find((pkg) =>
-			this.packageSourceStringMatches(
-				item.metadata.source,
-				this.getItemScope(item),
-				typeof pkg === "string" ? pkg : pkg.source,
-				targetScope,
-			),
-		);
-	}
-
-	private getPatternEntryTarget(entry: string): string {
-		return entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry;
-	}
-
-	private getResourceItemKey(item: ResourceItem): string {
-		return `${item.resourceType}:${canonicalizePath(item.path)}`;
-	}
-
-	private getItemScope(item: ResourceItem): SettingsScope {
-		return item.metadata.scope === "project" ? "project" : "user";
-	}
-
-	private getTopLevelBaseDir(scope: "user" | "project"): string {
-		return scope === "project" ? join(this.cwd, CONFIG_DIR_NAME) : this.agentDir;
-	}
-
-	private getResourcePattern(item: ResourceItem): string {
-		if (item.metadata.source === "builtin") return item.path;
-		const scope = item.metadata.scope as "user" | "project";
-		const baseDir = item.metadata.baseDir ?? this.getTopLevelBaseDir(scope);
-		return relative(baseDir, item.path);
-	}
-
-	private getPackageResourcePattern(item: ResourceItem): string {
-		const baseDir = item.metadata.baseDir ?? dirname(item.path);
-		return relative(baseDir, item.path);
 	}
 }
 
