@@ -21,12 +21,12 @@ export function watchSessionWorking(
 		(_event, ctx) => {
 			unsubscribe?.();
 			liveness = connectSessionLiveness(pi.events);
-			drawn = isWorking();
 			unsubscribe = liveness?.subscribe(() => {
 				if (isWorking() === drawn) return;
 				drawn = isWorking();
 				onChange(ctx);
 			});
+			drawn = isWorking();
 		},
 		LOOP,
 	);

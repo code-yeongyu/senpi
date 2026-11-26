@@ -124,7 +124,6 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			// todo widget; this reporter only publishes it (senpi#1146).
 			const liveness = connectSessionLiveness(pi.events);
 			if (liveness) {
-				state = liveness.state();
 				subscriptions.push(
 					liveness.subscribe((next) => {
 						if (stopped) return;
@@ -132,6 +131,7 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 						return publish();
 					}),
 				);
+				state = liveness.state();
 			}
 			if (!client) return publish();
 			// Herdr accepts a resume command only after this reporter holds the pane.

@@ -35,7 +35,8 @@ function scheduleUnrefInterval(tick: () => void, intervalMs: number): () => void
 
 /**
  * The session's one liveness fold: turn start and settle, `herdr:blocked`, the terminal monitor state, wake sources
- * and the child-task records on disk (at start, on settle and on every poll). It binds to the first `session_start`
+ * and the child-task records on disk. The records are read only while a consumer is subscribed: once per subscribe,
+ * on settle and on one poll that runs from the first subscriber to the last. It binds to the first `session_start`
  * and ends with that session's `session_shutdown`; a later `session_start` (a rebind) starts from a fresh fold, which
  * the inputs' owners refill by re-publishing at their own `session_start`. It registers first among the builtins so
  * it is listening before any of them does that (senpi#1146).
@@ -49,6 +50,7 @@ export function createSessionLivenessWatcher(
 	let bound: ExtensionContext | undefined;
 	let state: HerdrState = initialHerdrState();
 	let teardown: Array<() => void> = [];
+	let stopPoll: (() => void) | undefined;
 	const listeners = new Set<(state: HerdrState) => unknown>();
 	const owns = (ctx: ExtensionContext) => bound !== undefined && bound.sessionManager === ctx.sessionManager;
 	const fold = async (...events: HerdrStateEvent[]): Promise<void> => {
@@ -59,12 +61,27 @@ export function createSessionLivenessWatcher(
 		type: "children",
 		count: countRunningChildTasks(ctx, debug),
 	});
+	const stopPolling = (): void => {
+		stopPoll?.();
+		stopPoll = undefined;
+	};
+	/** A new consumer reads a current child count; the ones already subscribed hear a change it brings. */
+	const refreshFor = (ctx: ExtensionContext): void => {
+		const before = state.childCount;
+		state = reduceHerdrState(state, children(ctx));
+		if (state.childCount !== before) void Promise.all([...listeners].map((listener) => listener(state)));
+	};
 	const liveness: SessionLiveness = {
 		state: () => state,
 		working: () => selectHerdrReport(state).state === "working",
 		subscribe: (listener) => {
+			const ctx = bound;
+			if (ctx) refreshFor(ctx);
 			listeners.add(listener);
-			return () => listeners.delete(listener);
+			if (ctx && !stopPoll) stopPoll = schedulePoll(() => void fold(children(ctx)), CHILD_TASK_POLL_MS);
+			return () => {
+				if (listeners.delete(listener) && listeners.size === 0) stopPolling();
+			};
 		},
 	};
 
@@ -73,10 +90,7 @@ export function createSessionLivenessWatcher(
 		(_event, ctx) => {
 			if (bound) return;
 			bound = ctx;
-			state = reduceHerdrState(
-				reduceHerdrState(initialHerdrState(), { type: "turn", active: !ctx.isIdle() }),
-				children(ctx),
-			);
+			state = reduceHerdrState(initialHerdrState(), { type: "turn", active: !ctx.isIdle() });
 			teardown = [
 				pi.events.on(SESSION_LIVENESS_CONNECT_EVENT, (reply) => {
 					if (typeof reply === "function") (reply as SessionLivenessReply)(liveness);
@@ -92,7 +106,6 @@ export function createSessionLivenessWatcher(
 					if (isWakeSourceStateEvent(data))
 						return fold({ type: "wake-source", source: data.source, count: data.activeCount });
 				}),
-				schedulePoll(() => void fold(children(ctx)), CHILD_TASK_POLL_MS),
 			];
 		},
 		LOOP,
@@ -107,7 +120,9 @@ export function createSessionLivenessWatcher(
 	pi.on(
 		"agent_settled",
 		(_event, ctx) => {
-			if (owns(ctx)) return fold({ type: "turn", active: !ctx.isIdle() }, children(ctx));
+			if (!owns(ctx)) return;
+			const turn: HerdrStateEvent = { type: "turn", active: !ctx.isIdle() };
+			return listeners.size > 0 ? fold(turn, children(ctx)) : fold(turn);
 		},
 		LOOP,
 	);
@@ -117,6 +132,7 @@ export function createSessionLivenessWatcher(
 			if (!owns(ctx)) return;
 			for (const stop of teardown) stop();
 			teardown = [];
+			stopPolling();
 			listeners.clear();
 			bound = undefined;
 		},
