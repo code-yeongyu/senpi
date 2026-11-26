@@ -80,6 +80,47 @@ describe("a host state replace Windows refuses for a moment (senpi#7499)", () =>
 		expect(recordOnDisk()).toEqual(OLD);
 	});
 
+	// The writer's own temporaries; the policy tests' staged file is a fixture, not one of them.
+	const temporaries = () =>
+		readdirSync(dir).filter(
+			(name) => name.startsWith("host.pid.") && name.endsWith(".tmp") && join(dir, name) !== staged,
+		);
+
+	test("writeJsonAtomic keeps the old record whole through transient refusals, then publishes", async () => {
+		const seenDuringRefusals: unknown[] = [];
+		const refusals = ["EPERM", "EBUSY"];
+
+		await writeJsonAtomic(path, NEXT, {
+			rename: async (from, to) => {
+				const code = refusals.shift();
+				if (code === undefined) return rename(from, to);
+				seenDuringRefusals.push(recordOnDisk());
+				throw refused(code);
+			},
+		});
+
+		expect(seenDuringRefusals).toEqual([OLD, OLD]);
+		expect(recordOnDisk()).toEqual(NEXT);
+		expect(temporaries()).toEqual([]);
+	});
+
+	test("writeJsonAtomic throws a refusal that outlasts the retries, old record whole, no temporary left", async () => {
+		let attempts = 0;
+
+		await expect(
+			writeJsonAtomic(path, NEXT, {
+				rename: async () => {
+					attempts++;
+					throw refused("EBUSY");
+				},
+			}),
+		).rejects.toThrow("EBUSY");
+
+		expect(attempts).toBeGreaterThan(1);
+		expect(recordOnDisk()).toEqual(OLD);
+		expect(temporaries()).toEqual([]);
+	});
+
 	test("writeJsonAtomic fails once on a real non-transient replace error and leaves no temporary file", async () => {
 		const occupied = join(dir, "occupied");
 		mkdirSync(occupied);

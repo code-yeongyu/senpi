@@ -33,11 +33,21 @@ export async function renameRetryingTransient(rename: () => unknown): Promise<vo
 	}
 }
 
-export async function writeJsonAtomic(path: string, content: unknown): Promise<void> {
+export interface WriteJsonAtomicOptions {
+	/** The rename that publishes the staged file; the real one unless a test drives a refusal. */
+	readonly rename?: (from: string, to: string) => Promise<void>;
+}
+
+export async function writeJsonAtomic(
+	path: string,
+	content: unknown,
+	options: WriteJsonAtomicOptions = {},
+): Promise<void> {
+	const publish = options.rename ?? rename;
 	const temporary = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
 	try {
 		await writeFile(temporary, `${JSON.stringify(content)}\n`, { mode: 0o600 });
-		await renameRetryingTransient(() => rename(temporary, path));
+		await renameRetryingTransient(() => publish(temporary, path));
 	} catch (cause) {
 		await rm(temporary, { force: true }).catch(() => undefined);
 		throw cause;
