@@ -287,9 +287,9 @@ session.subscribe((event) => {
 const diagnostic: ProviderDiagnostic | undefined = session.agent.state.providerDiagnostic;
 ```
 
-- Only the Anthropic Messages and OpenAI-compatible Chat Completions adapters mint it today, from the HTTP status and error code of the SDK error their own transport call raised, an Anthropic `event: error` SSE envelope, or an OpenAI-compatible in-stream `error` chunk. Message text, response headers, request ids, and errors thrown by caller callbacks such as `onPayload` never produce one.
+- Adapters mint it from structured provider evidence. For example, Mistral uses the HTTP response status, and the Anthropic Messages and OpenAI-compatible Chat Completions adapters can also use structured in-stream errors. Message text, request IDs, and errors thrown by caller callbacks such as `onPayload` do not produce one.
 - A recognized `code` decides the category (`evidence: "structured_code"`); without one, the status alone decides it (`evidence: "structured_status"`: 401 is `auth`, 400 `invalid_request`, 5xx `provider_unavailable`, and any other 4xx such as a bare 402/403/429 is `unknown`). A code that contradicts the status, or a status outside 400..599, yields no diagnostic. `billing_error` maps to `unknown`, not `quota`.
-- The field is at most 512 bytes. It is additive: `errorMessage`, retries, model fallback and CLI exit codes are identical with or without it. It is absent on aborted turns and on failures without structured provider evidence.
+- The field is at most 512 bytes and leaves `errorMessage` unchanged. Retry classification uses `httpStatus` when present: a 408 makes an otherwise non-terminal failure eligible for same-model retry before model fallback, within the existing retry budget. The field is absent on aborted turns and on failures without structured provider evidence.
 - Values that crossed a boundary (a persisted session, a wire message) can be revalidated with `sanitizeProviderDiagnostic(value)` from `@earendil-works/pi-ai`, which returns a fresh canonical copy or `undefined`.
 
 ### Events

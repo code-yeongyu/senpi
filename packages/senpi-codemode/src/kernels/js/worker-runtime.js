@@ -6,6 +6,7 @@ import { inspect } from "node:util";
 import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
 import { terminateProcessGroups, terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
+import { installScopeHelper } from "./worker-scope.js";
 import { INJECTED_GROUP } from "./worker-cwd.js";
 import { installShellCapture } from "./worker-shell-capture.js";
 import { bindKernelBun } from "./worker-webview.js";
@@ -54,6 +55,7 @@ export class JsWorkerRuntime {
 			disabled: options.kernelToolsDisabled === true,
 		});
 		this.#installGlobals();
+		if (options.scopeHelper === true) installScopeHelper({ callTool: (name, args) => this.#callTool(name, args), emitStatus: (event) => this.#emitStatus(event) });
 	}
 
 	get kernelTools() {

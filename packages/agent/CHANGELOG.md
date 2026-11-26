@@ -12,6 +12,56 @@
 
 ### Removed
 
+## [2026.11.26] - 2026-11-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.25] - 2026-11-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A request at thinking-off to a model that has no thinking-off is sent at the model's lowest supported level ([#5721](https://github.com/code-yeongyu/senpi/pull/5721))
+
+### Removed
+
+## [2026.11.24] - 2026-11-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.22-2] - 2026-11-22
 
 ### Breaking Changes

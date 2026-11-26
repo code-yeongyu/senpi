@@ -36,6 +36,11 @@ export interface RpcAuthProvider {
 	keyHint?: string;
 	/** Where the provider is defined, so a client can name the file or extension to edit (senpi#4328). */
 	origin?: ProviderOrigin;
+	/**
+	 * Random, non-secret id of the stored sign-in, new on every sign-in (senpi#4099); absent when none is stored or
+	 * it predates the id. Send it as `logout` `expectedLoginId` to sign out only this sign-in (senpi#7406).
+	 */
+	loginId?: string;
 }
 
 /**

@@ -32,6 +32,7 @@ import {
 import { resetSessionRegistryBoundary } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
 import { isSignInAgainError } from "../../../src/core/extensions/builtin/anthropic-subscription/sign-in-again.ts";
 import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+import { providerFailureOf } from "../../../src/core/provider-failure.ts";
 import { cliAccountOf, cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const PROVIDER = "anthropic-subscription";
@@ -127,6 +128,19 @@ async function stored(lane: Lane, name: string): Promise<AccountSlot | undefined
 }
 
 describe("senpi#5350 login_expired on the auth lane", () => {
+	it("reports the retired sign-in accounts in the client failure", async () => {
+		await installLane(
+			["alpha", "bravo"].map((name) => cliSlot(name, { signInRequired: "legacy_sign_in_retired" })),
+			async () => ({ state: "unreadable" }),
+		);
+		const result = await runTurn();
+		expect(providerFailureOf([result])).toMatchObject({
+			category: "sign_in_required",
+			provider: PROVIDER,
+			accountNames: ["alpha", "bravo"],
+		});
+	});
+
 	it("guard: a login_expired account is never spawned and a sibling serves", async () => {
 		const lane = await installLane(
 			[cliSlot("alpha", expired(START + AUTH_BLOCK_REPROBE_MS)), cliSlot("bravo")],
@@ -183,6 +197,7 @@ describe("senpi#5350 login_expired on the auth lane", () => {
 		);
 		const first = await runTurn();
 		expect(first.stopReason).toBe("error");
+		expect(providerFailureOf([first])?.category).toBe("auth");
 		expect(await stored(lane, "alice")).toMatchObject({
 			blockReason: "auth_error",
 			blockedUntil: START + AUTH_BLOCK_REPROBE_MS,
@@ -194,6 +209,11 @@ describe("senpi#5350 login_expired on the auth lane", () => {
 		expect(lane.spawned).toEqual(["alice"]);
 		expect(lane.probes).toHaveLength(1);
 		expect(second.errorMessage).toContain(`${EXPIRED_TEXT}alice.`);
+		expect(providerFailureOf([second])).toMatchObject({
+			category: "sign_in_required",
+			provider: PROVIDER,
+			accountNames: ["alice"],
+		});
 		expect(await stored(lane, "alice")).toMatchObject({ signInRequired: "login_expired", blockReason: "auth_error" });
 	});
 });

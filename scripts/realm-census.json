@@ -2594,6 +2594,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/ai/src/utils/retry.ts#HTTP_408_REASON_PHRASE": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/ai/src/utils/retry.ts#NON_QUOTA_NON_RETRYABLE_PATTERN": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
@@ -3057,6 +3061,10 @@
 		"packages/coding-agent/src/core/auth-storage.ts#KIND_LABEL": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/auth-storage.ts#localAsyncAuthLocks": {
+			"class": "realm-registry",
+			"reason": "local-async-auth-locks/v1: the async auth-store lock holders of every copy are registered here, so a synchronous writer in any copy sees that its own realm holds the lock and fails fast instead of spinning on a lock only its blocked event loop can release (design 3.2, 3.3)"
 		},
 		"packages/coding-agent/src/core/auth-storage.ts#sharedAuthFileReadState": {
 			"class": "per-copy-safe",
@@ -6707,6 +6715,10 @@
 			"reason": "timing attribution only, no A1-A3 decision; a split costs timing attribution: work entered by another copy is not marked speculative",
 			"ground": "ii"
 		},
+		"packages/coding-agent/src/core/opener-approvals.ts#refusalRecords": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/output-guard.ts#rawStdoutWriteTail": {
 			"class": "per-copy-safe",
 			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
@@ -6906,6 +6918,10 @@
 		"packages/coding-agent/src/core/retry-fallback/log.ts#SENSITIVE_TEXT": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/retry-fallback/log.ts#retirements": {
+			"class": "realm-registry",
+			"reason": "fallback-log-retirements/v1: two copies starting on one agent dir share one first-start removal per log path, so the later one cannot delete lines the earlier one wrote (senpi#6351)"
 		},
 		"packages/coding-agent/src/core/retry-fallback/log.ts#unsettledLoggers": {
 			"class": "per-copy-safe",
@@ -8156,10 +8172,6 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/interactive/provider-error-reason.ts#STATUS_SOURCES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts#RISKY_MODEL_FAMILIES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -9944,6 +9956,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/machine-ops/src/files/automount-trigger.ts#active": {
+			"class": "per-copy-safe",
+			"reason": "trigger lookup holding a derived-value cache of the mount table, plus the child-resolver options (swapped only by tests); a split only re-reads the table"
+		},
 		"packages/machine-ops/src/files/bounded-realpath.ts#RESOLUTION_TIMED_OUT": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
@@ -10870,34 +10886,6 @@
 			"class": "per-copy-safe",
 			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
 		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#CONTROL_PAREN_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#DECLARATION_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#EXPRESSION_PREFIX_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#REGEX_PREFIX_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#STATEMENT_CONTINUATION_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#UNSHADOWABLE": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#shadowedNames": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
 		"packages/senpi-codemode/src/kernels/js/worker-kill-guard.js#SPAWNERS": {
 			"class": "per-copy-safe",
 			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
@@ -11630,7 +11618,7 @@
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#GONE_CODES": {
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#ROUTE_GONE_CODES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -11645,6 +11633,70 @@
 		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#PREDECESSOR_REQUEST_TIMEOUT_MS": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/js-source-scan.js#REGEX_PREFIX_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/js-source-scan.js#EXPRESSION_PREFIX_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#CONTROL_PAREN_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#BLOCK_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#STATEMENT_CONTINUATION_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#UNSHADOWABLE": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#shadowedNames": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#DECLARATION_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_ONLY_STATEMENTS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#DECLARABLE": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_SYNTAX": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_SUFFIX_EXPRESSIONS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#UNSUPPORTED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#MEMBER_MODIFIER_RE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/typescript-cell.ts#AsyncFunction": {
+			"class": "constant",
+			"reason": "intrinsic constructor read at load; never written after load"
+		},
+		"packages/senpi-codemode/src/bridge/reserved.ts#SCOPE_MONITOR_OP": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		}
 	}
 }

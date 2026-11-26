@@ -12,6 +12,73 @@
 
 ### Removed
 
+## [2026.11.26] - 2026-11-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.25] - 2026-11-25
+
+### Breaking Changes
+
+### Added
+
+- Assistant errors can identify the local accounts that require sign-in ([#7214](https://github.com/code-yeongyu/senpi/pull/7214)).
+- `Models.logout` accepts `expectedLoginId` and refuses with `ModelsError` code `stale_login`, changing nothing, when the stored sign-in is not that one; credential stores can implement `deleteLogin` ([#7407](https://github.com/code-yeongyu/senpi/pull/7407))
+
+### Changed
+
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 1 models.
+
+### Fixed
+
+- Kimi K3.1 Pro rows declare `supportsDisabledThinking: false`, a thinking-off turn there no longer sends `thinking: disabled`, and a disabled-thinking rejection is non-retryable even inside a gateway 5xx ([#5721](https://github.com/code-yeongyu/senpi/pull/5721))
+- Google Vertex login now rejects blank project IDs and locations before saving credentials ([#7216](https://github.com/code-yeongyu/senpi/pull/7216)).
+- Retry confirmed HTTP 408s and reset connections on the same model before trying the fallback chain. Mistral now reports the actual HTTP status, so a 400 that quotes a 408 does not trigger a timeout retry ([#7362](https://github.com/code-yeongyu/senpi/pull/7362)).
+- OpenAI Completions, Responses, Azure Responses, and Codex SSE streams now count keep-alive comments as transport activity while waiting for model output ([#4608](https://github.com/code-yeongyu/senpi/issues/4608)).
+- Cursor stream retries are no longer settled by a closed earlier attempt's late `end`, `error`, `trailers` or `data` event, so a stall retry reaches the server instead of exhausting the retry budget ([#7420](https://github.com/code-yeongyu/senpi/pull/7420))
+
+### Removed
+
+## [2026.11.24] - 2026-11-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The OpenGateway model catalog now matches the gateway: it removes `openai/gpt-4-turbo`, `openai/o1`, `openai/o3-mini`, `openai/o4-mini`; updates limits, prices, or capabilities for 2 models.
+
+### Fixed
+
+### Removed
+
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+- `downgradeUnsupportedImages` is exported from `api/transform-messages` and takes `imageDescriptionTool`: with it, the placeholder that replaces an image for a model without image input names a tool that can describe the image ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opencode`, `opencode-go`, `openrouter`).
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 2 models.
+- A Claude OAuth token (`sk-ant-oat...`) given as an API key to an `anthropic-messages` model is no longer refused with `ClaudeOAuthTokenRefusedError`; it is sent as a plain `x-api-key` to the model's `baseUrl` like any other key. `ClaudeOAuthTokenRefusedError` and `isClaudeOAuthTokenRefusedError` are removed ([#7392](https://github.com/code-yeongyu/senpi/pull/7392))
+
+### Fixed
+
+### Removed
+
 ## [2026.11.22-2] - 2026-11-22
 
 ### Breaking Changes

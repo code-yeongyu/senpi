@@ -24,7 +24,7 @@ export interface UncleanEndpointDeath {
 	readonly supervisorPid: number;
 	readonly hostPids: readonly number[];
 	readonly instanceId: string;
-	/** The frozen supervisor's private hop directories under the temp dir; the caller removes them. */
+	/** The frozen supervisor's private hop directories (daemon dir or temp dir); the caller removes them. */
 	readonly internalDirs: readonly string[];
 }
 
@@ -37,7 +37,7 @@ export async function killEndpointUnclean(socket: string, agentDir: string): Pro
 	const supervisorPid = Number((JSON.parse(await readFile(pidFile, "utf8")) as Record<string, unknown>).pid);
 	const hostPids = childrenOf(supervisorPid);
 	if (hostPids.length === 0) throw new Error(`supervisor ${supervisorPid} has no host child to kill`);
-	const internalDirs = await internalDirsOwnedBy(supervisorPid);
+	const internalDirs = await internalDirsOwnedBy(supervisorPid, [paths.dir, tmpdir()]);
 	process.kill(supervisorPid, "SIGSTOP");
 	for (const pid of hostPids) process.kill(pid, "SIGKILL");
 	for (const pid of hostPids) {
@@ -81,12 +81,14 @@ async function assertStale(pointer: string, pidFile: string, settings: string, d
 	if (processAlive(deadPid)) throw new Error(`stale-state fixture failed: pid ${deadPid} is still running`);
 }
 
-async function internalDirsOwnedBy(pid: number): Promise<string[]> {
+async function internalDirsOwnedBy(pid: number, roots: readonly string[]): Promise<string[]> {
 	const owned: string[] = [];
-	for (const name of await readdir(tmpdir()).catch(() => [] as string[])) {
-		if (!name.startsWith("senpi-rpc-host-internal-")) continue;
-		const owner = await readFile(join(tmpdir(), name, ".owner"), "utf8").catch(() => "");
-		if (owner.includes(`"pid":${pid},`)) owned.push(join(tmpdir(), name));
+	for (const root of roots) {
+		for (const name of await readdir(root).catch(() => [] as string[])) {
+			if (!name.startsWith("senpi-rpc-host-internal-")) continue;
+			const owner = await readFile(join(root, name, ".owner"), "utf8").catch(() => "");
+			if (owner.includes(`"pid":${pid},`)) owned.push(join(root, name));
+		}
 	}
 	return owned;
 }

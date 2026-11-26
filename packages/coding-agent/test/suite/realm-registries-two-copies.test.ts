@@ -5,7 +5,7 @@
  * between the imports gives copy B its own module graph while both share the realm's `globalThis`, which is exactly the
  * two-copy arrangement. Design: approved #12965 class fix, tests T-A, T-B and the T-C payload cases.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -399,5 +399,33 @@ describe("T-B kernel-tools contexts across two copies (omo#12965)", () => {
 		const [a, b] = await twoCopies(load);
 		const malformed = { capabilities: { invokeScope: true } } as unknown as typeof tools;
 		expect(b.kernelToolsStorage.run(malformed, () => a.activeKernelTools())).toBeUndefined();
+	});
+});
+
+describe("T-B fallback log first-start removal across two copies (senpi#6351)", () => {
+	const load = async () => import("../../src/core/retry-fallback/log.ts");
+
+	it("lets copy B's logger join copy A's removal in flight instead of starting a second one", async () => {
+		const [a, b] = await twoCopies(load);
+		const agentDir = tempDir("x6351-copies-");
+		const once = registryAt("@code-yeongyu/senpi/fallback-log-retirements/v1").once as (
+			filePath: string,
+			start: () => Promise<void>,
+		) => Promise<void>;
+		const secondRemoval = vi.fn(async () => {});
+
+		const first = a.createFallbackLogger(agentDir);
+		const second = b.createFallbackLogger(agentDir);
+		first.info("from_copy_a");
+		second.info("from_copy_b");
+		await once(join(agentDir, "logs", "fallback.log"), secondRemoval);
+		await Promise.all([first.settled(), second.settled()]);
+
+		expect(secondRemoval).not.toHaveBeenCalled();
+		const events = readFileSync(join(agentDir, "logs", "fallback.log"), "utf8")
+			.trimEnd()
+			.split("\n")
+			.map((line) => (JSON.parse(line) as { event: string }).event);
+		expect(events.sort()).toEqual(["from_copy_a", "from_copy_b"]);
 	});
 });

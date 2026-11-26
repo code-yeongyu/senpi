@@ -1,3 +1,21 @@
+## 2026-11-04 - Thinking-off is never sent to a thinking-only model (senpi#5720)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` sends thinking-off to a model whose level map vetoes `off` at that model's lowest supported level (`clampThinkingLevel(model, "off")`), and records that level on the reply. Explicit levels and models that support `off` are unchanged.
+
+### Why
+
+- A level carried over from another model (a mid-session switch to Kimi K3.1 Pro at `off`) reached the provider unclamped; K3.1 Pro rejects thinking-off with a 400 on every attempt (code-yeongyu/oh-my-openagent#12316).
+
+### Why an extension could not handle it
+
+- The request's model and level are fixed inside the loop after `prepareRequest`; only the loop sees the pair that is actually sent.
+
+### Expected merge conflict zones
+
+- LOW: the `streamFunction` call and the `result()` thinking-level stamp in `streamAssistantResponse`.
+
 ## 2026-11-20 - parked follow-ups join the next run's first turn; `all` lists every queued message (oh-my-openagent#14428)
 
 ### What changed
