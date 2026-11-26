@@ -55,21 +55,23 @@ describe("the hand's wake outbox file", () => {
 	});
 
 	it("keeps a scope's bound of un-acked wakes, refuses later ones before they are sent, and reports them as overflow", async () => {
+		// Every offer is a durable commit (two fsyncs), so the bound is driven at a small size: the production bound of
+		// 256 took 300 commits and 37-117 s alone, past the case budget on a loaded host (senpi#7496).
 		const path = await storePath("h3-overflow");
-		const outbox = await openHandWakeOutbox(path);
+		const outbox = await openHandWakeOutbox(path, { limits: { perScope: 4, total: 16 } });
 		const refused: string[] = [];
-		for (let index = 0; index < 300; index++)
+		for (let index = 0; index < 6; index++)
 			await outbox.offer(wakeOf("s", index)).catch((error: Error) => void refused.push(error.name));
 		const kept = await outbox.pending();
 
-		expect([kept.length, refused.length, new Set(refused)]).toEqual([256, 44, new Set(["WakeOverflowError"])]);
+		expect([kept.length, refused.length, new Set(refused)]).toEqual([4, 2, new Set(["WakeOverflowError"])]);
 		expect(kept[0]?.payload).toMatchObject({ message: { content: "m0" } });
 		const brain = await brainInbox();
 		const link = connect(brain, outbox);
 		closers.push(() => link.close());
 		await link.hand.ready;
 		const drop = await brain.committed.next("the overflow report");
-		expect(drop).toMatchObject({ scope: "s", source: "wake.dropped", payload: { reason: "overflow", count: 44 } });
+		expect(drop).toMatchObject({ scope: "s", source: "wake.dropped", payload: { reason: "overflow", count: 2 } });
 	});
 
 	it("drops a malformed pending entry with a fault and a drop report, and never offers it", async () => {
