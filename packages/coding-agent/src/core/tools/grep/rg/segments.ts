@@ -6,6 +6,7 @@ import { collectSegmentRows, type FileRows } from "./json-rows.ts";
 import { pathOrder } from "./paths.ts";
 import { MAX_FILE_BYTES, readSearchablePrefix } from "./prefix-pass.ts";
 import type { RgRun } from "./process.ts";
+import { matchPinnedFiles } from "./pinned-files.ts";
 
 const CAPPED_BATCH_SIZE = 200;
 const MAX_CAPPED_BATCH_SIZE = 1600;
@@ -150,7 +151,14 @@ export async function searchSegments({
 		const { files, segmentBinary, onEvent } = collectSegmentRows(searchable, request, oversized);
 		matcherRan = true;
 		if (oversized) await run([...matcher, "--", request.pattern], request.cwd, onEvent, prefix);
-		else await run(segmentFlags(searchable, request.pattern, walk, matcher), first.root.cwd, onEvent);
+		else
+			await matchPinnedFiles(
+				run,
+				searchable,
+				[...matcher, "--sort", "path", "--", request.pattern],
+				first.root.cwd,
+				onEvent,
+			);
 		check();
 		// Nothing from a partially completed segment is visible before this point.
 		if (oversized) result.prefixSearched++;

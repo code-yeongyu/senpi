@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { MachineOpError, readToolText } from "@code-yeongyu/senpi-machine-ops";
 import { dirname } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
@@ -21,8 +21,9 @@ export interface WriteToolOptions extends Pick<CoreWriteToolOptions, "operations
 
 async function readLocalWriteBaseline(absolutePath: string): Promise<WriteBaseline> {
 	try {
-		return { kind: "present", content: await readFile(absolutePath, "utf-8") };
+		return { kind: "present", content: await readToolText(absolutePath) };
 	} catch (error) {
+		if (error instanceof MachineOpError && error.code === "policy_denied") throw error;
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return { kind: "missing" };
 		if (error instanceof Error) return { kind: "unavailable" };
 		throw error;

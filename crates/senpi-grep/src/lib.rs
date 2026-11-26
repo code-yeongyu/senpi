@@ -35,6 +35,7 @@ pub fn senpi_grep_abi_sentinel() -> String {
 
 pub struct GrepTask {
     options: GrepOptions,
+    identities: Vec<String>,
     cancel: CancelToken,
     signal: Option<AbortSignal>,
 }
@@ -47,7 +48,11 @@ impl Task for GrepTask {
     type JsValue = GrepResult;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        Ok(search(&self.options, &self.cancel))
+        Ok(search::search_guarded(
+            &self.options,
+            &self.cancel,
+            &self.identities,
+        ))
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -80,12 +85,22 @@ impl Task for GrepTask {
 
 #[napi]
 pub fn grep(options: GrepOptions, signal: Option<AbortSignal>) -> AsyncTask<GrepTask> {
+    grep_guarded(options, Vec::new(), signal)
+}
+
+#[napi]
+pub fn grep_guarded(
+    options: GrepOptions,
+    identities: Vec<String>,
+    signal: Option<AbortSignal>,
+) -> AsyncTask<GrepTask> {
     let mut cancel = CancelToken::new(options.timeout_ms);
     if let Some(signal) = &signal {
         cancel.aborted = signal.aborted.clone();
     }
     AsyncTask::new(GrepTask {
         options,
+        identities,
         cancel,
         signal,
     })

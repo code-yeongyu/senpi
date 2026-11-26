@@ -82,6 +82,14 @@ fn commit_file(result: &mut GrepResult, mut file: FileResult, candidate: &Candid
 /// ignore and rayon create search workers. Results cross the commit boundary
 /// in path order, never in worker completion order.
 pub fn search(options: &GrepOptions, cancel: &CancelToken) -> Result<GrepResult, GrepError> {
+    search_guarded(options, cancel, &[])
+}
+
+pub(crate) fn search_guarded(
+    options: &GrepOptions,
+    cancel: &CancelToken,
+    identities: &[String],
+) -> Result<GrepResult, GrepError> {
     let start = Instant::now();
     if cancel.is_aborted() {
         return Err(GrepError::Aborted);
@@ -101,7 +109,7 @@ pub fn search(options: &GrepOptions, cancel: &CancelToken) -> Result<GrepResult,
     'chunks: for chunk in candidates.files.chunks(chunk_size) {
         let files: Vec<_> = chunk
             .par_iter()
-            .map(|candidate| search_one(candidate, options, &regex, cancel))
+            .map(|candidate| search_one(candidate, options, &regex, cancel, identities))
             .collect();
         let mut committed = 0u32;
         for (candidate, file) in chunk.iter().zip(files) {

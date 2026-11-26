@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
+import { readToolText } from "@code-yeongyu/senpi-machine-ops";
 import { splitBom } from "../../utils/text.ts";
 import {
 	applyEditsToNormalizedContent,
@@ -32,7 +33,7 @@ export async function computeEditsDiff(
 		}
 
 		// Read the file
-		const rawContent = await readFile(absolutePath, "utf-8");
+		const rawContent = await readToolText(absolutePath);
 
 		// Strip BOM before matching (LLM won't include invisible BOM in oldText)
 		const { text: content } = splitBom(rawContent);

@@ -189,7 +189,9 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 			await checkPath(cwd, "enumerate", "files.glob", ctx);
 			return gated("files.glob", req, ctx, async () => {
 				await checkIdentityAccess(cwd);
-				return localGlob(pattern, cwd, req.limit, ctx.signal, options.resolveFd);
+				const result = await localGlob(pattern, cwd, req.limit, ctx.signal, options.resolveFd);
+				for (const entry of result.entries) await checkIdentityAccess(resolve(cwd, entry.path));
+				return result;
 			});
 		},
 
@@ -207,8 +209,15 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 			return gated("files.stat", req, ctx, async () => {
 				await checkIdentityAccess(path);
 				if (req.access !== undefined) await access(path, ACCESS_MODES[req.access]);
-				const info = await stat(path);
-				return { path, type: entryType(info), size: info.size, mtimeMs: info.mtimeMs, mode: info.mode };
+				const info = await stat(path, { bigint: true });
+				await checkIdentityAccess(path, info);
+				return {
+					path,
+					type: entryType(info),
+					size: Number(info.size),
+					mtimeMs: Number(info.mtimeNs / 1_000_000n) + Number(info.mtimeNs % 1_000_000n) / 1e6,
+					mode: Number(info.mode),
+				};
 			});
 		},
 
@@ -218,6 +227,7 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 			return gated("files.list", req, ctx, async () => {
 				await checkIdentityAccess(path);
 				const dirents = await readdir(path, { withFileTypes: true });
+				for (const entry of dirents) await checkIdentityAccess(resolve(path, entry.name));
 				return { path, entries: dirents.map((dirent) => ({ name: dirent.name, type: entryType(dirent) })) };
 			});
 		},

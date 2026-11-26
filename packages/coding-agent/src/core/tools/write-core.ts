@@ -62,6 +62,7 @@ function machineWriteBaseline(machine: ToolMachine): (absolutePath: string) => P
 			const { bytes } = await machine.ops.files.read({ path: absolutePath }, machine.context(undefined, "caller"));
 			return { kind: "present", content: decodeUtf8(bytes) };
 		} catch (error) {
+			if (error instanceof Error && "code" in error && error.code === "policy_denied") throw error;
 			if (error instanceof Error && fsErrorCode(error) === "ENOENT") return { kind: "missing" };
 			if (error instanceof Error) return { kind: "unavailable" };
 			throw error;

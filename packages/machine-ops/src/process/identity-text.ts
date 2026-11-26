@@ -55,7 +55,7 @@ function nestedSpans(text: string, start: number, end: number, depth: number): S
 	}));
 }
 
-function spans(text: string, depth: number): Span[] {
+function spans(text: string, depth: number, open?: ObjectScope[]): Span[] {
 	const found: Span[] = [];
 	const stack: ObjectScope[] = [];
 	const finish = () => {
@@ -118,13 +118,18 @@ function spans(text: string, depth: number): Span[] {
 			}
 		}
 	}
-	while (stack.length) finish();
+	if (open) open.push(...stack);
+	else while (stack.length) finish();
 	return found;
 }
 
 export function redactIdentityText(text: string): string {
 	if (!/tvk1:|age-secret-key-1|signing|sealing|secretkey|sealedkey|\\u/i.test(text)) return text;
-	const changes = spans(text, 0).sort((a, b) => a.start - b.start || b.end - a.end);
+	return splice(text, spans(text, 0));
+}
+
+function splice(text: string, changes: Span[]): string {
+	changes.sort((a, b) => a.start - b.start || b.end - a.end);
 	if (!changes.length) return text;
 	let out = "",
 		offset = 0;
@@ -134,4 +139,14 @@ export function redactIdentityText(text: string): string {
 		offset = end;
 	}
 	return out + text.slice(offset);
+}
+
+/** Cut only at a completed member/subobject. A later discriminator can still decide
+ * an earlier human credential, so never publish that unresolved prefix. */
+export function redactCompletePrefix(text: string): { output: string; context: string } | undefined {
+	const open: ObjectScope[] = [];
+	const found = spans(text, 0, open);
+	if (open.some((s) => s.candidates.length > 0)) return undefined;
+	const context = open.map((s) => "{" + (s.version ? '"v":1,' : "") + (s.human ? '"kind":"human",' : "")).join("");
+	return { output: splice(text, found), context };
 }

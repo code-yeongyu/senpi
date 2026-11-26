@@ -9988,6 +9988,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/machine-ops/src/files/identity-access.ts#serviceDirectory": {
+			"class": "realm-registry",
+			"reason": "the authenticated device-service directory must reach file operations even across engine copies"
+		},
 		"packages/machine-ops/src/files/mutation-queue.ts#fileMutationQueue": {
 			"class": "realm-registry",
 			"reason": "file-mutation-queue/v1: any copy's edit, write, patch or remote-hand operation on one file must queue, and the stuck-holder diagnostics see every copy (design 3.2, 3.3)"
@@ -10003,6 +10007,10 @@
 		"packages/machine-ops/src/policy/filesystem.ts#ALLOW": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-output.ts#prefixes": {
+			"class": "constant",
+			"reason": "immutable prefix vocabulary for the per-stream output filter"
 		},
 		"packages/machine-ops/src/process/handles.ts#ANSI": {
 			"class": "per-copy-safe",

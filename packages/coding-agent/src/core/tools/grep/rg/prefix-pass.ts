@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { MachineOpError, openToolFile } from "@code-yeongyu/senpi-machine-ops";
 import { GrepEngineError, type GrepEngineResult } from "../engine.ts";
 import type { Candidate } from "./enumerate.ts";
 import { SearchTimeout } from "./process.ts";
@@ -13,7 +13,7 @@ export async function readSearchablePrefix(
 ): Promise<Buffer | undefined> {
 	let prefix: Buffer;
 	try {
-		const file = await open(candidate.absolute, "r");
+		const file = await openToolFile(candidate.absolute);
 		try {
 			const buffer = Buffer.alloc(MAX_FILE_BYTES);
 			let length = 0;
@@ -28,7 +28,8 @@ export async function readSearchablePrefix(
 			await file.close();
 		}
 	} catch (error) {
-		if (error instanceof SearchTimeout || error instanceof GrepEngineError) throw error;
+		if (error instanceof SearchTimeout || error instanceof GrepEngineError || error instanceof MachineOpError)
+			throw error;
 		check();
 		result.skippedOversized++;
 		result.warnings.push({ path: candidate.display, code: "SKIPPED_OVERSIZED", message: String(error) });

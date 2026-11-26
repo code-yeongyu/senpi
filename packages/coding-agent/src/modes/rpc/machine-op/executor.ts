@@ -8,7 +8,12 @@
  * marked it `cross_owner` after its admin verdict; another sender's handle fails `not_owner`.
  */
 import { resolve } from "node:path";
-import { MachineOpError, type MachineOps, opErrorCode } from "@code-yeongyu/senpi-machine-ops";
+import {
+	MachineOpError,
+	type MachineOps,
+	opErrorCode,
+	withDeviceIdentityDirectory,
+} from "@code-yeongyu/senpi-machine-ops";
 import { type OpCall, servedOp } from "./op-registry.ts";
 import type { TerminalOps } from "./terminal-ops.ts";
 import type { Args, MachineOpRequest, OpError, OpOutcome } from "./wire.ts";
@@ -102,7 +107,9 @@ export async function runMachineOp(
 		pidOf: deps.pidOf,
 	};
 	try {
-		return await entry.run(confined ? request.args : anchored(request.op, request.args, root), call);
+		return await withDeviceIdentityDirectory(request.envOverlay.OMO_DEVICE_SERVICE_STATE_DIR, () =>
+			entry.run(confined ? request.args : anchored(request.op, request.args, root), call),
+		);
 	} catch (error) {
 		return failure(error, confined);
 	}

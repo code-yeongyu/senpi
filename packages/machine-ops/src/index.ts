@@ -9,6 +9,7 @@ export {
 export { type FdResolver, globToRegExp } from "./files/glob.ts";
 export {
 	checkIdentityAccess,
+	identityFilesForNativeSearch,
 	openToolFile,
 	readToolText,
 	withDeviceIdentityDirectory,

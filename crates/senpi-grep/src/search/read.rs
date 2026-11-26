@@ -41,10 +41,24 @@ fn search_file(
     options: &GrepOptions,
     regex: &RegexMatcher,
     cancel: &CancelToken,
+    identities: &[String],
 ) -> io::Result<FileResult> {
     cancel.check(Checkpoint::BeforeRead)?;
     let mut file = File::open(&candidate.path)?;
     let metadata = file.metadata()?;
+    for path in identities {
+        match same_identity(&file, &metadata, path) {
+            Ok(true) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("IDENTITY_FILE_REFUSED {path}"),
+                ))
+            }
+            Ok(false) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound || e.kind() == io::ErrorKind::NotADirectory => {}
+            Err(e) => return Err(e),
+        }
+    }
     if !metadata.is_file() {
         return Err(io::Error::other("candidate is no longer a regular file"));
     }
@@ -77,10 +91,12 @@ pub(super) fn search_one(
     options: &GrepOptions,
     regex: &RegexMatcher,
     cancel: &CancelToken,
+    identities: &[String],
 ) -> io::Result<FileResult> {
-    match search_file(candidate, options, regex, cancel) {
+    match search_file(candidate, options, regex, cancel, identities) {
         Ok(result) => Ok(result),
         Err(error) if cancel.is_aborted() || cancel.timed_out() => Err(error),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Err(error),
         Err(error) => Ok(FileResult {
             skipped_oversized: candidate
                 .path
@@ -94,4 +110,18 @@ pub(super) fn search_one(
             ..FileResult::default()
         }),
     }
+}
+
+#[cfg(unix)]
+fn same_identity(_: &File, info: &std::fs::Metadata, path: &str) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let protected = std::fs::metadata(path)?;
+    Ok((protected.dev(), protected.ino()) == (info.dev(), info.ino()))
+}
+
+#[cfg(windows)]
+fn same_identity(file: &File, _: &std::fs::Metadata, path: &str) -> io::Result<bool> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let protected = File::options().access_mode(0).open(path)?;
+    Ok(same_file::Handle::from_file(protected)? == same_file::Handle::from_file(file.try_clone()?)?)
 }

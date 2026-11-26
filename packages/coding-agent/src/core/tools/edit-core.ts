@@ -222,6 +222,7 @@ export function createCoreEditToolDefinition(
 					await ops.access(absolutePath);
 				} catch (error: unknown) {
 					throwIfAborted();
+					if (error instanceof Error && "code" in error && error.code === "policy_denied") throw error;
 					const errorMessage =
 						error instanceof Error && "code" in error
 							? `Error code: ${fsErrorCode(error) ?? error.code}`

@@ -105,6 +105,23 @@ describe("ordinary file operations keep their filesystem semantics", () => {
 });
 
 describe("shell output is redacted before capture and callbacks", () => {
+	it("streams a large listing without replacing the record or changing unrelated bytes", () => {
+		const row = '{"Key":"ordinary/photo.jpg","Size":12345678901234567890}';
+		const input = '{"items":[' + Array(76000).fill(row).join(",") + '],"signing":"' + fake + '"}\n';
+		const filter = new IdentityOutputStream();
+		const output: string[] = [];
+		for (let off = 0; off < input.length; off += 16384) output.push(filter.push(input.slice(off, off + 16384)));
+		output.push(filter.finish());
+		expect(output.join("") === input.replace(fake, "[REDACTED]")).toBe(true);
+	});
+	it("streams a large ordinary scalar before a private field without losing either boundary", () => {
+		const input = JSON.stringify({ payload: "x".repeat(5 * 1024 * 1024), signing: fake, count: 7 });
+		const stream = new IdentityOutputStream();
+		let clean = "";
+		for (let i = 0; i < input.length; i += 65536) clean += stream.push(input.slice(i, i + 65536));
+		clean += stream.finish();
+		expect(clean === input.replace(fake, "[REDACTED]")).toBe(true);
+	});
 	it.each([
 		"cat .omo/device-identity.json",
 		"cp .omo/device-identity.json copy && cat copy",

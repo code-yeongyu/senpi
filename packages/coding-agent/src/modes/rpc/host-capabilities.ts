@@ -159,6 +159,7 @@ export function multiSessionHostCapabilities(options: {
 			SAME_ACCOUNT_DELEGATION_CAPABILITY,
 			// ...and runs the local relay host's device ops on a launch-proven, non-delegated connection (senpi#6752).
 			MACHINE_OP_CAPABILITY,
+			"machine_op_identity_guard_v1",
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			UNLOAD_REFUSE_DELIVERIES_CAPABILITY,

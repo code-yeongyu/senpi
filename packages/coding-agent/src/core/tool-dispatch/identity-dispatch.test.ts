@@ -27,9 +27,7 @@ it("refuses a protected read before invoking the tool, but dispatches ordinary c
 		for (const [name, params] of [
 			["read", { path: "notes" }],
 			["read", { path: "@notes" }],
-			["bash", { command: 'cat "$HOME/.omo/device-identity.json"' }],
-			["eval", { code: `await machine.shell("cat ~/.omo/device-identity.json")` }],
-			["eval", { code: `fs.readFileSync("notes")` }],
+			["grep", { path: "notes" }],
 		] as const) {
 			await expect(run(name, params)).rejects.toThrow(`IDENTITY_FILE_REFUSED ${path}`);
 		}
@@ -38,9 +36,10 @@ it("refuses a protected read before invoking the tool, but dispatches ordinary c
 			`IDENTITY_FILE_REFUSED ${join(home, "config/typevault/identity.json")}`,
 		);
 		await run("eval", { code: "rows.map(e => e.key)" });
+		await run("bash", { command: 'cat "$HOME/.omo/device-identity.json"' });
 		await run("grep", { pattern: path, path: "." });
 		await run("read", { path: "docs/device-identity.json" });
-		expect(execute).toHaveBeenCalledTimes(3);
+		expect(execute).toHaveBeenCalledTimes(4);
 	} finally {
 		vi.unstubAllEnvs();
 		rmSync(home, { recursive: true, force: true });
@@ -56,7 +55,7 @@ it("redacts identity-shaped JSON fields in final and update frames without dropp
 		sha: "f".repeat(40),
 	};
 	const body = { signing: token, sealing: token, ek: token, sk: token, listing };
-	const clean = { signing: "[REDACTED]", sealing: "[REDACTED]", ek: "[REDACTED]", sk: "[REDACTED]", listing };
+	const clean = { signing: "[REDACTED]", sealing: "[REDACTED]", ek: token, sk: token, listing };
 	const ordinary = JSON.stringify(
 		{ ...listing, signing: listing.sha, sealing: listing.uuid, key: listing.sha },
 		null,

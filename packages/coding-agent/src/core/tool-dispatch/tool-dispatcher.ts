@@ -18,8 +18,8 @@ import { kernelToolInvokerStorage } from "../extensions/kernel-tools-context.ts"
 import type { ExtensionToolContext, ToolChildJob, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
 import { childBashOperations } from "./child-bash-operations.ts";
-import { redactIdentityOutput } from "./identity-output.ts";
-import { refusedIdentityRead } from "./identity-read.ts";
+import { identityUpdateFilter, redactIdentityOutput } from "./identity-output.ts";
+import { checkToolIdentityPath } from "./identity-read.ts";
 import { type InProcessRun, runModuleInProcess, type StuckModuleNotice } from "./in-process-module.ts";
 import { OffloadError } from "./offload.ts";
 
@@ -150,19 +150,14 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 	async run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
 		this.#executing++;
 		try {
-			const refused = refusedIdentityRead(call.definition.name, call.params, this.cwd ?? process.cwd());
-			if (refused) throw new Error(`IDENTITY_FILE_REFUSED ${refused}`);
+			if (call.definition.name === "read" || call.definition.name === "grep")
+				await checkToolIdentityPath(call.definition.name, call.params, this.cwd ?? process.cwd());
 			const update = call.onUpdate;
-			const result = await this.dispatch(
-				update ? { ...call, onUpdate: (frame) => update(redactIdentityOutput(frame)) } : call,
-			);
+			const filter = identityUpdateFilter();
+			const result = await this.dispatch(update ? { ...call, onUpdate: (frame) => update(filter(frame)) } : call);
 			return redactIdentityOutput(result);
 		} catch (error) {
-			if (error instanceof Error) {
-				const message = redactIdentityOutput(error.message);
-				if (message !== error.message) throw new Error(message);
-			}
-			throw error;
+			throw redactIdentityOutput(error);
 		} finally {
 			this.#executing--;
 		}
