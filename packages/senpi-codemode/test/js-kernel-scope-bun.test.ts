@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 // senpi#7381: `jsCells.scope` installs `scope()`, whose resources close when the `await using` block exits.
 const kernelModulePath = fileURLToPath(new URL("../src/kernels/js/context-manager.ts", import.meta.url));
 const bunAvailable = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
-const DRIVER_TIMEOUT_MS = 90_000;
+const DRIVER_TIMEOUT_MS = 25_000;
 
 const CELLS = {
 	success: [
@@ -115,7 +115,7 @@ async function runScopeDriver(): Promise<Record<string, unknown>> {
 	}
 }
 
-describe.skipIf(!bunAvailable)("JavaScript kernel scope() under Bun", { timeout: DRIVER_TIMEOUT_MS + 30_000 }, () => {
+describe.skipIf(!bunAvailable)("JavaScript kernel scope() under Bun", () => {
 	it("closes what a scope opened on success, throw, repeat disposal and a stopped cell, and keeps a moved handoff", async () => {
 		const report = await runScopeDriver();
 
