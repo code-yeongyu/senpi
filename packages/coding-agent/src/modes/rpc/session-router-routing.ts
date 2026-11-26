@@ -205,7 +205,8 @@ export async function dispatch(
 								row.durableSessionId !== durableSessionId &&
 								(row.context?.parent_session_id === durableSessionId ||
 									row.context?.root_session_id === durableSessionId),
-						).length,
+						)
+						.map((row) => row.sessionId),
 				tearDown: (sessionId, sessionPath) => tearDownUnloaded(host, sessionId, sessionPath),
 			},
 			command,

@@ -61,7 +61,8 @@ export interface SessionUnloadPort extends ReleaseSettlePort {
 	/** Attachments held by connections other than the caller's. */
 	otherAttachments(sessionId: string): number;
 	/** Open worker sessions on this host whose context names `durableSessionId` as parent or root. */
-	openChildSessions(durableSessionId: string): number;
+	/** The ids of the sessions open on this host that name this one as their parent or root. */
+	openChildSessions(durableSessionId: string): readonly string[];
 	/** The park teardown, sealed `session_parked { reason: "unloaded" }`. `false` when another close owns it. */
 	tearDown(sessionId: string, sessionPath: string): Promise<boolean>;
 }
@@ -120,6 +121,7 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 				...refusalFields(begun.replay.outcome),
 				...(begun.replay.pending === undefined ? {} : { pending: begun.replay.pending }),
 				...(begun.replay.dropped === undefined ? {} : { dropped: begun.replay.dropped }),
+				...(begun.replay.detached === undefined ? {} : { detached: begun.replay.detached }),
 				...effectAnswer(begun.replay, command.sessionId, true),
 			});
 	}
@@ -204,6 +206,8 @@ async function claimAndUnload(
 		if (drain !== undefined) reopenAfterDrain(ready.session);
 		return fail(command, ready.session, stillBlocked[0] as Refusal, dropped);
 	}
+	// Read in the step that claims the close, so the answer names exactly the children this unload left running.
+	const detached = command.children === "detach" ? [...port.openChildSessions(ready.durableSessionId)] : [];
 	if (command.clearQueue === true) {
 		ClientAdmissions.clearQueuedFor(ready.session);
 		ready.session.clearQueue();
@@ -215,6 +219,7 @@ async function claimAndUnload(
 			: EffectLedger.forSession(ready.session).transition(command.effectId, "done", {
 					disposition: "unloaded",
 					...dropped,
+					detached,
 				});
 	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
 		return answer(command, {
@@ -228,6 +233,7 @@ async function claimAndUnload(
 		outcome: "unloaded",
 		sessionPath: ready.sessionPath,
 		...dropped,
+		detached,
 		...(closed === undefined
 			? {}
 			: { graceful: { turn: closed.turn, waited_ms: closed.waited_ms, stopped: closed.stopped } }),
@@ -294,7 +300,7 @@ function blockers(
 			detail: `work published by ${otherSources.join(", ")}`,
 			action: ACTIONS.extension_work,
 		});
-	const childSessions = port.openChildSessions(durableSessionId);
+	const childSessions = port.openChildSessions(durableSessionId).length;
 	if (command.children !== "detach" && (childSources.length > 0 || childSessions > 0)) {
 		const what =
 			childSessions > 0 ? `${childSessions} child session(s) open on this host` : "child tasks still working";

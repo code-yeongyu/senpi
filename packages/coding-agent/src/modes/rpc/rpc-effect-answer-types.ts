@@ -45,6 +45,11 @@ export interface RpcUnloadAnswer {
 	 * graceful close always names them, with the user's queued text (`user_messages`, in enqueue order).
 	 */
 	dropped?: { deliveries: readonly string[]; user_messages?: readonly string[] };
+	/**
+	 * An RPC host's `unloaded` answer: the child sessions open on this host that the unload left running (`children:
+	 * "detach"`), read in the step that claimed the close; `[]` when there were none or `children` was not `detach`.
+	 */
+	detached?: readonly string[];
 	/** A graceful close that ended the session: the turn it waited for and the work sources it stopped. */
 	graceful?: { turn: number; waited_ms: number; stopped: { wake_sources: readonly string[] } };
 	/** A graceful close whose drain outlived `waitMs`: the session is still open (`open`) and admitting again. */
