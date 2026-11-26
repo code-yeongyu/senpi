@@ -25,6 +25,7 @@ import {
 } from "./cli/auth-command.ts";
 import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
+import { classifyInvocation } from "./cli/invocation-class.ts";
 import { LAUNCH_KEY_FAILED_EXIT_CODE, LaunchKeyError, readLaunchKey } from "./cli/launch-key.ts";
 import { createModelListingServices, resolveCliPaths } from "./cli/model-listing.ts";
 import { sessionFlagRefusal } from "./cli/session-flag-refusal.ts";
@@ -1238,9 +1239,9 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
-	// --version and --help start no session, so they never read the private table (security design B10).
+	// An invocation that starts no session never reads the private table (security design B10).
 	const launchKey =
-		parsed.version || parsed.help
+		classifyInvocation(args) === "no_session"
 			? undefined
 			: await readLaunchKey().catch((error: unknown) =>
 					error instanceof LaunchKeyError

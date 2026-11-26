@@ -172,7 +172,7 @@ describe("no canary reaches a prohibited output (security design 6, senpi#7451)"
 	});
 
 	it("the engine's launch-key failure line carries no canary, and the launch answers the failure", async () => {
-		const child = spawn("bun", [CLI, "--list-tips"], {
+		const child = spawn("bun", [CLI, "--print-prompt-sizes"], {
 			cwd: root,
 			stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe"],
 			env: {

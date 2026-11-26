@@ -159,6 +159,15 @@ describe("private host descriptors", () => {
 		},
 	);
 
+	it.skipIf(process.platform === "win32")(
+		"forwards a table cut short as the unparseable marker, never as a table that parses (B10)",
+		async () => {
+			const result = await exchange("supervisor-report", '{"presenter":4,');
+			expect(result.code, result.stderr).toBe(0);
+			expect(reports(result.stderr)).toEqual([nested, engine({ declared: false, unparseable: true })]);
+		},
+	);
+
 	it.skipIf(process.platform === "win32")("ends the chain at the engine: a nested host inherits nothing", async () => {
 		// given the engine received the named duplex
 		const result = await exchange("supervisor-report");

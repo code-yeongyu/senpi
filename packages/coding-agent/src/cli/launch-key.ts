@@ -19,11 +19,6 @@ function unusableMessage(tableUnreadable: boolean): string {
 		: `channel ${LAUNCH_KEY_CHANNEL} was given a descriptor this engine could not adopt`;
 }
 
-/** Entries that start no session (`--version`, `--help`) never read the table (security design B10). */
-export function startsNoSession(args: readonly string[]): boolean {
-	return args.some((arg) => arg === "--version" || arg === "-v" || arg === "--help" || arg === "-h");
-}
-
 /** The private descriptor a launch function delivers a provider key on (security design 5.5, launch row). */
 export const LAUNCH_KEY_CHANNEL = "api-key";
 /** The whole key step, read and close, must end within this; otherwise the engine fails closed before it starts. */

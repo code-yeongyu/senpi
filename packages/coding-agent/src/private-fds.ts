@@ -245,7 +245,9 @@ function capturedState(): PrivateFdState {
 		unparseable,
 		channels: new Map(),
 		forward: new Map(),
-		forwardUnparseable: unparseable && !final,
+		// Every table that did not parse forwards the marker, not only a nameless one: a hop must never turn it into a
+		// table that parses (B10).
+		forwardUnparseable: !parsed && !final,
 	};
 	for (const [name, fd] of entries) {
 		if (fd !== null) state.channels.set(name, fd);

@@ -30,7 +30,8 @@ import { runtimeExecArgv } from "./utils/runtime-exec-argv.ts";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
-import { refuseUnusableLaunchKey, startsNoSession } from "./cli/launch-key.ts";
+import { classifyInvocation } from "./cli/invocation-class.ts";
+import { refuseUnusableLaunchKey } from "./cli/launch-key.ts";
 import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
 import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
 
@@ -123,7 +124,7 @@ function reexecUnderBunIfNeeded(): boolean {
 // loads only the judge, so it answers before any runtime re-exec or engine import.
 await dispatchKillGuardCommand(process.argv.slice(2));
 
-if (!startsNoSession(process.argv.slice(2))) refuseUnusableLaunchKey();
+if (classifyInvocation(process.argv.slice(2)) === "reads_table") refuseUnusableLaunchKey();
 
 if (reexecUnderBunIfNeeded()) {
 	process.exit();
