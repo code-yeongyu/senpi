@@ -722,6 +722,12 @@ export class McpService {
 	}
 
 	async reconnectServer(name: string): Promise<void> {
+		// senpi#6538: a credentials re-key (another holder's refresh rotated the grant) retires the connection a manual
+		// reconnect acts on, and a reconnect on a retired connection returns quietly. Re-key first, let every re-key already
+		// queued land, then reconnect the connection that is current.
+		const stale = this.#entryForName(name);
+		if (stale?.credentialsCurrent?.() === false) await stale.onCredentialsChanged?.();
+		await this.#attachQueue;
 		const entry = this.#entryForName(name);
 		if (entry === undefined) throw new Error(`Unknown MCP server: ${name || "<missing>"}`);
 		if (await entry.generationChanged?.()) {

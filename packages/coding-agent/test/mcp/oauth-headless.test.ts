@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthCommandDeps } from "../../src/core/extensions/builtin/mcp/auth/commands-auth.ts";
 import {
 	runAuth,
@@ -443,6 +443,59 @@ describe("headless oauth flows", () => {
 			},
 		]);
 		expect(harness.store.read()).toBeUndefined();
+	});
+
+	// senpi#6538: the refresh token is part of the grant identity, so rotating it makes the connection's credentials
+	// stale and the next background check re-keys the server. Under load that re-key landed while a manual reconnect
+	// was still refreshing on the connection it retired, and the reconnect resolved quietly.
+	it("surfaces auth-start guidance on manual reconnect when a credentials re-key lands mid-reconnect", async () => {
+		// Given: a connected server whose refresh token was rotated away, and every token-store lock held at a gate
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await writeMcpConfig(dir, harness.deps.config);
+		const service = new McpService();
+		cleanups.push(() => service.dispose("quit"));
+		const session = { cwd: dir, isProjectTrusted: () => true };
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		expect(service.getConnection("fix")?.state).toBe("connected");
+		await poisonRefreshToken(harness);
+		const released = Promise.withResolvers<void>();
+		const reached = Promise.withResolvers<void>();
+		const withLock = McpTokenStore.prototype.withLock;
+		const gate = vi.spyOn(McpTokenStore.prototype, "withLock").mockImplementation(async function (
+			this: McpTokenStore,
+			fn,
+		) {
+			reached.resolve();
+			await released.promise;
+			return withLock.call(this, fn);
+		});
+		cleanups.push(async () => gate.mockRestore());
+
+		// When: the manual reconnect starts refreshing, another session's start re-keys the server, then the refresh runs
+		const reconnect = service.reconnectServer("fix");
+		const outcome = reconnect.then(
+			() => "resolved",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+		await reached.promise;
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		released.resolve();
+
+		// Then: the reconnect names the way back instead of resolving quietly
+		expect(await outcome).toMatch(/\/mcp auth-start fix/);
+		expect(service.getServerSnapshots()).toMatchObject([
+			{ lastError: expect.stringMatching(/\/mcp auth-start fix/), lifecycleState: "needs_auth", name: "fix" },
+		]);
 	});
 
 	// senpi#6538: under load a background refresh (the attach's catalog refresh) can meet the rotated refresh token
