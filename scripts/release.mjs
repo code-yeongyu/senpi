@@ -278,7 +278,7 @@ async function main() {
 		log(`dry-run complete; would have prepared v${version}`);
 	} else {
 		log(
-			`prepared v${version}; publish with: gh workflow run publish-npm.yml -f version=${version} -f publish-only=true`,
+			`prepared v${version}; the tag's Build Binaries run publishes it (it dispatches publish-npm.yml publish-only itself). Dispatch publish-only by hand only to recover a Build Binaries run that failed (senpi#7469).`,
 		);
 	}
 }

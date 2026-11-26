@@ -1,4 +1,6 @@
 name: Release
+# senpi#7469: the version is in the run title, so the draft cleanup can see whether any run already published it.
+run-name: Release ${{ inputs.version || 'auto' }}${{ inputs.publish-only && ' publish-only' || '' }}
 
 'on':
   workflow_dispatch:
@@ -101,6 +103,25 @@ jobs:
       # its sha input names a main commit. Only a dry run may go further there; the steps that stamp, tag, push or
       # publish below carry the same condition. A publish-only run checks out the TAG, whose publish.mjs may predate the in-code
       # ref guard, so off main it is refused even as a dry run.
+      # senpi#7469: a tag push runs Build Binaries, which dispatches this tag's publish-only run itself (with build_run_id).
+      # A second, manual publish-only run of the same tag races it, and the loser's finalize used to delete the draft
+      # GitHub Release on registry lag. A manual run is for recovering a Build Binaries run that failed, so it is refused
+      # while one for the tag is queued, running or has succeeded. It runs before anything is checked out or published.
+      - name: Refuse a second publisher for the tag
+        if: inputs.publish-only == true && inputs.build_run_id == '' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: v${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          runs="$(gh run list --workflow build-binaries.yml --branch "${RELEASE_TAG}" --limit 20 --json databaseId,status,conclusion \
+            --jq '[.[] | select(.status != "completed" or .conclusion == "success") | .databaseId | tostring] | join(" ")')"
+          if [ -n "${runs}" ]; then
+            echo "::error::Build Binaries run(s) ${runs} for ${RELEASE_TAG} publish this tag themselves (senpi#7469); a manual publish-only run is only for recovering a Build Binaries run that failed." >&2
+            exit 1
+          fi
+
       - name: Refuse a live release from any ref but main
         if: github.ref != 'refs/heads/main' && (inputs.dry_run != true || inputs.publish-only == true)
         env:
