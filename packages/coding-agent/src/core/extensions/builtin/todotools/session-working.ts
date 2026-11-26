@@ -5,7 +5,8 @@ const LOOP = { runs: "brain" } as const;
 
 /**
  * Whether the session is working, read from the session's one liveness watcher (senpi#1146). `onChange` runs when
- * that answer flips. With no watcher bound (the session-liveness builtin is not loaded) every item draws as before.
+ * that answer flips. Only a session that can show the widget (`ctx.hasUI`: the TUI, an RPC host) consumes it, so a
+ * print or json run never starts the watcher's child-record reads. With no watcher bound every item draws as before.
  */
 export function watchSessionWorking(
 	pi: Pick<ExtensionAPI, "on" | "events">,
@@ -20,7 +21,8 @@ export function watchSessionWorking(
 		"session_start",
 		(_event, ctx) => {
 			unsubscribe?.();
-			liveness = connectSessionLiveness(pi.events);
+			unsubscribe = undefined;
+			liveness = ctx.hasUI ? connectSessionLiveness(pi.events) : undefined;
 			unsubscribe = liveness?.subscribe(() => {
 				if (isWorking() === drawn) return;
 				drawn = isWorking();

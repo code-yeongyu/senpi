@@ -81,6 +81,7 @@ export async function liveHarness() {
 	const ctx = {
 		cwd,
 		mode: "tui",
+		hasUI: true,
 		ui: { setWidget: (_key: string, factory: WidgetFactory | undefined) => widgets.push(factory) },
 		sessionManager,
 		isIdle: () => idle,

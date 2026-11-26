@@ -73,6 +73,7 @@ async function sharedHost() {
 	const ctx = {
 		cwd,
 		mode: "tui",
+		hasUI: true,
 		isIdle: () => idle,
 		sessionManager,
 		ui: {
