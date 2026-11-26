@@ -41,6 +41,17 @@ export interface ToolEventDispatchOptions {
 	readonly forward?: ToolEventForwarder;
 	/** Where the loop runs: run only this one handler (a forwarded request). */
 	readonly only?: ForwardedHandler;
+	/**
+	 * The call's own abort signal: a `tool_call` handler's `ctx.signal` for this call, combined with the turn's so
+	 * aborting either ends it (senpi#6676, senpi#6679 M1). Forwarded handlers are the exception (senpi#6679 L1): the
+	 * forwarder carries the event only, so a handler served on the loop side of a forward sees its loop-hook signal.
+	 */
+	readonly signal?: AbortSignal;
+	/**
+	 * `tool_result` only: receives each handler that threw, timed out or was interrupted, in addition to the extension
+	 * error listeners, so a caller that owns the event can show the failure next to its own result.
+	 */
+	readonly onHandlerFailure?: (failure: { readonly extensionPath: string; readonly error: string }) => void;
 }
 
 const undeclaredHandlers = (extension: Extension, event: ExtensionEvent["type"]): HandlerFn[] =>

@@ -12,17 +12,28 @@ const root = fileURLToPath(new URL("../../../../..", import.meta.url));
 // the race. RuntimeCredentials is included so dropping the capability fails.
 describe("rotating refresh tokens across processes", () => {
 	it.each([
-		["a", "a"],
-		["flat", "a"],
-		["a", "catalog"],
-		["flat", "flat"],
-		["a", "b"],
+		["a", "a", false],
+		["flat", "a", false],
+		["a", "catalog", false],
+		["flat", "flat", false],
+		["identity-flat", "a", false],
+		["a", "b", false],
+		["a", "a", true],
+		["flat", "a", true],
 	])(
-		"serializes one session but not siblings (%s/%s)",
-		async (first, second) => {
+		"serializes one session but not siblings (%s/%s, no identity: %s)",
+		async (first, second, noIdentity) => {
 			const { stdout } = await run(
 				"bun",
-				["--tsconfig-override", `${root}/tsconfig.json`, fixture, first, second, `${root}/tsconfig.json`],
+				[
+					"--tsconfig-override",
+					`${root}/tsconfig.json`,
+					fixture,
+					first,
+					second,
+					`${root}/tsconfig.json`,
+					String(noIdentity),
+				],
 				{
 					cwd: root,
 					env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR },

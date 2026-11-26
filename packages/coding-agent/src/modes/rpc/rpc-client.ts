@@ -16,6 +16,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
+import type { TelemetryConsent } from "../../core/telemetry-consent.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
@@ -32,10 +33,12 @@ export { RpcCommandError } from "./rpc-command-error.ts";
 export type { RpcClientEvent, RpcEventListener, RpcProviderAccountEvent } from "./rpc-client-events.ts";
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import { isProviderAccountEvent, type RpcClientEvent, type RpcEventListener } from "./rpc-client-events.ts";
+import { childEnvironmentOf } from "./host-identity-env.ts";
 import { connectRpcClientSocket } from "./rpc-client-socket.ts";
 import {
 	armRequestDeadline,
@@ -261,7 +264,8 @@ export class RpcClient {
 		const childProcess = spawn("node", [cliPath, ...args], {
 			cwd: this.options.cwd,
 			env: {
-				...process.env,
+				// A stdio child never reads the host's supervisor hand-off (senpi#5635).
+				...childEnvironmentOf(process.env),
 				// The spawned child must BE the process this client signals and reaps. An ambient
 				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
 				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease
@@ -513,6 +517,25 @@ export class RpcClient {
 			);
 		}
 		this.getData(await this.send({ type: "set_session_context", sessionId, patch }, false));
+	}
+
+	/**
+	 * Change this connection's live telemetry answer for an attached session (`set_telemetry_consent`, senpi#7446):
+	 * the host collects and delivers the session's telemetry only while it permits it AND every caller granted.
+	 * Requires the host capability `telemetry_consent`; rejects with {@link RpcCommandError} (`session_not_attached`).
+	 */
+	async setTelemetryConsent(consent: TelemetryConsent, sessionId = this.sessionId): Promise<void> {
+		if (!sessionId) {
+			throw new RpcCommandError(
+				`${RPC_ERROR_SESSION_NOT_ATTACHED}: set_telemetry_consent needs a session`,
+				RPC_ERROR_SESSION_NOT_ATTACHED,
+				{
+					reason: "this client has no attached session",
+					action: "attach with openSession first, or pass a sessionId",
+				},
+			);
+		}
+		this.getData(await this.send({ type: "set_telemetry_consent", sessionId, consent }, false));
 	}
 
 	async closeSession(sessionId = this.sessionId): Promise<void> {
@@ -1158,6 +1181,20 @@ export class RpcClient {
 	}
 
 	/**
+	 * Archive or unarchive the session; the flag is stored in its session file.
+	 */
+	async setSessionArchived(archived: boolean): Promise<void> {
+		await this.send({ type: "set_session_archived", archived });
+	}
+
+	/**
+	 * Mark the session Done or reopen it; the flag and how it was reached (`by`) are stored in its session file.
+	 */
+	async setSessionSettled(settled: boolean, by?: ThreadSettledBy): Promise<void> {
+		await this.send({ type: "set_session_settled", settled, ...(by !== undefined ? { by } : {}) });
+	}
+
+	/**
 	 * Report that the user started typing a draft, so a first-activity prompt-cache prewarm can run (senpi#3859).
 	 */
 	async recordDraftActivity(): Promise<void> {
@@ -1313,6 +1350,8 @@ export class RpcClient {
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||
 					event.type === "session_released" ||
+					event.type === "session_archived_changed" ||
+					event.type === "session_settled_changed" ||
 					event.type === "queued" ||
 					event.type === "socket_closing" ||
 					event.type === "message_tool_arguments_reset"

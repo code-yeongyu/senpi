@@ -1,3 +1,225 @@
+## 2026-11-22 - OpenAI-family SSE reports transport activity (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/api/openai-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts` report body chunks through a shared fetch wrapper before the SDK parses them.
+- `packages/ai/src/api/openai-codex-responses.ts` reports body chunks from its SSE reader before decoding. WebSocket paths are unchanged.
+
+### Why
+
+- SSE keep-alive comments never become assistant events. Reporting the bytes lets the agent loop re-arm its existing start and idle bounds while waiting for content.
+
+### Why an extension could not handle it
+
+- The SDK fetch boundary and the Codex SSE reader are internal to the adapters.
+
+### Expected merge conflict zones
+
+- LOW: the SDK client fetch options and the Codex `parseSSE` read loop.
+
+## 2026-11-22 - Preserve Mistral HTTP status in provider diagnostics (senpi#3251)
+
+### What changed
+
+- `packages/ai/src/api/mistral-conversations.ts`: attaches the response status to the HTTP error with the shared diagnostic carrier and copies it to the terminal assistant message without changing the displayed error.
+
+### Why
+
+- The response status distinguishes an actual 408 from a 400 whose body quotes one.
+
+### Why an extension could not handle it
+
+- The adapter sees the HTTP response before turning the failure into an assistant message.
+
+### Expected merge conflict zones
+
+- LOW: the non-OK response and stream catch in `packages/ai/src/api/mistral-conversations.ts`.
+
+## 2026-11-04 - Kimi K3.1 Pro never receives disabled thinking (senpi#5720)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts` omits disabled thinking for K3.1 Pro, including gateway rows without catalog metadata. The catalog models send only `output_config.effort: low` at their floor, whether the caller requests off or the agent has already clamped it to low.
+
+### Why
+
+- Kimi Code answers `thinking: {type: "disabled"}` on K3.1 Pro with `400 K3.1 Pro does not support disabled thinking mode`; no `thinking` plus effort `low` is accepted (code-yeongyu/oh-my-openagent#12316).
+
+### Why an extension could not handle it
+
+- The thinking block is built inside the Anthropic request builder.
+
+### Expected merge conflict zones
+
+- LOW: the marker list.
+
+## 2026-11-23 - sk-ant-oat API keys are sent as plain x-api-key instead of being refused (senpi#7391)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `CLAUDE_OAUTH_TOKEN_MARKER`, `ClaudeOAuthTokenRefusedError`, `isClaudeOAuthTokenRefusedError` and `assertNotClaudeOAuthToken` are deleted, along with the assert calls in `stream()` and `streamSimple()`. An `sk-ant-oat` value given as an API key now takes the same path as any other key: the SDK client is built with `apiKey`, so the token goes out as `x-api-key` to the model's `baseUrl`.
+
+### Why
+
+- The refusal from senpi#5131 also blocked custom `anthropic-messages` providers whose `baseUrl` is a self-hosted Anthropic-compatible proxy that takes such a token as its key; the owner reversed the refusal part of that ruling. The Claude Code impersonation path removed by senpi#5131 (Bearer auth for oat keys, `claude-code-20250219` / `oauth-2025-04-20` betas, `claude-cli` user agent, `x-app`, the Claude Code system block, tool-name mapping) stays removed.
+
+### Why an extension could not handle it
+
+- The refusal ran inside the provider's `stream()` / `streamSimple()` before any request was built; no extension hook runs before it or can skip it.
+
+### Expected merge conflict zones
+
+- LOW: the auth assertions at the top of `stream()`'s client setup and of `streamSimple()`. Upstream still carries the OAuth stealth branch; keep every `isOAuthToken` parameter and Claude Code mapping deleted when syncing.
+
+## 2026-11-22 - The image downgrade names a describing tool when the caller has one (senpi#7260)
+
+### What changed
+
+- `packages/ai/src/api/transform-messages.ts`: `downgradeUnsupportedImages` is exported and takes a third argument, `{ imageDescriptionTool?: string }` (`ImageDowngradeOptions`, also exported). With a tool name, the two placeholders that replace images for a model without image input read `(tool image omitted: this model cannot see images; call <tool> with the image's file path for a description)` and `(image omitted: this model cannot see images; <tool> describes an image given its file path)`. `transformMessages` still calls it with no options, so the six provider adapters and every caller that passes nothing produce the two existing placeholders byte for byte. The video placeholders do not change.
+
+### Why
+
+- senpi#7233. A text-only model that read a screenshot got only `(tool image omitted: model does not support images)`. The session offered `look_at`, which describes an image from its file path, and nothing told the model. The tool name has to come from the session, and this file must not know about session tools, so the name is a parameter. The look-at extension runs the same function before the request is built, which leaves no image for the provider's own pass to replace. Threading the name through `StreamOptions` instead would have changed every provider adapter and still missed the adapters that never call `transformMessages`.
+
+### Why an extension could not handle it
+
+- The session side is an extension: look-at calls this function from its `context_with_system` handler. What an extension cannot reach is the wording and the replacement rules (one placeholder for a run of images, video replaced before images), which were private to this file. A copy in the extension would be a second version to keep in step with upstream.
+
+### Expected merge conflict zones
+
+- LOW: the signature and first lines of `downgradeUnsupportedImages`, and the two `replaceImagesWithPlaceholder` call sites inside it. No adapter and no other export changed. If upstream restructures the image downgrade, keep an exported function that takes the tool name and re-point `packages/coding-agent/src/core/extensions/builtin/look-at/image-placeholder.ts` at it.
+
+## 2026-11-18 - GPT-6.2 Astra and Sol are documented Ultrafast models (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: `ULTRAFAST_DOCUMENTED_MODEL_IDS` gains `gpt-6.2-astra` and `gpt-6.2-sol`.
+
+### Why
+
+- Both 6.2 model pages document Ultrafast. Without the entry, an Ultrafast request on either model was priced at the Standard rate. OpenAI prices 6.2 API Ultrafast at 3x through 2027-02-28 and 6x after that. The shared 6x API multiplier therefore overstates the API cost until March; the subscription multiplier stays at 8x.
+
+### Why an extension could not handle it
+
+- Both pricing adapters read this one list. No extension hook can change the service-tier multiplier.
+
+### Expected merge conflict zones
+
+- LOW: the one `Set` literal.
+
+## 2026-11-15 - shared-subscription item-limit 400s surface a typed route+remedy error (senpi#6718)
+
+### What changed
+
+- `packages/ai/src/api/subscription-sharing-items.ts` (new): detects the wire-evidenced ChatGPT shared-subscription item-limit error text ("User subscription sharing currently supports only...") and appends the route name and the switch-model remedy.
+- `packages/ai/src/api/openai-codex-responses.ts`: a 400 whose message matches the marker is enriched at the error-classification point, naming the provider and the remedy.
+- `packages/ai/src/api/openai-responses.ts`: the same enrichment in `formatOpenAIResponsesError` for the SIWC face.
+
+### Why
+
+- A shared ChatGPT subscription rejects requests carrying function-call items with a raw invalid_request 400, which surfaced to users as an unactionable provider error (senpi#6715). The reactive mapping names the route and the remedy at the exact failure, without refusing routes that accept the items (both subscription routes keep working per senpi#6607), and without adding any retry (a provider-level maxRetries still applies to the permanent 400).
+
+### Why an extension could not handle it
+
+- The mapping needs the provider identity and the raw error body inside each API client's error-classification step; extensions cannot intercept provider error handling.
+
+### Expected merge conflict zones
+
+- LOW: `openai-codex-responses.ts` around the SSE error assembly; `openai-responses.ts` inside `formatOpenAIResponsesError`.
+
+## 2026-11-13 - A missing-scope 401 listing other dotted scopes first still gets guidance (senpi#6643)
+
+### What changed
+
+- `packages/ai/src/utils/siwc-errors.ts`: `isSiwcMissingResponsesScope` matches `api.responses.write` anywhere in the rest of the `Missing scopes:` line instead of stopping at the first dot.
+
+### Why
+
+- Scope names are dotted, so a 401 such as "Missing scopes: api.model.read, api.responses.write" did not match: the account was still parked as `auth_error` and the user got no guidance (senpi#6653 review).
+
+### Why an extension could not handle it
+
+- The pattern is read by the Responses adapter's error formatting and by the credential-pool classifier, both before any extension sees the failed turn.
+
+### Expected merge conflict zones
+
+- LOW: the `MISSING_RESPONSES_SCOPE` pattern in `siwc-errors.ts`.
+
+## 2026-11-13 - A Sign in with ChatGPT 401 for a missing Responses scope says what to do (senpi#6643)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `formatOpenAIResponsesError` appends `SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE` (from `utils/siwc-errors.ts`) on the SIWC route when the error names the missing scope `api.responses.write`.
+
+### Why
+
+- The provider answers an account that is not entitled to the Responses API with a 401 and generic missing-scope prose; users read it as a sign-in failure and kept re-logging in.
+
+### Why an extension could not handle it
+
+- The error message is built inside the Responses adapter before any extension sees the failed turn.
+
+### Expected merge conflict zones
+
+- LOW: the SIWC branches of `formatOpenAIResponsesError`.
+
+## 2026-11-13 - Sign in with ChatGPT never sends configuration_update input items (senpi#6607)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: `convertResponsesMessages` skips `configurationUpdate` messages when the model carries `compat.siwc`, even on a catalog row flagged `supportsConfigurationUpdate`.
+- `packages/ai/src/api/openai-responses.ts`: on a SIWC model flagged `supportsConfigurationUpdate`, `buildParams` takes the newest `configurationUpdate` effort in the transcript as the requested reasoning effort (`off` means no requested effort), instead of the session's cache-baseline `reasoningEffort`.
+
+### Why
+
+- The Sign in with ChatGPT route rejects `configuration_update` input items with 400 `subscription_sharing_unsupported_capability`, so every turn after a thinking-level change failed on gpt-6.1-sol and gpt-6-astra. Upstream pi applies the same guard (`getConfigurationUpdateEffort` returns undefined for a ChatGPT sign-in) and sends the current level as `reasoning.effort`.
+
+### Why an extension could not handle it
+
+- The input items and request effort are built inside the Responses adapter after every extension payload hook has run; the route is chosen per credential below the session.
+
+### Expected merge conflict zones
+
+- LOW: the `configurationUpdate` branch in `convertResponsesMessages` and the reasoning-effort preamble of `buildParams`.
+
+## 2026-11-10 - One shared list of the models Ultrafast is documented for (senpi#2978)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: new export `ULTRAFAST_DOCUMENTED_MODEL_IDS` (`gpt-6-astra`, `gpt-6.1-sol`), the single list of the models Ultrafast is documented for.
+- `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts`: `getServiceTierCostMultiplier` reads the shared list instead of its own `["gpt-6-astra", "gpt-6.1-sol"]` literal. The multipliers are unchanged (6x Standard on the API, 8x of a ChatGPT plan's included usage).
+
+### Why
+
+- The same model set lived in three places (both adapters plus the selection warning in coding-agent), so the next Ultrafast model needed three matching edits (senpi#2978 item 2).
+
+### Why an extension could not handle it
+
+- Service-tier pricing is computed inside the wire adapters from the model and tier; no extension API owns the multiplier table.
+
+### Expected merge conflict zones
+
+- LOW: the `case "ultrafast"` line in each adapter's `getServiceTierCostMultiplier` only.
+
+## 2026-11-09 - OpenAI Responses `long` retention sends `prompt_cache_options.ttl: "12h"` (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `getPromptCacheOptions()` sends `{ ttl: "12h" }` for `cacheRetention: "long"` on GPT-5.6+ models that accept `prompt_cache_options`, instead of `{ ttl: "30m" }`.
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: `OpenAIPromptCacheOptionsPayload.ttl` accepts `"30m" | "12h"`.
+
+### Why
+
+- `"30m"` is OpenAI's default, so `long` bought nothing; `"12h"` is the longest documented value (write 2.5x, reads unchanged).
+
+### Why an extension could not handle it
+
+- The field is built inside the provider adapter and reserved from `extraBody`.
+
+### Expected merge conflict zones
+
+- LOW: one line in `getPromptCacheOptions()` and the payload type.
+
 ## 2026-11-07 - Codex turns are priced at the tier that was sent when the backend echoes auto/default (senpi#6156)
 
 ### What changed

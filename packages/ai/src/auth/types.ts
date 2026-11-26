@@ -31,6 +31,8 @@ export interface OAuthCredentials {
 	refresh: string;
 	access: string;
 	expires: number;
+	/** Hash binding the last completed refresh input to these token values. */
+	refreshContinuity?: string;
 	/** ChatGPT slots without a route retain the legacy Codex protocol. */
 	route?: "siwc" | "codex";
 	[key: string]: unknown;
@@ -74,6 +76,12 @@ export type OAuthRevocationResult = { status: "revoked" | "remote_revocation_unc
 
 export interface LogoutOptions extends AuthOperationOptions {
 	slotId?: string;
+	/**
+	 * Sign out only the sign-in the caller showed: the store compares this with the entry's `loginId` inside its
+	 * write exclusion and, on any difference (a newer sign-in, none, or no id), refuses with `ModelsError`
+	 * `stale_login` and changes nothing (senpi#7406). Absent keeps the unconditional sign-out.
+	 */
+	expectedLoginId?: string;
 	/** Injectable backoff scheduler; production defaults to an abortable timer. */
 	sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -145,6 +153,13 @@ export interface CredentialStore {
 
 	/** Remove a credential (logout). Implementations serialize this against `modify`. */
 	delete(providerId: string, options?: AuthOperationOptions): Promise<void>;
+
+	/**
+	 * Remove the entry only while its `loginId` equals `loginId`, under the same exclusion as `modify` and
+	 * `delete`; resolves whether it was removed. Optional: a logout with `expectedLoginId` refuses on a store
+	 * without it rather than removing unconditionally (senpi#7406).
+	 */
+	deleteLogin?(providerId: string, loginId: string, options?: AuthOperationOptions): Promise<boolean>;
 }
 
 /** Environment access for auth resolution. Injectable for tests and browsers. */

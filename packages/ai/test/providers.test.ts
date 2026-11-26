@@ -525,6 +525,28 @@ describe("builtin providers", () => {
 		});
 	});
 
+	it.each([
+		["adc", "", "us-central1", "project"],
+		["adc", "project-id", " \t", "location"],
+		["service-account", " \t", "us-central1", "project"],
+		["service-account", "project-id", "", "location"],
+	])("rejects %s login with project %j and location %j", async (method, project, location, field) => {
+		const answers = [method, project, location, "/test/credentials.json"];
+		const login = googleVertexProvider().auth.apiKey?.login;
+		if (login === undefined) throw new Error("google-vertex must expose an API-key login");
+		await expect(
+			login({
+				signal: neverAbortedSignal,
+				prompt: async () => {
+					const answer = answers.shift();
+					if (answer === undefined) throw new Error("login asked more questions than the test answers");
+					return answer;
+				},
+				notify: () => {},
+			}),
+		).rejects.toThrow(new RegExp(field, "i"));
+	});
+
 	it("resolves vertex via ADC file plus project and location", async () => {
 		const adc = "~/.config/gcloud/application_default_credentials.json";
 		const configured = createModels({

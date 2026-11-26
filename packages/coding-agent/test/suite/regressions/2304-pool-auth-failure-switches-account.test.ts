@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent, ProviderDiagnostic } from "@earendil-works/pi-ai";
@@ -12,7 +13,11 @@ import {
 } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { describeAccountBlock } from "../../../src/core/credential-account-status.ts";
+import { summarizeCredentialAccounts } from "../../../src/core/credential-accounts.ts";
+import { AUTH_BLOCK_REPROBE_MS } from "../../../src/core/credential-pool/auth-reprobe.ts";
 import { classifyCredentialFailure } from "../../../src/core/credential-pool/classify.ts";
+import { retireLoginSlotHealth } from "../../../src/core/credential-pool/login-health.ts";
 import { streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
 
@@ -47,6 +52,7 @@ function withDiagnostic(error: Error, diagnostic: ProviderDiagnostic): Error {
 // other statuses need a refused-grant body before the account can be blocked.
 describe("a failed OAuth refresh blocks the account only when the grant itself was refused", () => {
 	const FAILOVER = { kind: "failover", block: { reason: "auth_error" } };
+	const SIGN_IN = { kind: "failover", block: { reason: "auth_error", refusedGrant: true } };
 	const FAIL_REQUEST = { kind: "fail_request" };
 	test.each([
 		["401 plain", () => refreshRejected(401, "Unauthorized"), FAILOVER],
@@ -55,31 +61,31 @@ describe("a failed OAuth refresh blocks the account only when the grant itself w
 			() => refreshFailed(new OAuthTokenEndpointError('401 Unauthorized: {"message":"Bad credentials"}', 401)),
 			FAILOVER,
 		],
-		["401 RFC 6749 invalid_grant", () => refreshRejected(401, '{"error":"invalid_grant"}'), FAILOVER],
+		["401 RFC 6749 invalid_grant", () => refreshRejected(401, '{"error":"invalid_grant"}'), SIGN_IN],
 		[
 			"400 invalid_grant",
 			() => refreshRejected(400, '{"error":"invalid_grant","error_description":"Refresh token expired"}'),
-			FAILOVER,
+			SIGN_IN,
 		],
-		["401 refresh_token_expired", () => refreshRejected(401, '{"error":{"code":"refresh_token_expired"}}'), FAILOVER],
-		["401 refresh_token_reused", () => refreshRejected(401, '{"error":{"code":"refresh_token_reused"}}'), FAILOVER],
+		["401 refresh_token_expired", () => refreshRejected(401, '{"error":{"code":"refresh_token_expired"}}'), SIGN_IN],
+		["401 refresh_token_reused", () => refreshRejected(401, '{"error":{"code":"refresh_token_reused"}}'), SIGN_IN],
 		[
 			"401 refresh_token_invalidated",
 			() => refreshRejected(401, '{"error":{"code":"refresh_token_invalidated"}}'),
-			FAILOVER,
+			SIGN_IN,
 		],
 		[
 			"401 token_revoked",
 			() => refreshRejected(401, '{"error":{"message":"revoked","code":"token_revoked"}}'),
-			FAILOVER,
+			SIGN_IN,
 		],
 		[
 			"400 form-encoded invalid_grant",
 			() => refreshRejected(400, "error=invalid_grant&error_description=expired"),
 			FAILOVER,
 		],
-		["403 with an OAuth invalid_grant body", () => refreshRejected(403, '{"error":"invalid_grant"}'), FAILOVER],
-		["404 with an OAuth invalid_grant body", () => refreshRejected(404, '{"error":"invalid_grant"}'), FAILOVER],
+		["403 with an OAuth invalid_grant body", () => refreshRejected(403, '{"error":"invalid_grant"}'), SIGN_IN],
+		["404 with an OAuth invalid_grant body", () => refreshRejected(404, '{"error":"invalid_grant"}'), SIGN_IN],
 		["403 non-refusal OAuth body", () => refreshRejected(403, '{"error":"invalid_request"}'), FAIL_REQUEST],
 		["404 non-refusal OAuth body", () => refreshRejected(404, '{"error":"invalid_request"}'), FAIL_REQUEST],
 		["403 refusal code outside OAuth JSON", () => refreshRejected(403, "error=invalid_grant"), FAIL_REQUEST],
@@ -143,7 +149,7 @@ describe("a failed OAuth refresh blocks the account only when the grant itself w
 						{ oauthError: "invalid_grant", credentialRefused: true },
 					),
 				),
-			FAILOVER,
+			SIGN_IN,
 		],
 		[
 			"Kimi 401 invalid_client is a client fault, not a refusal",
@@ -164,7 +170,7 @@ describe("a failed OAuth refresh blocks the account only when the grant itself w
 					[
 						`SIWC typed ${code} at ${status}`,
 						() => refreshFailed(new OAuthReauthorizationRequiredError(code, status)),
-						FAILOVER,
+						SIGN_IN,
 					] as const,
 			),
 		),
@@ -238,7 +244,7 @@ describe("a refresh that failed in the network retries the same account", () => 
 		const error = refreshRejected(401, '{"error":"invalid_grant","error_description":"network error"}');
 		expect(classifyCredentialFailure(error, { nowMs: NOW })).toEqual({
 			kind: "failover",
-			block: { reason: "auth_error" },
+			block: { reason: "auth_error", refusedGrant: true },
 		});
 	});
 	test("auth wording in a failed refresh that was not refused never blocks the account", () => {
@@ -384,8 +390,8 @@ describe("the rotation stream switches off a pooled account with an auth failure
 		repository = new CredentialSlotRepository(join(dir, "credential-pool-state.json"));
 	});
 
-	afterEach(() => {
-		rmSync(dir, { recursive: true, force: true });
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
 	});
 
 	function pool(pinned?: string): PooledCredential {
@@ -439,7 +445,7 @@ describe("the rotation stream switches off a pooled account with an auth failure
 		slot: string,
 	) => AsyncIterable<AssistantMessageEvent> | Promise<AsyncIterable<AssistantMessageEvent>>;
 
-	async function request(credential: PooledCredential, alpha: Failure, attempts: string[]) {
+	async function request(credential: PooledCredential, alpha: Failure, attempts: string[], now = NOW) {
 		const events: AssistantMessageEvent[] = [];
 		const stream = streamWithCredentialRotation({
 			sources: {
@@ -448,7 +454,7 @@ describe("the rotation stream switches off a pooled account with an auth failure
 				env: () => undefined,
 				repository,
 				policy: { affinity: false },
-				now: () => NOW,
+				now: () => now,
 			},
 			affinityKey: "session-2304",
 			runAttempt: (slot) => {
@@ -464,11 +470,50 @@ describe("the rotation stream switches off a pooled account with an auth failure
 		return (await repository.listSlots(PROVIDER, "stored"))[name];
 	}
 
-	test.each([
-		[
-			"its refresh grant was rejected",
+	test("a refused grant stays out after the probe interval until a new login", async () => {
+		const credential = pool("alpha");
+		const attempts: string[] = [];
+		// This request already holds a usable access token when the refresh endpoint refuses the grant.
+		const started = Promise.withResolvers<void>();
+		const finish = Promise.withResolvers<void>();
+		const inFlight = request(credential, async () => {
+			started.resolve();
+			await finish.promise;
+			return served();
+		}, []);
+		await started.promise;
+		await request(
+			credential,
 			async () => {
 				throw refreshRejected(400, '{"error":"invalid_grant"}');
+			},
+			attempts,
+		);
+		finish.resolve();
+		await inFlight;
+		expect(attempts).toEqual(["alpha", "bravo"]);
+		const later = NOW + AUTH_BLOCK_REPROBE_MS + 1;
+		await request(credential, served, attempts, later);
+		expect(attempts).toEqual(["alpha", "bravo", "bravo"]);
+		const [alpha] = await summarizeCredentialAccounts(PROVIDER, credential, {}, repository);
+		expect(alpha && describeAccountBlock(alpha)).toBe("sign-in rejected; sign in again");
+		const renewed = {
+			...credential,
+			accounts: credential.accounts?.map((slot) =>
+				slot.name === "alpha" ? { ...slot, access: "new-access", refresh: "new-refresh" } : slot,
+			),
+		};
+		await retireLoginSlotHealth(join(dir, "credential-pool-state.json"), PROVIDER, credential, renewed);
+		expect(await health("alpha")).toBeUndefined();
+		await request(renewed, served, attempts, later);
+		expect(attempts.at(-1)).toBe("alpha");
+	});
+
+	test.each([
+		[
+			"the token endpoint returns an unidentified 401",
+			async () => {
+				throw refreshRejected(401, "Unauthorized");
 			},
 		],
 		["its token was invalidated server-side (no status)", () => failed(INVALIDATED)],
@@ -498,6 +543,8 @@ describe("the rotation stream switches off a pooled account with an auth failure
 			const next: string[] = [];
 			await request(pool("alpha"), alpha, next);
 			expect(next).toEqual(["bravo"]);
+			await request(pool("alpha"), served, next, NOW + AUTH_BLOCK_REPROBE_MS + 1);
+			expect(next).toEqual(["bravo", "alpha"]);
 		},
 	);
 

@@ -14,6 +14,7 @@
  * session file is gone is dropped, never retried.
  */
 import { createHash } from "node:crypto";
+import { isTelemetryConsent, type TelemetryConsent } from "../../core/telemetry-consent.ts";
 import { existsSync, renameSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -62,6 +63,8 @@ export interface HandoverParkedEntry {
 	readonly retryFallback?: SessionRetryFallbackProfile;
 	/** The session's own caller env (senpi#4381); it follows the session, never the generation's process. */
 	readonly sessionEnv?: SessionEnv;
+	/** The standing telemetry answer of the session's callers (senpi#7446); a reopen never grants by losing it. */
+	readonly telemetryConsent?: TelemetryConsent;
 	/**
 	 * The host instance that wrote the park. Its own reopen watch skips it: the park is for the NEXT
 	 * generation, and a host reopening what it just idle-parked races the client's reopen (senpi#3485).
@@ -73,6 +76,12 @@ export interface HandoverParkedEntry {
 	 * entry only once that writer process is gone, so it never opens a session its live predecessor still holds.
 	 */
 	readonly residentWriter?: ResidentWriter;
+	/**
+	 * The session was loaded when the host that wrote this entry ended (senpi#7020): resident, parked by a handoff
+	 * drain, or parked by a clean stop. A successor reopens a live session as that host left it, releasing only the hold
+	 * the restart caused; an entry without it (an idle-sweep park, an unload, an older host) reopens dormant.
+	 */
+	readonly live?: true;
 }
 
 const recordDir = (daemonDir: string): string => join(daemonDir, "handover-parked");
@@ -88,7 +97,7 @@ function enqueueMutation(mutation: () => Promise<void>): Promise<void> {
 	return next;
 }
 
-function isEntry(value: unknown): value is HandoverParkedEntry {
+export function isHandoverParkedEntry(value: unknown): value is HandoverParkedEntry {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 	const record = value as Record<string, unknown>;
 	return (
@@ -98,6 +107,7 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		(record.cwd === undefined || typeof record.cwd === "string") &&
 		(record.parkedBy === undefined || typeof record.parkedBy === "string") &&
 		(record.residentWriter === undefined || isResidentWriter(record.residentWriter)) &&
+		(record.live === undefined || record.live === true) &&
 		(record.thinkingLevel === undefined || typeof record.thinkingLevel === "string") &&
 		(record.permissionPreset === undefined ||
 			(typeof record.permissionPreset === "string" &&
@@ -110,6 +120,7 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		sessionAutoTitleError(record.autoTitle) === undefined &&
 		sessionRetryFallbackError(record.retryFallback) === undefined &&
 		sessionEnvShapeError(record.sessionEnv) === undefined &&
+		(record.telemetryConsent === undefined || isTelemetryConsent(record.telemetryConsent)) &&
 		(record.model === undefined ||
 			(typeof record.model === "object" &&
 				record.model !== null &&
@@ -142,7 +153,7 @@ export async function readHandoverParkedSessions(daemonDir: string): Promise<rea
 		const file = join(recordDir(daemonDir), name);
 		try {
 			const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-			if (isEntry(parsed)) entries.push(parsed);
+			if (isHandoverParkedEntry(parsed)) entries.push(parsed);
 			// A well-formed JSON value that fails the shape check is not corrupt: it may be an entry a
 			// different-version generation wrote (a rollback handover). Leave it alone.
 		} catch (cause) {
@@ -179,7 +190,7 @@ export function clearInheritedParkedSession(
 				(text) => JSON.parse(text),
 				() => undefined,
 			);
-			if (isEntry(recorded) && recorded.parkedBy === holder) return;
+			if (isHandoverParkedEntry(recorded) && recorded.parkedBy === holder) return;
 		}
 		await rm(file, { force: true });
 	});

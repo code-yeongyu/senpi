@@ -180,7 +180,7 @@ export function createWorkerCore(transport, options) {
 				});
 				return;
 			}
-			applySessionEnvironment(message.sessionEnv);
+			applySessionEnvironment(message.sessionEnv, message.removedEnv, message.inheritedSet);
 			installSessionCwd(options.cwd, options.cwdInstallOptions);
 			installKernelWebView(requestWebViewPort);
 			installPackageResolver();
@@ -194,6 +194,7 @@ export function createWorkerCore(transport, options) {
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				kernelToolsDisabled: message.kernelToolsDisabled === true,
+				scopeHelper: message.scopeHelper === true,
 				...(killGuard?.guard === undefined ? {} : { killGuard: killGuard.guard }),
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 				onShellWaitChange: () => {
@@ -263,14 +264,16 @@ function durationMs(startedAtMs) {
 	return Math.max(0, Math.round(performance.now() - startedAtMs));
 }
 
-function applySessionEnvironment(sessionEnv) {
+// removedEnv/inheritedSet: the RPC host's supervisor hand-off this thread's env copy must not keep, and the origin
+// attribution it carries instead (senpi#5635). Deleted like an unprovided session key, so the pin below covers them.
+function applySessionEnvironment(sessionEnv, removedEnv = [], inheritedSet = {}) {
 	const provided = new Set(Object.keys(sessionEnv ?? {}));
 	const deleted = [];
-	for (const key of SESSION_ENVIRONMENT_KEYS) {
+	for (const key of [...SESSION_ENVIRONMENT_KEYS, ...removedEnv]) {
 		if (key in process.env && !provided.has(key)) deleted.push(key);
 		delete process.env[key];
 	}
-	const applied = Object.entries(sessionEnv ?? {});
+	const applied = [...Object.entries(inheritedSet), ...Object.entries(sessionEnv ?? {})];
 	for (const [key, value] of applied) process.env[key] = value;
 	// A worker's process.env is its own view: Bun.$ and node:child_process read it, but Bun.spawn
 	// without an explicit env inherits the OS environ, which also still holds deleted keys because

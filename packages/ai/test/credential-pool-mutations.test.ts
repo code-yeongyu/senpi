@@ -5,6 +5,7 @@ import {
 	appendLoginSlot,
 	type Credential,
 	type CredentialSlot,
+	findFlatOAuthSlot,
 	isManagedSentinelSlot,
 	listSlots,
 	managedSentinelMaterial,
@@ -435,7 +436,7 @@ describe("provider-managed sentinel slot repair", () => {
 });
 
 describe("credential pool refresh", () => {
-	test("mergeRefreshed updates the primary slot even when top-level access was desynced (senpi#3407)", () => {
+	test("mergeRefreshed updates the identified slot when its tokens differ from the flat credential (senpi#3407)", () => {
 		const desynced: PooledCredential = {
 			type: "oauth",
 			access: "desynced-top-access",
@@ -453,20 +454,25 @@ describe("credential pool refresh", () => {
 			expires: 200,
 			clientId: "fresh-client",
 		};
-		const merged = mergeRefreshed(desynced, refreshed) as PooledCredential;
+		if (desynced.type !== "oauth") throw new Error("expected OAuth credentials");
+		const matched = findFlatOAuthSlot(desynced, ({ access }) =>
+			access === "desynced-top-access" || access === "old-slot-access" ? "same-account" : undefined,
+		);
+		const merged = mergeRefreshed(desynced, refreshed, matched ?? null);
 		if (merged.type !== "oauth") throw new Error("expected OAuth credentials");
+		const [primary, secondary] = listSlots(merged);
 		expect(merged.access).toBe("fresh-access");
 		expect(merged.refresh).toBe("fresh-refresh");
 		expect(merged.expires).toBe(200);
-		expect(merged.accounts?.[0]?.access).toBe("fresh-access");
-		expect(merged.accounts?.[0]?.refresh).toBe("fresh-refresh");
-		expect(merged.accounts?.[0]?.expires).toBe(200);
+		expect(primary?.access).toBe("fresh-access");
+		expect(primary?.refresh).toBe("fresh-refresh");
+		expect(primary?.expires).toBe(200);
 		expect(merged.clientId).toBe("fresh-client");
-		expect(merged.accounts?.[0]?.clientId).toBe("fresh-client");
-		expect(merged.accounts?.[1]?.access).toBe("sec-access");
+		expect(primary?.clientId).toBe("fresh-client");
+		expect(secondary?.access).toBe("sec-access");
 	});
 
-	test("mergeRefreshedSlot keeps flat projection and primary slot in sync when rotating primary slot (senpi#3407)", () => {
+	test("mergeRefreshedSlot rotates the identified flat projection with its slot (senpi#3407)", () => {
 		const pooled: PooledCredential = {
 			type: "oauth",
 			access: "desynced-access",
@@ -483,11 +489,16 @@ describe("credential pool refresh", () => {
 			refresh: "fresh-refresh",
 			expires: 200,
 		};
-		const merged = mergeRefreshedSlot(pooled, "default", refreshed) as PooledCredential;
+		if (pooled.type !== "oauth") throw new Error("expected OAuth credentials");
+		const matched = findFlatOAuthSlot(pooled, ({ access }) =>
+			access === "desynced-access" || access === "old-access" ? "same-account" : undefined,
+		);
+		const merged = mergeRefreshedSlot(pooled, "default", refreshed, matched ?? null);
 		if (merged.type !== "oauth") throw new Error("expected OAuth credentials");
+		const [primary, secondary] = listSlots(merged);
 		expect(merged.access).toBe("fresh-access");
-		expect(merged.accounts?.[0]?.access).toBe("fresh-access");
-		expect(merged.accounts?.[1]?.access).toBe("sec-access");
+		expect(primary?.access).toBe("fresh-access");
+		expect(secondary?.access).toBe("sec-access");
 	});
 
 	test("refreshing the primary slot preserves a flat projection of another slot", () => {

@@ -7,6 +7,7 @@ import {
 	defaultJsIsolation,
 	resolveAdvertiseHelpers,
 	resolveEnvironments,
+	resolveJsCells,
 	resolveJsIsolation,
 	resolveKernelToolsEnabled,
 	resolveSandbox,
@@ -33,6 +34,7 @@ describe("codemode feature settings", () => {
 		expect(resolveEnvironments(settings)).toEqual({ autoProvision: true, jsInstaller: "auto", pyInstaller: "pip" });
 		expect(resolveAdvertiseHelpers(settings)).toBe(false);
 		expect(resolveKernelToolsEnabled(settings)).toBe(true);
+		expect(resolveJsCells(settings)).toEqual({ typescript: false, scope: false });
 		expect(settings.languages.pyInterpreter).toBeUndefined();
 	});
 
@@ -65,6 +67,7 @@ describe("codemode feature settings", () => {
 		["sandbox", { sandbox: { futureNested: true } }],
 		["prompt", { prompt: { futureNested: true } }],
 		["kernelTools", { kernelTools: { futureNested: true } }],
+		["jsCells", { jsCells: { futureNested: true } }],
 		["environments.js", { environments: { js: { installer: "bun", futureNested: true } } }],
 	])(
 		"Given an unknown key inside %s when settings load then that object stays strict and the file falls back to defaults with a warning",
@@ -88,6 +91,7 @@ describe("codemode feature settings", () => {
 			sandbox: { enabled: true, memoryMb: 128, timeoutSeconds: 60 },
 			prompt: { advertiseHelpers: true },
 			kernelTools: { enabled: false },
+			jsCells: { typescript: true, scope: true },
 			languages: { pyInterpreter: "/usr/bin/python3" },
 		});
 
@@ -102,6 +106,7 @@ describe("codemode feature settings", () => {
 		});
 		expect(resolveAdvertiseHelpers(loaded.settings)).toBe(true);
 		expect(resolveKernelToolsEnabled(loaded.settings)).toBe(false);
+		expect(resolveJsCells(loaded.settings)).toEqual({ typescript: true, scope: true });
 		expect(loaded.settings.languages.pyInterpreter).toBe("/usr/bin/python3");
 		// The env overrides apply to the four enable flags only; languages.pyInterpreter survives them (#2763).
 		expect(resolveEnabledLanguages(loaded.settings, {})).toEqual({

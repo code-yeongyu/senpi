@@ -112,7 +112,7 @@ describe("OAuth refresh outside the credential lock (#1542)", () => {
 		expect(stored.accounts?.find((slot) => slot.name === "b")).toMatchObject({ refresh: "r-b", access: "b-access" });
 	});
 
-	it("adopts a slot rotated by another writer during the exchange instead of overwriting it", async () => {
+	it("preserves an unidentified slot rotated during the exchange and allows a retry", async () => {
 		const store = new InMemoryCredentialStore();
 		await store.modify("lockfree", async () => pooled());
 		const started = deferred();
@@ -128,6 +128,7 @@ describe("OAuth refresh outside the credential lock (#1542)", () => {
 		models.setProvider(provider);
 
 		const resolving = models.getAuth("lockfree", { slotName: "a" });
+		const rejected = expect(resolving).rejects.toMatchObject({ code: "auth" });
 		await started.promise;
 		// Another writer rotates slot "a" while our exchange is in flight; the store
 		// serializes it ahead of our compare-and-swap.
@@ -146,15 +147,55 @@ describe("OAuth refresh outside the credential lock (#1542)", () => {
 		gate.resolve();
 		await other;
 
-		const resolved = await resolving;
+		await rejected;
 		expect(exchanges).toBe(1);
-		expect(resolved?.auth.apiKey).toBe("other-access");
+		expect((await models.getAuth("lockfree", { slotName: "a" }))?.auth.apiKey).toBe("other-access");
 		const stored = (await store.read("lockfree")) as PooledCredential;
 		expect(stored.accounts?.find((slot) => slot.name === "a")).toMatchObject({
 			access: "other-access",
 			refresh: "r-a-other",
 		});
 		expect(stored.accounts?.find((slot) => slot.name === "b")).toMatchObject({ refresh: "r-b" });
+	});
+
+	it.each([undefined, "a"])("adopts a genuine concurrent refresh for slot %s", async (slotName) => {
+		const backing = new InMemoryCredentialStore();
+		await backing.modify("lockfree", async () => pooled());
+		const makeStore = (): CredentialStore => ({
+			read: backing.read.bind(backing),
+			list: backing.list.bind(backing),
+			modify: backing.modify.bind(backing),
+			delete: backing.delete.bind(backing),
+		});
+		const started = deferred();
+		const gate = deferred();
+		let exchanges = 0;
+		const provider = oauthProvider(async (credential) => {
+			const exchange = ++exchanges;
+			if (exchange === 1) {
+				started.resolve();
+				await gate.promise;
+			}
+			return {
+				type: "oauth",
+				access: `access-${exchange}`,
+				refresh: `${credential.refresh}-${exchange}`,
+				expires: FUTURE,
+			};
+		});
+		const firstModels = createModels({ credentials: makeStore() });
+		const secondModels = createModels({ credentials: makeStore() });
+		firstModels.setProvider(provider);
+		secondModels.setProvider(provider);
+
+		const first = firstModels.getAuth("lockfree", { slotName });
+		await started.promise;
+		const second = await secondModels.getAuth("lockfree", { slotName });
+		gate.resolve();
+
+		expect(second?.auth.apiKey).toBe("access-2");
+		expect((await first)?.auth.apiKey).toBe("access-2");
+		expect(exchanges).toBe(2);
 	});
 
 	it("joins concurrent requests for the same slot into one exchange", async () => {

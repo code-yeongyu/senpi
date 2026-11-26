@@ -5,9 +5,17 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { endpoint, type WorkerHostRecord } from "./rpc-host-endpoint.ts";
+import { SESSION_WORKER_LIMITS } from "../../src/modes/rpc/session-worker-protocol.ts";
+import { STARTUP_PHASE_ALLOWANCE_MS } from "../../src/modes/rpc/host-startup-policy.ts";
+import { CHILD_STOP_TIMEOUT_MS } from "../../src/modes/rpc/host-stop-intent.ts";
+import { endpoint, RPC_RESPONSE_TIMEOUT_MS, type WorkerHostRecord } from "./rpc-host-endpoint.ts";
 
 export type { WorkerHostRecord };
+
+export const HOST_READY_TIMEOUT_MS = STARTUP_PHASE_ALLOWANCE_MS.opaque_host;
+// Wait for the existing worker opening decision and delivery of its response.
+// Host cold loading has its own readiness exchange, outside this response clock.
+export const WORKER_OPEN_TIMEOUT_MS = SESSION_WORKER_LIMITS.openMs + RPC_RESPONSE_TIMEOUT_MS;
 
 // Keep native-entry rescue live when a registry test controls the host request clock.
 const fifoSetTimeout = setTimeout;
@@ -50,6 +58,8 @@ export async function startWorkerHost(
 		node?: boolean;
 		preload?: string;
 		sessionRuntime?: HostSessionRuntime;
+		/** Wait for the host's exact readiness reply before starting session-operation clocks. */
+		waitForReady?: boolean;
 		/** Extra host environment, e.g. a rollout flag the host reads at startup. */
 		env?: Readonly<Record<string, string>>;
 	} = {},
@@ -109,7 +119,7 @@ export async function startWorkerHost(
 			stdio: ["pipe", "pipe", "pipe"],
 		},
 	);
-	const exited = once(child, "close");
+	const exited = once(child, "exit");
 	if (options.preload) {
 		child.once("exit", (code, signal) =>
 			process.stderr.write(`PRESSURE_CHILD_EXIT ${JSON.stringify({ pid: child.pid, code, signal })}\n`),
@@ -125,7 +135,8 @@ export async function startWorkerHost(
 		stderr = (stderr + chunk.toString()).slice(-16000);
 		if (stderr.includes("senpi rpc listening on")) listening?.();
 	});
-	const stdio = endpoint(child.stdout, child.stdin, () => stderr);
+	const openTimeoutMs = options.waitForReady ? WORKER_OPEN_TIMEOUT_MS : RPC_RESPONSE_TIMEOUT_MS;
+	const stdio = endpoint(child.stdout, child.stdin, () => stderr, openTimeoutMs);
 	const connections: Array<{ dispose(): void }> = [];
 	const dispose = async () => {
 		if (options.preload)
@@ -133,24 +144,42 @@ export async function startWorkerHost(
 				`PRESSURE_DISPOSE ${JSON.stringify({ pid: child.pid, exitCode: child.exitCode, stdout: child.stdout.readableFlowing, stderr: child.stderr.readableFlowing })}\n`,
 			);
 		for (const connection of connections) connection.dispose();
+		// The supervisor's own stop window (senpi#6319): a host gets CHILD_STOP_TIMEOUT_MS from SIGTERM to SIGKILL, as in
+		// production, so a slow exit ends as this reported kill well inside vitest's 10 s hook budget, not as a hook timeout.
 		child.kill("SIGTERM");
-		const deadline = setTimeout(() => child.kill("SIGKILL"), 10_000);
-		await exited;
-		clearTimeout(deadline);
+		if (!(await settlesWithin(exited, CHILD_STOP_TIMEOUT_MS))) {
+			process.stderr.write(
+				`test host ${child.pid} did not exit within ${CHILD_STOP_TIMEOUT_MS} ms of SIGTERM; sending SIGKILL. Host stderr tail:\n${stderr.slice(-2_000)}\n`,
+			);
+			child.kill("SIGKILL");
+			await exited;
+		}
 		stdio.dispose();
+		// `exit` does not wait for the pipes: a grandchild may still hold them, so close this end before the scratch goes.
+		child.stdin.destroy();
+		child.stdout.destroy();
+		child.stderr.destroy();
 		if (options.preload) process.stderr.write(`PRESSURE_REMOVE ${scratch}\n`);
 		await rm(scratch, { recursive: true, force: true });
 		if (options.preload) process.stderr.write(`PRESSURE_REMOVED ${scratch}\n`);
 	};
-	if (options.socket) {
+	if (options.socket || options.waitForReady) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			await Promise.race([
-				ready,
-				new Promise<never>((_resolve, reject) => {
-					timer = setTimeout(() => reject(new Error(`Listener deadline: ${stderr}`)), 30_000);
-				}),
-			]);
+			if (options.socket) {
+				await Promise.race([
+					ready,
+					new Promise<never>((_resolve, reject) => {
+						timer = setTimeout(
+							() => reject(new Error(`Listener deadline: ${stderr}`)),
+							options.waitForReady ? HOST_READY_TIMEOUT_MS : RPC_RESPONSE_TIMEOUT_MS,
+						);
+					}),
+				]);
+			} else {
+				const started = await stdio.request({ type: "get_protocol_info" }, HOST_READY_TIMEOUT_MS);
+				if (!started.success) throw new Error(`Host readiness failed: ${started.error ?? stderr}`);
+			}
 		} catch (cause) {
 			await dispose();
 			throw cause;
@@ -170,7 +199,7 @@ export async function startWorkerHost(
 		stderrText: () => stderr,
 		async connect() {
 			const socket = createConnection(socketPath);
-			const wire = endpoint(socket, socket, () => stderr);
+			const wire = endpoint(socket, socket, () => stderr, openTimeoutMs);
 			connections.push({
 				dispose: () => {
 					wire.dispose();
@@ -181,6 +210,19 @@ export async function startWorkerHost(
 			return wire;
 		},
 	};
+}
+
+/** Whether `work` settles within `ms`; the timer never outlives the wait. */
+async function settlesWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<false>((resolveExpired) => {
+		timer = setTimeout(() => resolveExpired(false), ms);
+	});
+	try {
+		return await Promise.race([work.then(() => true as const), expired]);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 /**

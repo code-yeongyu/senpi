@@ -412,6 +412,13 @@ function joinSentences(...parts: readonly string[]): string {
 	return parts.filter((part) => part.length > 0).join(" ");
 }
 
+/** A surface variant derived from the terminal wording; an anchor that no longer matches throws instead of leaving a silent copy (senpi#6966). */
+function swap(text: string, anchor: string | RegExp, replacement: string): string {
+	const swapped = text.replace(anchor, replacement);
+	if (swapped === text) throw new Error(`gpt-6-astra: surface anchor not found: ${String(anchor)}`);
+	return swapped;
+}
+
 // The rule table carries the terminal wording; the app surface has no routing line to open with or refer back to.
 const INTENT_GATE_LEAD: Record<TerminalOrApp, string> = {
 	terminal: `Open a new request with one short routing line:
@@ -422,11 +429,12 @@ The declared stop condition is binding: work until it holds, then stop (see Stop
 	app: "Open a new request by settling the exact, observable condition that ends the task. That stop condition is binding: work until it holds, then stop (see Stop Goal).",
 };
 
-const APP_STEERING = STEERING.replace(
+const APP_STEERING = swap(
+	STEERING,
 	"keep going under the reading you already declared, so the reply opens with the work instead of another routing line;",
 	"keep going under the reading you already settled, so the reply opens with the work;",
 );
-const APP_FINAL_MESSAGE_SHAPE = FINAL_MESSAGE_SHAPE.replace("anything left unverified", GPT_APP_UNVERIFIED_SLOT);
+const APP_FINAL_MESSAGE_SHAPE = swap(FINAL_MESSAGE_SHAPE, "anything left unverified", GPT_APP_UNVERIFIED_SLOT);
 
 // Chat takes the app wording and replaces the handoff block with the chat reply rule.
 const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport: string; finalMessageShape: string }> =
@@ -434,13 +442,14 @@ const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport
 		terminal: { steering: STEERING, handoffReport: HANDOFF_REPORT, finalMessageShape: FINAL_MESSAGE_SHAPE },
 		app: {
 			steering: APP_STEERING,
-			handoffReport: HANDOFF_REPORT.replace(GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
+			handoffReport: swap(HANDOFF_REPORT, GPT_HANDOFF_MOMENTS.terminal, GPT_HANDOFF_MOMENTS.app),
 			finalMessageShape: APP_FINAL_MESSAGE_SHAPE,
 		},
 		chat: {
 			steering: APP_STEERING,
-			handoffReport: HANDOFF_REPORT.replace(/^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
-			finalMessageShape: APP_FINAL_MESSAGE_SHAPE.replace(
+			handoffReport: swap(HANDOFF_REPORT, /^[\s\S]*Between handoffs, no narration\. /, `${CHAT_REPLY_RULE} `),
+			finalMessageShape: swap(
+				APP_FINAL_MESSAGE_SHAPE,
 				"The final message of a change is the handoff block and stands alone: the outcome first, then in its You need slot what a reader needs",
 				`${CHAT_FINAL_MESSAGE} and stands alone: the outcome first, then what a reader needs`,
 			),
@@ -457,8 +466,8 @@ function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
 	const asyncDefault = hasEval ? ASYNC_DEFAULT : ASYNC_DEFAULT.replace(ASYNC_EVAL_CLAUSE, ASYNC_NO_EVAL_CLAUSE);
 	const unrunChecks =
 		context.surface !== "terminal"
-			? `${GPT_APP_UNRUN_CHECK_RULE} Fix failures your change caused and report pre-existing ones.`
-			: "Say what you could not run and why; fix failures your change caused and report pre-existing ones.";
+			? `${GPT_APP_UNRUN_CHECK_RULE} Fix failures your change caused and any that sit in the code you changed; report other pre-existing ones.`
+			: "Say what you could not run and why; fix failures your change caused and any that sit in the code you changed; report other pre-existing ones.";
 	// Only the guidelines: the provider request carries every tool schema, so the core renders no tool list.
 	const guidelinesAt = context.toolSection.indexOf("## Tool Guidelines");
 	const toolSection = guidelinesAt === -1 ? "" : `\n\n${context.toolSection.slice(guidelinesAt)}`;
@@ -505,7 +514,7 @@ ${asyncDefault} ${FOREGROUND_EXCEPTION} ${TURN_END_IS_WAIT} ${monitor}
 
 ${ROOT_CAUSE}
 
-The fix lands at the cause, in the smallest correct change: fewer new names, helpers, and layers; single-use logic inline; no error handling, fallbacks, retries, or shims for cases the current contracts exclude; validation at system boundaries only. Problems outside the goal, including ones you run into, go in the final message unexplored unless one blocks the goal. Match the codebase's style.
+This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it. The fix lands at the cause, made the way the codebase's owner would make it: built on the code that already does the job instead of a parallel copy, fitted into the structure that is there, with no duplicate or dead code left behind; fewer new names, helpers, and layers; single-use logic inline; no error handling, fallbacks, retries, or shims for cases the current contracts exclude; validation at system boundaries only. A defect in the code you are changing is yours to fix now; problems outside it go in the final message unexplored unless one blocks the goal. Match the codebase's style.
 
 ${UNBOUNDED_RETRY}${toolSection}
 

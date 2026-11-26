@@ -29,6 +29,15 @@ describe("senpi-codemode extension factory", () => {
 
 		expect(() => senpiCodemode(pi)).not.toThrow();
 		expect(registeredTools).toEqual(["eval"]);
-		expect(events).toEqual(["resources_discover", "session_start", "session_shutdown", "model_select", "turn_start"]);
+		expect(events).toEqual([
+			"resources_discover",
+			"tool_call_ready",
+			"tool_execution_end",
+			"turn_start",
+			"session_start",
+			"session_shutdown",
+			"model_select",
+			"turn_start",
+		]);
 	});
 });

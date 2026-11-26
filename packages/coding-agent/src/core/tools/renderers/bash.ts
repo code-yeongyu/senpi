@@ -15,7 +15,6 @@ import type { BashToolDetails } from "../bash.ts";
 import { getTextOutput, invalidArgText, normalizeDisplayText, replaceTabs, str } from "../render-utils.ts";
 
 const BASH_PREVIEW_LINES = 5;
-export const BASH_UPDATE_THROTTLE_MS = 100;
 type BashResultRenderState = {
 	cachedWidth: number | undefined;
 	cachedLines: string[] | undefined;

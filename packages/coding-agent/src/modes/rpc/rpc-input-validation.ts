@@ -1,5 +1,6 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { isTelemetryConsent } from "../../core/telemetry-consent.ts";
 import { MAX_TOOL_BARRIER_ID_LENGTH, toolBarrierSpecError } from "../../core/tool-barrier.ts";
 import { admitExternalMessageFieldError } from "./admit-external-message-wire.ts";
 import { validatePauseCommand } from "./pause-command-validation.ts";
@@ -154,8 +155,14 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	if (value.type === "unload_session") {
 		if (value.children !== undefined && value.children !== "refuse" && value.children !== "detach")
 			return 'children must be "refuse" or "detach".';
-		for (const flag of ["interrupt", "clearQueue", "force"] as const)
+		if (value.deliveries !== undefined && value.deliveries !== "refuse")
+			return 'deliveries must be "refuse"; omit it to hand unwritten deliveries back on an interrupt.';
+		for (const flag of ["interrupt", "clearQueue", "force", "graceful"] as const)
 			if (value[flag] !== undefined && typeof value[flag] !== "boolean") return `${flag} must be a boolean.`;
+		if (value.waitMs !== undefined && !(Number.isSafeInteger(value.waitMs) && Number(value.waitMs) > 0))
+			return "waitMs must be a positive integer of milliseconds.";
+		if (value.graceful === true && value.interrupt === true)
+			return "graceful and interrupt exclude each other: a graceful close never interrupts the turn.";
 	}
 	if (
 		(value.type === "steer" || value.type === "follow_up") &&
@@ -281,6 +288,25 @@ export function sessionPromptSurfaceError(value: unknown): string | undefined {
 export function sessionBrowserEngineError(value: unknown): string | undefined {
 	if (value === undefined || isBrowserEngine(value)) return undefined;
 	return `browserEngine must be "connected", "builtin" or "none".`;
+}
+
+/** Detail for a bare telemetry answer (`set_telemetry_consent.consent`) the host refuses. */
+export function sessionTelemetryConsentError(value: unknown): string | undefined {
+	if (isTelemetryConsent(value)) return undefined;
+	return `consent must be "granted", "declined" or "unanswered".`;
+}
+
+/** Detail for a telemetry answer (`open_session.telemetry`, `attach_session.telemetry`) the host refuses. */
+export function sessionTelemetryError(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	if (
+		typeof value === "object" &&
+		value !== null &&
+		Object.keys(value).length === 1 &&
+		isTelemetryConsent((value as { consent?: unknown }).consent)
+	)
+		return undefined;
+	return `telemetry must be { consent: "granted" | "declined" | "unanswered" }.`;
 }
 
 const MAX_RETRY_FALLBACK_CHAINS = 32;

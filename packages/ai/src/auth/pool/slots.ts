@@ -1,6 +1,6 @@
 import { LEGACY_PROVIDER_IDS } from "../../legacy-provider-ids.ts";
 import type { ProviderEnv } from "../../types.ts";
-import type { Credential, OAuthCredentials } from "../types.ts";
+import type { Credential, OAuthAuth, OAuthCredential, OAuthCredentials } from "../types.ts";
 
 export type { Credential };
 
@@ -32,6 +32,7 @@ const OAUTH_ACCOUNT_FIELDS = [
 	"scopes",
 	"planUsageEnabled",
 	"signedOut",
+	"refreshContinuity",
 ] as const;
 
 /** Replace account metadata as a unit; an absent field must not inherit a sibling's identity. */
@@ -218,6 +219,48 @@ export function listSlots(credential: PooledCredential | undefined): CredentialS
 
 export function findSlot(credential: PooledCredential | undefined, name: string): CredentialSlot | undefined {
 	return listSlots(credential).find((slot) => slot.name === name);
+}
+
+function sameSiwcRegistration(credential: OAuthCredential, slot: CredentialSlot): boolean {
+	return (
+		credential.route === "siwc" &&
+		slot.route === "siwc" &&
+		(["issuer", "subject", "clientId"] as const).every(
+			(field) =>
+				typeof credential[field] === "string" &&
+				credential[field].trim() !== "" &&
+				credential[field] === slot[field],
+		)
+	);
+}
+
+/** Finds the single slot represented by the flat OAuth credential, if it can be identified. */
+export function findFlatOAuthSlot(
+	credential: OAuthCredential,
+	accountIdentity?: OAuthAuth["accountIdentity"],
+): CredentialSlot | undefined {
+	const slots = listSlots(credential);
+	const tokenMatches = slots.filter(
+		(slot) =>
+			(credential.access !== "" && slot.access === credential.access) ||
+			(credential.refresh !== "" && slot.refresh === credential.refresh),
+	);
+	if (tokenMatches.length > 0) return tokenMatches.length === 1 ? tokenMatches[0] : undefined;
+	if (credential.route === "siwc") {
+		const registrations = slots.filter((slot) => sameSiwcRegistration(credential, slot));
+		return registrations.length === 1 ? registrations[0] : undefined;
+	}
+	if (!accountIdentity || !credential.access) return undefined;
+	const identity = accountIdentity(credential);
+	if (!identity) return undefined;
+	const identityMatches = slots.filter(
+		(slot) =>
+			slot.route !== "siwc" &&
+			typeof slot.access === "string" &&
+			slot.access !== "" &&
+			accountIdentity({ access: slot.access }) === identity,
+	);
+	return identityMatches.length === 1 ? identityMatches[0] : undefined;
 }
 
 /**
@@ -496,13 +539,7 @@ export function appendLoginSlot(
 	}
 	if (flat.type === "oauth" && flat.route === "siwc") {
 		const existing = listSlots(current);
-		const matched = existing.find(
-			(slot) =>
-				slot.route === "siwc" &&
-				(["issuer", "subject", "clientId"] as const).every(
-					(field) => typeof flat[field] === "string" && flat[field].trim() !== "" && flat[field] === slot[field],
-				),
-		);
+		const matched = existing.find((slot) => sameSiwcRegistration(flat, slot));
 		if (matched) {
 			const replacement = {
 				...slotFromFlatCredentialNamed(flat, matched.name),
@@ -721,12 +758,13 @@ export function repairManagedSentinelSlots(providerId: string, credential: Crede
 	return repaired;
 }
 
-/**
- * Merges a rotated OAuth credential into the NAMED slot. The flat top-level
- * projection rotates when it mirrors that slot or is desynchronized from the
- * whole pool and the primary slot is refreshed.
- */
-export function mergeRefreshedSlot(current: PooledCredential, name: string, refreshed: Credential): Credential {
+/** Rotates a named slot and, only when identified as the same account, its flat projection. */
+export function mergeRefreshedSlot(
+	current: PooledCredential,
+	name: string,
+	refreshed: Credential,
+	flatSlot?: CredentialSlot | null,
+): Credential {
 	if (refreshed.type !== "oauth" || current.type !== "oauth") return current;
 	if (!Array.isArray(current.accounts) || current.accounts.length === 0) return mergeRefreshed(current, refreshed);
 	const target = current.accounts.find((slot) => slot.name === name);
@@ -736,23 +774,22 @@ export function mergeRefreshedSlot(current: PooledCredential, name: string, refr
 		refreshed,
 	);
 	const accounts = current.accounts.map((slot) => (slot === target ? { ...slot, ...rotated } : slot));
-	const mirrorsFlat =
-		target.access === current.access ||
-		target.refresh === current.refresh ||
-		(target === current.accounts[0] &&
-			!current.accounts.some((slot) => slot.access === current.access || slot.refresh === current.refresh));
+	const matchedFlat = flatSlot === undefined ? findFlatOAuthSlot(current) : flatSlot;
+	const mirrorsFlat = matchedFlat?.name === target.name;
 	return mirrorsFlat ? { ...current, ...rotated, accounts } : { ...current, accounts };
 }
 
-/** Updates the slot matching the flat credential, or the primary slot when none matches. */
-export function mergeRefreshed(current: PooledCredential, refreshed: Credential): Credential {
+/** Rotates the flat credential and its identified slot without guessing an account. */
+export function mergeRefreshed(
+	current: PooledCredential,
+	refreshed: Credential,
+	matchedSlot?: CredentialSlot | null,
+): Credential {
 	if (!Array.isArray(current.accounts) || current.accounts.length === 0) {
 		return refreshed;
 	}
 	if (refreshed.type !== "oauth" || current.type !== "oauth") return refreshed;
-	const target =
-		current.accounts.find((slot) => slot.access === current.access || slot.refresh === current.refresh) ??
-		current.accounts[0];
+	const target = matchedSlot === undefined ? findFlatOAuthSlot(current) : matchedSlot;
 	const rotated = withOAuthAccountFields(
 		{
 			access: refreshed.access,

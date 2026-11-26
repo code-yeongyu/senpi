@@ -1,3 +1,4 @@
+import { resetsEngineTurnHistory } from "../../../engine-turn-limit.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import { TTSR_INJECTION_CUSTOM_TYPE } from "./types.ts";
 
@@ -16,14 +17,14 @@ function nudgedRules(entry: SessionEntry): readonly unknown[] {
 }
 
 /**
- * Whether this rule already sent its one corrective follow-up since the user's last message. Read from the
- * session, so a host that rebuilds the extension between turns cannot re-arm it (senpi#2967); the engine-wide
- * turn bound covers every other source.
+ * Whether this rule already sent its one corrective follow-up since the last user-directed input.
+ * Read from the session, so rebuilding the extension cannot re-arm it (senpi#2967).
  */
 export function ruleAlreadyCorrected(entries: readonly SessionEntry[], rule: string): boolean {
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
 		if (entry.type === "message" && entry.message.role === "user") return false;
+		if (entry.type === "custom_message" && resetsEngineTurnHistory(entry.customType, entry.details)) return false;
 		if (nudgedRules(entry).includes(rule)) return true;
 	}
 	return false;

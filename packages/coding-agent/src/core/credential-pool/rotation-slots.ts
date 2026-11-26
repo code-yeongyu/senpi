@@ -6,6 +6,7 @@ import type { PoolState } from "../egress/pool-state.ts";
 import { getConfigValueEnvVarNames, resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
+import { hasRefusedGrant } from "./auth-reprobe.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { activeModelBlockUntil } from "./model-scope.ts";
 import type { AccountStrategy } from "./selection-order.ts";
@@ -128,6 +129,7 @@ function overlayState(slot: RotationSlot, state: CredentialSlotState | undefined
 		...slot,
 		...(state.blockedUntil === undefined ? {} : { blockedUntil: state.blockedUntil }),
 		...(state.blockReason === undefined ? {} : { blockReason: state.blockReason }),
+		...(hasRefusedGrant(state) ? { refusedGrant: true } : {}),
 		...(state.failureCount === undefined ? {} : { failureCount: state.failureCount }),
 		...(state.lease === undefined ? {} : { lease: state.lease }),
 	};
@@ -138,7 +140,8 @@ function overlayState(slot: RotationSlot, state: CredentialSlotState | undefined
  * slot unavailable to THIS request only, until the block's own expiry (senpi#2555).
  */
 function overlayModelBlock(slot: RotationSlot, until: number | undefined): RotationSlot {
-	if (until === undefined || (slot.blockedUntil !== undefined && slot.blockedUntil >= until)) return slot;
+	if (slot.refusedGrant || until === undefined || (slot.blockedUntil !== undefined && slot.blockedUntil >= until))
+		return slot;
 	return {
 		...slot,
 		blockedUntil: until,
@@ -242,8 +245,10 @@ export async function listRotationSlots(
 							lane: "stored" as const,
 							pinned: (credential as PooledCredential).pinned === slot.name,
 							storedRevision,
+							// A 401 on this slot after the lease ends is a verdict on this token (senpi#5097).
+							materialRevision,
 						},
-						(state) => state?.credentialRevision === storedRevision,
+						(state) => applicableStoredState(state, revisions) !== undefined,
 						now(),
 					);
 					if (inFlight !== undefined) slots.push(inFlight);

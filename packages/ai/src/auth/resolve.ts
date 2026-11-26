@@ -5,6 +5,7 @@ import { classifyOAuthRefreshFailure, OAuthRefreshUnavailableError } from "../ut
 import { readCredential, readSlotCredential } from "./credential-read.ts";
 import {
 	OAuthRefreshExchangeError,
+	OAuthRefreshIdentityError,
 	OAuthRefreshStoreError,
 	projectOAuthSlot,
 	refreshOAuthCredential,
@@ -180,6 +181,7 @@ const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000;
 /** Maps a shared-refresh failure onto the `ModelsError` codes callers match on. */
 export function oauthRefreshModelsError(error: unknown, providerId: string): ModelsError {
 	if (error instanceof ModelsError) return error;
+	if (error instanceof OAuthRefreshIdentityError) return new ModelsError("auth", error.message, { cause: error });
 	if (error instanceof OAuthRefreshExchangeError) {
 		if (classifyOAuthRefreshFailure(error.cause) === "transient") {
 			return new OAuthRefreshUnavailableError(providerId, error.cause);

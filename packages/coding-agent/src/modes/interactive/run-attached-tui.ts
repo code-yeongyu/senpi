@@ -1,7 +1,10 @@
 import { TuiAltScreen } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
+import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { AttachedTui, validateAttachTerminal } from "./attach.ts";
+import type { AttachStartup } from "./attach-startup.ts";
 import { initTheme, stopThemeWatcher } from "./theme/theme.ts";
 import { createInteractiveTui } from "./tui-renderer.ts";
 
@@ -11,6 +14,7 @@ export async function runAttachedTui(options: {
 	readonly session: string;
 	readonly tuiMode?: "regular" | "fullscreen";
 	readonly theme?: string;
+	readonly startup?: AttachStartup;
 }): Promise<void> {
 	validateAttachTerminal(process.stdin.isTTY, process.stdout.isTTY);
 	initTheme(options.theme);
@@ -50,7 +54,9 @@ export async function runAttachedTui(options: {
 	const interrupted = new Promise<"interrupted">((resolve) => {
 		interrupt = () => resolve("interrupted");
 	});
-	const view = new AttachedTui(ui, finish);
+	// The terminal user's own setting is this caller's answer; the host still decides with its own (senpi#7446).
+	const telemetryConsent = isInstallTelemetryEnabled(SettingsManager.create(process.cwd())) ? "granted" : "declined";
+	const view = new AttachedTui(ui, finish, { telemetryConsent });
 	// A signal ends the presentation at once, also while connect() still waits on the endpoint. Once it
 	// is leaving, the release can wait on a silent endpoint: a further signal restores the terminal
 	// (idempotently) and exits at once, non-zero.
@@ -74,7 +80,7 @@ export async function runAttachedTui(options: {
 	ui.start();
 	try {
 		const outcome = await Promise.race([
-			view.connect(options.address, options.session).then(() => "connected" as const),
+			view.connect(options.address, options.session, options.startup).then(() => "connected" as const),
 			interrupted,
 		]);
 		if (outcome === "connected") await done;

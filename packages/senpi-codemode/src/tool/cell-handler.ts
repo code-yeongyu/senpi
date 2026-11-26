@@ -25,7 +25,9 @@ import { CellResultBuilder, type CellState } from "./cell-runtime.ts";
 import type { EvalImageResizer } from "./image.ts";
 import { type ResolvedToolReply, runNestedTool } from "./nested-tool-call.ts";
 import type { CellToolUpdateSink } from "./nested-tool-output.ts";
+import { ScopedWatches } from "./scoped-watches.ts";
 import { upsertStatusEvent } from "./status-events.ts";
+import { isCoreWidgetName } from "./tool-widgets.ts";
 import type { EvalKernel, EvalStatusEvent, EvalToolDetails } from "./types.ts";
 
 export type { CellState } from "./cell-runtime.ts";
@@ -54,6 +56,8 @@ export class CellHandler {
 	readonly #runtime: CellBridgeRuntime;
 	readonly #resultBuilder: CellResultBuilder;
 	readonly #dispatchContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
+	readonly #scopedWatches = new ScopedWatches();
+	#settledOk = false;
 
 	constructor(kernel: EvalKernel, state: CellState, runtime: CellBridgeRuntime) {
 		this.#kernel = kernel;
@@ -86,7 +90,7 @@ export class CellHandler {
 				this.#resultBuilder.setPhase(message.title);
 				return;
 			case "status":
-				this.#recordStatus(message.event);
+				if (!this.#scopedWatches.observe(message.event)) this.#recordStatus(message.event);
 				return;
 			case "log":
 				this.#resultBuilder.push(`${message.message}\n`);
@@ -114,11 +118,24 @@ export class CellHandler {
 	}
 
 	async finalize(result: Extract<KernelToHostMessage, { type: "result" }>): Promise<AgentToolResult<EvalToolDetails>> {
+		this.#settledOk = result.ok;
+		await this.stopScopedWatches();
 		return await this.#resultBuilder.finalize(result);
 	}
 
 	async finalizeCancellation(error: Error): Promise<AgentToolResult<EvalToolDetails>> {
+		await this.stopScopedWatches();
 		return await this.#resultBuilder.finalizeCancellation(error);
+	}
+
+	/**
+	 * A cell that ends without an ok result (error, stop, timeout) cannot close its scoped watches itself, so the host
+	 * does (senpi#7381). An ok cell already closed them, or moved them on deliberately. Stopping twice is a no-op.
+	 */
+	async stopScopedWatches(): Promise<void> {
+		if (this.#settledOk) return;
+		for (const failure of await this.#scopedWatches.stopHeld(this.#runtime.executeTool))
+			this.#resultBuilder.push(`${failure}\n`);
 	}
 
 	async flushOutput(): Promise<void> {
@@ -191,7 +208,14 @@ export class CellHandler {
 		}
 		await this.#deliverToolReply(
 			message,
-			() => runNestedTool(this.#runtime.executeTool, message, this.#state.signal, this.#resultBuilder),
+			() =>
+				runNestedTool(
+					this.#runtime.executeTool,
+					message,
+					this.#state.signal,
+					this.#resultBuilder,
+					this.#drawsOwnRow(message.toolName),
+				),
 			capture,
 		);
 	}
@@ -204,7 +228,14 @@ export class CellHandler {
 		try {
 			const reply = await resolve();
 			if (!this.#state.active) return;
-			recordToolCall(this.#state.toolCalls, reply.toolCallOk, capture, reply.resultPreview, reply.errorText);
+			recordToolCall(
+				this.#state.toolCalls,
+				reply.toolCallOk,
+				capture,
+				reply.resultPreview,
+				reply.errorText,
+				reply.details,
+			);
 			this.#kernel.deliverToolReply({ type: "tool-reply", callId: message.callId, ok: true, value: reply.value });
 		} catch (error) {
 			if (!this.#state.active) return;
@@ -229,6 +260,13 @@ export class CellHandler {
 
 	#toolParameters(toolName: string): unknown {
 		return this.#runtime.listTools?.().find((tool) => tool.name === toolName)?.parameters;
+	}
+
+	/** True when the tool draws its own result row, so its nested call keeps the details that row is drawn from. */
+	#drawsOwnRow(toolName: string): boolean {
+		// The six core tools are drawn by codemode's own widgets, which never read the kept details.
+		if (isCoreWidgetName(toolName)) return false;
+		return this.#runtime.listTools?.().find((tool) => tool.name === toolName)?.renderResult !== undefined;
 	}
 
 	#recordStatus(event: EvalStatusEvent): void {

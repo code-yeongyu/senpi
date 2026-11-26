@@ -7,7 +7,7 @@ import type { Message, Model, OpenAIResponsesCompat, PromptCacheDiagnostics } fr
 
 export interface OpenAIPromptCacheOptionsPayload {
 	mode?: "explicit" | "implicit";
-	ttl?: "30m";
+	ttl?: "30m" | "12h";
 	prewarm?: boolean;
 	comparison_response_id?: string;
 }

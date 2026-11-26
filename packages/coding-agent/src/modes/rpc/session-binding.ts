@@ -26,9 +26,12 @@ import { structuredLaneEnabled } from "./structured-session-records.ts";
 /** A session-owned adapter around the classic command and extension-UI wiring. */
 export interface RpcSessionBinding {
 	handle(command: object): Promise<void>;
+	setClientCapabilities?(capabilities: readonly string[]): void;
 	cancelPendingExtensionUiRequests?(): void;
 	/** A connection of the shared host left this session (`close_session`, a dropped or detached connection). */
 	connectionDetached?(connectionId: string): void;
+	/** Sends the session's current extension state to one receiver (a connection that just attached). */
+	replayExtensionEvents?(receiver: (record: object) => void): void;
 	/** `prompt` calls this binding started that have not settled, preflight included. */
 	pendingPrompts?(): readonly Promise<unknown>[];
 	dispose(): Promise<void>;
@@ -71,6 +74,7 @@ export async function createRpcSessionBinding(
 		return carrier && record && firstOrdinal !== undefined ? { record, carrier, ordinal, firstOrdinal } : undefined;
 	};
 	const enqueueRecord = (record: object): void => {
+		if (entry.speculative) return;
 		toolSpans.observe(record);
 		const canonical = pairing?.take(record);
 		const refused = pairing?.refused(record) === true;
@@ -129,6 +133,7 @@ export async function createRpcSessionBinding(
 			writeInScope(record);
 		};
 		const writeStructuredInScope = bindToProviderScope((record: object) => {
+			if (entry.speculative) return;
 			writer.structuredLanes.accept(sessionId, record);
 			const control = pairing?.structured(record);
 			if (control && lane) lane.acceptControl(unit(control.carrier, control.record));
@@ -170,7 +175,8 @@ export async function createRpcSessionBinding(
 				rpcOwnersByConnection.clear();
 			},
 			publishLoadedSurfacesChanged: (previous, digest) => {
-				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
+				if (!entry.speculative && entry.scope.state !== "closed")
+					writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
 			},
 			...options,
 			workerSecurityBridge: writer.workerSecurityBridge,
@@ -193,6 +199,8 @@ export async function createRpcSessionBinding(
 	});
 	await handler.ready;
 	return {
+		setClientCapabilities: (capabilities) =>
+			runWithProviderScope(entry.scope, () => handler.setClientCapabilities(capabilities)),
 		handle: (command) => {
 			if (writer.handleMcpForm(command)) return Promise.resolve();
 			const invoke = () => runWithProviderScope(entry.scope, () => handler.handleInputLine(JSON.stringify(command)));
@@ -207,6 +215,10 @@ export async function createRpcSessionBinding(
 			rpcOwnersByConnection.get(connectionId)?.retire();
 			rpcOwnersByConnection.delete(connectionId);
 			runWithProviderScope(entry.scope, () => handler.connectionDetached(connectionId));
+		},
+		replayExtensionEvents: (receiver) => {
+			if (entry.scope.state !== "closed")
+				runWithProviderScope(entry.scope, () => handler.replayExtensionEvents(receiver));
 		},
 		dispose: () => {
 			toolSpans.closeAll();

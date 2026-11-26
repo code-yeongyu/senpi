@@ -61,6 +61,17 @@ export const OptBool = Opt(Bool);
 export const literals = <const L extends readonly [string, ...string[]]>(...values: L) =>
 	Type.Union(values.map((value) => Type.Literal(value)) as unknown as { -readonly [I in keyof L]: TLiteral<L[I]> });
 
+/** The desktop app's `ThreadSettledBy` (`core/session-settled.ts`); the handler also trims and drops extra fields. */
+export const ThreadSettledBy = Type.Union([
+	Type.Object({ kind: Type.Literal("user") }),
+	Type.Object({ kind: Type.Literal("agent"), threadId: OptId, threadTitle: OptStr }),
+	Type.Object({
+		kind: literals("pr-merged", "pr-closed"),
+		pullRequestNumber: Opt(Type.Integer({ minimum: 1, maximum: RPC_INBOUND_LIMITS.count })),
+	}),
+	Type.Object({ kind: Type.Literal("inactivity"), days: Num }),
+]);
+
 export const ThinkingLevel = literals("off", "minimal", "low", "medium", "high", "xhigh", "max");
 export const SessionKind = literals("interactive", "worker");
 export const SessionContext = Type.Record(Id, Str, { maxProperties: SESSION_CONTEXT_LIMITS.keys });
@@ -79,6 +90,8 @@ const ModelEntry = Type.Object({
 	serviceTier: Opt(Type.Unknown()),
 });
 export const ModelEntries = Type.Array(ModelEntry, { maxItems: RPC_INBOUND_LIMITS.listItems });
+export const TelemetryConsent = literals("granted", "declined", "unanswered");
+export const TelemetryDeclaration = Type.Object({ consent: TelemetryConsent }, { additionalProperties: false });
 export const RetryFallback = Type.Object({
 	modelFallback: Bool,
 	fallbackChains: Type.Record(Id, Type.Immutable(Strings), { maxProperties: RPC_INBOUND_LIMITS.recordKeys }),

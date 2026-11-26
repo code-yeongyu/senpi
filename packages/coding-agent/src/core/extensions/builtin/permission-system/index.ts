@@ -1,5 +1,7 @@
+import { hasOpenerRefusal, refusesApprovals } from "../../../opener-approvals.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult } from "../../types.ts";
+import { combinedToolCallSignal } from "../../tool-call-signal.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { decideAuto } from "./auto-policy.ts";
 import { createCellDecision, registerCellAuthorizer, updateCellEnforcement } from "./cell-decision.ts";
@@ -144,6 +146,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const retireCellAuthorizers = new WeakMap<object, () => void>();
 	let cellSession: object | undefined;
 
+	const labelled = refusesApprovals(pi.sessionContext);
 	const nextRequestID = createRequestIDFactory();
 	// Rules this session already persisted at answer time; shutdown skips re-appending them.
 	const persistedAtAnswer = new Set<string>();
@@ -319,8 +322,12 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const authorizeToolCall = async (
 		event: ToolCallEvent,
 		ctx: ExtensionContext,
-		signal?: AbortSignal,
+		dispatchSignal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
+		// A `tool_call` hook gets no signal argument, so its prompt ends with the turn: an abort releases a prompt
+		// nobody answers (a child's dialog forwarded to a host that never shows it), senpi#6670. The dispatch (call)
+		// signal does not replace the context's: the prompt runs under their union so a turn abort also ends it (senpi#6679).
+		const signal = combinedToolCallSignal(dispatchSignal, ctx.signal);
 		attachWithoutSession(ctx);
 		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {
@@ -376,8 +383,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				callPreset === "auto"
 					? await decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd)
 					: undefined;
+			const registered = Promise.withResolvers<"pending">();
 			const askResultPromise = activeService
 				.ask(request, {
+					onPending: () => registered.resolve("pending"),
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
 					approveBlanketAsk: auto?.approveBlanketAsk ?? false,
 					presetBound: callPreset === "auto",
@@ -388,7 +397,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					() => ({ ok: true as const }),
 					(error: unknown) => ({ ok: false as const, error }),
 				);
-			const isPending = activeService.list().some((pendingRequest) => pendingRequest.id === request.id);
+			// The decision can resolve path identities first, so the request may register after this point: wait for
+			// whichever comes first, a decision without an ask or the pending request, before choosing how to answer.
+			const isPending = (await Promise.race([askResultPromise, registered.promise])) === "pending";
 
 			if (!isPending) {
 				const askResult = await askResultPromise;
@@ -404,7 +415,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				continue;
 			}
 
-			if (ctx.hasUI) {
+			// Read at ask time: a labelled attach can record the refusal while this session is live. A runtime with no
+			// session (a hand running tools for a remote loop) has no record to read; its opener's label still applies.
+			const refusedByOpener = labelled || (ctx.sessionManager !== undefined && hasOpenerRefusal(ctx.sessionManager));
+			if (ctx.hasUI && !refusedByOpener) {
 				const reply = await showPermissionPrompt(ctx, request, signal);
 				activeService.reply(reply);
 				if (reply.reply === "always") {
@@ -420,6 +434,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 							}
 						},
 						presetBound: callPreset === "auto",
+						refusedByOpener,
 					}),
 				);
 			}

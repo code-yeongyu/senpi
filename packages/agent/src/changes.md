@@ -1,3 +1,158 @@
+## 2026-11-04 - Thinking-off is never sent to a thinking-only model (senpi#5720)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` sends thinking-off to a model whose level map vetoes `off` at that model's lowest supported level (`clampThinkingLevel(model, "off")`), and records that level on the reply. Explicit levels and models that support `off` are unchanged.
+
+### Why
+
+- A level carried over from another model (a mid-session switch to Kimi K3.1 Pro at `off`) reached the provider unclamped; K3.1 Pro rejects thinking-off with a 400 on every attempt (code-yeongyu/oh-my-openagent#12316).
+
+### Why an extension could not handle it
+
+- The request's model and level are fixed inside the loop after `prepareRequest`; only the loop sees the pair that is actually sent.
+
+### Expected merge conflict zones
+
+- LOW: the `streamFunction` call and the `result()` thinking-level stamp in `streamAssistantResponse`.
+
+## 2026-11-20 - parked follow-ups join the next run's first turn; `all` lists every queued message (oh-my-openagent#14428)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: a run that ends in a provider error with follow-ups still queued marks them parked, whoever owns that run's post-run decision (a retry, a compaction or `agent_before_settle`, which suppress the core's own drain). The next run started from new input (a prompt, a started delivery, a goal continuation's message) sets `takeFollowUpsAtStart`, so those follow-ups enter it at its first turn boundary instead of only after its first response; a retry or other `continue()` leaves the mark for that run, so follow-up work still waits behind a retry. A run that starts from the follow-up queue itself clears the mark. `peekQueuedMessages({ all: true })` returns every queued steering and follow-up message (new `PendingMessageQueue.all()`); in `one-at-a-time` mode it returned only each queue's next drain.
+- `packages/agent/src/agent-loop.ts`: the loop's first queue poll also drains follow-ups when `takeFollowUpsAtStart` is set and no steering is queued.
+- `packages/agent/src/internal-events.ts`: `InternalLoopConfig` carries the internal `takeFollowUpsAtStart` flag; the public `AgentLoopConfig` is unchanged.
+
+### Why
+
+- oh-my-openagent#14428: follow-ups another session queued while a run was failing were parked, and every later run whose request failed too (a started delivery, a goal continuation) settled without writing them, so they stayed pending for hours. The transcript entry is the delivery: the next run writes them before its request, whatever that request returns.
+- `takeQueuedDeliveries()`, `clearQueue()` and the ticket lookups used `peekQueuedMessages({ all: true })` as "every queued message". With user input queued ahead of a delivery, an interrupt dropped the delivery from the admission ledger while it stayed queued, so the sender's redelivery was written twice.
+
+### Why an extension could not handle it
+
+- Queue polling inside a run and the queue snapshot are agent-loop internals; no extension hook runs at a run's first turn boundary or owns the native queues.
+
+### Expected merge conflict zones
+
+- LOW: `runWithLifecycle()`, `createLoopConfig()` and `peekQueuedMessages()` in `agent.ts`; the first steering poll in `runLoop()` in `agent-loop.ts`.
+
+## 2026-11-15 - What a closed hand link suppresses, stated exactly (senpi#6777, PR #6801)
+
+### What changed
+
+- `packages/agent/src/execution/remote-link.ts`: comment only. A closed link ignores every inbound frame before decoding it, so a late `settled` / `terminal` frame is not acked, a `hello` re-sends no floor, and a nested `plane.request` gets no `plane.refused` (or any other plane answer). This states precisely what #6796's entry summarised as "no nested plane answer is written"; behaviour is unchanged.
+
+### Why
+
+- #6796 review L1: the claim about plane answers had no test; this PR adds the proof and the exact wording.
+
+### Why an extension could not handle it
+
+- The hand link is an agent-core execution internal.
+
+### Expected merge conflict zones
+
+- LOW: the comment at the top of the `transport.onFrame` handler in `remote-link.ts`.
+
+## 2026-11-15 - A closed hand link writes nothing for inbound frames (senpi#6777, PR #6796)
+
+### What changed
+
+- `packages/agent/src/execution/remote-link.ts`: the inbound frame handler returns at once on a closed link, so a late `settled` / `terminal` frame is not acked, a `hello` re-sends no floor, and no nested plane answer is written.
+
+### Why
+
+- After `close()` the link still wrote through its closed transport in response to frames (#6791 review L1).
+
+### Why an extension could not handle it
+
+- The hand link is an agent-core execution internal.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `transport.onFrame` handler in `remote-link.ts`.
+
+## 2026-11-15 - A closed hand link sends nothing (senpi#6777, PR #6791)
+
+### What changed
+
+- `packages/agent/src/execution/remote-link.ts`: `close()` marks the link closed; a `dispatch` after it settles at once as `{ kind: "closed", sent: false }` (the tool host's `cancelled`, a device file operation's `hand_unreachable`) instead of sending on the closed link.
+
+### Why
+
+- A call made after `close()` went out on a link whose transport the host had already closed (#6785 review L2). The one designed re-send, a durable hand's `hello`, happens on an open link, so nothing relies on post-close sends.
+
+### Why an extension could not handle it
+
+- The hand link is an agent-core execution internal.
+
+### Expected merge conflict zones
+
+- LOW: `dispatch` and `close()` in `remote-link.ts`.
+
+## 2026-11-15 - A sent device file operation is interrupted when the hand link closes; split-local closed calls (senpi#6777, PR #6783)
+
+### What changed
+
+- `packages/agent/src/execution/remote-device-files.ts`: a `closed` reply for an operation that was sent fails `interrupted` with `reason: "hand_restarted"` and `uncertain: true`, like a `terminal` reply; one never sent stays `hand_unreachable`.
+- With #6778, a closed tool call under `placement: "split-local"` returns the non-error `TOOL_RESULT_PLACEHOLDER` (sent or not), where it used to return an error; this follows the split-local recovery rule, under which the session's own recovery decides.
+
+### Why
+
+- `hand_unreachable` reads as "did not happen" and invites a retry of a write that may have landed (#6778 review L1). The split-local outcome was not stated (#6778 review L4).
+
+### Why an extension could not handle it
+
+- The device file client and the remote tool host are agent-core execution internals.
+
+### Expected merge conflict zones
+
+- LOW: the `closed` case of `valueOf` in `remote-device-files.ts`.
+
+## 2026-11-15 - A tool call pending when the hand link closes ends as hand_restarted or cancelled (senpi#6777, PR #6778)
+
+### What changed
+
+- `packages/agent/src/execution/remote-link.ts`: the `closed` reply carries `sent`, whether the call's invoke had been handed to the transport.
+- `packages/agent/src/execution/remote-tool-host.ts`: a `closed` reply maps through `terminalResult`: `hand_restarted` (uncertain, hooks may have run) when sent, `cancelled` (no effect) when never sent, instead of an untyped error.
+
+### Why
+
+- When the hand dies or is replaced mid-call, the model needs to know whether the call may have run; a hosted brain had to patch this locally.
+
+### Why an extension could not handle it
+
+- The remote tool host and the hand link are agent-core execution internals.
+
+### Expected merge conflict zones
+
+- LOW: the `resultOf` switch in `remote-tool-host.ts`; `close()` in `remote-link.ts`.
+
+## 2026-11-15 - Late hand results reach the brain over a durable, bounded wake link (senpi#5778, senpi#6763, PR #6767)
+
+### What changed
+
+- `packages/agent/src/execution/wake-link.ts` (new): the wake link on the hand transport's `hand.wake` lane. `createHandWakeLink` (hand end) commits each wake before sending it; on start and on the brain's `wake_reoffer` it sweeps the outbox, then sends every due drop report as `wake_dropped` with its `eventId` and every un-acked wake as `wake`, and applies the brain's `wake_receipt`. A wake it cannot record goes out as a best-effort `wake_dropped` (`unrecorded`, no `eventId`). `serveHandWakes` (brain end) passes the brain's `check` to `inbox.receive`, which runs it only for a new wake of a bound scope (an unbound scope is retryable `unknown_scope`; `not_scope_session` is reported as `WakeRefusedError`), commits each wake or durable drop report to the inbox, answers the receipt only after the commit, hands first commits to `onCommitted` and best-effort drops to `onDropped`, and reports an undecodable frame to `onFault`.
+- `packages/agent/src/execution/wake-outbox.ts`: optional `limits` (per scope and total; past either a wake the brain refused for good is evicted with all its state, reported `refused`, or else the new wake is refused before it is sent, `WakeOverflowError`, reported `overflow`; a sent wake is never evicted) and `onFault`. Drop reports (`overflow`, `expired`, `refused`, `malformed`) are durable records in the outbox document (`drops`), acked like wakes, coalesced only while this instance never sent them, never bounded and never reported dropped themselves. A refusal for good records its time; when it lapses after the retention the wake is reported `refused`, and `sweep` purges refusal entries whose wake is gone. `sweep` also removes malformed entries (reported `malformed`, `MalformedWakeError` to `onFault`). `due()` lists drop reports first, then un-acked wakes.
+- `packages/agent/src/execution/wake-outbox-record.ts` (new): the strict outbox record codec and the drop-report bookkeeping.
+- `packages/agent/src/execution/wake-inbox.ts`: `receive(sender, wake, check?)` acks a duplicate first, then refuses a closed scope, then checks the binding and runs `check`; optional `onUndeliverable` and `maxAttempts` (default 3). With them a wake whose consumer throws is reported, kept for later drains with its failure count in the record (`failures`), and taken as poisoned at its last attempt, while the wakes behind it are delivered. Without them a failure rejects the drain, as before. `sweep` keeps the other fields of the record.
+- `packages/agent/src/execution/wake-types.ts`: `WakeRefusal` adds `not_scope_session`; `WakeDropReason`, `WAKE_DROPPED_SOURCE`, `WakeLimits`; the outbox record's `drops` and timed `refused`; the inbox record's `failures`; the meaning of `WakeEvent.scope`.
+- `packages/agent/src/execution/wake-delivery.ts` (new): the brain side of a hand's wakes. `parseHandWake` (sources `message`, `user_message`, `entry`, `notice`, `wake.dropped`), `deliverHandWake` (the call a local session makes; a wake that would start a turn is skipped in a one-shot session or one without a model), `deliverHandDrop` (the consumer of `onDropped`: a warning notice), `scopeSessionCheck` (for `serveHandWakes({ check })`), `ONE_SHOT_MODES`.
+- `packages/agent/src/index.ts`: exports all of the above, `createWakeOutbox`, `createWakeInbox`, `WAKE_RETENTION_MS` and the `MemoryStoreMedium` type.
+
+### Why
+
+- S14 built the durable outbox and inbox but nothing wired them, so a hand's late results had no reliable way to the brain (senpi#5778, senpi#6763). The #6767 review asked for a bound on un-acked wakes with reported drops (M1), strict decoding (L2) and a session check on the brain (L3). The hosted brain's lane (omo-service#1176) asked for the delivery functions from `packages/agent/src/index.ts`, the package entry it already imports, for undecodable frames to be reported, and for one undeliverable wake to stop blocking the inbox.
+
+### Why an extension could not handle it
+
+- The outbox, the inbox, the wake link and the hand transport are agent-core primitives below the extension layer, and only `packages/agent/src/index.ts` makes them reachable from the package.
+
+### Expected merge conflict zones
+
+- LOW: the export block of `packages/agent/src/index.ts`.
+
 ## 2026-11-08 - Agent forwards a hosted commitStep to every loop run (senpi#6236)
 
 ### What changed

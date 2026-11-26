@@ -1,7 +1,7 @@
-import { buildRpcSessionState } from "./connection-handler.ts";
+import { stat } from "node:fs/promises";
+import { RETRY_ROUTED_OPEN } from "./predecessor-routes.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { startOpenTimer } from "../../core/open-timing.ts";
-import { openReplyPermissionMode } from "../../core/permission-mode.ts";
 import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { runAdmissionProducer } from "./compact-admission-producer.ts";
@@ -18,18 +18,24 @@ import { close } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
+import { openSessionFolder } from "./open-session-folder.ts";
 import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-profile.ts";
+import { holdOpenConnection, type OpenReplyAs, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
+import { closePark } from "./session-router-park.ts";
 import { relocationConnection } from "./session-router-relocation.ts";
 import { syncRetainedRecord } from "./session-router-residency.ts";
+import { declareTelemetry } from "./session-router-telemetry.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
+import { RpcSessionRegistryError } from "./session-registry-types.ts";
 
 export function openWithBarrier(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "open_session" }>,
+	replyAs?: OpenReplyAs,
 ): Promise<RpcResponse | undefined> {
 	if (compactUpdatesEnabled() && command.admissionId !== undefined)
 		return compactOpen(host, command, (accept, signal) => openPhysicalWithBarrier(host, command, accept, signal));
-	return openPhysicalWithBarrier(host, command);
+	return openPhysicalWithBarrier(host, command, undefined, undefined, replyAs);
 }
 
 function openPhysicalWithBarrier(
@@ -37,20 +43,15 @@ function openPhysicalWithBarrier(
 	command: Extract<RpcCommand, { type: "open_session" }>,
 	accept?: OpenAcceptance,
 	signal?: AbortSignal,
+	replyAs?: OpenReplyAs,
 ): Promise<RpcResponse | undefined> {
 	const owner = host.writer.currentConnection();
-	if (owner === undefined) return open(host, command);
-	let resolveBarrier!: () => void;
-	const barrier = new Promise<void>((resolve) => {
-		resolveBarrier = resolve;
-	});
-	const opens = host.opensByConnection.get(owner) ?? new Set<Promise<void>>();
+	if (owner === undefined) return open(host, command, undefined, { replyAs });
 	// Every open already accepted anywhere on this host, not just on this connection: the
 	// in-process runtime serves them on ONE loop, so the wait this caller faces is the total.
 	let inFlight = 0;
 	for (const pending of host.opensByConnection.values()) inFlight += pending.size;
-	opens.add(barrier);
-	host.opensByConnection.set(owner, opens);
+	const releaseBarrier = holdOpenConnection(host, owner);
 	// Before the open reaches the loop: a client that later hits its deadline can then say
 	// where it was queued instead of reporting a bare timeout (senpi#1844).
 	if (command.id !== undefined)
@@ -60,27 +61,27 @@ function openPhysicalWithBarrier(
 			position: inFlight + 1,
 			in_flight: inFlight,
 		});
-	const start = () => open(host, command, owner, accept === undefined ? undefined : { accept, signal });
+	const start = () => open(host, command, owner, accept === undefined ? { replyAs } : { accept, signal });
 	// A late open's physical session is released by its admission (the accept/rollback path, 4272-admission-
 	// abandonment), so the late response itself owns nothing to release here.
 	const opened = signal === undefined ? start() : runAdmissionProducer(signal, start, async () => {});
-	return opened.finally(() => {
-		resolveBarrier();
-		opens.delete(barrier);
-		if (opens.size === 0) host.opensByConnection.delete(owner);
-	});
+	return opened.finally(releaseBarrier);
 }
 
 /**
  * The successor's reopen of a handoff-parked session: the same open as an `open_session`, with no
  * requesting connection and nothing to reply to (senpi#3368). Resolves `undefined` on success and
- * the failure response otherwise, exactly as an open does.
+ * the failure response otherwise, exactly as an open does. A session that was live when its host ended
+ * continues as that host left it (senpi#7020); any other park reopens unattended, holding automatic turns.
  */
 export function reopenParked(host: RouterContext, entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
-	return open(host, { ...parkedOpenCommand(entry), attended: false }, undefined, {
+	const command = parkedOpenCommand(entry);
+	return open(host, entry.live === true ? command : { ...command, attended: false }, undefined, {
 		reply: false,
 		defaults: false,
 		contextOverlay: entry.contextOverlay,
+		unattached: true,
+		...(entry.live === true ? { continued: true } : {}),
 	});
 }
 
@@ -94,16 +95,37 @@ export async function open(
 		readonly signal?: AbortSignal;
 		readonly defaults?: boolean;
 		readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
+		/** The reply is another command's answer: see `OpenReplyAs`. */
+		readonly replyAs?: OpenReplyAs;
+		/** An invisible speculative open, published only when its ledger hands it to a caller. */
+		readonly park?: (opened: OpenRpcSession) => void;
+		/** A successor's reopen of a session that was live on its predecessor; never set from the wire. */
+		readonly continued?: boolean;
+		/** No connection asked for this open: it counts no attachment (the successor's restore). */
+		readonly unattached?: boolean;
+		/** When this open first waited for a routed session to change generations (senpi#7098). */
+		readonly routedSince?: number;
 	},
 ): Promise<RpcResponse | undefined> {
-	const profile = validatedOpenProfile(host, command, options);
-	if ("type" in profile) return profile;
+	const validated = validatedOpenProfile(host, command, options);
+	if ("type" in validated) return validated;
 	let opened: OpenRpcSession | undefined;
 	const timer = startOpenTimer(`host-open:${command.id ?? "-"}`);
 	const assertSessionNotHeld = sessionHeldCheck(
 		(observedStarts) => host.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
 	);
 	try {
+		// An open that names no folder resumes a session file where its header says, not where this host runs
+		// (senpi#6427). Inside the try: a file it cannot read refuses the open, and that refusal is this open's answer.
+		const profile = {
+			...validated,
+			cwd: await openSessionFolder(command, validated.cwd),
+			...(options?.continued === true ? { continued: true as const } : {}),
+		};
+		// A folder that exists but is a file (or a socket) is refused, typed, before anything is opened or created. A missing
+		// folder, or one this host cannot stat, keeps today's answer from the registry.
+		if ((await stat(profile.cwd).catch(() => undefined))?.isDirectory() === false)
+			return error(command.id, "open_session", "session_cwd_not_directory", { cwd: profile.cwd });
 		await assertSessionNotHeld(command.sessionPath);
 		timer.mark("held_check");
 		options?.signal?.throwIfAborted();
@@ -113,8 +135,12 @@ export async function open(
 			ancestry ? { ...profile, spawnedBy: ancestry } : profile,
 			// Host lifecycle policy, deliberately outside the immutable launch profile.
 			{
+				routedHandle: host.routes.handleFor(command.sessionPath),
 				retainOnDisconnect: command.retain_on_disconnect === true,
 				attachOnly: command.expectedHostInstance !== undefined,
+				...(options?.park ? { speculative: true } : {}),
+				// The successor's restore has no requesting connection to own an attachment (senpi#7020).
+				...(options?.unattached === true ? { unattached: true } : {}),
 			},
 		);
 		timer.mark("registry_open");
@@ -151,23 +177,16 @@ export async function open(
 		const lane = entry.acceptance ?? entry.worker?.acceptance;
 		if (lane) host.writer.registerAcceptance(openedSession.sessionId, lane);
 		if (options?.accept) await options.accept(openedSession);
-		if (owner !== undefined) {
-			if (!host.writer.hasRegisteredConnectionCapabilities(owner))
-				host.writer.setConnectionCapabilities(
-					owner,
-					host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [],
-				);
-			host.writer.attachConnectionToSession(owner, openedSession.sessionId, options?.accept !== undefined);
-		}
-		// A client that dies without close_session (terminal closed, SIGKILL, dropped
-		// SSH) still holds this handle's attachment and its path reservation. Remember
-		// which connection owns it so releaseConnection() can close exactly that.
-		if (owner !== undefined) {
-			const owned = host.sessionsByConnection.get(owner) ?? new Map<string, number>();
-			owned.set(openedSession.sessionId, (owned.get(openedSession.sessionId) ?? 0) + 1);
-			host.sessionsByConnection.set(owner, owned);
-			host.attachOrder.attached(openedSession.sessionId, owner);
-		}
+		ownOpen(host, openedSession, owner, options?.accept !== undefined);
+		const telemetryKind = openedSession.attached ? "attach" : "answer";
+		const telemetry = await declareTelemetry(
+			host,
+			openedSession.sessionId,
+			owner,
+			command.telemetry?.consent,
+			telemetryKind,
+		);
+		if (telemetry !== "confirmed") throw new RpcSessionRegistryError("telemetry_update_unconfirmed");
 		if (!host.bindings.has(openedSession.sessionId)) {
 			host.bindings.set(
 				openedSession.sessionId,
@@ -175,7 +194,10 @@ export async function open(
 					openedSession.sessionId,
 					entry,
 					host.writer,
-					() => void close(host, { type: "close_session", sessionId: openedSession.sessionId }),
+					() =>
+						void (entry.speculative
+							? closePark(host, openedSession)
+							: close(host, { type: "close_session", sessionId: openedSession.sessionId })),
 					{
 						...host.connectionOptions,
 						capabilities:
@@ -222,19 +244,12 @@ export async function open(
 				});
 		}
 		options?.signal?.throwIfAborted();
-		if (opened.attached) host.writer.status.publish(openedSession.sessionId, "attach", "client");
-		else {
-			host.writer.publishSessionOpened({
-				type: "session_opened",
-				sessionId: openedSession.sessionId,
-				durableSessionId: openedSession.durableSessionId,
-				...(openedSession.sessionPath !== undefined ? { sessionPath: openedSession.sessionPath } : {}),
-				kind: entry.kind,
-				cwd: entry.cwd,
-				context: entry.context,
-			});
-			host.writer.status.publish(openedSession.sessionId, "open", "client");
+		if (options?.park) {
+			options.park(openedSession);
+			return undefined;
 		}
+		publishOpen(host, openedSession, entry);
+		host.routes.adopt(openedSession.sessionId);
 		if (!options?.accept && !host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
 			releaseOwnerAttachment(host, owner, openedSession.sessionId);
 			await releaseOwnedSession(host, openedSession.sessionId);
@@ -245,26 +260,15 @@ export async function open(
 		if (options?.accept) {
 			return undefined;
 		}
-		const replyState =
-			entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
-		if (!replyState) throw new Error("Session state was not created");
 		timer.mark("reply");
-		if (options?.reply !== false)
-			host.writer.enqueue(opened.sessionId, {
-				id: command.id,
-				type: "response",
-				command: "open_session",
-				success: true,
-				data: {
-					sessionId: opened.sessionId,
-					state: replyState,
-					...openReplyPermissionMode(replyState),
-					...(opened.attached ? { attached: true } : {}),
-					...(host.defaults.sessionPresence
-						? { presence: host.defaults.sessionPresence.view(replyState.sessionId) }
-						: {}),
-				},
-			});
+		replyOpen(
+			host,
+			opened,
+			entry,
+			options?.replyAs?.command ?? command,
+			options?.reply !== false,
+			options?.replyAs?.data,
+		);
 		return undefined;
 	} catch (cause) {
 		if (opened) {
@@ -272,7 +276,7 @@ export async function open(
 			// rollback, and only while the registry still holds the live entry, so only that
 			// rollback owes its subscribers the terminal record; an attach rollback, or one whose
 			// entry is already gone, never announced the session in the first place (#3198 review, L1).
-			if (!opened.attached && !options?.signal?.aborted) {
+			if (!options?.park && !opened.attached && !options?.signal?.aborted) {
 				const entry = host.registry.peek(opened.sessionId);
 				if (entry?.runtime !== undefined || entry?.worker !== undefined)
 					host.writer.sealRolledBackOpen(opened.sessionId, entry.sessionPath);
@@ -286,6 +290,38 @@ export async function open(
 			if (!opened.attached || !compactUpdatesEnabled()) host.writer.forgetSession(opened.sessionId);
 		}
 		if (cause instanceof CompactAdmissionError) throw cause;
+		if (
+			!opened &&
+			owner &&
+			command.expectedHostInstance &&
+			!host.draining &&
+			!options?.accept &&
+			code(cause) === "session_not_held" &&
+			!owner.startsWith("generation-route-")
+		) {
+			const attached = await host.routes.attachPath(command, owner);
+			if (attached) return attached;
+		}
+		if (
+			!opened &&
+			owner &&
+			!host.draining &&
+			!options?.park &&
+			!options?.accept &&
+			code(cause) === "session_path_in_use"
+		) {
+			const routed = await host.routes.open(command, owner, detail(cause));
+			if (routed === RETRY_ROUTED_OPEN && host.writer.hasConnection(owner) && !host.draining) {
+				// The handover between generations is bounded like a close: past the grace window the caller gets the
+				// retryable refusal instead of an open that never answers.
+				const routedSince = options?.routedSince ?? Date.now();
+				if (Date.now() - routedSince <= host.registry.closeGraceMs)
+					return open(host, command, owner, { ...options, routedSince });
+				return error(command.id, "open_session", code(cause), detail(cause));
+			}
+			if (routed === RETRY_ROUTED_OPEN) return error(command.id, command.type, "host_draining");
+			if (routed) return routed;
+		}
 		return error(command.id, "open_session", code(cause), detail(cause));
 	}
 }
