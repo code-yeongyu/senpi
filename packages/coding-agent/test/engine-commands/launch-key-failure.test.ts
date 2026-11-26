@@ -66,6 +66,30 @@ describe("a launch answers launch_key_failed on every mode (security design 5.5,
 });
 
 describe("the real engine entry (review 6064845699 M1, L5)", () => {
+	it.each([
+		["cli.ts", [], CLI],
+		["cli.ts across the hop", ["--smol"], CLI],
+		["cli-main", [], CLI_MAIN],
+	] as const)(
+		"refuses a handed-over key it cannot read at %s when --list-tips sits in an option's value position (review 6068111644 N1)",
+		async (_route, runtime, entry) => {
+			const file = openSync(join(root, "not-a-channel-n1"), "w");
+			try {
+				const run = await realEngine(["-p", "--system-prompt", "--list-tips", "hello"], {
+					root,
+					table: JSON.stringify({ "api-key": 5 }),
+					slot5: file,
+					runtime,
+					entry,
+				});
+				expect(run.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+				expect(run.output).toContain("launch_key_unreadable");
+			} finally {
+				closeSync(file);
+			}
+		},
+	);
+
 	it("fails closed when the key channel names a descriptor that is not a channel", async () => {
 		const file = openSync(join(root, "not-a-channel"), "w");
 		try {

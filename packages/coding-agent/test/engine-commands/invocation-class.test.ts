@@ -37,6 +37,9 @@ const REFUSED: ReadonlyArray<readonly string[]> = [
 	["--print", "--", "--help"],
 	["--print", "--", "--version"],
 	["-p", "--system-prompt", "--list-tips", "hello"],
+	["-p", "--model", "--list-tips", "hello"],
+	["--system-prompt", "--list-tips", "hello"],
+	["--internal-rpc-host-supervisor", "x", "--list-tips"],
 	["--system-prompt", "--version", "hello"],
 	["auth", "check", "--help"],
 	["models", "discover", "--help"],
@@ -162,8 +165,17 @@ describe("the real parser agrees with every root exemption, in the safe directio
 		},
 	);
 
-	it("refuses a first-token exemption that also names a session start: a tie never exempts", () => {
-		expect(classifyInvocation(["--list-tips", "--mode", "rpc"])).toBe("reads_table");
+	it.each([
+		[["--list-tips", "--mode", "rpc"]],
+		[["--list-tips", "-p", "hello"]],
+		[["--list-tips", "--print", "hello"]],
+	])("refuses %j: a first-token exemption that also names a session start ties, and a tie never exempts", (args) =>
+		expect(classifyInvocation(args)).toBe("reads_table"),
+	);
+
+	it("reads nothing after -- as an option: what follows is a message", () => {
+		expect(classifyInvocation(["--list-tips", "--", "--mode", "rpc"])).toBe("no_session");
+		expect(classifyInvocation(["host", "status", "--", "--mode", "rpc"])).toBe("no_session");
 	});
 
 	it.each(

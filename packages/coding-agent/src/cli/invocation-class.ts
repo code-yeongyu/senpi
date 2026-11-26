@@ -37,14 +37,20 @@ export const INVOCATION_CLASSES: Readonly<Record<string, InvocationRow>> = {
 	"packages.update": { kind: "no_session", reason: "updates packages: no credential, no start" },
 	"models.update": { kind: "reads_table", reason: "uses a provider credential (owner ruling D22-18)" },
 	"models.discover": { kind: "reads_table", reason: "uses a provider credential" },
-	"models.list": { kind: "reads_table", reason: "resolves models with their credentials" },
+	"models.list": {
+		kind: "reads_table",
+		reason: "starts no session; refuses by choice: resolves models with their credentials",
+	},
 	"config.resources": { kind: "no_session", reason: "the config selector: no credential, no start" },
 	"config.setResource": { kind: "no_session", reason: "the config selector: no credential, no start" },
 	"schedule.list": { kind: "no_session", reason: "lists scheduled jobs: no credential, no start" },
 	"schedule.cancel": { kind: "no_session", reason: "removes a scheduled job: no credential, no start" },
 	"schedule.run": { kind: "reads_table", reason: "a scheduled run is judged when it starts its session" },
 	"sessions.exportHtml": { kind: "reads_table", reason: "default refuse: opens session state" },
-	promptSizes: { kind: "reads_table", reason: "builds a session's prompt" },
+	promptSizes: {
+		kind: "reads_table",
+		reason: "starts no session; refuses by choice: builds a session's prompt and its models",
+	},
 	"host.ensure": { kind: "reads_table", reason: "starts a host" },
 	"host.handoff": { kind: "reads_table", reason: "starts a host" },
 	"host.gc": { kind: "reads_table", reason: "default refuse: manages host state" },
@@ -65,14 +71,14 @@ function startsWith(args: readonly string[], words: readonly string[]): boolean 
  */
 function names(
 	argv: readonly string[],
-	required: readonly string[],
+	required: readonly (readonly string[])[],
 	flagsGiven: boolean,
 	kind: InvocationClass,
 	options: readonly string[],
 ): boolean {
 	if (argv.length > 0) return startsWith(options, argv);
 	if (required.length === 0 || !flagsGiven) return false;
-	return kind === "reads_table" || (required.length === 1 && options[0] === required[0]);
+	return kind === "reads_table" || (required.length === 1 && (required[0] ?? []).includes(options[0] ?? ""));
 }
 
 /**
@@ -86,8 +92,9 @@ export function classifyInvocation(args: readonly string[]): InvocationClass {
 	let best = Number.NEGATIVE_INFINITY;
 	let classes: InvocationClass[] = [];
 	for (const command of ENGINE_COMMANDS) {
-		const required = command.flags.filter((flag) => flag.required).map((flag) => flag.names[0] ?? "");
-		const flagsGiven = required.every((name) => options.includes(name));
+		// Every alias names the flag (`-p` is `--print`).
+		const required = command.flags.filter((flag) => flag.required).map((flag) => flag.names);
+		const flagsGiven = required.every((aliases) => aliases.some((name) => options.includes(name)));
 		const kind = INVOCATION_CLASSES[command.call]?.kind ?? "reads_table";
 		if (!names(command.argv, required, flagsGiven, kind, options)) continue;
 		// A form whose required flag is given is the more specific one (`update --models`); a subcommand form whose
