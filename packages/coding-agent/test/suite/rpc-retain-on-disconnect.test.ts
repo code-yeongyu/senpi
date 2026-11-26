@@ -22,6 +22,17 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+it("reports only the requesting connection's own ID in protocol info (#5393)", async () => {
+	await using host = await retainHost();
+	for (const id of ["caller-a", "caller-b"]) {
+		const reply = await host.writer.withConnection(id, () => host.router.handle({ type: "get_protocol_info" }));
+		expect(reply).toMatchObject({ success: true, data: { connectionId: id } });
+	}
+	const direct = await host.router.handle({ type: "get_protocol_info" });
+	if (direct?.command !== "get_protocol_info" || !direct.success) throw new Error("no protocol reply");
+	expect(direct.data).not.toHaveProperty("connectionId");
+});
+
 it("keeps a retained session listed and re-attachable after its only connection drops", async () => {
 	// Given: a retained idle session owned by exactly one connection.
 	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });

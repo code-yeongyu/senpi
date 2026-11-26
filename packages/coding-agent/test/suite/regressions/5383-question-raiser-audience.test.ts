@@ -4,6 +4,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, expect, it } from "vitest";
 import type { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
+import { queueHiddenGoalPrompt } from "../../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { createRpcConnectionHandler, type RpcConnectionHandler } from "../../../src/modes/rpc/connection-handler.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
@@ -54,8 +55,8 @@ function fixture(pi: ExtensionAPI): void {
 	});
 }
 
-async function setup() {
-	harness = await createHarness({ extensionFactories: [fixture] });
+async function setup(afterPrompt?: (pi: ExtensionAPI) => void) {
+	harness = await createHarness({ extensionFactories: afterPrompt ? [fixture, afterPrompt] : [fixture] });
 	const writer = new SessionEventWriter(() => {});
 	const received = new Map<string, Frame[]>();
 	const waiters = new Map<string, Waiter[]>();
@@ -148,6 +149,33 @@ it("stamps a model tool call's question with the connection whose prompt started
 	await send("b", { type: "extension_ui_response", id: frame.id, answers: ANSWER });
 	await prompt;
 	await writer.flush();
+});
+
+it("attributes a goal wake queued by the prompting turn's agent_end handler (#5393)", async () => {
+	const {
+		harness: current,
+		send,
+		dialog,
+		writer,
+	} = await setup((pi) => {
+		let queued = false;
+		pi.on("agent_end", () => {
+			if (queued) return;
+			queued = true;
+			queueHiddenGoalPrompt(pi, "continue the goal");
+		});
+	});
+	current.setResponses([
+		fauxAssistantMessage("first turn"),
+		fauxAssistantMessage([fauxToolCall("ask_probe", {})]),
+		fauxAssistantMessage("done"),
+	]);
+	const prompt = send("a", { type: "prompt", id: "p", message: "start" });
+	const frame = await dialog("b", "question");
+	await send("b", { type: "extension_ui_response", id: frame.id, answers: ANSWER });
+	await prompt;
+	await writer.flush();
+	expect(frame.raisedBy).toBe("a");
 });
 
 it('stamps "agent" on a question raised in a turn that no connection started', async () => {

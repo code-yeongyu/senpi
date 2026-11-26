@@ -40,11 +40,17 @@ export function answerProtocolInfo(
 				host.writer.currentConnection() !== undefined && host.compactAvailable(),
 			),
 			mode: "multi",
+			// The asking connection's own id, the value `raisedBy` and effect receipts name it by (senpi#5393).
+			...connectionIdentity(host.writer.currentConnection()),
 			...protocolIdentity(host.defaults.agentDir),
 			memory_pressure: host.memoryPressure,
 			path_identity_resolver: pathIdentityResolverStatus(sharedPathIdentityResolver()),
 		},
 	};
+}
+
+function connectionIdentity(connectionId: string | undefined): { connectionId?: string } {
+	return connectionId === undefined ? {} : { connectionId };
 }
 
 export function answerSubscriptionLimits(

@@ -59,6 +59,8 @@ export interface RpcProtocolInfo extends RpcProtocolIdentity {
 	};
 	/** Supervised socket hosts expose admission state independently of child responsiveness. */
 	readonly lifecycle?: "ready" | "stopping";
+	/** The asking connection's own id on a multi-session host (the value `raisedBy` names it by); absent otherwise. */
+	readonly connectionId?: string;
 	readonly protocolVersion: 1;
 	/** Informational engine version. Never compare it for compatibility - use the fields above. */
 	readonly serverVersion: string;

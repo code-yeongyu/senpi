@@ -27,6 +27,8 @@ export interface HostProtocolInfo {
 	readonly capabilities: readonly string[];
 	/** Which host PROCESS answered. A handoff is complete exactly when this value changes. */
 	readonly instanceId?: string;
+	/** The asking connection's own id on a multi-session host; absent on classic and older hosts. */
+	readonly connectionId?: string;
 	/** Which generation of the daemon that process is; `0` until the first handoff. */
 	readonly generation?: number;
 	readonly engineVersion?: string;
@@ -61,6 +63,7 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 		capabilities: data.capabilities,
 		...((data.lifecycle === "ready" || data.lifecycle === "stopping") && { lifecycle: data.lifecycle }),
 		...(typeof data.instanceId === "string" && { instanceId: data.instanceId }),
+		...(typeof data.connectionId === "string" && { connectionId: data.connectionId }),
 		...(typeof data.generation === "number" &&
 			Number.isSafeInteger(data.generation) && { generation: data.generation }),
 		...(typeof data.engineVersion === "string" && { engineVersion: data.engineVersion }),
