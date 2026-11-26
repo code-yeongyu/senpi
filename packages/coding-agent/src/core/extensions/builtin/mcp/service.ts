@@ -737,6 +737,12 @@ export class McpService {
 			return;
 		}
 		await reconnectMcpNow(entry.connection);
+		// A re-key that lands during the reconnect retires the connection it acted on, which then returns quietly. Act once
+		// more on the connection that is current, so the caller learns its real state (needs_auth included).
+		await this.#attachQueue;
+		if (this.#disposed) return;
+		const current = this.#entryForName(name);
+		if (current !== undefined && current !== entry) await reconnectMcpNow(current.connection);
 	}
 
 	/**

@@ -1,8 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AuthCommandDeps } from "../../src/core/extensions/builtin/mcp/auth/commands-auth.ts";
+import { afterEach, describe, expect, it } from "vitest";
 import {
 	runAuth,
 	runAuthComplete,
@@ -10,10 +6,7 @@ import {
 	runLogout,
 } from "../../src/core/extensions/builtin/mcp/auth/commands-auth.ts";
 import { resolveServerAuth } from "../../src/core/extensions/builtin/mcp/auth/context.ts";
-import type { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
-import { McpTokenStore } from "../../src/core/extensions/builtin/mcp/auth/token-store.ts";
 import type { McpToolCatalogEntry } from "../../src/core/extensions/builtin/mcp/catalog.ts";
-import type { McpServerConfig } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
 import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import { buildMcpToolDefinitions } from "../../src/core/extensions/builtin/mcp/expose/register.ts";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
@@ -24,74 +17,19 @@ import { connectAndRefreshMcpCatalog } from "../../src/core/extensions/builtin/m
 import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { capturingPi, registeredTool, testContext, textContent } from "./fixtures/register-call.ts";
-import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
+import {
+	agentDir,
+	cleanups,
+	followAuthorize,
+	idp,
+	makeHarness,
+	poisonRefreshToken,
+	writeMcpConfig,
+} from "./fixtures/oauth-headless-harness.ts";
 
-const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
 	await Promise.all(cleanups.splice(0).map((fn) => fn()));
 });
-
-async function idp(args: string[] = []): Promise<IdpFixture> {
-	const fixture = await spawnOAuthIdp(args);
-	cleanups.push(fixture.cleanup);
-	return fixture;
-}
-
-async function agentDir(): Promise<string> {
-	const dir = await mkdtemp(join(tmpdir(), "mcp-headless-"));
-	cleanups.push(() => rm(dir, { force: true, recursive: true }));
-	return dir;
-}
-
-interface Harness {
-	deps: AuthCommandDeps<McpServerConfig>;
-	notes: { message: string; type: string }[];
-	browsered: URL[];
-	store: McpTokenStore;
-}
-
-function makeHarness(
-	dir: string,
-	mcpUrl: string,
-	overrides: Partial<McpServerConfig> & { hasUI?: boolean } = {},
-): Harness {
-	const notes: { message: string; type: string }[] = [];
-	const browsered: URL[] = [];
-	const config: McpServerConfig = {
-		type: "http",
-		url: mcpUrl,
-		args: [],
-		enabled: true,
-		lifecycle: "lazy",
-		connectTimeoutMs: 4000,
-		requestTimeoutMs: 4000,
-		startupTimeoutMs: 250,
-		idleTimeoutMin: 10,
-		exposure: "auto",
-		logLevel: "info",
-		...overrides,
-	};
-	const deps: AuthCommandDeps<McpServerConfig> = {
-		serverName: "fix",
-		config,
-		agentDir: dir,
-		hasUI: overrides.hasUI ?? true,
-		notify: (message, type = "info") => notes.push({ message, type }),
-		openBrowser: (url) => {
-			browsered.push(url);
-		},
-		onReconnect: () => Promise.resolve(),
-		pending: new Map<string, McpOAuthProvider>(),
-	};
-	return { deps, notes, browsered, store: new McpTokenStore({ agentDir: dir, serverName: "fix", serverUrl: mcpUrl }) };
-}
-
-async function followAuthorize(url: string): Promise<string> {
-	const response = await fetch(url, { redirect: "manual" });
-	const location = response.headers.get("location");
-	if (location === null) throw new Error(`no redirect: ${response.status}`);
-	return location;
-}
 
 async function redeemCodeDirectly(
 	baseUrl: string,
@@ -112,18 +50,6 @@ async function redeemCodeDirectly(
 		method: "POST",
 	});
 	if (!response.ok) throw new Error(`direct redemption failed: ${response.status}`);
-}
-
-async function poisonRefreshToken(harness: Harness): Promise<void> {
-	await harness.store.update((current) => ({
-		...current,
-		expiresAt: Date.now() + 60_000,
-		refreshToken: "RT_UNKNOWN",
-	}));
-}
-
-async function writeMcpConfig(dir: string, config: McpServerConfig): Promise<void> {
-	await writeFile(join(dir, "mcp.json"), `${JSON.stringify({ mcpServers: { fix: config } }, null, 2)}\n`);
 }
 
 describe("headless oauth flows", () => {
@@ -443,92 +369,6 @@ describe("headless oauth flows", () => {
 			},
 		]);
 		expect(harness.store.read()).toBeUndefined();
-	});
-
-	// senpi#6538: the refresh token is part of the grant identity, so rotating it makes the connection's credentials
-	// stale and the next background check re-keys the server. Under load that re-key landed while a manual reconnect
-	// was still refreshing on the connection it retired, and the reconnect resolved quietly.
-	it("surfaces auth-start guidance on manual reconnect when a credentials re-key lands mid-reconnect", async () => {
-		// Given: a connected server whose refresh token was rotated away, and every token-store lock held at a gate
-		const fixture = await idp();
-		const dir = await agentDir();
-		const harness = makeHarness(dir, fixture.mcpUrl);
-		const redirect = await followAuthorize(await runAuthStart(harness.deps));
-		await runAuthComplete(harness.deps, redirect);
-		await writeMcpConfig(dir, harness.deps.config);
-		const service = new McpService();
-		cleanups.push(() => service.dispose("quit"));
-		const session = { cwd: dir, isProjectTrusted: () => true };
-		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
-			agentDir: dir,
-		});
-		await service.whenAttachSettled();
-		expect(service.getConnection("fix")?.state).toBe("connected");
-		await poisonRefreshToken(harness);
-		const released = Promise.withResolvers<void>();
-		const reached = Promise.withResolvers<void>();
-		const withLock = McpTokenStore.prototype.withLock;
-		const gate = vi.spyOn(McpTokenStore.prototype, "withLock").mockImplementation(async function (
-			this: McpTokenStore,
-			fn,
-		) {
-			reached.resolve();
-			await released.promise;
-			return withLock.call(this, fn);
-		});
-		cleanups.push(async () => gate.mockRestore());
-
-		// When: the manual reconnect starts refreshing, another session's start re-keys the server, then the refresh runs
-		const reconnect = service.reconnectServer("fix");
-		const outcome = reconnect.then(
-			() => "resolved",
-			(error: unknown) => (error instanceof Error ? error.message : String(error)),
-		);
-		await reached.promise;
-		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
-			agentDir: dir,
-		});
-		await service.whenAttachSettled();
-		released.resolve();
-
-		// Then: the reconnect names the way back instead of resolving quietly
-		expect(await outcome).toMatch(/\/mcp auth-start fix/);
-		expect(service.getServerSnapshots()).toMatchObject([
-			{ lastError: expect.stringMatching(/\/mcp auth-start fix/), lifecycleState: "needs_auth", name: "fix" },
-		]);
-	});
-
-	// senpi#6538: under load a background refresh (the attach's catalog refresh) can meet the rotated refresh token
-	// first, get invalid_grant and clear the saved sign-in before the manual reconnect reads it.
-	it("surfaces auth-start guidance on manual reconnect when another refresh already cleared the rotated credentials", async () => {
-		// Given: a connected server whose refresh token was rotated away, and another holder of the same sign-in that
-		// refreshes first
-		const fixture = await idp();
-		const dir = await agentDir();
-		const harness = makeHarness(dir, fixture.mcpUrl);
-		const redirect = await followAuthorize(await runAuthStart(harness.deps));
-		await runAuthComplete(harness.deps, redirect);
-		await writeMcpConfig(dir, harness.deps.config);
-		const service = new McpService();
-		cleanups.push(() => service.dispose("quit"));
-		await service.attachSession(
-			{ type: "session_start", reason: "startup" },
-			{ cwd: dir, isProjectTrusted: () => true },
-			capturingPi(),
-			{ agentDir: dir },
-		);
-		await service.whenAttachSettled();
-		expect(service.getConnection("fix")?.state).toBe("connected");
-		await poisonRefreshToken(harness);
-		const other = resolveServerAuth({ agentDir: dir, config: harness.deps.config, serverName: "fix" });
-		await expect(other.refresh?.ensureFresh()).rejects.toThrow(/invalid_grant/);
-		expect(harness.store.read()).toBeUndefined();
-
-		// When/Then: the manual reconnect still names the way back instead of resolving quietly
-		await expect(service.reconnectServer("fix")).rejects.toThrow(/\/mcp auth-start fix/);
-		expect(service.getServerSnapshots()).toMatchObject([
-			{ lastError: expect.stringMatching(/\/mcp auth-start fix/), lifecycleState: "needs_auth", name: "fix" },
-		]);
 	});
 });
 
