@@ -83,6 +83,7 @@ case "$*" in
   "issue list"*) echo "$EXISTING_TITLE" ;;
   "issue create"*) echo https://github.com/o/r/issues/7 ;;
   "run view"*) echo "$PUBLISH_STATUS " ;;
+  "run list"*displayTitle*) echo "" ;;
   "run list"*) echo 0 ;;
   *) echo "unexpected gh $*" >&2; exit 2 ;;
 esac`,
