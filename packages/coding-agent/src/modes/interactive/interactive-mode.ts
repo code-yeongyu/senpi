@@ -325,6 +325,7 @@ import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { interactiveErrorText } from "./required-compaction-wording.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
+import { ProgramResumeReporter, programResumeTarget } from "./program-resume-reporter.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
 import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
 import type { TuiControlContext } from "./session-control-lifecycle.ts";
@@ -951,6 +952,8 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 	/** Terminal implementation. Defaults to the current process terminal. */
 	terminal?: Terminal;
+	/** The terminal's OSC 7577 token, taken out of the environment at startup; enables resume reports (senpi#7493). */
+	programResumeToken?: string;
 }
 
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
@@ -1080,6 +1083,7 @@ export class InteractiveMode {
 	/** The OSC 7501 report last written while a status is active; undefined once cleared. */
 	private programStatusSequence: string | undefined = undefined;
 	private programStatusClosed = false;
+	private programResume: ProgramResumeReporter | undefined;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -1236,6 +1240,14 @@ export class InteractiveMode {
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
+		if (options.programResumeToken !== undefined && process.stdout.isTTY) {
+			this.programResume = new ProgramResumeReporter({
+				token: options.programResumeToken,
+				pid: process.pid,
+				now: Date.now,
+				write: (sequence) => this.ui.terminal.write(sequence),
+			});
+		}
 		this.optimisticUserEchoes = new OptimisticUserEchoController((text) => this.renderPendingUserEcho(text));
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
@@ -3020,6 +3032,12 @@ export class InteractiveMode {
 		this.updateAvailableProviderCount();
 		this.updateEditorBorderColor();
 		this.updateTerminalTitle();
+		this.syncProgramResume();
+	}
+
+	/** Keep the terminal's OSC 7577 record on the current session; `refresh` re-reports an unchanged command. */
+	private syncProgramResume(options?: { refresh?: boolean }): void {
+		this.programResume?.sync(programResumeTarget(this.sessionManager), options);
 	}
 
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
@@ -5615,6 +5633,7 @@ export class InteractiveMode {
 
 			case "message_end":
 				if (event.message.role === "user") break;
+				this.syncProgramResume();
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingReveal.stop();
@@ -5733,6 +5752,7 @@ export class InteractiveMode {
 			}
 
 			case "agent_end":
+				this.syncProgramResume();
 				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(false);
 				}
@@ -6995,6 +7015,8 @@ export class InteractiveMode {
 		this.themeController.disableAutoSync();
 		await this.ui.terminal.drainInput(1000);
 
+		// The user ended the session: drop the resume record. Signal shutdowns above keep it for the terminal's restart.
+		this.programResume?.clear();
 		this.stop({ restoreStderr: false });
 		try {
 			await this.sessionControlHost?.disposeActive();
@@ -7218,6 +7240,8 @@ export class InteractiveMode {
 			process.removeListener("SIGINT", ignoreSigint);
 			takeOverInteractiveStderr();
 			this.ui.start();
+			// Another program may have replaced the terminal's record while this one was stopped.
+			this.syncProgramResume({ refresh: true });
 			this.resumeQuestionMouseCapture();
 			this.ui.requestRender(true);
 		});
