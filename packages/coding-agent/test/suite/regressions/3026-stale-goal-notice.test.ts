@@ -31,6 +31,9 @@ async function fixture() {
 		executeTool: async () => {
 			throw new Error("Unexpected nested tool execution");
 		},
+		reportToolResult: async () => {
+			throw new Error("Unexpected reported tool result");
+		},
 	};
 	const ref = goalStoreRef(ctx.sessionManager, ctx.cwd);
 	const goal = await createGoal(ref, "Finish the work");

@@ -6503,19 +6503,10 @@
        "type": "custom",
        "customType": "work-custody",
        "data": {
-        "id": "<uuid:21>",
-        "key": "wake-source:senpi-codemode",
-        "source": "senpi-codemode",
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
         "kind": "background",
-        "activeCount": 1,
-        "items": [
-         {
-          "id": "<id:6>",
-          "description": "G4 detached nested calls",
-          "startedAtMs": "<ts:items.startedAtMs:2>"
-         }
-        ],
-        "state": "passive",
+        "state": "open",
         "sessionId": "<uuid:16>"
        },
        "id": "<id:17>",
@@ -6529,7 +6520,7 @@
        "type": "custom",
        "customType": "session-lifecycle",
        "data": {
-        "state": "waiting_background",
+        "state": "running",
         "seq": 4,
         "epoch": 1,
         "epochOrigin": "human",
@@ -6546,7 +6537,14 @@
          "background": [
           {
            "source": "senpi-codemode",
-           "activeCount": 1
+           "activeCount": 1,
+           "items": [
+            {
+             "id": "<id:6>",
+             "label": "G4 detached nested calls",
+             "startedAt": "<ts:items.startedAt:8>"
+            }
+           ]
           }
          ],
          "human": []
@@ -6573,7 +6571,7 @@
      {
       "type": "session_lifecycle",
       "lifecycle": {
-       "state": "waiting_background",
+       "state": "running",
        "seq": 4,
        "epoch": 1,
        "epochOrigin": "human",
@@ -6594,7 +6592,14 @@
         "background": [
          {
           "source": "senpi-codemode",
-          "activeCount": 1
+          "activeCount": 1,
+          "items": [
+           {
+            "id": "<id:6>",
+            "label": "G4 detached nested calls",
+            "startedAt": "<ts:items.startedAt:9>"
+           }
+          ]
          }
         ],
         "human": []
@@ -6613,12 +6618,65 @@
         "id": "<uuid:24>",
         "key": "delivery:senpi-codemode:notification:<uuid:25>",
         "kind": "background",
-        "state": "open",
+        "state": "queued",
+        "ticketId": "<uuid:26>",
         "sessionId": "<uuid:16>"
        },
        "id": "<id:19>",
        "parentId": "<id:18>",
        "timestamp": "<ts:entry.timestamp:12>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "work-custody",
+       "data": {
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
+        "kind": "background",
+        "state": "queued",
+        "ticketId": "<uuid:26>",
+        "payload": {
+         "message": {
+          "customType": "senpi-codemode:notification",
+          "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+          "display": false
+         },
+         "deliverAs": "steer"
+        },
+        "sessionId": "<uuid:16>"
+       },
+       "id": "<id:20>",
+       "parentId": "<id:19>",
+       "timestamp": "<ts:entry.timestamp:13>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "work-custody",
+       "data": {
+        "id": "<uuid:21>",
+        "key": "wake-source:senpi-codemode",
+        "source": "senpi-codemode",
+        "kind": "background",
+        "activeCount": 1,
+        "items": [
+         {
+          "id": "<id:6>",
+          "description": "G4 detached nested calls",
+          "startedAtMs": "<ts:items.startedAtMs:2>"
+         }
+        ],
+        "state": "passive",
+        "sessionId": "<uuid:16>"
+       },
+       "id": "<id:21>",
+       "parentId": "<id:20>",
+       "timestamp": "<ts:entry.timestamp:14>"
       }
      },
      {
@@ -6663,9 +6721,9 @@
          "deadlineStop": false
         }
        },
-       "id": "<id:20>",
-       "parentId": "<id:19>",
-       "timestamp": "<ts:entry.timestamp:13>"
+       "id": "<id:22>",
+       "parentId": "<id:21>",
+       "timestamp": "<ts:entry.timestamp:15>"
       }
      },
      {
@@ -6700,50 +6758,6 @@
        "holds": [],
        "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:11>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "work-custody",
-       "data": {
-        "id": "<uuid:24>",
-        "key": "delivery:senpi-codemode:notification:<uuid:25>",
-        "kind": "background",
-        "state": "queued",
-        "ticketId": "<uuid:26>",
-        "sessionId": "<uuid:16>"
-       },
-       "id": "<id:21>",
-       "parentId": "<id:20>",
-       "timestamp": "<ts:entry.timestamp:14>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "work-custody",
-       "data": {
-        "id": "<uuid:24>",
-        "key": "delivery:senpi-codemode:notification:<uuid:25>",
-        "kind": "background",
-        "state": "queued",
-        "ticketId": "<uuid:26>",
-        "payload": {
-         "message": {
-          "customType": "senpi-codemode:notification",
-          "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
-          "display": false
-         },
-         "deliverAs": "steer"
-        },
-        "sessionId": "<uuid:16>"
-       },
-       "id": "<id:22>",
-       "parentId": "<id:21>",
-       "timestamp": "<ts:entry.timestamp:15>"
       }
      },
      {
@@ -7826,19 +7840,10 @@
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
-      "key": "wake-source:senpi-codemode",
-      "source": "senpi-codemode",
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
-      "activeCount": 1,
-      "items": [
-       {
-        "id": "<id:9>",
-        "description": "G4 detached nested calls",
-        "startedAtMs": "<ts:items.startedAtMs:2>"
-       }
-      ],
-      "state": "passive",
+      "state": "open",
       "sessionId": "<uuid:1>"
      },
      "id": "<id:16>",
@@ -7849,7 +7854,7 @@
      "type": "custom",
      "customType": "session-lifecycle",
      "data": {
-      "state": "waiting_background",
+      "state": "running",
       "seq": 4,
       "epoch": 1,
       "epochOrigin": "human",
@@ -7866,7 +7871,14 @@
        "background": [
         {
          "source": "senpi-codemode",
-         "activeCount": 1
+         "activeCount": 1,
+         "items": [
+          {
+           "id": "<id:9>",
+           "label": "G4 detached nested calls",
+           "startedAt": "<ts:items.startedAt:3>"
+          }
+         ]
         }
        ],
        "human": []
@@ -7896,12 +7908,59 @@
       "id": "<uuid:5>",
       "key": "delivery:senpi-codemode:notification:<uuid:6>",
       "kind": "background",
-      "state": "open",
+      "state": "queued",
+      "ticketId": "<uuid:7>",
       "sessionId": "<uuid:1>"
      },
      "id": "<id:18>",
      "parentId": "<id:17>",
      "timestamp": "<ts:entries.timestamp:17>"
+    },
+    {
+     "type": "custom",
+     "customType": "work-custody",
+     "data": {
+      "id": "<uuid:5>",
+      "key": "delivery:senpi-codemode:notification:<uuid:6>",
+      "kind": "background",
+      "state": "queued",
+      "ticketId": "<uuid:7>",
+      "payload": {
+       "message": {
+        "customType": "senpi-codemode:notification",
+        "content": "<system-reminder>Detached eval cell <id:9> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+        "display": false
+       },
+       "deliverAs": "steer"
+      },
+      "sessionId": "<uuid:1>"
+     },
+     "id": "<id:19>",
+     "parentId": "<id:18>",
+     "timestamp": "<ts:entries.timestamp:18>"
+    },
+    {
+     "type": "custom",
+     "customType": "work-custody",
+     "data": {
+      "id": "<uuid:4>",
+      "key": "wake-source:senpi-codemode",
+      "source": "senpi-codemode",
+      "kind": "background",
+      "activeCount": 1,
+      "items": [
+       {
+        "id": "<id:9>",
+        "description": "G4 detached nested calls",
+        "startedAtMs": "<ts:items.startedAtMs:2>"
+       }
+      ],
+      "state": "passive",
+      "sessionId": "<uuid:1>"
+     },
+     "id": "<id:20>",
+     "parentId": "<id:19>",
+     "timestamp": "<ts:entries.timestamp:19>"
     },
     {
      "type": "custom",
@@ -7942,44 +8001,6 @@
        "budgetSpent": false,
        "deadlineStop": false
       }
-     },
-     "id": "<id:19>",
-     "parentId": "<id:18>",
-     "timestamp": "<ts:entries.timestamp:18>"
-    },
-    {
-     "type": "custom",
-     "customType": "work-custody",
-     "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-codemode:notification:<uuid:6>",
-      "kind": "background",
-      "state": "queued",
-      "ticketId": "<uuid:7>",
-      "sessionId": "<uuid:1>"
-     },
-     "id": "<id:20>",
-     "parentId": "<id:19>",
-     "timestamp": "<ts:entries.timestamp:19>"
-    },
-    {
-     "type": "custom",
-     "customType": "work-custody",
-     "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-codemode:notification:<uuid:6>",
-      "kind": "background",
-      "state": "queued",
-      "ticketId": "<uuid:7>",
-      "payload": {
-       "message": {
-        "customType": "senpi-codemode:notification",
-        "content": "<system-reminder>Detached eval cell <id:9> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
-        "display": false
-       },
-       "deliverAs": "steer"
-      },
-      "sessionId": "<uuid:1>"
      },
      "id": "<id:21>",
      "parentId": "<id:20>",

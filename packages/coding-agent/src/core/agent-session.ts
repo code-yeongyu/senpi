@@ -258,6 +258,7 @@ import {
 	type ContextUsage,
 	ExecuteToolError,
 	type ExecuteToolOptions,
+	type ToolCallEvent,
 	type ToolCallEventResult,
 	type ExtensionCommandContextActions,
 	type ExtensionContext,
@@ -2594,18 +2595,19 @@ export class AgentSession {
 			}
 
 			const runner = this._extensionRunner;
+			const event: ToolCallEvent = {
+				type: "tool_call",
+				toolName: toolCall.name,
+				toolCallId: toolCall.id,
+				...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
+				input: args as Record<string, unknown>,
+			};
 			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
+				return await runner.emitToolCallReady(event, signal);
 			}
 
 			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
-					toolName: toolCall.name,
-					toolCallId: toolCall.id,
-					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
-					input: args as Record<string, unknown>,
-				}, signal === undefined ? {} : { signal });
+				return await runner.emitToolCall(event, signal === undefined ? {} : { signal });
 			} catch (err) {
 				if (err instanceof Error) {
 					throw err;
