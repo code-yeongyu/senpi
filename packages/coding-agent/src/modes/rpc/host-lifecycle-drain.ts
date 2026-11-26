@@ -1,15 +1,23 @@
 /**
  * HOW a supervisor leaves without ending work: the handoff drain (SIGUSR1 to its child, a soft grace
  * that never kills busy sessions), the watch that turns a lost public entry into a drain, and the win32
- * identity watchdog that notices a child gone without an exit event. Split out of `host-lifecycle.ts`,
- * which keeps the supervisor's orchestration (senpi#2566). Nothing here sends a terminating signal.
+ * identity watchdog and the POSIX lifetime-pipe watch that notice a child gone without an exit event. Split out of
+ * `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566). Nothing here sends a terminating signal.
  */
 import type { ChildProcess } from "node:child_process";
+import { createConnection } from "node:net";
+import { Readable, type Writable } from "node:stream";
 import { readProcessStartTime } from "../../utils/process-identity.ts";
 import { type HostStopSender, recordHostCrash } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import { DEFAULT_HANDOFF_GRACE_MS, HANDOFF_GRACE_MS_ENV, parseIdleExitMs } from "./host-lifecycle-policy.ts";
-import { watchDrainRequest, writeDrainRequest, writeDrainWatch } from "./host-stop-intent.ts";
+import { waitForChildExit } from "./host-lifecycle-shutdown.ts";
+import {
+	CHILD_KILL_EXIT_TIMEOUT_MS,
+	watchDrainRequest,
+	writeDrainRequest,
+	writeDrainWatch,
+} from "./host-stop-intent.ts";
 import { type SupersessionPointer, watchForSupersession } from "./host-supersession.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
@@ -150,6 +158,53 @@ export function drainOnPublicSocketLoss(
 				: "another generation owns the public socket; draining this one",
 		);
 		drain.drain();
+	});
+}
+
+/**
+ * POSIX: a host child that is gone although its exit was never observed (oh-my-openagent#14725). The child inherits
+ * its end of the lifetime pipe and never closes it, so EOF on this end means it has exited. The exit event normally
+ * lands in the same moment; without one - a child nobody reaped, a zombie under a supervisor that ran for days -
+ * nothing else ends this generation: the idle ticker and the owner check stand down while draining, the drain grace
+ * re-asks a dead pid forever, and the supervisor keeps the public socket, accepting every client and fresh bind and
+ * serving none of them. So the exit gets the kill-exit breaker's window to arrive; after that, a private hop nobody
+ * accepts on is the second proof, and `onGone` ends the generation through its ordinary shutdown, which stops what
+ * is left of the child and gives the public socket up.
+ */
+export function watchChildLifetimePipe(options: {
+	readonly child: ChildProcess;
+	readonly pipe: Readable | Writable | null | undefined;
+	readonly internalSocket: string;
+	readonly settled: () => boolean;
+	readonly onGone: () => void;
+}): void {
+	const { child, pipe, internalSocket, settled, onGone } = options;
+	// The supervisor's end of the socket pair is readable, and nothing is ever written to it.
+	if (!(pipe instanceof Readable) || process.platform === "win32") return;
+	const judge = async (): Promise<void> => {
+		if (settled() || (await waitForChildExit(child, CHILD_KILL_EXIT_TIMEOUT_MS)) || settled()) return;
+		if (await hopAccepts(internalSocket)) {
+			supervisorLog(`host child pid ${child.pid ?? "unknown"} closed its lifetime pipe but its hop still accepts`);
+			return;
+		}
+		onGone();
+	};
+	pipe.once("end", () => void judge());
+	pipe.resume();
+}
+
+/** Only a refused or missing hop proves nobody serves it; any other failure is no evidence. */
+function hopAccepts(path: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		const probe = createConnection(path);
+		probe.once("connect", () => {
+			probe.destroy();
+			resolve(true);
+		});
+		probe.once("error", (cause: NodeJS.ErrnoException) => {
+			probe.destroy();
+			resolve(cause.code !== "ECONNREFUSED" && cause.code !== "ENOENT");
+		});
 	});
 }
 

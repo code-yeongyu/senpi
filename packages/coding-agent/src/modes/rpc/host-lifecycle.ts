@@ -22,6 +22,7 @@ import {
 	drainOnPublicSocketLoss,
 	recordDrainOverdue,
 	SupervisorDrain,
+	watchChildLifetimePipe,
 	watchWin32ChildIdentity,
 } from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
@@ -172,6 +173,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// Nothing is ever written; the pipe exists purely so its EOF is a reliable
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
+	// An exit nobody observes must still end this generation (oh-my-openagent#14725).
+	watchChildLifetimePipe({
+		child,
+		pipe: child.stdio[HOST_CHILD_WATCH_FD],
+		internalSocket,
+		settled: () => state.shuttingDown,
+		onGone: () => void shutdown("rpc host child closed its lifetime pipe and its exit was never observed", 1),
+	});
 	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart.
 	if (child.pid !== undefined)
 		void recordChildPid(

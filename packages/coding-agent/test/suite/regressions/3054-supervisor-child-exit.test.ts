@@ -21,6 +21,7 @@ import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts
 import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
 import { hostChildAlive } from "../../../src/modes/rpc/host-stalled-evidence.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
+import { prepareSocketPath } from "../../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
 import { processStartTimeMs, readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { removeHostScratch } from "../../helpers/host-scratch-removal.ts";
@@ -111,8 +112,12 @@ async function rig(mode: string) {
 			registered.hostPid = message.pid;
 		messages.push({ ...message });
 	});
-	const wait = async (type: string, after = 0): Promise<Record<string, unknown>> => {
-		const existing = () => messages.slice(after).find((message) => message.type === type);
+	const wait = async (
+		type: string,
+		after = 0,
+		match: (message: Record<string, unknown>) => boolean = () => true,
+	): Promise<Record<string, unknown>> => {
+		const existing = () => messages.slice(after).find((message) => message.type === type && match(message));
 		const found = existing();
 		if (found) return found;
 		if (child.exitCode !== null || child.signalCode !== null)
@@ -404,6 +409,39 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 		expect(await r.exited, r.stderr()).toEqual([143, null]);
 		expect(await readHostCrashRecords(r.paths.dir)).toContainEqual(expect.objectContaining({ signal: "SIGKILL" }));
 		await expect(access(r.paths.pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	// oh-my-openagent#14725: a drained generation whose successor never took over. Its host parks nothing and exits on
+	// its own, and the supervisor never hears that exit (a child nobody reaped). It must not keep the public socket,
+	// refusing every client and every fresh bind; it ends the generation once its child is provably not serving.
+	it("gives up the public socket when its drained host is gone and the exit is never observed", async () => {
+		const r = await rig("drain-gate-exit");
+		const before = r.messages.length;
+		r.child.kill("SIGUSR1");
+		await r.wait("exit-held", before);
+		const exitWindow = await r.wait("wait", before, (message) => message.ms === CHILD_KILL_EXIT_TIMEOUT_MS);
+		// From here the test is the clock: the ordinary stop escalation runs its waits, and so does the occupancy
+		// observer's reconnect to the dead host, whose handshake waits are indistinguishable by length.
+		const tick = (message: unknown) => {
+			if (typeof message === "object" && message !== null && Reflect.get(message, "type") === "wait")
+				r.child.send({ type: "expire", id: Reflect.get(message, "id") });
+		};
+		r.child.on("message", tick);
+		r.child.send({ type: "expire", id: exitWindow.id });
+
+		expect(await r.exited, r.stderr()).toEqual([1, null]);
+		r.child.off("message", tick);
+		expect(
+			r.messages
+				.slice(before)
+				.filter((message) => message.type === "child-signal")
+				.map((message) => message.signal),
+		).toEqual(["SIGTERM", "SIGKILL"]);
+		expect(r.stderr()).toContain("lifetime pipe");
+		// Nothing serves the endpoint any more: its generation is released and a fresh bind may take the path.
+		expect((await pruneDeadGenerations(r.paths)).generations).toEqual(["child-exit"]);
+		await expect(prepareSocketPath(r.qa.socket)).resolves.toBeUndefined();
+		await expect(access(r.qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("fails the breaker without releasing or replacing a still-live child's ownership", async () => {

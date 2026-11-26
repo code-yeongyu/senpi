@@ -17,8 +17,10 @@ function exitWhenLeaseEnds(fd: number): void {
 	lease.resume();
 	lease.unref();
 }
-if (mode === "host" || mode === "host-term") {
+if (mode === "host" || mode === "host-term" || mode === "host-drain") {
 	exitWhenLeaseEnds(HOST_LEASE_FD);
+	// A drained host with nothing to park leaves through its own clean exit, as the real host's idle path does.
+	if (mode === "host-drain") process.on("SIGUSR1", () => process.exit(0));
 	const address = process.argv.find((arg) => arg.startsWith("unix://"))?.slice(7);
 	if (!address) throw new Error("missing internal socket");
 	// The supervisor hands a POSIX host its internal key on stdin and proves readiness over the sealed hop
@@ -92,7 +94,7 @@ if (mode === "host" || mode === "host-term") {
 				if (output.includes("host-term-ready\n")) process.send?.({ type: "host-ready" });
 			});
 		}
-		if (mode === "gate-exit") {
+		if (mode === "gate-exit" || mode === "drain-gate-exit") {
 			// SIGKILL itself cannot be delayed deterministically: hold libuv's exit observation instead.
 			let code: number | null = null;
 			let signal: NodeJS.Signals | null = null;
@@ -157,6 +159,9 @@ if (mode === "host" || mode === "host-term") {
 		agentDir,
 		hostArgs: [],
 		childCommand: process.execPath,
-		childArgs: [import.meta.filename, mode === "honour-term" ? "host-term" : "host"],
+		childArgs: [
+			import.meta.filename,
+			mode === "honour-term" ? "host-term" : mode === "drain-gate-exit" ? "host-drain" : "host",
+		],
 	});
 }
