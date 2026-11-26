@@ -21,7 +21,7 @@ const CELLS = {
 		'  child = s.spawn(["tail", "-f", "/dev/null"]);',
 		'  await s.monitor({ command: "tail -f /dev/null", filter: "x" });',
 		"}",
-		"const served = await fetch(`http://127.0.0.1:${port}/`).then(() => true, () => false);",
+		'const served = await fetch("http://127.0.0.1:" + port + "/").then(() => true, () => false);',
 		"return { dirExists: existsSync(dir), childEnded: child.exitCode !== null || child.signalCode !== null, served };",
 	].join("\n"),
 	thrown: [
