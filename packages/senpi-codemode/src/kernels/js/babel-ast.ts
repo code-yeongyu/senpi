@@ -9,7 +9,7 @@ export type AstNode = {
 
 export type ParsedProgram = ReturnType<typeof parse>;
 
-export function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 

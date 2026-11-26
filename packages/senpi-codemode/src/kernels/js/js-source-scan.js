@@ -96,7 +96,7 @@ export function skipTemplateLiteral(code, start) {
 	return code.length;
 }
 
-export function skipTemplateExpression(code, start) {
+function skipTemplateExpression(code, start) {
 	let curly = 1;
 	let canStartRegex = true;
 	for (let index = start; index < code.length; index += 1) {
