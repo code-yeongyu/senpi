@@ -1,24 +1,12 @@
-import { closeSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
-import { join, win32 } from "node:path";
+import { win32 } from "node:path";
 import { debuglog } from "node:util";
 import { APP_COMMAND } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionContext, ProgramStatus } from "../../types.ts";
-import {
-	isTerminalMonitorStateEvent,
-	isWakeSourceStateEvent,
-	TERMINAL_MONITOR_STATE_EVENT,
-	WAKE_SOURCE_STATE_EVENT,
-} from "../monitor-state-event.ts";
+import { connectSessionLiveness } from "../session-liveness/connect.ts";
+import { initialHerdrState, selectHerdrBlockedKind, selectHerdrReport } from "../session-liveness/state.ts";
 import { HerdrClient, type HerdrMethod } from "./herdr-client.ts";
-import {
-	initialHerdrState,
-	isHerdrBlockedEvent,
-	openEndedMonitors,
-	reduceHerdrState,
-	selectHerdrBlockedKind,
-	selectHerdrReport,
-} from "./herdr-state.ts";
 
 /**
  * Herdr keys prompt delivery and session restore on agent labels it knows, so the protocol agent stays `pi`.
@@ -65,7 +53,6 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 		let deferred = false;
 		let lastReport: string | undefined;
 		let title: string | undefined;
-		let poll: ReturnType<typeof setInterval> | undefined;
 		const subscriptions: Array<() => void> = [];
 		const pending = new Set<Promise<boolean>>();
 		const owns = (ctx: ExtensionContext) => !stopped && bound === ctx.sessionManager;
@@ -118,9 +105,6 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			const params = { title: next, display_agent: next, tokens: { [APP_TOKEN]: APP_COMMAND } };
 			if (!(await send("pane.report_metadata", params)) && title === next) title = undefined;
 		}
-		function refreshChildren(ctx: ExtensionContext): void {
-			state = reduceHerdrState(state, { type: "children", count: countRunningChildTasks(ctx, debug) });
-		}
 
 		pi.on("session_start", async (_event, ctx) => {
 			if (stopped || bound || ctx.mode !== "tui") return;
@@ -136,38 +120,19 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 					debug("Herdr builtin deferred to a loaded user reporter");
 				} else client = new HerdrClient(socketPath, paneId, deps);
 			}
-			state = reduceHerdrState(state, { type: "turn", active: !ctx.isIdle() });
-			refreshChildren(ctx);
-			subscriptions.push(
-				pi.events.on("herdr:blocked", (data) => {
-					if (stopped || !isHerdrBlockedEvent(data)) return;
-					state = reduceHerdrState(state, { type: "blocked", ...data });
-					return publish();
-				}),
-			);
-			subscriptions.push(
-				pi.events.on(TERMINAL_MONITOR_STATE_EVENT, (data) => {
-					if (stopped || !isTerminalMonitorStateEvent(data)) return;
-					state = reduceHerdrState(state, {
-						type: "monitors",
-						count: data.activeCount,
-						openEnded: openEndedMonitors(data),
-					});
-					return publish();
-				}),
-			);
-			subscriptions.push(
-				pi.events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
-					if (stopped || !isWakeSourceStateEvent(data)) return;
-					state = reduceHerdrState(state, { type: "wake-source", source: data.source, count: data.activeCount });
-					return publish();
-				}),
-			);
-			poll = setInterval(() => {
-				refreshChildren(ctx);
-				void publish();
-			}, 4000);
-			poll.unref();
+			// The session's one liveness fold (turn, blocks, monitors, wake sources, child records) is shared with the
+			// todo widget; this reporter only publishes it (senpi#1146).
+			const liveness = connectSessionLiveness(pi.events);
+			if (liveness) {
+				state = liveness.state();
+				subscriptions.push(
+					liveness.subscribe((next) => {
+						if (stopped) return;
+						state = next;
+						return publish();
+					}),
+				);
+			}
 			if (!client) return publish();
 			// Herdr accepts a resume command only after this reporter holds the pane.
 			await Promise.all([reportTitle(ctx), publish()]);
@@ -181,21 +146,9 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 		pi.on("session_info_changed", (_event, ctx) => {
 			if (owns(ctx)) return reportTitle(ctx);
 		});
-		pi.on("agent_start", (_event, ctx) => {
-			if (!owns(ctx)) return;
-			state = reduceHerdrState(state, { type: "turn", active: true });
-			return publish();
-		});
-		pi.on("agent_settled", (_event, ctx) => {
-			if (!owns(ctx)) return;
-			state = reduceHerdrState(state, { type: "turn", active: !ctx.isIdle() });
-			refreshChildren(ctx);
-			return publish();
-		});
 		pi.on("session_shutdown", async (event, ctx) => {
 			if (!owns(ctx)) return;
 			stopped = true;
-			if (poll) clearInterval(poll);
 			for (const unsubscribe of subscriptions) unsubscribe();
 			if (event.reason === "quit") ctx.ui.setProgramStatus?.(undefined);
 			// Drain before the host builds the successor runtime, or releases the pane.
@@ -219,40 +172,4 @@ function hasUserReporter(deps: HerdrDependencies, ctx: ExtensionContext, debug: 
 			return true;
 		}
 	});
-}
-
-function countRunningChildTasks(ctx: ExtensionContext, debug: (message: string) => void): number {
-	const directory = join(ctx.cwd, ".omo", "senpi-task", "tasks");
-	let entries: string[];
-	try {
-		entries = readdirSync(directory);
-	} catch (error) {
-		if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
-			debug("Herdr child-task directory unavailable");
-		return 0;
-	}
-	let count = 0;
-	for (const file of entries) {
-		if (!file.endsWith(".json")) continue;
-		try {
-			const record: unknown = JSON.parse(readFileSync(join(directory, file), "utf8"));
-			if (
-				typeof record !== "object" ||
-				record === null ||
-				!("status" in record) ||
-				(record.status !== "running" && record.status !== "pending")
-			)
-				continue;
-			const sessionId = ctx.sessionManager.getSessionId();
-			if (
-				("root_session_id" in record && record.root_session_id === sessionId) ||
-				("parent_session_id" in record && record.parent_session_id === sessionId)
-			)
-				count++;
-		} catch {
-			// Task records are an external, concurrently-written boundary. Retry on the next poll.
-			debug("Herdr ignored an unreadable or partial child-task record");
-		}
-	}
-	return count;
 }

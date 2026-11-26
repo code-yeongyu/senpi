@@ -1,80 +1,43 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import {
-	type HerdrStateEvent,
-	initialHerdrState,
-	isHerdrBlockedEvent,
-	openEndedMonitors,
-	reduceHerdrState,
-	selectHerdrReport,
-} from "../herdr/herdr-state.ts";
-import {
-	isTerminalMonitorStateEvent,
-	isWakeSourceStateEvent,
-	TERMINAL_MONITOR_STATE_EVENT,
-	WAKE_SOURCE_STATE_EVENT,
-} from "../monitor-state-event.ts";
+import { connectSessionLiveness, type SessionLiveness } from "../session-liveness/connect.ts";
 
 const LOOP = { runs: "brain" } as const;
 
 /**
- * Whether the session is working (a turn is active or bounded background work is live), folded by the herdr pane
- * report's own rule from the events that report listens to (senpi#1146). The pane report also counts task records
- * on disk, which this does not.
- * `onChange` runs when the answer flips; the first read of a session comes from its `session_start`.
+ * Whether the session is working, read from the session's one liveness watcher (senpi#1146). `onChange` runs when
+ * that answer flips. With no watcher bound (the session-liveness builtin is not loaded) every item draws as before.
  */
-export function watchSessionWorking(pi: ExtensionAPI, onChange: (ctx: ExtensionContext) => void): () => boolean {
-	let state = initialHerdrState();
-	let boundCtx: ExtensionContext | undefined;
-	let subscriptions: Array<() => void> = [];
-	const isWorking = (): boolean => selectHerdrReport(state).state === "working";
-	const apply = (event: HerdrStateEvent): void => {
-		const before = isWorking();
-		state = reduceHerdrState(state, event);
-		if (boundCtx && isWorking() !== before) onChange(boundCtx);
-	};
-	const unsubscribe = (): void => {
-		for (const stop of subscriptions) stop();
-		subscriptions = [];
-	};
+export function watchSessionWorking(
+	pi: Pick<ExtensionAPI, "on" | "events">,
+	onChange: (ctx: ExtensionContext) => void,
+): () => boolean {
+	let liveness: SessionLiveness | undefined;
+	let unsubscribe: (() => void) | undefined;
+	let drawn = true;
+	const isWorking = (): boolean => liveness?.working() ?? true;
 
 	pi.on(
 		"session_start",
 		(_event, ctx) => {
-			unsubscribe();
-			boundCtx = ctx;
-			state = reduceHerdrState(initialHerdrState(), { type: "turn", active: !ctx.isIdle() });
-			subscriptions = [
-				pi.events.on("herdr:blocked", (data) => {
-					if (isHerdrBlockedEvent(data)) apply({ type: "blocked", ...data });
-				}),
-				pi.events.on(TERMINAL_MONITOR_STATE_EVENT, (data) => {
-					if (!isTerminalMonitorStateEvent(data)) return;
-					apply({ type: "monitors", count: data.activeCount, openEnded: openEndedMonitors(data) });
-				}),
-				pi.events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
-					if (isWakeSourceStateEvent(data))
-						apply({ type: "wake-source", source: data.source, count: data.activeCount });
-				}),
-			];
+			unsubscribe?.();
+			liveness = connectSessionLiveness(pi.events);
+			drawn = isWorking();
+			unsubscribe = liveness?.subscribe(() => {
+				if (isWorking() === drawn) return;
+				drawn = isWorking();
+				onChange(ctx);
+			});
 		},
 		LOOP,
 	);
 	pi.on(
-		"agent_start",
-		(_event, ctx) => {
-			boundCtx = ctx;
-			apply({ type: "turn", active: true });
+		"session_shutdown",
+		() => {
+			unsubscribe?.();
+			unsubscribe = undefined;
+			liveness = undefined;
 		},
 		LOOP,
 	);
-	pi.on(
-		"agent_settled",
-		(_event, ctx) => {
-			boundCtx = ctx;
-			apply({ type: "turn", active: !ctx.isIdle() });
-		},
-		LOOP,
-	);
-	pi.on("session_shutdown", unsubscribe, LOOP);
 	return isWorking;
 }

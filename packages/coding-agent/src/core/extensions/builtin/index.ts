@@ -46,6 +46,7 @@ import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
 import scheduleExtension from "./schedule/index.ts";
 import serviceTierExtension from "./service-tier.ts";
+import sessionLivenessExtension from "./session-liveness/index.ts";
 import terminalExtension from "./terminal/index.ts";
 import todowriteExtension from "./todotools/index.ts";
 import toolPairGuardExtension from "./tool-pair-guard/index.ts";
@@ -72,6 +73,8 @@ export const globalDefaultExtensionFactories = {
 } satisfies Record<(typeof globalDefaultExtensionIds)[number], ExtensionFactory>;
 
 export const builtinExtensions: BuiltinExtensionFactory[] = [
+	// First: its session_start fold must be listening before any owner re-publishes its liveness state there.
+	{ id: "session-liveness", factory: sessionLivenessExtension },
 	// Loop guard owns the first veto opportunity so repeated calls never re-run hooks or permission prompts.
 	{ id: "loop-guard", factory: loopGuardExtension },
 	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.

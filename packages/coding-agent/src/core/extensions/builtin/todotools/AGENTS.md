@@ -17,9 +17,11 @@ oh-my-pi, plus the `/todo` command suite and the `todo-sidebar` widget. Fully di
   `prompt.ts` (`TODO_TOOL_DESCRIPTION`, `TASK_MANAGEMENT_SECTION`), `markdown.ts`.
 - **First turn**: `first-turn.ts` (gate, named tool_choice wire shapes, `FIRST_TURN_REMINDER`).
 - **UI**: `todo-widget.ts` (10-line window model), `todo-widget-component.ts`
-  (completion strike animation), `native-todo-mirror.ts`, `session-working.ts` (whether the
-  session is working, by the herdr reporter's rule; while it is not, the widget draws no active
-  item and its title reads paused with the open count, senpi#1146; stored state is unchanged).
+  (completion strike animation), `native-todo-mirror.ts`, `session-working.ts` (reads whether the
+  session is working from the session's one liveness watcher, `../session-liveness/`, the same
+  answer the herdr pane report publishes; while it is not, the widget draws no active item and its
+  title reads paused with the open count of the whole list, senpi#1146; stored state is unchanged;
+  with no watcher bound every item draws as before).
 
 ## ASK / NOW / NEXT
 
