@@ -9756,6 +9756,14 @@
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
+		"packages/coding-agent/src/private-fd-token-handoff.ts#DESCRIPTOR_ENV": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/private-fd-token-handoff.ts#DESCRIPTOR_FLAGS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/private-fds.ts#WINDOWS_PRIVATE_FD_PAIR_PROVEN": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
