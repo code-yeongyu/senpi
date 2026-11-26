@@ -83,4 +83,27 @@ describe('unload_session { children: "detach" } names the children it left runni
 
 		expect(answer).toMatchObject({ outcome: "unloaded", detached: [] });
 	});
+
+	it("adds no detached key when the unload did not ask to detach children, live, on the receipt or on a replay", async () => {
+		const rig = await host();
+		const client = rig.client("A");
+		const parent = String(dataOf(await client.request({ type: "open_session", cwd: rig.cwd })).sessionId);
+		const unload = { type: "unload_session", sessionId: parent, force: true, effectId: "plain" };
+
+		const answer = dataOf(await client.request(unload));
+		const replay = dataOf(await client.request(unload));
+		const receipt = dataOf(
+			await client.request({
+				type: "get_effect_status",
+				effectId: "plain",
+				sessionPath: String(answer.sessionPath),
+			}),
+		);
+
+		expect(answer).toMatchObject({ outcome: "unloaded" });
+		expect(Object.keys(answer)).not.toContain("detached");
+		expect(Object.keys(replay)).not.toContain("detached");
+		expect(receipt).toMatchObject({ effect: { state: "done", disposition: "unloaded" } });
+		expect(Object.keys(receipt.effect as WireRecord)).not.toContain("detached");
+	});
 });

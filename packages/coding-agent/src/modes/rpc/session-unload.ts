@@ -206,7 +206,9 @@ async function claimAndUnload(
 		return fail(command, ready.session, stillBlocked[0] as Refusal, dropped);
 	}
 	// Read in the step that claims the close, so the answer names exactly the children this unload left running.
-	const detached = command.children === "detach" ? [...port.openChildSessions(ready.durableSessionId)] : [];
+	// Only an unload that asked to detach names them: every other caller's answer keeps today's keys.
+	const detached =
+		command.children === "detach" ? { detached: [...port.openChildSessions(ready.durableSessionId)] } : {};
 	if (command.clearQueue === true) {
 		ClientAdmissions.clearQueuedFor(ready.session);
 		ready.session.clearQueue();
@@ -218,7 +220,7 @@ async function claimAndUnload(
 			: EffectLedger.forSession(ready.session).transition(command.effectId, "done", {
 					disposition: "unloaded",
 					...dropped,
-					detached,
+					...detached,
 				});
 	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
 		return answer(command, {
@@ -232,7 +234,7 @@ async function claimAndUnload(
 		outcome: "unloaded",
 		sessionPath: ready.sessionPath,
 		...dropped,
-		detached,
+		...detached,
 		...(closed === undefined
 			? {}
 			: { graceful: { turn: closed.turn, waited_ms: closed.waited_ms, stopped: closed.stopped } }),
