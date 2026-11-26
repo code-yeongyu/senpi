@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// First: under Bun the OSC 7577 token leaves the startup environment by an in-place exec (senpi#7493).
+import "./program-resume-startup.ts";
 import "./valid-cwd.ts";
 // Release a coordinated start's filler pipes while the private table is still in the environment (senpi#4602).
 import "./private-fd-startup-release.ts";
