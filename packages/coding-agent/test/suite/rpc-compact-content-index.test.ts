@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CompactContentIndex } from "../../src/modes/rpc/compact-content-index.ts";
 import { CompactContentStore, type LeafId } from "../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState, type CompactSessionStateOptions } from "../../src/modes/rpc/compact-session-state.ts";
-import { controlledIo, spoolRoot } from "./compact-storage-support.ts";
+import { controlledIo, spoolRoot, startIdentity } from "./compact-storage-support.ts";
 
 // senpi#4272 (S03a-2): the spillable settled-row index under concurrent transitions. Every
 // asynchronous step is driven by an explicit I/O hold or by awaiting idle, never by elapsed time.
@@ -16,14 +16,25 @@ afterEach(async () => {
 
 async function setup(options: Partial<CompactSessionStateOptions> = {}) {
 	const root = await spoolRoot();
-	cleanups.push(root.cleanup);
 	const control = controlledIo();
 	const state = new CompactSessionState({ dir: root.dir, io: control.io, compactAboveRows: 3, ...options });
+	cleanups.push(async () => {
+		await state.retire();
+		await root.cleanup();
+	});
 	return { state, control, dir: root.dir };
 }
 
 function start(messageId: string, seed: string) {
-	return { type: "block_start", messageId, contentIndex: 0, kind: "text", seed, coveredCodeUnits: 0 } as const;
+	return {
+		type: "block_start",
+		...startIdentity(),
+		messageId,
+		contentIndex: 0,
+		kind: "text",
+		seed,
+		coveredCodeUnits: 0,
+	} as const;
 }
 
 function settle(state: CompactSessionState, messageId: string, seed: string, persistence = "pending" as const) {
@@ -52,7 +63,7 @@ async function compactionInFlight() {
 	settle(state, "m1", "a1");
 	settle(state, "m2", "b2");
 	await state.idle();
-	const pageWrite = control.hold("write");
+	const pageWrite = control.hold("write", (path) => /[/\\]page-/.test(path));
 	settle(state, "m3", "");
 	expect(await pageWrite.entered).toContain("page-");
 	return { ...setupResult, pageWrite };
@@ -61,7 +72,7 @@ async function compactionInFlight() {
 describe("compact content index: transitions racing a compaction", () => {
 	it("skips a row removed between the snapshot and the publish, and the next compaction still runs", async () => {
 		const { state, dir, pageWrite } = await compactionInFlight();
-		state.accept({ type: "message_remove", messageId: "m2" });
+		await state.applyCold({ type: "message_remove", messageId: "m2" });
 		pageWrite.release();
 		await state.idle();
 
@@ -73,30 +84,32 @@ describe("compact content index: transitions racing a compaction", () => {
 		const status = state.storageStatus();
 		expect(status).toMatchObject({ failures: [], overrideSlots: 0, baseRows: 5, reclaimDebtBytes: 0 });
 		expect(await texts(state)).toEqual({ m1: "a1", m3: "", m4: "", m5: "", m6: "" });
-		expect(await spoolFiles(dir, "leaf-")).toHaveLength(1);
+		expect(await spoolFiles(dir, "leaf-")).toHaveLength(0);
+		expect(status.structuredBytes.resident).toBe(0);
 		expect(await spoolFiles(dir, "page-")).toHaveLength(status.basePages);
 	});
 
 	it("keeps a row re-created with new leaves during compaction and releases the replaced leaves", async () => {
 		const { state, dir, pageWrite } = await compactionInFlight();
-		state.accept({ type: "message_remove", messageId: "m2" });
+		await state.applyCold({ type: "message_remove", messageId: "m2" });
 		settle(state, "m2", "new2");
 		pageWrite.release();
 		await state.idle();
 
 		expect(state.storageStatus()).toMatchObject({ failures: [], overrideSlots: 1 });
 		expect(await texts(state)).toEqual({ m1: "a1", m2: "new2", m3: "" });
+		expect(state.storageStatus().structuredBytes.resident).toBe(0);
 
 		for (const id of ["m4", "m5"]) settle(state, id, "");
 		await state.idle();
 		expect(state.storageStatus()).toMatchObject({ failures: [], overrideSlots: 0, baseRows: 5, reclaimDebtBytes: 0 });
 		expect(await texts(state)).toEqual({ m1: "a1", m2: "new2", m3: "", m4: "", m5: "" });
-		expect(await spoolFiles(dir, "leaf-")).toHaveLength(2);
+		expect(await spoolFiles(dir, "leaf-")).toHaveLength(0);
 	});
 
 	it("keeps the previous index after a failed page write, and the next compaction publishes", async () => {
 		const { state, control } = await setup();
-		const pageWrite = control.hold("write");
+		const pageWrite = control.hold("write", (path) => /[/\\]page-/.test(path));
 		for (const id of ["m1", "m2", "m3"]) settle(state, id, "");
 		await pageWrite.entered;
 		pageWrite.fail(new Error("disk full"));
@@ -109,13 +122,14 @@ describe("compact content index: transitions racing a compaction", () => {
 
 		settle(state, "m4", "");
 		await state.idle();
+		// The bounded structural flush makes m4 eligible alongside the three retained rows.
 		expect(state.storageStatus()).toMatchObject({ basePages: 1, baseRows: 4, overrideSlots: 0 });
 		expect(Object.keys(await texts(state))).toEqual(["m1", "m2", "m3", "m4"]);
 	});
 
 	it("publishes nothing once retirement started", async () => {
 		const { state, control, dir } = await setup();
-		const pageWrite = control.hold("write");
+		const pageWrite = control.hold("write", (path) => /[/\\]page-/.test(path));
 		for (const id of ["m1", "m2", "m3"]) settle(state, id, "");
 		await pageWrite.entered;
 		const retired = state.retire();

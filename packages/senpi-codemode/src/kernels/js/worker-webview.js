@@ -1,10 +1,11 @@
 import { onCellRelease } from "./cell-run-context.js";
 import { DELIVER_EVENT, WebViewPortClient, webViewError } from "./worker-webview-client.js";
 
-// Bun constructs "chrome"-backend WebViews only on the process main thread, and this kernel runs in
-// a worker where `globalThis.Bun` and `Bun.WebView` are non-writable. Cells therefore run with a
-// `Bun` parameter bound to a stand-in whose `WebView` forwards Chrome-backed views to the
-// main-thread service over a private port; every other `Bun.*` member is the real one.
+// Bun's WebViews are only safe on the process main thread (Chrome is constructed nowhere else, and
+// the WebKit host client is bound to one thread), and this kernel runs in a worker where
+// `globalThis.Bun` and `Bun.WebView` are non-writable. Cells therefore run with a `Bun` parameter
+// bound to a stand-in whose `WebView` forwards every view to the main-thread service over a private
+// port; every other `Bun.*` member is the real one.
 const KERNEL_BUN = Symbol.for("senpi.kernel.bun");
 const KERNEL_PROCESS_MODE = Symbol.for("senpi.kernel.processMode");
 
@@ -27,7 +28,8 @@ function shadowBun(real, WebView) {
 	return new Proxy(
 		{},
 		{
-			get: (_target, key) => (key === "WebView" ? WebView : Reflect.get(real, key)),
+			get: (_target, key) => key === "WebView" ? WebView
+				: key === "plugin" ? globalThis[Symbol.for("senpi.kernel.permissionBunPlugin")] ?? real.plugin : Reflect.get(real, key),
 			set: (_target, key, value) => Reflect.set(real, key, value),
 			has: (_target, key) => key === "WebView" || Reflect.has(real, key),
 			ownKeys: () => Reflect.ownKeys(real),
@@ -40,14 +42,13 @@ function shadowBun(real, WebView) {
 	);
 }
 
-// The macOS default (WebKit) stays a native worker view: its host process serves any thread.
-// A process-mode kernel already runs its cells on the child's main thread, so the native
-// WebView constructs there directly and no MessagePort proxy is ever needed.
-function needsMainThread(options) {
-	if (globalThis[KERNEL_PROCESS_MODE]) return false;
-	const backend = options?.backend;
-	if (backend === undefined) return process.platform !== "darwin";
-	return backend === "chrome" || (typeof backend === "object" && backend !== null && backend.type === "chrome");
+// Every backend goes to the main thread, WebKit included (senpi#4794): Bun's WebKit host client is
+// one per process, bound to the thread that first spawned it, and it settles every view's replies
+// in that thread's heap. A second kernel worker's views then corrupt the process heap, and once the
+// binding worker exits no later view can spawn the host. A process-mode kernel already runs its
+// cells on the child's main thread, so the native WebView constructs there directly.
+function needsMainThread() {
+	return !globalThis[KERNEL_PROCESS_MODE];
 }
 
 function closedError(method) {
@@ -96,7 +97,7 @@ function createKernelWebView(NativeWebView, requestPort) {
 		onNavigationFailed = null;
 
 		constructor(options = {}) {
-			if (!needsMainThread(options)) {
+			if (!needsMainThread()) {
 				const view = new NativeWebView(options);
 				const ref = new WeakRef(view);
 				natives.add(ref);
@@ -141,8 +142,8 @@ function createKernelWebView(NativeWebView, requestPort) {
 		scroll(dx, dy) { return this.#call("scroll", [dx, dy]); }
 		scrollTo(...args) { return this.#call("scrollTo", args); }
 		resize(width, height) { return this.#call("resize", [width, height]); }
-		back() { return this.#call("back", []); }
-		forward() { return this.#call("forward", []); }
+		goBack() { return this.#call("goBack", []); }
+		goForward() { return this.#call("goForward", []); }
 		reload() { return this.#call("reload", []); }
 		cdp(...args) { return this.#call("cdp", args); }
 

@@ -21,11 +21,13 @@ function asExtensionOAuthRegistry(store: CredentialStore): ExtensionOAuthRegistr
 }
 /** Async credential store overlay for non-persistent runtime API keys. */
 export class RuntimeCredentials implements CredentialStore {
+	readonly withRefreshLock?: CredentialStore["withRefreshLock"];
 	private readonly store: CredentialStore;
 	private readonly overrides = new Map<string, string>();
 
 	constructor(store: CredentialStore) {
 		this.store = store;
+		this.withRefreshLock = store.withRefreshLock?.bind(store);
 	}
 
 	/** The store extension OAuth providers register into; a session's ModelRegistry reads it (senpi#3434). */
@@ -101,5 +103,13 @@ export class RuntimeCredentials implements CredentialStore {
 		options?.signal?.throwIfAborted();
 		await this.store.delete(providerId, options);
 		this.overrides.delete(providerId);
+	}
+
+	/** A backing store that cannot compare refuses (`false`) rather than removing unconditionally (senpi#7406). */
+	async deleteLogin(providerId: string, loginId: string, options?: AuthOperationOptions): Promise<boolean> {
+		options?.signal?.throwIfAborted();
+		const deleted = (await this.store.deleteLogin?.(providerId, loginId, options)) ?? false;
+		if (deleted) this.overrides.delete(providerId);
+		return deleted;
 	}
 }

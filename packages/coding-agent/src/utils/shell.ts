@@ -7,6 +7,9 @@ import {
 } from "@earendil-works/pi-agent-core/node";
 import { spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
+import { withCredentialProxy } from "../core/credential-proxy/runtime.ts";
+import { withKillGuardRuntime } from "../core/kill-guard/runtime.ts";
+import { childEnvironmentOf } from "../modes/rpc/host-identity-env.ts";
 import { withBundledBunCommands } from "./bundled-bun.ts";
 
 /** Family of a resolved shell executable, used to pick invocation arguments. */
@@ -193,7 +196,20 @@ export function getPowerShellConfig(): ShellConfig {
 	return { shell, args: [...POWERSHELL_ARGS] };
 }
 
+/**
+ * The environment agent-spawned shells get: the user's shell environment with declared credentials withheld
+ * (senpi#6820), plus the kill guard's runtime layer.
+ */
 export function getShellEnv(): NodeJS.ProcessEnv {
+	// The kill guard's runtime shims go first on PATH while the host has them active (senpi#5349).
+	return withKillGuardRuntime(withCredentialProxy(getUserShellEnv()));
+}
+
+/**
+ * The environment for a command the user typed (`!cmd`): no kill guard runtime layer, which judges only what the agent
+ * runs (senpi#5349).
+ */
+export function getUserShellEnv(): NodeJS.ProcessEnv {
 	const binDir = getBinDir();
 	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const currentPath = process.env[pathKey] ?? "";
@@ -201,8 +217,9 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 	const hasBinDir = pathEntries.includes(binDir);
 	const updatedPath = hasBinDir ? currentPath : [binDir, currentPath].filter(Boolean).join(delimiter);
 
+	// An RPC host's supervisor hand-off stays in the host; the shell gets the origin attribution instead (senpi#5635).
 	return withBundledBunCommands({
-		...process.env,
+		...childEnvironmentOf(process.env),
 		[pathKey]: updatedPath,
 	});
 }

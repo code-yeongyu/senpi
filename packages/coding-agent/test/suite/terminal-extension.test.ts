@@ -16,6 +16,7 @@ import { createKillBashTool } from "../../src/core/extensions/builtin/terminal/t
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import type { Harness } from "./harness.ts";
 import { createHarness } from "./harness.ts";
+import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 
 const autoDetachSpawn = vi.hoisted(() => ({
 	enabled: false,
@@ -36,7 +37,7 @@ vi.mock("../../src/core/extensions/builtin/terminal/tools/spawn.ts", async (impo
 	};
 });
 
-const COMPANIONS = ["bash_output", "bash_input", "bash_resize", "kill_bash", "monitor"];
+const COMPANIONS = ["bash_output", "kill_bash", "monitor"];
 
 function firstText(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content.find((block) => block.type === "text")?.text ?? "";
@@ -66,7 +67,7 @@ describe("terminal builtin extension — tool surface & mutual exclusion", () =>
 		return harness;
 	}
 
-	it("registers PTY bash plus the four companion tools", async () => {
+	it("registers PTY bash plus the resident companion tools", async () => {
 		delete process.env.PI_ANTHROPIC_BASH;
 		const harness = await anthropicHarness();
 		await harness.session.bindExtensions({});
@@ -137,21 +138,26 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 		expect(idMatch).not.toBeNull();
 		const bashId = idMatch![1]!;
 
-		// Wait for the output event-driven (monitor-style), then peek without blocking.
+		// Wait on the output event itself (monitor-style), then peek without blocking. No wall-clock
+		// deadline here: a loaded host can take seconds to schedule the child (senpi#5341). The
+		// session's exit event is the failure path, and vitest's testTimeout is the outer bound.
 		const runtime = ctx.manager.get(bashId);
 		if (!runtime) throw new Error(`No terminal session found with id: ${bashId}`);
 		await new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error("READY_MARK never arrived within 5s")), 5000);
-			const done = () => {
-				clearTimeout(timer);
-				unsubscribe();
-				resolve();
+			const settle = (outcome: () => void) => {
+				unsubscribeOutput();
+				unsubscribeExit();
+				outcome();
 			};
-			const unsubscribe = runtime.onOutput((chunk) => {
-				if (chunk.includes("READY_MARK")) done();
+			const unsubscribeOutput = runtime.onOutput((chunk) => {
+				if (chunk.includes("READY_MARK")) settle(resolve);
+			});
+			const unsubscribeExit = runtime.session.onExit(() => {
+				if (runtime.fullOutput().includes("READY_MARK")) settle(resolve);
+				else settle(() => reject(new Error(`exited without READY_MARK: ${runtime.fullOutput()}`)));
 			});
 			// Subscribed first, then check what execute's early-output grace already buffered.
-			if (runtime.fullOutput().includes("READY_MARK")) done();
+			if (runtime.fullOutput().includes("READY_MARK")) settle(resolve);
 		});
 		const peeked = await output.execute("call-peek", { bash_id: bashId });
 		expect(firstText(peeked)).toContain("READY_MARK");
@@ -189,7 +195,7 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 });
 
 describe("terminal runtime session startup ordering", () => {
-	it("subscribes to output before starting a fast session", () => {
+	it("subscribes to output before starting a fast session", async () => {
 		const calls: string[] = [];
 		const start = vi.spyOn(TerminalSession.prototype, "start").mockImplementation(function (this: TerminalSession) {
 			calls.push("start");
@@ -201,7 +207,7 @@ describe("terminal runtime session startup ordering", () => {
 		});
 		const onExit = vi.spyOn(TerminalSession.prototype, "onExit").mockReturnValue(() => {});
 
-		const runtime = new TerminalRuntimeSession("fast-exit", { command: "true" });
+		const runtime = new TerminalRuntimeSession("fast-exit", { command: "true" }, await processBootAtMs());
 		try {
 			expect(calls).toEqual(["onData", "start"]);
 		} finally {
@@ -364,6 +370,7 @@ describe("terminal extension auto-detach wiring", () => {
 			setActiveTools: (next: string[]) => {
 				activeTools = next;
 			},
+			isLoopRemote: () => false,
 		} as unknown as ExtensionAPI;
 		autoDetachSpawn.enabled = true;
 		autoDetachSpawn.spawn = (toolContext: unknown) => {

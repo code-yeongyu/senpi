@@ -1,5 +1,123 @@
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
-import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "./types.ts";
+import { ModelsError } from "../utils/models-error.ts";
+import { captureOAuthRefreshes } from "./oauth-refresh.ts";
+import { listSlots, projectSlot, type PooledCredential } from "./pool/slots.ts";
+import type {
+	AuthOperationOptions,
+	Credential,
+	CredentialInfo,
+	CredentialStore,
+	LogoutOptions,
+	OAuthAuth,
+	OAuthCredential,
+	OAuthRevocationResult,
+} from "./types.ts";
+
+function staleLogin(providerId: string): ModelsError {
+	return new ModelsError(
+		"stale_login",
+		`The ${providerId} sign-in changed since it was shown; nothing was signed out`,
+	);
+}
+
+/** Throw `stale_login` unless `current` is the sign-in `expectedLoginId` names; call it inside the store's write. */
+export function assertExpectedLogin(
+	providerId: string,
+	current: Credential | undefined,
+	expectedLoginId: string | undefined,
+): void {
+	if (expectedLoginId !== undefined && current?.loginId !== expectedLoginId) throw staleLogin(providerId);
+}
+
+/** Remove the entry; with `expectedLoginId`, only while it is still that sign-in (senpi#7406). */
+export async function deleteStored(
+	credentials: CredentialStore,
+	providerId: string,
+	expectedLoginId: string | undefined,
+	options?: AuthOperationOptions,
+): Promise<void> {
+	if (expectedLoginId === undefined) return credentials.delete(providerId, options);
+	if (!(await credentials.deleteLogin?.(providerId, expectedLoginId, options))) throw staleLogin(providerId);
+}
+
+/** Clear session secrets without discarding the registration's non-secret metadata. */
+function clearTokens<T extends object>(credential: T) {
+	const cleared = { ...credential, access: "", refresh: "", expires: 0, signedOut: true };
+	Reflect.deleteProperty(cleared, "idToken");
+	return cleared;
+}
+
+/** Capture and clear atomically before network work, so later logins are not cleared. */
+export async function revokeStoredOAuth(
+	credentials: CredentialStore,
+	providerId: string,
+	oauth: OAuthAuth,
+	options?: LogoutOptions,
+): Promise<OAuthRevocationResult | undefined> {
+	const revoke = oauth.revoke;
+	if (!revoke) return undefined;
+	let handled = false;
+	const targets: OAuthCredential[] = [];
+	let refreshes = Promise.resolve(true);
+	const settleRefreshes = captureOAuthRefreshes(credentials, providerId);
+	// Deliberately not cancellable: even an interrupted remote revoke must clear locally.
+	// Slot selection and its token snapshot share the same lock as refresh writes.
+	await credentials
+		.modify(providerId, async (current: PooledCredential | undefined) => {
+			assertExpectedLogin(providerId, current, options?.expectedLoginId);
+			if (current?.type !== "oauth") return undefined;
+			handled = true;
+			const slots = listSlots(current).filter(
+				(slot) => options?.slotId === undefined || slot.name === options.slotId,
+			);
+			if (!slots.length) return undefined;
+			for (const slot of slots) {
+				const projected = projectSlot(current, slot.name);
+				if (projected?.type === "oauth") targets.push({ ...projected, ...slot });
+			}
+			const names = new Set(slots.map((slot) => slot.name));
+			const accounts = Array.isArray(current.accounts)
+				? current.accounts.map((slot) => (names.has(slot.name) ? clearTokens(slot) : slot))
+				: undefined;
+			let next =
+				options?.slotId === undefined ||
+				slots.some((slot) => slot.refresh === current.refresh && slot.access === current.access)
+					? clearTokens(current)
+					: { ...current };
+			if (accounts) {
+				next = { ...next, accounts };
+				// Keep the legacy flat projection on a surviving signed-in sibling, if one exists.
+				const active = accounts.find((slot) => slot.access && slot.refresh);
+				if (next.signedOut === true && active) {
+					next = { ...next, ...active, signedOut: false };
+				}
+			}
+			return next;
+		})
+		.finally(() => {
+			// Include exchanges admitted until the store publishes the cleared slot.
+			// Later exchanges re-read the clear; earlier ones lose their CAS.
+			refreshes = settleRefreshes();
+		});
+	if (!handled) return undefined;
+	let result: OAuthRevocationResult = {
+		status: targets.length ? "revoked" : "remote_revocation_unconfirmed",
+	};
+	for (const target of targets) {
+		if (!target.refresh) {
+			result = { status: "remote_revocation_unconfirmed" };
+			continue;
+		}
+		try {
+			const revoked = await revoke(target, options);
+			if (revoked.status !== "revoked") result = revoked;
+		} catch {
+			result = { status: "remote_revocation_unconfirmed" };
+		}
+	}
+	if (!(await refreshes)) result = { status: "remote_revocation_unconfirmed" };
+	return result;
+}
 
 /**
  * Default in-memory credential store. Apps inject persistent stores.
@@ -62,6 +180,14 @@ export class InMemoryCredentialStore implements CredentialStore {
 			async () => {
 				this.credentials.delete(providerId);
 			},
+			options,
+		);
+	}
+
+	deleteLogin(providerId: string, loginId: string, options?: AuthOperationOptions): Promise<boolean> {
+		return this.enqueue(
+			providerId,
+			async () => this.credentials.get(providerId)?.loginId === loginId && this.credentials.delete(providerId),
 			options,
 		);
 	}

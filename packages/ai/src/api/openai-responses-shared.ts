@@ -22,6 +22,7 @@ import {
 	getContextProvenance,
 } from "../context-provenance.ts";
 import { calculateCost, supportsConfigurationUpdate } from "../models.ts";
+import { isNativeOpenAIEndpoint } from "../openai-responses-compat.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -140,6 +141,8 @@ function convertToolResultOutput<TApi extends Api>(
 }
 
 export interface OpenAIResponsesStreamOptions {
+	/** SIWC succeeds only on response.completed, never on a finished tool alone. */
+	siwc?: boolean;
 	onProviderStreamEvent?: StreamOptions["onProviderStreamEvent"];
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
@@ -211,6 +214,19 @@ type ResponseInputItem =
 
 export const CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL = "custom";
 
+/**
+ * Models Ultrafast is documented for (OpenAI prices GPT-6 Astra, GPT-6.1 Sol and both GPT-6.2 tiers' Ultrafast at
+ * 6x Standard on the API and 8x of a ChatGPT plan's included usage). One list, read by both
+ * pricing adapters and the selection warning, so the next Ultrafast model needs a single edit
+ * (senpi#2978).
+ */
+export const ULTRAFAST_DOCUMENTED_MODEL_IDS: ReadonlySet<string> = new Set([
+	"gpt-6-astra",
+	"gpt-6.1-sol",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
+]);
+
 type ResponseFunctionTool = Extract<OpenAITool, { type: "function" }>;
 
 function isResponseCustomToolCallItem(item: { type?: string }): item is ResponseCustomToolCallItem {
@@ -260,9 +276,10 @@ export type ResponsesDeferredToolsMode = "additional-tools" | "tool-search";
 
 /** `additional_tools` items win over client tool search when a model supports both. */
 export function resolveResponsesDeferredToolsMode(
-	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean } | undefined,
+	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean; siwc?: boolean } | undefined,
 ): ResponsesDeferredToolsMode | undefined {
 	if (compat?.supportsAdditionalTools) return "additional-tools";
+	if (compat?.siwc) return undefined;
 	return compat?.supportsToolSearch ? "tool-search" : undefined;
 }
 
@@ -381,14 +398,19 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
+	const instructionRole =
+		(model.compat as { siwc?: boolean } | undefined)?.siwc ||
+		(model.reasoning && compat?.supportsDeveloperRole !== false)
+			? "developer"
+			: "system";
 
 	let msgIndex = 0;
 	let sourceIndex = 0;
 	for (const msg of transformedMessages) {
 		const isLeadingSystemMessage = sourceIndex++ === 0 && msg.role === "system";
 		if (msg.role === "configurationUpdate") {
-			if (!supportsConfigurationUpdate(model)) continue;
+			// Sign in with ChatGPT rejects the item; openai-responses sends the level as reasoning.effort (senpi#6607).
+			if (!supportsConfigurationUpdate(model) || (model.compat as { siwc?: boolean } | undefined)?.siwc) continue;
 			const previous = messages[messages.length - 1];
 			if (previous?.type === "configuration_update") {
 				messages[messages.length - 1] = {
@@ -522,13 +544,10 @@ export function convertResponsesMessages<TApi extends Api>(
 					// An active grammar declaration wins over sentinel recovery below: its
 					// named input property is richer than the persisted freeform fallback.
 
-					// For different-model messages, set id to undefined to avoid pairing validation.
-					// OpenAI tracks which item IDs were paired with rs_xxx reasoning items.
-					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					// Also drop ids that do not match the replayed item type: function_call ids must be fc_*
-					// and custom_tool_call ids must be ctc_*. Foreign tool call ids are normalized to fc_*, and
-					// a call can switch between the two types when grammar tool support differs. Freeform
-					// calls replay without an item id and without the local <call_id>|custom sentinel.
+					// Do not replay a same-provider, different-model item ID after its reasoning
+					// item has been dropped: the original ID may be paired with that reasoning.
+					// Drop IDs incompatible with the replayed item type as well. Freeform calls
+					// do not replay the local <call_id>|custom sentinel as an item ID.
 					const itemIdPrefix = customInputProperty === undefined ? "fc_" : "ctc_";
 					if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) {
 						itemId = undefined;
@@ -560,9 +579,18 @@ export function convertResponsesMessages<TApi extends Api>(
 								: {}),
 						} satisfies ResponseCustomToolCallItem);
 					} else {
+						let replayItemId = itemId;
+						if (
+							replayItemId === undefined &&
+							model.api === "openai-responses" &&
+							(!isDifferentModel || !isNativeOpenAIEndpoint(model.baseUrl))
+						) {
+							replayItemId = `fc_${shortHash(callId)}`;
+							if (isDifferentModel && replayItemId === itemIdRaw) replayItemId += "_replay";
+						}
 						output.push({
 							type: "function_call",
-							id: itemId?.startsWith("fc_") ? itemId : `fc_${shortHash(callId)}`,
+							...(replayItemId === undefined ? {} : { id: replayItemId }),
 							call_id: callId,
 							name: toolCall.name,
 							arguments: JSON.stringify(toolCall.arguments),
@@ -1258,14 +1286,24 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			finalizeResponse(event.response);
+			if (options?.siwc && event.type === "response.incomplete") {
+				throw new Error(`Response incomplete: ${event.response.incomplete_details?.reason ?? "unknown reason"}`);
+			}
 		} else if (event.type === "error") {
 			const errorEvent = event as typeof event & {
-				error?: { code?: string | null; message?: string };
+				error?: { code?: string | null; message?: string; param?: string };
 				status?: number;
 			};
 			const code = errorEvent.error?.code ?? errorEvent.code ?? errorEvent.status;
 			const message = errorEvent.error?.message || errorEvent.message || "Unknown error";
-			throw new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			const failure = new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: typeof code === "string" ? code : undefined,
+						status: errorEvent.status,
+						param: errorEvent.error?.param ?? errorEvent.param,
+					})
+				: failure;
 		} else if (event.type === "response.failed") {
 			sawTerminalResponseEvent = true;
 			output.rawStopReason = event.response?.status;
@@ -1276,11 +1314,17 @@ export async function processResponsesStream<TApi extends Api>(
 				: details?.reason
 					? `incomplete: ${details.reason}`
 					: "Unknown error (no error details in response)";
-			throw new Error(msg);
+			const failure = new Error(msg);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: error?.code,
+						param: error && "param" in error ? error.param : undefined,
+					})
+				: failure;
 		}
 	}
 	const hasFinalizedToolCall = output.content.some((block) => block.type === "toolCall" && !("partialJson" in block));
-	if (!sawTerminalResponseEvent && !hasFinalizedToolCall) {
+	if (!sawTerminalResponseEvent && (options?.siwc || !hasFinalizedToolCall)) {
 		throw new Error("OpenAI Responses stream ended before a terminal response event");
 	}
 	// The agent runs every tool call in the final message. Refuse to hand over calls whose

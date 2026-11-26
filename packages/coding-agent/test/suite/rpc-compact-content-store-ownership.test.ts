@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { COMPACT_LEAF_CODE_UNITS as LEAF } from "../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState } from "../../src/modes/rpc/compact-session-state.ts";
-import { controlledIo, spoolRoot } from "./compact-storage-support.ts";
+import { controlledIo, spoolRoot, startIdentity } from "./compact-storage-support.ts";
 
 // senpi#4272 (ruling 08, lead ruling on review M2): the spool directory is created 0700 by the store
 // itself, a pre-existing directory is never adopted, and retirement removes only a directory this
@@ -29,6 +29,7 @@ async function setup() {
 async function spill(state: CompactSessionState, messageId: string, char: string): Promise<void> {
 	state.accept({
 		type: "block_start",
+		...startIdentity(),
 		messageId,
 		contentIndex: 0,
 		kind: "text",

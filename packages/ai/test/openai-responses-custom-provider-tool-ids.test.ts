@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
+import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { normalizeContext } from "../src/compat.ts";
 import type { AssistantMessage, Model, ToolResultMessage, Usage } from "../src/types.ts";
 import { shortHash } from "../src/utils/hash.ts";
@@ -29,6 +30,8 @@ function createMockCommandCodeModel(): Model<"openai-responses"> {
 }
 
 describe("OpenAI Responses custom provider tool-call ID serialization (#4395)", () => {
+	afterEach(() => vi.restoreAllMocks());
+
 	it("preserves foreign tool call IDs with compliant fc_ prefixes when targeting commandcode", () => {
 		const targetModel = createMockCommandCodeModel();
 
@@ -170,5 +173,107 @@ describe("OpenAI Responses custom provider tool-call ID serialization (#4395)", 
 
 		const messageItem = input.find((item) => item.type === "message");
 		expect(messageItem).toBeDefined();
+	});
+
+	it("retains readable reasoning as text without replaying foreign provider state", () => {
+		const targetModel = createMockCommandCodeModel();
+		const foreignAssistant: AssistantMessage = {
+			role: "assistant",
+			content: [
+				{
+					type: "thinking",
+					thinking: "The earlier model checked the input.",
+					thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_foreign", summary: [] }),
+				},
+				{ type: "text", text: "The result is ready." },
+			],
+			api: "openai-codex-responses",
+			provider: "chatgpt-subscription",
+			model: "gpt-6-luna",
+			usage,
+			stopReason: "stop",
+			timestamp: 1,
+		};
+		const input = convertResponsesMessages(
+			targetModel,
+			normalizeContext({ messages: [foreignAssistant] }),
+			new Set(["openai", "chatgpt-subscription", "opencode"]),
+		);
+
+		expect(input.some((item) => item.type === "reasoning")).toBe(false);
+		expect(input).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					type: "message",
+					role: "assistant",
+					content: [
+						expect.objectContaining({ type: "output_text", text: "The earlier model checked the input." }),
+					],
+				}),
+			]),
+		);
+	});
+
+	it("sends foreign tool calls and readable reasoning through the real Responses request path", async () => {
+		let payload: unknown;
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+			payload = JSON.parse(String(init?.body));
+			return new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			});
+		});
+		const callId = "call_foreign|item-foreign";
+		const assistant: AssistantMessage = {
+			role: "assistant",
+			content: [
+				{
+					type: "thinking",
+					thinking: "I checked the input.",
+					thinkingSignature: JSON.stringify({ type: "reasoning", id: "rs_foreign", summary: [] }),
+				},
+				{ type: "toolCall", id: callId, name: "read", arguments: { path: "note.txt" } },
+			],
+			api: "google-generative-ai",
+			provider: "foreign-provider",
+			model: "foreign-model",
+			usage,
+			stopReason: "toolUse",
+			timestamp: 1,
+		};
+		const result: ToolResultMessage = {
+			role: "toolResult",
+			toolCallId: callId,
+			toolName: "read",
+			content: [{ type: "text", text: "synthetic result" }],
+			isError: false,
+			timestamp: 2,
+		};
+		const stream = streamOpenAIResponses(
+			createMockCommandCodeModel(),
+			normalizeContext({ messages: [assistant, result] }),
+			{ apiKey: "synthetic-key" },
+		);
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(payload).toEqual(
+			expect.objectContaining({
+				input: expect.arrayContaining([
+					expect.objectContaining({
+						type: "function_call",
+						id: expect.stringMatching(/^fc_/),
+						call_id: "call_foreign",
+					}),
+					expect.objectContaining({
+						type: "message",
+						role: "assistant",
+						content: [expect.objectContaining({ type: "output_text", text: "I checked the input." })],
+					}),
+				]),
+			}),
+		);
+		expect(JSON.stringify(payload)).not.toContain("rs_foreign");
 	});
 });

@@ -217,6 +217,22 @@ export class TerminalManifestWriter {
 		await this.#persist();
 	}
 
+	/**
+	 * A graceful close (oh-my-openagent#14313): the session ended on request, so its monitors and background jobs stop
+	 * for good. Nothing is left to re-run on a reopen, and the manifest file goes away with the last entry.
+	 */
+	async recordClosed(): Promise<void> {
+		if (this.#timer !== undefined) {
+			clearTimeout(this.#timer);
+			this.#timer = undefined;
+		}
+		this.#pending.clear();
+		this.#pendingRpc.clear();
+		this.#entries.clear();
+		this.#backgrounds.clear();
+		await this.#persist();
+	}
+
 	recordBackgroundStart(
 		id: string,
 		command: string,

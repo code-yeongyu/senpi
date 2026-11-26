@@ -29,6 +29,16 @@ describe("OpenGateway outage handling in the model catalog workflows", () => {
 		}
 	});
 
+	// senpi#2287: the release ships main's committed catalog, so these refresh PRs are the only way catalog data reaches
+	// main; each must ask for auto-merge or it waits for a hand (the closed OpenGateway refreshes of 2026-11).
+	it("asks for auto-merge on both refresh PRs", () => {
+		for (const file of ["model-catalog-refresh.yml", "opengateway-catalog-refresh.yml"]) {
+			const publish = runCommands(file).filter((run) => run.includes("node scripts/publish-catalog-refresh.mjs"));
+			assert.equal(publish.length, 1, file);
+			assert.match(publish[0], /--auto-merge\b/, file);
+		}
+	});
+
 	it("keeps the last good OpenGateway catalog in the whole-catalog refresh", () => {
 		const generate = runCommands("model-catalog-refresh.yml").filter((run) => run.includes("generate-models.ts"));
 

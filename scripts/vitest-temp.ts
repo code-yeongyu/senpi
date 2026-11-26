@@ -1,15 +1,79 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 
 const directories = new Set<string>();
 const cleanups = new Set<() => void>();
+
+/** Work that may still write into a tracked directory; its removal waits for it (senpi#3570). */
+type Settler = { readonly settled: () => Promise<void>; readonly writer: () => string; readonly deadlineMs: number };
+const settlers = new Map<string, Settler>();
+
+/** Under vitest's default 10 s hookTimeout, so an expired wait fails here with the writer named, not as a hook timeout. */
+const SETTLE_DEADLINE_MS = 8_000;
+
+/**
+ * Removes `directory` only after `settled` resolves. On the deadline the removal fails naming `writer()` and the
+ * directory stays for inspection: a removal while the writer still runs is exactly the ENOTEMPTY race.
+ */
+export function settleBeforeRemoval(
+	directory: string,
+	settled: () => Promise<void>,
+	writer: () => string,
+	deadlineMs = SETTLE_DEADLINE_MS,
+): void {
+	settlers.set(directory, { settled, writer, deadlineMs });
+}
+
+async function settleThenRemove(directory: string, settler: Settler): Promise<string | undefined> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<"expired">((resolve) => {
+		timer = setTimeout(() => resolve("expired"), settler.deadlineMs);
+	});
+	const outcome = await Promise.race([settler.settled().then(() => "settled" as const), expired]);
+	clearTimeout(timer);
+	if (outcome === "expired")
+		return `${directory}: ${settler.writer()} did not finish within ${settler.deadlineMs} ms; left in place`;
+	try {
+		await rm(directory, { recursive: true, force: true });
+	} catch (error) {
+		// A writer this registration does not cover still adds entries: name them instead of a bare rmdir error.
+		if (!(error instanceof Error && "code" in error && error.code === "ENOTEMPTY")) throw error;
+		let left: string[] = [];
+		try {
+			left = readdirSync(directory, { recursive: true }).map(String);
+		} catch {}
+		return `${directory}: still written after ${settler.writer()} finished; left: ${left.join(", ") || "(nothing by the time it was listed)"}`;
+	}
+	return undefined;
+}
 // File-scoped fixtures may be created at module evaluation, before any test is active.
 // Vitest setup registers teardown; real subprocess fixtures keep their explicit cleanup.
-export function cleanupTempDirs(): void {
+// The removal is awaited so a package's test setup can join work still writing into a tracked tree first
+// (coding-agent waits for in-flight host gc passes, senpi#4382); a synchronous removal could not wait.
+/** Removes one settle-tracked directory now, after its writer finished; throws naming the writer on the deadline. */
+export async function removeSettledTempDir(directory: string): Promise<void> {
+	const settler = settlers.get(directory);
+	if (settler === undefined) throw new Error(`${directory} has no settle-before-removal registration`);
+	settlers.delete(directory);
+	directories.delete(directory);
+	const failure = await settleThenRemove(directory, settler);
+	if (failure !== undefined) throw new Error(failure);
+}
+
+export async function cleanupTempDirs(): Promise<void> {
 	for (const cleanup of [...cleanups].reverse()) cleanup();
+	// Every registered writer is awaited at once, so a file with several harnesses waits one deadline, not one per
+	// harness (sequential waits could add up past vitest's hookTimeout); every writer that did not finish is reported.
+	const pending = [...settlers];
+	settlers.clear();
+	for (const [directory] of pending) directories.delete(directory);
+	const outcomes = await Promise.all(pending.map(([directory, settler]) => settleThenRemove(directory, settler)));
+	const failures = outcomes.filter((failure): failure is string => failure !== undefined);
 	for (const directory of directories) {
-		rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
+		await rm(directory, { recursive: true, force: true, maxRetries: 3 });
 		directories.delete(directory);
 	}
+	if (failures.length > 0) throw new Error(`temp directories still being written:\n${failures.join("\n")}`);
 }
 
 export function onTempCleanup(cleanup: () => void): void {

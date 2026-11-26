@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isStaleExtensionContextError } from "../goal/stale-context.ts";
 import { isWakeSourceStateEvent, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
@@ -18,6 +19,17 @@ const USER_TURN_WAKE_SOURCE = "ask-user";
 type PendingStop = {
 	readonly ctx: ExtensionContext;
 	readonly input: HookInputWire;
+	/**
+	 * The session's id, read when the turn ended (on a hand it is bound to that call only; locally it is the same id). The
+	 * turn key is read when the Stop dispatches, so a held Stop counts reentries against the entry the session's leaf has
+	 * reached by then, as it always has; on a hand the held Stop reads it in its call's own work, from the carried leaf.
+	 */
+	readonly sessionId: string;
+	/**
+	 * Runs a held Stop in the async context of the `agent_end` that held it, so its writes go where that turn's would
+	 * (on a hand, to the loop session whose call it was, as late effects), not to whatever work drained the wake source.
+	 */
+	readonly resume: ReturnType<typeof AsyncLocalStorage.snapshot>;
 };
 
 export type StopLifecycleDeps = {
@@ -44,17 +56,17 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 	let pending: PendingStop | undefined;
 	let drainTimer: ReturnType<typeof setTimeout> | undefined;
 
-	async function dispatchStop({ ctx, input }: PendingStop): Promise<void> {
+	async function dispatchStop({ ctx, input, sessionId }: PendingStop, signal: AbortSignal | undefined): Promise<void> {
 		const state = deps.refreshState(ctx);
 		const result = await dispatchHookEvent({
 			cwd: ctx.cwd,
 			handlers: state.parsed.executableHandlers,
 			input,
-			signal: ctx.signal,
+			...(signal === undefined ? {} : { signal }),
 			trustOptions: { platform: process.platform },
 			trustState: state.trust,
 		});
-		await applyStopHookResult(pi, ctx, result, turnTracker.turnKey(ctx));
+		await applyStopHookResult(pi, ctx, result, { sessionId, turnKey: turnTracker.turnKey(ctx, sessionId) });
 	}
 
 	function clearDrainTimer(): void {
@@ -75,13 +87,16 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 		// A wake turn that is already running or queued reports its own Stop when it ends.
 		if (!stop.ctx.isIdle() || stop.ctx.hasPendingMessages()) return;
 		pending = undefined;
-		dispatchStop(stop).catch((error: unknown) => {
-			if (isStaleExtensionContextError(error)) return;
-			stop.ctx.ui.notify(
-				`Stop hook dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
-				"error",
-			);
-		});
+		// The session is quiet, so no turn signal applies: a local idle session's `ctx.signal` is undefined too.
+		stop
+			.resume(() => dispatchStop(stop, undefined))
+			.catch((error: unknown) => {
+				if (isStaleExtensionContextError(error)) return;
+				stop.ctx.ui.notify(
+					`Stop hook dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+					"error",
+				);
+			});
 	}
 
 	pi.events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
@@ -95,13 +110,18 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 	});
 
 	pi.on("agent_end", async (event, ctx) => {
-		const stop = { ctx, input: buildStopHookInput(event, ctx) };
+		const stop: PendingStop = {
+			ctx,
+			input: buildStopHookInput(event, ctx),
+			sessionId: ctx.sessionManager.getSessionId(),
+			resume: AsyncLocalStorage.snapshot(),
+		};
 		if (backgroundWork.size > 0) {
 			pending = stop;
 			return;
 		}
 		dropPending();
-		await dispatchStop(stop);
+		await dispatchStop(stop, ctx.signal);
 	});
 
 	pi.on("agent_start", () => dropPending());

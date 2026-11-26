@@ -5,39 +5,50 @@
 // recycled pid, and the retirement then force-kills the runner (measured: 145 processes, csrss.exe and
 // wininit.exe first). A process only counts as a child when it started after the parent it names.
 
+import { bunChromeProfileDir } from "./chrome-graceful-close.ts";
+
 export interface WindowsProcessRow {
 	readonly pid: number;
 	readonly parentPid: number;
 	readonly createdAt: bigint;
 	readonly bunChromeFlag: boolean;
 	readonly name: string;
+	/** The `.bun-chrome` temp profile on a flagged process's command line (senpi#5571). */
+	readonly profileDir?: string;
 }
 
 /**
- * PowerShell that prints one `pid parentPid createdFileTime flag name` line per process, leaving out the
- * listing's own PowerShell (its command line names the flag). The image name comes last because it can
- * contain spaces. A process without a readable creation time prints 0, so it never counts as the child
- * of a process that has one.
+ * PowerShell that prints one `pid parentPid createdFileTime flag name<TAB>commandLine` line per process, leaving
+ * out the listing's own PowerShell (its command line names the flag). The image name comes after the numbers
+ * because it can contain spaces, and the command line (printed only for a flagged process, where it names the
+ * profile Bun made) after a tab. A process without a readable creation time prints 0, so it never counts as the
+ * child of a process that has one.
  */
 export const WINDOWS_PROCESS_ROWS = `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID } | ForEach-Object {
 $created = if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { 0 }
 $flag = if ($_.CommandLine -like '*--remote-debugging-pipe*') { 1 } else { 0 }
-"{0} {1} {2} {3} {4}" -f $_.ProcessId, $_.ParentProcessId, $created, $flag, $_.Name }`;
+$command = if ($flag) { $_.CommandLine } else { '' }
+"{0} {1} {2} {3} {4}\`t{5}" -f $_.ProcessId, $_.ParentProcessId, $created, $flag, $_.Name, $command }`;
 
 export function parseWindowsProcessRows(stdout: string): WindowsProcessRow[] {
 	const rows: WindowsProcessRow[] = [];
 	for (const line of stdout.split(/\r?\n/u)) {
-		const [pidText, parentText, createdText, flagText, ...nameParts] = line.trim().split(/\s+/u);
+		const tab = line.indexOf("\t");
+		const fields = tab < 0 ? line : line.slice(0, tab);
+		const [pidText, parentText, createdText, flagText, ...nameParts] = fields.trim().split(/\s+/u);
 		const pid = Number(pidText);
 		const parentPid = Number(parentText);
 		if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(parentPid) || !/^\d+$/u.test(createdText ?? ""))
 			continue;
+		const bunChromeFlag = flagText === "1";
+		const profileDir = bunChromeFlag && tab >= 0 ? bunChromeProfileDir(line.slice(tab + 1)) : undefined;
 		rows.push({
 			pid,
 			parentPid,
 			createdAt: BigInt(createdText ?? "0"),
-			bunChromeFlag: flagText === "1",
+			bunChromeFlag,
 			name: nameParts.join(" "),
+			...(profileDir === undefined ? {} : { profileDir }),
 		});
 	}
 	return rows;

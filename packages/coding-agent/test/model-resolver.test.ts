@@ -703,8 +703,8 @@ describe("default model selection", () => {
 	});
 
 	test("openai defaults track current models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-6.1-sol");
-		expect(defaultModelPerProvider["chatgpt-subscription"]).toBe("gpt-6.1-sol");
+		expect(defaultModelPerProvider.openai).toBe("gpt-6.2-sol");
+		expect(defaultModelPerProvider["chatgpt-subscription"]).toBe("gpt-6.2-sol");
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
@@ -754,6 +754,16 @@ describe("default model selection", () => {
 				`${provider} default ${defaultId} should exist in its generated catalog`,
 			).toBe(true);
 		}
+	});
+
+	test("kimi defaults pick kimi k3.1 pro where the provider serves it", () => {
+		expect(defaultModelPerProvider.moonshotai).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider["moonshotai-cn"]).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider["opencode-go"]).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider.opengateway).toBe("moonshotai/kimi-k3.1-pro");
+		// Fireworks and Together list no K3.1 Pro yet, so they stay on K3.
+		expect(defaultModelPerProvider.fireworks).toBe("accounts/fireworks/models/kimi-k3");
+		expect(defaultModelPerProvider.together).toBe("moonshotai/Kimi-K3");
 	});
 
 	test("ai-gateway default tracks current model", () => {

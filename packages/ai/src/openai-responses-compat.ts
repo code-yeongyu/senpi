@@ -8,7 +8,7 @@ export interface OpenAIResponsesCompat {
 	supportsDeveloperRole?: boolean;
 	/** Session-affinity header format. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
-	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
+	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "12h"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
 	supportsLongCacheRetention?: boolean;
 	/** Whether the provider supports the OpenAI Responses WebSocket transport. */
 	supportsWebSocket?: boolean;
@@ -51,7 +51,7 @@ export interface OpenAIResponsesCompat {
 	supportsAllowedTools?: boolean;
 }
 
-function isNativeOpenAIEndpoint(baseUrl: string | undefined): boolean {
+export function isNativeOpenAIEndpoint(baseUrl: string | undefined): boolean {
 	try {
 		const { hostname } = new URL(baseUrl || "https://api.openai.com/v1");
 		return hostname === "api.openai.com" || hostname.endsWith(".api.openai.com");

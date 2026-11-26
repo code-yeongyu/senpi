@@ -24,8 +24,10 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Audit production vulnerabilities
-        run: npm audit --omit=dev --audit-level=moderate
+      - name: Audit production vulnerabilities (reviewed exceptions only)
+        # Fails on any moderate-or-above finding unless every advisory behind it is in
+        # .github/npm-audit-exceptions.json; an expired, over-long or unmatched exception fails too.
+        run: node scripts/npm-audit-gate.mjs .github/npm-audit-exceptions.json
 
       - name: Verify registry signatures
         run: npm audit signatures --omit=dev

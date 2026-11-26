@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { oauthBrandName } from "@earendil-works/pi-ai/utils/oauth-page";
 import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
 	OAuthClientInformationFull,
@@ -10,89 +11,41 @@ import type { McpLogger } from "../log.ts";
 import { fingerprintSecret } from "../log.ts";
 import { OAuthFlowError } from "./oauth-errors.ts";
 import {
+	freezeGrantAttribution,
+	grantBinding,
+	type McpGrantContext,
+	mergeOAuthTokenResponse,
+	storedAuthToTokens,
+	storedGrantIssuer,
+} from "./oauth-grant.ts";
+import {
 	canonicalAuthorizationServerIssuer,
 	credentialsMatchIssuer,
+	discoveryNamesItsServer,
 	validatedAuthorizationServerIssuer,
 } from "./oauth-issuer.ts";
-import type { McpStoredAuth, McpTokenStore } from "./token-store.ts";
-
-// Buffer before absolute token expiry at which a refresh is considered due.
-export const REFRESH_LEEWAY_MS = 5 * 60 * 1000;
+import {
+	grantForFlow,
+	registrationForFlow,
+	usesStagedRegistration,
+	withoutStagedFlowCredentials,
+	withPromotedRegistration,
+	withRegistration,
+} from "./registered-redirect.ts";
+import type { McpClientRegistration, McpStoredAuth, McpTokenStore } from "./token-store.ts";
 
 export interface McpOAuthProviderOptions {
 	serverName: string;
 	serverUrl: string;
 	store: McpTokenStore;
 	redirectUrl?: string | URL;
+	/** This flow sends an authorize request: reuse only a stored registration naming `redirectUrl` (senpi#6327). */
+	requireRegisteredRedirect?: boolean;
 	scopes?: string[];
 	clientId?: string;
 	clientMetadataUrl?: string;
 	logger?: McpLogger;
 	onRedirect?: (url: URL) => void | Promise<void>;
-}
-
-export function tokenExpiresAt(tokens: OAuthTokens, now = Date.now()): number | undefined {
-	if (tokens.expires_in === undefined) return undefined;
-	return now + tokens.expires_in * 1000;
-}
-
-/**
- * The authorization server a stored grant belongs to (senpi#2940, GHSA-6qxp-vccf-f47h): its `issuer` stamp, or
- * for a record saved before the stamp existed, the authorization server its sign-in discovered. A record with
- * neither cannot be attributed, so its refresh token is never presented anywhere.
- */
-export function storedGrantIssuer(record: McpStoredAuth | undefined): string | undefined {
-	return record?.issuer ?? record?.discoveryState?.authorizationServerUrl?.toString();
-}
-
-/**
- * Fixes who an unstamped grant belongs to before the discovery record it falls back to is replaced (senpi#2940).
- * A later discovery reflects what the MCP server advertises now, not where the grant was issued, so it must never
- * attribute an existing grant: the grant keeps the server it was attributed to, or loses its refresh token.
- */
-export function freezeGrantAttribution(record: McpStoredAuth | undefined): McpStoredAuth {
-	const next: McpStoredAuth = { ...(record ?? {}) };
-	if (next.issuer !== undefined || (next.accessToken === undefined && next.refreshToken === undefined)) return next;
-	const issuer = storedGrantIssuer(next);
-	if (issuer !== undefined) next.issuer = issuer;
-	else delete next.refreshToken;
-	return next;
-}
-
-export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date.now()): OAuthTokens | undefined {
-	if (record?.accessToken === undefined || record.accessToken.length === 0) return undefined;
-	const expiresIn =
-		record.expiresAt === undefined ? undefined : Math.max(0, Math.ceil((record.expiresAt - now) / 1000));
-	const issuer = storedGrantIssuer(record);
-	return {
-		access_token: record.accessToken,
-		// An unattributed refresh token is withheld: the SDK would post it to whichever server it discovers.
-		refresh_token: issuer === undefined ? undefined : record.refreshToken,
-		token_type: "Bearer",
-		...(expiresIn === undefined ? {} : { expires_in: expiresIn }),
-		...(issuer === undefined ? {} : { issuer }),
-	};
-}
-
-export function mergeTokensIntoStoredAuth(
-	current: McpStoredAuth | undefined,
-	tokens: OAuthTokens,
-	serverUrl: string,
-	issuer?: string,
-): McpStoredAuth {
-	const next: McpStoredAuth = {
-		...(current ?? {}),
-		accessToken: tokens.access_token,
-		resource: current?.resource ?? serverUrl,
-	};
-	const refreshToken = tokens.refresh_token ?? current?.refreshToken;
-	if (refreshToken !== undefined) next.refreshToken = refreshToken;
-	const expiresAt = tokenExpiresAt(tokens);
-	if (expiresAt !== undefined) next.expiresAt = expiresAt;
-	else delete next.expiresAt;
-	const stamp = tokens.issuer ?? issuer;
-	if (stamp !== undefined) next.issuer = stamp;
-	return next;
 }
 
 // Implements the SDK OAuthClientProvider backed by the URL-bound token store.
@@ -102,6 +55,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	readonly #options: McpOAuthProviderOptions;
 	#expectedState: string | undefined;
 	#lastAuthorizationUrl: URL | undefined;
+	#freshAuthorization = false;
+	#resource: string | undefined;
+	#presentedGrant: McpStoredAuth | undefined;
+	#selectedClient: McpClientRegistration | undefined;
 
 	constructor(options: McpOAuthProviderOptions) {
 		this.#options = options;
@@ -135,7 +92,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
 			token_endpoint_auth_method: "none",
-			client_name: "senpi",
+			client_name: oauthBrandName(),
 			scope: this.#options.scopes?.join(" "),
 		};
 	}
@@ -155,7 +112,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	clientInformation(): OAuthClientInformationMixed | undefined {
 		if (this.#options.clientId !== undefined) return { client_id: this.#options.clientId };
 		if (this.#options.clientMetadataUrl !== undefined) return { client_id: this.#options.clientMetadataUrl };
-		return this.#store.read()?.clientInfo;
+		this.#selectedClient = registrationForFlow(this.#store.read(), this.#options);
+		return this.#selectedClient;
 	}
 
 	async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
@@ -164,7 +122,15 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			discovery === undefined
 				? info.issuer && canonicalAuthorizationServerIssuer(info.issuer)
 				: validatedAuthorizationServerIssuer(discovery, this.serverName);
-		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: { ...info, issuer } }));
+		const saved = await this.#store.update((current) => {
+			const next = withRegistration(current, { ...info, issuer }, this.#options);
+			return current !== undefined &&
+				JSON.stringify(grantBinding(current, this.grantContext)) !==
+					JSON.stringify(grantBinding(next, this.grantContext))
+				? { ...next, scope: undefined, refreshScope: undefined, authorization: undefined }
+				: next;
+		});
+		this.#selectedClient = registrationForFlow(saved, this.#options);
 	}
 
 	async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
@@ -189,6 +155,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	discoveryState(): OAuthDiscoveryState | undefined {
 		const current = this.#store.read();
 		const state = current?.discoveryState;
+		// senpi#4924: a record that does not show where its authorization server came from is never handed out.
+		// The SDK would fetch metadata from the stored URL and post the saved grant there before anything checks
+		// that the MCP server names that server; callers discover from the MCP server instead.
+		if (state !== undefined && !discoveryNamesItsServer(state, this.serverUrl)) return undefined;
 		if (state !== undefined) {
 			try {
 				const issuer = validatedAuthorizationServerIssuer(state, this.serverName);
@@ -202,16 +172,41 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	tokens(): OAuthTokens | undefined {
-		return storedAuthToTokens(this.#store.read());
+		const grant = grantForFlow(this.#store.read(), this.#options);
+		this.#presentedGrant = withPromotedRegistration(grant, this.#options);
+		return storedAuthToTokens(grant);
+	}
+
+	async withFreshAuthorization<T>(exchange: () => Promise<T>): Promise<T> {
+		const previous = this.#freshAuthorization;
+		this.#freshAuthorization = true;
+		try {
+			return await exchange();
+		} finally {
+			this.#freshAuthorization = previous;
+		}
 	}
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
 		const discovery = this.discoveryState();
+		// SDK results carry the exchange's issuer. Never restamp a late response from a newer file snapshot.
 		const issuer =
-			discovery === undefined
-				? tokens.issuer && canonicalAuthorizationServerIssuer(tokens.issuer)
-				: validatedAuthorizationServerIssuer(discovery, this.serverName);
-		await this.#store.update((current) => mergeTokensIntoStoredAuth(current, { ...tokens, issuer }, this.serverUrl));
+			tokens.issuer !== undefined
+				? canonicalAuthorizationServerIssuer(tokens.issuer)
+				: this.#freshAuthorization && discovery !== undefined
+					? validatedAuthorizationServerIssuer(discovery, this.serverName)
+					: storedGrantIssuer(this.#presentedGrant);
+		// A flow's staged registration replaces the signed-in client in the same write as its tokens (senpi#6327).
+		const response = {
+			tokens: { ...tokens, issuer },
+			resource: this.#resource ?? new URL(this.serverUrl).href,
+			fresh: this.#freshAuthorization,
+			presented: this.#presentedGrant,
+			clientInfo: this.#selectedClient ?? this.#presentedGrant?.clientInfo,
+		};
+		this.#presentedGrant = await this.#store.update((current) =>
+			mergeOAuthTokenResponse(current ?? {}, this.grantContext, response),
+		);
 		this.#logFingerprint("saveTokens", tokens.access_token);
 	}
 
@@ -236,10 +231,19 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
 	// RFC 8707: bind the token to this MCP resource.
 	validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
-		return Promise.resolve(new URL(resource ?? String(serverUrl)));
+		const selected = new URL(resource ?? String(serverUrl));
+		this.#resource = selected.href;
+		return Promise.resolve(selected);
 	}
 
 	async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
+		if (
+			(scope === "all" || scope === "client" || scope === "tokens") &&
+			usesStagedRegistration(this.#store.read(), this.#options)
+		) {
+			await this.#store.update((current) => withoutStagedFlowCredentials(current, scope));
+			return;
+		}
 		if (scope === "all") {
 			await this.#store.clear();
 			return;
@@ -252,8 +256,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
 				delete next.refreshToken;
 				delete next.expiresAt;
 			}
+			if (scope === "tokens" || scope === "client") {
+				return {
+					...next,
+					scope: undefined,
+					refreshScope: undefined,
+					authorization: undefined,
+					...(scope === "client" ? { clientInfo: undefined } : {}),
+				};
+			}
 			if (scope === "verifier") next.codeVerifier = undefined;
-			if (scope === "client") next.clientInfo = undefined;
 			if (scope === "discovery") next.discoveryState = undefined;
 			return next;
 		});
@@ -270,6 +282,15 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 	get scopes(): string[] | undefined {
 		return this.#options.scopes;
+	}
+	get grantContext(): McpGrantContext {
+		return {
+			serverName: this.serverName,
+			serverUrl: this.serverUrl,
+			agentDir: this.store.agentDir,
+			clientId: this.#options.clientId,
+			clientMetadataUrl: this.#options.clientMetadataUrl,
+		};
 	}
 
 	get #store(): McpTokenStore {

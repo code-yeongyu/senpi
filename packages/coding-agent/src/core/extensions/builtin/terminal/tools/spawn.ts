@@ -1,4 +1,5 @@
 import { getShellConfig } from "../../../../../utils/shell.ts";
+import { attestSessionSpawn } from "../../../../session-spawn-attestation.ts";
 import type { CreatedTerminalSession } from "../manager.ts";
 import type { TerminalExitView, TerminalToolContext } from "./context.ts";
 
@@ -12,6 +13,8 @@ export interface SpawnRequest {
 	readonly cwd?: string;
 	/** Environment overrides merged over `ctx.getEnv()` (foreground non-interactive env). */
 	readonly envOverrides?: Readonly<Record<string, string>>;
+	/** The session the command runs for; its pid is attested to that session (senpi#6972). */
+	readonly sessionId?: string;
 }
 
 /**
@@ -36,8 +39,15 @@ export async function spawnCommandSession(
 		cols: request.cols,
 		rows: request.rows,
 		timeoutMs: request.timeoutMs,
+		redactSecretsInOutput: ctx.redactSecretsInOutput,
 	});
 
+	const spawnedPid = created.runtime.session.pid;
+	if (request.sessionId !== undefined && spawnedPid !== undefined) {
+		const attestation = attestSessionSpawn(request.sessionId, spawnedPid);
+		created.runtime.session.onExit(() => void attestation.release());
+		await attestation.recorded;
+	}
 	if (ctx.launchBarrier !== undefined) {
 		const session = created.runtime.session;
 		try {

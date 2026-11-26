@@ -7,7 +7,7 @@ import {
 } from "../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState } from "../../src/modes/rpc/compact-session-state.ts";
 import type { CompactStorageIo } from "../../src/modes/rpc/compact-storage-io.ts";
-import { controlledIo, spoolRoot } from "./compact-storage-support.ts";
+import { controlledIo, spoolRoot, startIdentity } from "./compact-storage-support.ts";
 
 // senpi#4272 (review L4-L8): storage failures and churn never stall spilling silently, leak spool
 // files, or mint unbounded leaves. Retry backoff is driven by fake timers, every other step by I/O holds.
@@ -35,7 +35,15 @@ async function setup(options: Partial<CompactContentStoreOptions> = {}) {
 const leafFiles = async (dir: string) => (await readdir(dir)).filter((name) => name.startsWith("leaf-"));
 
 function settle(state: CompactSessionState, messageId: string, seed: string): void {
-	state.accept({ type: "block_start", messageId, contentIndex: 0, kind: "text", seed, coveredCodeUnits: 0 });
+	state.accept({
+		type: "block_start",
+		...startIdentity(),
+		messageId,
+		contentIndex: 0,
+		kind: "text",
+		seed,
+		coveredCodeUnits: 0,
+	});
 	state.accept({ type: "message_status", messageId, persistence: "pending" });
 }
 
@@ -76,8 +84,8 @@ describe("compact content store: failed writes and unlinks (L4, L5)", () => {
 		const { state, control, dir } = await setup();
 		settle(state, "m1", "u".repeat(LEAF));
 		await state.idle();
-		const first = control.hold("unlink");
-		state.accept({ type: "message_remove", messageId: "m1" });
+		const first = control.hold("unlink", (path) => /[/\\]leaf-/.test(path));
+		await state.applyCold({ type: "message_remove", messageId: "m1" });
 		await first.entered;
 		first.fail(injected("EBUSY"));
 		await state.idle();
@@ -100,10 +108,11 @@ describe("compact content store: failed writes and unlinks (L4, L5)", () => {
 		const { state } = await setup({ io });
 		settle(state, "m1", "d".repeat(17 * LEAF));
 		await state.idle();
+		const structured = state.storageStatus().structuredBytes.spilled;
 		failUnlink = true;
-		state.accept({ type: "message_remove", messageId: "m1" });
+		await state.applyCold({ type: "message_remove", messageId: "m1" });
 		await state.idle();
-		expect(state.storageStatus()).toMatchObject({ reclaimDebtBytes: 17 * 65_536, spillHalted: true });
+		expect(state.storageStatus()).toMatchObject({ reclaimDebtBytes: 17 * 65_536 + structured, spillHalted: true });
 	});
 
 	it("labels a spill failure it cannot describe with its own operation and file, and reports the halt", async () => {
@@ -150,6 +159,7 @@ describe("compact content store: reads, churn and retirement (L6, L7, L8)", () =
 		const { state } = await setup();
 		state.accept({
 			type: "block_start",
+			...startIdentity(),
 			messageId: "m1",
 			contentIndex: 0,
 			kind: "text",
@@ -168,19 +178,22 @@ describe("compact content store: reads, churn and retirement (L6, L7, L8)", () =
 		await state.idle();
 		expect(state.storageStatus()).toMatchObject({
 			residentPayloadBytes: 0,
-			spillBytesWritten: 0,
 			residentTailBytes: 400,
 			frozenTailBytes: 100,
 		});
+		const beforeFreeze = state.storageStatus();
+		for (let i = 0; i < 200; i++) state.release(state.freeze());
+		await state.idle();
+		expect(state.storageStatus()).toEqual(beforeFreeze);
 		expect(await texts(state, early)).toEqual(["x".repeat(50)]);
 		expect(state.storageStatus().frozenTailBytes).toBe(0);
 	});
 
 	it("spills the next leaf without rescanning every committed leaf", async () => {
 		const { state } = await setup();
-		for (let i = 0; i < 300; i++) settle(state, `m${i}`, "t");
+		for (let i = 0; i < 300; i++) settle(state, `m${i}`, "t".repeat(LEAF));
 		await state.idle();
-		expect(state.storageStatus()).toMatchObject({ residentPayloadBytes: 0, spilledLiveBytes: 600 });
+		expect(state.storageStatus()).toMatchObject({ residentPayloadBytes: 0, spilledLiveBytes: 300 * LEAF * 2 });
 
 		const entries = Map.prototype.entries;
 		let steps = 0;
@@ -196,20 +209,23 @@ describe("compact content store: reads, churn and retirement (L6, L7, L8)", () =
 			};
 			return counting as unknown as ReturnType<typeof entries>;
 		});
-		settle(state, "last", "t");
+		settle(state, "last", "t".repeat(LEAF));
 		await state.idle();
 		vi.restoreAllMocks();
-		expect(state.storageStatus().spilledLiveBytes).toBe(602);
+		expect(state.storageStatus().spilledLiveBytes).toBe(301 * LEAF * 2);
 		expect(steps).toBe(0);
 	});
 
-	it("drops unlinks queued after retirement without recording failures or debt", async () => {
+	it("refuses cold removal after retirement without recording failures or debt", async () => {
 		const { state } = await setup();
 		settle(state, "m1", "z".repeat(LEAF));
 		await state.idle();
 		await state.retire();
-		state.accept({ type: "message_remove", messageId: "m1" });
+		expect(await state.applyCold({ type: "message_remove", messageId: "m1" })).toMatchObject({
+			kind: "rejected",
+			reason: "retired",
+		});
 		await state.idle();
-		expect(state.storageStatus()).toMatchObject({ failures: [], reclaimDebtBytes: 0, spilledLiveBytes: 0 });
+		expect(state.storageStatus()).toMatchObject({ failures: [], reclaimDebtBytes: 0, spilledLiveBytes: LEAF * 2 });
 	});
 });

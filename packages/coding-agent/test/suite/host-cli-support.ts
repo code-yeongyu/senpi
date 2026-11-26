@@ -50,8 +50,9 @@ export async function hostCliSandbox(label: string): Promise<HostCliSandbox> {
 		ownedPids: new Set<number>(),
 	};
 	sandboxes.push(sandbox);
-	await mkdir(sandbox.agentDir, { recursive: true });
-	await mkdir(sandbox.specDir, { recursive: true });
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	await mkdir(sandbox.agentDir, { recursive: true, mode: 0o700 });
+	await mkdir(sandbox.specDir, { recursive: true, mode: 0o700 });
 	return sandbox;
 }
 

@@ -1,4 +1,5 @@
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	AssistantMessage,
 	Message,
@@ -18,6 +19,8 @@ import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
+import { classifyProviderFailure } from "../utils/provider-diagnostic-vocabulary.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { getCurrentTools, resolveTranscript } from "../utils/transcript.ts";
@@ -180,6 +183,8 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 				delete (block as { partialArgs?: string }).partialArgs;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			output.errorMessage = formatMistralError(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
@@ -326,7 +331,10 @@ async function requestMistralStream(
 
 	if (!response.ok) {
 		const body = await response.text();
-		throw new MistralHttpError(response.status, body, response.statusText);
+		throw attachProviderDiagnostic(
+			new MistralHttpError(response.status, body, response.statusText),
+			classifyProviderFailure({ status: response.status, code: undefined }),
+		);
 	}
 	if (!response.body) {
 		throw new Error("Mistral response has no body");

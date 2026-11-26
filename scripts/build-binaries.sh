@@ -101,9 +101,6 @@ else
     echo "==> Skipping package build (--skip-build)"
 fi
 
-echo "==> Building trusted native dependencies..."
-npm rebuild canvas --foreground-scripts
-
 node scripts/prepare-bun-compile-assets.mjs
 
 # Build identity (engineBuildIdentity(): packages/coding-agent/src/core/engine-build-identity.ts).
@@ -151,9 +148,9 @@ for platform in "${PLATFORMS[@]}"; do
     # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
     # standalone binary before pi starts (see #7684).
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --splitting --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --define "SENPI_BUILD_EPOCH=$BUILD_EPOCH" --define "SENPI_BUILD_SHA7=\"$BUILD_SHA7\"" --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
+        bun build --compile --splitting --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --external canvas --define "SENPI_BUILD_EPOCH=$BUILD_EPOCH" --define "SENPI_BUILD_SHA7=\"$BUILD_SHA7\"" --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/modes/rpc/loopless-worker.ts ./src/utils/image-resize-worker.ts ./src/core/extensions/builtin/permission-system/path-identity-worker.ts ./src/core/kill-guard/index.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
     else
-        bun build --compile --splitting --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --define "SENPI_BUILD_EPOCH=$BUILD_EPOCH" --define "SENPI_BUILD_SHA7=\"$BUILD_SHA7\"" --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
+        bun build --compile --splitting --compile-autoload-package-json --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --external canvas --define "SENPI_BUILD_EPOCH=$BUILD_EPOCH" --define "SENPI_BUILD_SHA7=\"$BUILD_SHA7\"" --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/modes/rpc/loopless-worker.ts ./src/utils/image-resize-worker.ts ./src/core/extensions/builtin/permission-system/path-identity-worker.ts ./src/core/kill-guard/index.ts --outfile "$OUTPUT_DIR/$platform/pi"
         if [[ "$platform" == darwin-* ]] && command -v codesign >/dev/null 2>&1; then
             codesign --remove-signature "$OUTPUT_DIR/$platform/pi" 2>/dev/null || true
             codesign --force --sign - "$OUTPUT_DIR/$platform/pi"
@@ -202,6 +199,29 @@ for platform in "${PLATFORMS[@]}"; do
     cp -R "../tui/$native_path/$native_platform" "$OUTPUT_DIR/$platform/$native_path/"
 done
 
+# Zip the current directory's contents into $1 (call it in a subshell). Info-ZIP zip where installed (the release runners);
+# otherwise the bsdtar every Windows ships as System32\tar.exe, which writes the same entries, so a
+# Windows runner needs no package feed (senpi#7473).
+zip_current_dir() {
+    if command -v zip >/dev/null 2>&1; then
+        zip -r "$1" .
+        return
+    fi
+    local bsdtar="${SYSTEMROOT:-}/System32/tar.exe"
+    if [[ -z "${SYSTEMROOT:-}" || ! -x "$bsdtar" ]]; then
+        echo "Error: neither zip nor the Windows bsdtar (System32/tar.exe) is available to create $1" >&2
+        exit 1
+    fi
+    # Name the entries instead of "." so they carry no "./" prefix, as Info-ZIP's do.
+    shopt -s dotglob nullglob
+    local -a entries=(*)
+    if [[ ${#entries[@]} -eq 0 ]]; then
+        echo "Error: nothing to archive in $PWD for $1" >&2
+        exit 1
+    fi
+    "$bsdtar" -a -c -f "$1" "${entries[@]}"
+}
+
 # Create archives
 cd "$OUTPUT_DIR"
 
@@ -209,7 +229,7 @@ for platform in "${PLATFORMS[@]}"; do
     if [[ "$platform" == windows-* ]]; then
         # Windows (zip)
         echo "Creating pi-$platform.zip..."
-        (cd "$platform" && zip -r ../pi-$platform.zip .)
+        (cd "$platform" && zip_current_dir ../pi-$platform.zip)
     else
         # Unix platforms (tar.gz) - use wrapper directory for mise compatibility
         echo "Creating pi-$platform.tar.gz..."

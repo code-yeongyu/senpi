@@ -75,7 +75,7 @@ describe("openai-responses prompt_cache_options.comparison_response_id", () => {
 			comparison_response_id: "resp_previous",
 		});
 		await expect(capturePromptCacheOptions(luna, messages, "long")).resolves.toEqual({
-			ttl: "30m",
+			ttl: "12h",
 			comparison_response_id: "resp_previous",
 		});
 	});

@@ -144,6 +144,7 @@ function createUi(captureInput: (handler: (data: string) => void) => void): Exte
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		custom: async <T>(): Promise<T> => {
 			throw new Error("Race test does not render custom UI");
 		},

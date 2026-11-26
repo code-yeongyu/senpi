@@ -308,7 +308,19 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		});
 	});
 
-	it.each(["quit", "new", "resume", "fork", "reload"] as const)(
+	it("keeps the resident session on a reload shutdown", async () => {
+		let closes = 0;
+		const extension = fakeExtension();
+		registerSessionRegistry(extension.api);
+		createEntry("shutdown-reload", () => closes++);
+
+		await emitTwice(extension, "session_shutdown", { type: "session_shutdown", reason: "reload" }, "shutdown-reload");
+
+		expect(getSession("shutdown-reload")).toBeDefined();
+		expect(closes).toBe(0);
+	});
+
+	it.each(["quit", "new", "resume", "fork"] as const)(
 		"closes a session on %s shutdown idempotently",
 		async (reason) => {
 			let closes = 0;

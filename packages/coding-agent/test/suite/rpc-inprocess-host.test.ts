@@ -9,7 +9,7 @@ import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts"
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
 import { SESSION_WORKER_LIMITS } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { listedSessions, MAX_THREADS_PER_SESSION, opened, threadCount } from "./rpc-inprocess-host-metrics.ts";
-import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
+import { createInProcessRig, inProcessRuntimeFactory } from "./rpc-inprocess-host-support.ts";
 import { startInProcessHost, startWorkerHost } from "./rpc-worker-host-support.ts";
 
 /** Sessions opened on one host: more than double the worker runtime's 20-worker cap. */
@@ -211,6 +211,112 @@ it("reopens a closed path while the previous session is still tearing down", asy
 	]);
 });
 
+/** An in-process registry whose cross-generation claim removal is `release`, closing within `CLAIM_GRACE_MS`. */
+const CLAIM_GRACE_MS = 100;
+function registryWithRelease(dir: string, release: () => Promise<void>): RpcSessionRegistry {
+	return new RpcSessionRegistry({
+		agentDir: dir,
+		createRuntime: inProcessRuntimeFactory().createRuntime,
+		closeGraceMs: CLAIM_GRACE_MS,
+		pathReservations: { claim: async () => undefined, release, setAttached: () => {} },
+	});
+}
+
+it("reopens after close grace expires while the path claim is still being removed", async () => {
+	vi.useFakeTimers({ toFake: [...IDLE_CLOCK_FAKES] });
+	const dir = await rigDir();
+	const path = join(dir, "slow-release.jsonl");
+	const removing = Promise.withResolvers<void>();
+	const removed = Promise.withResolvers<void>();
+	const registry = registryWithRelease(dir, async () => {
+		removing.resolve();
+		await removed.promise;
+	});
+	const session = await registry.openSession({ cwd: dir, sessionPath: path });
+	const closing = registry.close(session.sessionId);
+	await removing.promise;
+	await vi.advanceTimersByTimeAsync(CLAIM_GRACE_MS);
+	await closing;
+	expect(registry.size).toBe(0);
+
+	// The close is bounded, but the removal is still live. Reopen must wait for
+	// that exact removal, not attach to the entry the close already deleted.
+	const reopening = registry.openSession({ cwd: dir, sessionPath: path });
+	const outcome = reopening.then(
+		(value) => value,
+		(cause: unknown) => cause,
+	);
+	removed.resolve();
+	try {
+		expect(await outcome).toMatchObject({
+			sessionPath: session.sessionPath,
+			sessionId: expect.not.stringMatching(`^${session.sessionId}$`),
+		});
+	} finally {
+		const entries = registry.list();
+		await Promise.all(entries.map((entry) => registry.close(entry.sessionId)));
+	}
+});
+
+it("refuses a reopen with claim_in_progress while a path claim removal never finishes", async () => {
+	vi.useFakeTimers({ toFake: [...IDLE_CLOCK_FAKES] });
+	const dir = await rigDir();
+	const path = join(dir, "stuck-release.jsonl");
+	const removing = Promise.withResolvers<void>();
+	const registry = registryWithRelease(dir, () => {
+		removing.resolve();
+		return new Promise<void>(() => {});
+	});
+	const session = await registry.openSession({ cwd: dir, sessionPath: path });
+	const closing = registry.close(session.sessionId);
+	await removing.promise;
+	await vi.advanceTimersByTimeAsync(CLAIM_GRACE_MS);
+	await closing;
+	expect(registry.size).toBe(0);
+
+	// The removal is wedged: the reopen waits out its bounded pending-claim wait and is refused
+	// with a retryable claim_in_progress, instead of opening over a claim that is still live.
+	const outcome = registry.openSession({ cwd: dir, sessionPath: path }).then(
+		(value) => value,
+		(cause: unknown) => cause,
+	);
+	await vi.advanceTimersByTimeAsync(CLAIM_GRACE_MS);
+	expect(await outcome).toMatchObject({
+		code: "session_path_in_use",
+		detail: { reason: "claim_in_progress" },
+	});
+	expect(registry.size).toBe(0);
+});
+
+it("clears the pending claim when a path claim removal throws, so a reopen succeeds", async () => {
+	vi.useFakeTimers({ toFake: [...IDLE_CLOCK_FAKES] });
+	const dir = await rigDir();
+	const path = join(dir, "failed-release.jsonl");
+	let releases = 0;
+	const registry = registryWithRelease(dir, async () => {
+		if (releases++ === 0) throw new Error("claim removal failed");
+	});
+	const session = await registry.openSession({ cwd: dir, sessionPath: path });
+	await registry.close(session.sessionId);
+	expect(registry.size).toBe(0);
+
+	// The failed removal must not leave a pending claim or the path's reservation behind: the
+	// reopen opens the file fresh rather than being refused with claim_in_progress or path_still_held.
+	const outcome = registry.openSession({ cwd: dir, sessionPath: path }).then(
+		(value) => value,
+		(cause: unknown) => cause,
+	);
+	await vi.advanceTimersByTimeAsync(CLAIM_GRACE_MS);
+	try {
+		expect(await outcome).toMatchObject({
+			sessionPath: session.sessionPath,
+			sessionId: expect.not.stringMatching(`^${session.sessionId}$`),
+		});
+	} finally {
+		await Promise.all(registry.list().map((entry) => registry.close(entry.sessionId)));
+	}
+});
+
 it("names client_close on an explicit close_session", async () => {
 	// Given: an open session on the in-process registry.
 	const dir = await rigDir();
@@ -330,8 +436,8 @@ it("names host_shutdown when the host process is SIGTERM'd", async () => {
 	}
 }, 120_000);
 
-it("does not park a retained session when the host is shutting down", async () => {
-	// Given: a retained session on a live host - the adversarial mix-up is host_shutdown vs park.
+it("parks a retained session instead of closing it when the host is shutting down (senpi#6190)", async () => {
+	// Given: a retained session on a live socket host - it outlives the process, so the stop must not read as its end.
 	vi.stubEnv("SENPI_RPC_TEST_BUN", process.execPath);
 	const host = await startInProcessHost();
 	try {
@@ -344,16 +450,22 @@ it("does not park a retained session when the host is shutting down", async () =
 			}),
 			0,
 		);
-		const closed = client.wait(
-			(record) => record.type === "session_closed" && record.sessionId === session.sessionId,
+		const parked = client.wait(
+			(record) => record.type === "session_parked" && record.sessionId === session.sessionId,
 		);
 
 		// When: the host is SIGTERM'd with that retained session still attached.
 		host.child.kill("SIGTERM");
 
-		// Then: the host going away is a close named host_shutdown, never a park the client would reopen here.
-		expect(await closed).toMatchObject({ type: "session_closed", reason: "host_shutdown" });
-		expect(client.records.some((record) => record.type === "session_parked")).toBe(false);
+		// Then: a park named host_shutdown (the next host on the endpoint reopens it), never a close.
+		expect(await parked).toMatchObject({
+			type: "session_parked",
+			reason: "host_shutdown",
+			sessionPath: session.state.sessionFile,
+		});
+		expect(
+			client.records.some((record) => record.type === "session_closed" && record.sessionId === session.sessionId),
+		).toBe(false);
 	} finally {
 		await host.dispose();
 	}

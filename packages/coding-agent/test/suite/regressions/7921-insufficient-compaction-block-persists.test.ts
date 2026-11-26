@@ -1,7 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHarness, type Harness } from "../harness.ts";
+import type { CompactionRejectionCause } from "../../../src/core/extensions/types.ts";
+import { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "../../../src/index.ts";
+import { createHarness, getUserTexts, type Harness } from "../harness.ts";
 
 /**
  * code-yeongyu/oh-my-openagent#7921 case 6: when an accepted compaction produces
@@ -128,6 +130,137 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 
 		expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeUndefined();
 	});
+
+	/**
+	 * A session whose automatic compaction was rejected with `rejectionCause` after an earlier
+	 * checkpoint; `retryAllowed` decides whether a later attempt succeeds.
+	 */
+	async function createFailedCompactionHarness(rejectionCause?: CompactionRejectionCause): Promise<{
+		harness: Harness;
+		attempts: () => number;
+		allowRetry: (allowed: boolean) => void;
+	}> {
+		let attempts = 0;
+		let retryAllowed = false;
+		const harness = await createHarness({
+			models: [{ id: "faux-large", contextWindow: 20_000, maxTokens: 4_096 }],
+			settings: {
+				compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1, speculativeEnabled: false },
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => {
+						attempts++;
+						if (!retryAllowed) return { cancel: true, rejectionCause, reason: "summary unavailable" };
+						const retained = event.branchEntries.at(-1);
+						if (!retained) throw new Error("Expected a retained response");
+						return {
+							compaction: {
+								summary: "recovered context",
+								firstKeptEntryId: retained.id,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const timestamp = Date.now() - 1_000;
+		harness.sessionManager.appendMessage({ role: "user", content: "old work", timestamp });
+		const first = harness.sessionManager.getEntries()[0];
+		if (!first) throw new Error("Expected a seeded entry");
+		harness.sessionManager.appendCompaction("prior summary", first.id, 19_000);
+		harness.sessionManager.appendMessage({ role: "user", content: "x".repeat(80_000), timestamp });
+		const model = harness.getModel();
+		const assistant: AssistantMessage = {
+			...fauxAssistantMessage("progress", { timestamp }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(19_500),
+		};
+		harness.sessionManager.appendMessage(assistant);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const liveAssistant = harness.session.agent.state.messages.at(-1);
+		if (liveAssistant?.role !== "assistant") throw new Error("Expected the live assistant response");
+		await privateMethod(harness.session, "_checkCompaction")(liveAssistant, true);
+		expect(attempts).toBe(1);
+		return {
+			harness,
+			attempts: () => attempts,
+			allowRetry: (allowed) => {
+				retryAllowed = allowed;
+			},
+		};
+	}
+
+	/** A deterministic rejection after an earlier checkpoint arms the automatic-loop latch. */
+	async function createLatchedHarness(): ReturnType<typeof createFailedCompactionHarness> {
+		const failed = await createFailedCompactionHarness();
+		expect(Reflect.get(failed.harness.session, "_blockedPostCompactionAssistant")).toBeDefined();
+		return failed;
+	}
+
+	// senpi#4161: the automatic-loop latch must not prevent an explicit new turn from recovering.
+	// A plain SDK `prompt()` with no `source`/`inputOrigin` is a person's input (`inputOriginOf`).
+	it.each([true, false])("retries compaction on the next user prompt (recovery succeeds: %s)", async (recovers) => {
+		const { harness, attempts, allowRetry } = await createLatchedHarness();
+		harnesses.push(harness);
+
+		allowRetry(recovers);
+		harness.setResponses([fauxAssistantMessage("answered the next message")]);
+		const nextPrompt = harness.session.prompt("please continue");
+		if (recovers) {
+			await expect(nextPrompt).resolves.toBeUndefined();
+			expect(harness.faux.state.callCount).toBe(1);
+			expect(getUserTexts(harness).filter((text) => text === "please continue")).toHaveLength(1);
+		} else {
+			// SDK callers get a typed error whose wording names no slash command.
+			const rejection = await nextPrompt.then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			expect(rejection).toBeInstanceOf(RequiredCompactionError);
+			expect(rejection).toMatchObject({ code: "compaction_failed", message: REQUIRED_COMPACTION_ERROR_MESSAGE });
+			expect(REQUIRED_COMPACTION_ERROR_MESSAGE).not.toMatch(/\/\w/);
+			expect(harness.faux.state.callCount).toBe(0);
+			expect(getUserTexts(harness)).not.toContain("please continue");
+		}
+		expect(attempts()).toBe(2);
+		expect(harness.session.isCompacting).toBe(false);
+		expect(harness.session.isStreaming).toBe(false);
+	});
+
+	// An extension-sent prompt is automation, not a person: it keeps the latch and is refused without a retry.
+	it("keeps the latch for an extension-sourced prompt", async () => {
+		const { harness, attempts, allowRetry } = await createLatchedHarness();
+		harnesses.push(harness);
+
+		allowRetry(true);
+		await expect(harness.session.prompt("automated nudge", { source: "extension" })).rejects.toBeInstanceOf(
+			RequiredCompactionError,
+		);
+		expect(attempts()).toBe(1);
+		expect(harness.faux.state.callCount).toBe(0);
+	});
+
+	// senpi#6760: a transient provider failure, and the breaker cooldown repeated ones trip, say
+	// nothing about the context, so they must not latch admission; an automated session would
+	// otherwise never compact again.
+	it.each(["transient-failure", "circuit-breaker"] as const)(
+		"retries compaction on the next automated prompt after a %s rejection",
+		async (rejectionCause) => {
+			const { harness, attempts, allowRetry } = await createFailedCompactionHarness(rejectionCause);
+
+			expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeUndefined();
+			allowRetry(true);
+			harness.setResponses([fauxAssistantMessage("answered the automated nudge")]);
+			await expect(harness.session.prompt("automated nudge", { source: "extension" })).resolves.toBeUndefined();
+			expect(attempts()).toBe(2);
+			expect(harness.faux.state.callCount).toBe(1);
+		},
+	);
 
 	it("clears the block once a real compaction reduces the context", async () => {
 		const { harness, assistant } = await createBlockedHarness();

@@ -51,7 +51,7 @@ function createRuntimeFactory(): {
 } {
 	const states: FakeRuntimeState[] = [];
 	const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
-		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+		await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		const state: FakeRuntimeState = {
 			isStreaming: false,
 			isBashRunning: false,
@@ -90,6 +90,7 @@ function createRuntimeFactory(): {
 				// Records flags like ExtensionRunner: an attach and a runtime replacement set the permission preset here.
 				extensionRunner: {
 					hasHandlers: () => false,
+					emitBusEvent: () => {},
 					emit: async () => {},
 					setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
 					getFlagValues: () => new Map(flagValues),

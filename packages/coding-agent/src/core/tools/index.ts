@@ -80,6 +80,7 @@ export {
 	type WriteToolOptions,
 } from "./write.ts";
 
+import type { MachineOps } from "@code-yeongyu/senpi-machine-ops";
 import { type AgentTool, selectedReadFolder } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
@@ -88,6 +89,7 @@ import { createFindTool, createFindToolDefinition, type FindToolOptions } from "
 import { createGlobToolDefinition, type GlobToolOptions } from "./glob.ts";
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
 import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.ts";
+import { createToolMachine, type ToolPathPolicy } from "./machine.ts";
 import { createPowerShellToolDefinition, type PowerShellToolOptions } from "./powershell.ts";
 import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
 import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.ts";
@@ -117,36 +119,47 @@ export interface ToolsOptions {
 	find?: FindToolOptions;
 	glob?: GlobToolOptions;
 	ls?: LsToolOptions;
+	/** The one operation layer every tool calls. Default: the process-wide local machine (principal `local-session`). */
+	machineOps?: MachineOps;
+	/** Hooks for the tool path: only `beforeOp`, run once per tool call before any effect. */
+	machinePolicy?: ToolPathPolicy;
+}
+
+function toolMachine(options: ToolsOptions | undefined) {
+	return createToolMachine({ ops: options?.machineOps, policy: options?.machinePolicy });
 }
 
 export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): Record<ToolName, ToolDef> {
+	const machine = toolMachine(options);
 	return {
-		read: createReadToolDefinition(cwd, { folder: selectedReadFolder, ...options?.read }),
-		bash: createBashToolDefinition(cwd, options?.bash),
-		powershell: createPowerShellToolDefinition(cwd, options?.powershell),
-		edit: createEditToolDefinition(cwd, options?.edit),
-		write: createWriteToolDefinition(cwd, options?.write),
-		grep: createGrepToolDefinition(cwd, options?.grep),
-		find: createFindToolDefinition(cwd, options?.find),
-		glob: createGlobToolDefinition(cwd, options?.glob),
-		ls: createLsToolDefinition(cwd, options?.ls),
+		read: createReadToolDefinition(cwd, { folder: selectedReadFolder, machine, ...options?.read }),
+		bash: createBashToolDefinition(cwd, { machine, ...options?.bash }),
+		powershell: createPowerShellToolDefinition(cwd, { machine, ...options?.powershell }),
+		edit: createEditToolDefinition(cwd, { machine, ...options?.edit }),
+		write: createWriteToolDefinition(cwd, { machine, ...options?.write }),
+		grep: createGrepToolDefinition(cwd, { machine, ...options?.grep }),
+		find: createFindToolDefinition(cwd, { machine, ...options?.find }),
+		glob: createGlobToolDefinition(cwd, { machine, ...options?.glob }),
+		ls: createLsToolDefinition(cwd, { machine, ...options?.ls }),
 	};
 }
 
 export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
+	const machine = toolMachine(options);
 	return [
-		createReadTool(cwd, { folder: selectedReadFolder, ...options?.read }),
-		createBashTool(cwd, options?.bash),
-		createEditTool(cwd, options?.edit),
-		createWriteTool(cwd, options?.write),
+		createReadTool(cwd, { folder: selectedReadFolder, machine, ...options?.read }),
+		createBashTool(cwd, { machine, ...options?.bash }),
+		createEditTool(cwd, { machine, ...options?.edit }),
+		createWriteTool(cwd, { machine, ...options?.write }),
 	];
 }
 
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
+	const machine = toolMachine(options);
 	return [
-		createReadTool(cwd, { folder: selectedReadFolder, ...options?.read }),
-		createGrepTool(cwd, options?.grep),
-		createFindTool(cwd, options?.find),
-		createLsTool(cwd, options?.ls),
+		createReadTool(cwd, { folder: selectedReadFolder, machine, ...options?.read }),
+		createGrepTool(cwd, { machine, ...options?.grep }),
+		createFindTool(cwd, { machine, ...options?.find }),
+		createLsTool(cwd, { machine, ...options?.ls }),
 	];
 }

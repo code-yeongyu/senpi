@@ -50,7 +50,7 @@ function hasKimiK26CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getKimiK26CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasKimiK26CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasKimiK26CatalogSignal));
 }
 
 function hasKimiK27CatalogSignal(model: Model<Api>): boolean {
@@ -59,7 +59,7 @@ function hasKimiK27CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getKimiK27CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasKimiK27CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasKimiK27CatalogSignal));
 }
 
 describe("prompt preset resolver", () => {
@@ -221,7 +221,7 @@ describe("prompt preset resolver", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
 		const catalogModels = getProviders().flatMap((provider) =>
-			(getModels(provider) as Model<Api>[]).filter((model) => model.id.toLowerCase().includes("gpt-5.6")),
+			getModels(provider).filter((model) => model.id.toLowerCase().includes("gpt-5.6")),
 		);
 		const catalogModelIds = catalogModels.map((model) => `${model.provider}/${model.id}`);
 
