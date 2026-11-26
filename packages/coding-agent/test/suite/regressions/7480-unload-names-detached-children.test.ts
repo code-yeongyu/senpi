@@ -84,14 +84,14 @@ describe('unload_session { children: "detach" } names the children it left runni
 		expect(answer).toMatchObject({ outcome: "unloaded", detached: [] });
 	});
 
-	it("adds no detached key when the unload did not ask to detach children, live, on the receipt or on a replay", async () => {
+	it("adds no detached key when the unload did not ask to detach children, live or on the receipt", async () => {
 		const rig = await host();
 		const client = rig.client("A");
 		const parent = String(dataOf(await client.request({ type: "open_session", cwd: rig.cwd })).sessionId);
-		const unload = { type: "unload_session", sessionId: parent, force: true, effectId: "plain" };
 
-		const answer = dataOf(await client.request(unload));
-		const replay = dataOf(await client.request(unload));
+		const answer = dataOf(
+			await client.request({ type: "unload_session", sessionId: parent, force: true, effectId: "plain" }),
+		);
 		const receipt = dataOf(
 			await client.request({
 				type: "get_effect_status",
@@ -102,8 +102,39 @@ describe('unload_session { children: "detach" } names the children it left runni
 
 		expect(answer).toMatchObject({ outcome: "unloaded" });
 		expect(Object.keys(answer)).not.toContain("detached");
-		expect(Object.keys(replay)).not.toContain("detached");
 		expect(receipt).toMatchObject({ effect: { state: "done", disposition: "unloaded" } });
 		expect(Object.keys(receipt.effect as WireRecord)).not.toContain("detached");
+	});
+
+	// A replay answers from the stored receipt: the same keyed unload sent again to the reopened session.
+	async function unloadThenReplay(children: "detach" | undefined, effectId: string) {
+		const rig = await host();
+		const client = rig.client("A");
+		const parent = String(dataOf(await client.request({ type: "open_session", cwd: rig.cwd })).sessionId);
+		const durable = await durableIdOf(client, parent);
+		// Only a detach may leave a child open: a plain unload would be refused children_live.
+		if (children === "detach")
+			await client.request({ type: "open_session", cwd: rig.cwd, context: { parent_session_id: durable } });
+		const unload = { type: "unload_session", force: true, effectId, ...(children === undefined ? {} : { children }) };
+		const first = dataOf(await client.request({ ...unload, sessionId: parent }));
+		const reopened = dataOf(await client.request({ type: "open_session", sessionPath: String(first.sessionPath) }));
+		const replay = dataOf(await client.request({ ...unload, sessionId: String(reopened.sessionId) }));
+		return { first, replay };
+	}
+
+	it("replays a detach from its receipt with the first answer's detached", async () => {
+		const { first, replay } = await unloadThenReplay("detach", "replay-detach");
+
+		expect(first).toMatchObject({ outcome: "unloaded" });
+		expect(first.detached).toHaveLength(1);
+		expect(replay).toMatchObject({ outcome: "unloaded", replayed: true, detached: first.detached });
+	});
+
+	it("replays a plain unload from its receipt with no detached key", async () => {
+		const { first, replay } = await unloadThenReplay(undefined, "replay-plain");
+
+		expect(first).toMatchObject({ outcome: "unloaded" });
+		expect(replay).toMatchObject({ outcome: "unloaded", replayed: true });
+		expect(Object.keys(replay)).not.toContain("detached");
 	});
 });
