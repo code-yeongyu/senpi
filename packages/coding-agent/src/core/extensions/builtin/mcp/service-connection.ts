@@ -110,9 +110,15 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 			entry.cacheRefreshedAfterConnect = false;
 			try {
 				const refresh = entry.authPlan?.refresh;
-				// senpi#6538: no saved sign-in (another refresh met a rotated grant and cleared it) is needs_auth now,
-				// not a token-less connect whose outcome races the credentials re-key.
-				if (refresh !== undefined && (await refresh.ensureFresh()) === undefined) {
+				// senpi#6538: a connection built on a saved sign-in (it has a grant identity) that now finds none saved
+				// (another refresh met a rotated grant and cleared it) is needs_auth now, not a token-less connect whose
+				// outcome races the credentials re-key. A server that never had a sign-in still connects token-less:
+				// an autodetected OAuth server may not require auth, and one that does answers needs_auth itself.
+				if (
+					refresh !== undefined &&
+					entry.credentialIdentity !== undefined &&
+					(await refresh.ensureFresh()) === undefined
+				) {
 					throw new OAuthFlowError(
 						"needs_auth",
 						`MCP server ${name} has no saved sign-in; re-authentication required.`,
@@ -130,8 +136,16 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 				}
 				throw error;
 			}
-			await entry.connection.renew();
-			await connectAndRefreshMcpCatalog(entry, config);
+			try {
+				await entry.connection.renew();
+				await connectAndRefreshMcpCatalog(entry, config);
+			} catch (error) {
+				// senpi#6538: a token-less connect to a server that requires sign-in answers Unauthorized; name the way back.
+				const authError = markMcpConnectionNeedsAuth(entry.connection, error);
+				if (authError === undefined) throw error;
+				entry.logger.warn(authError.message);
+				throw authError;
+			}
 		},
 		shouldReconnect: () => options.shouldReconnect(entry),
 	});

@@ -728,6 +728,8 @@ export class McpService {
 		const stale = this.#entryForName(name);
 		if (stale?.credentialsCurrent?.() === false) await stale.onCredentialsChanged?.();
 		await this.#attachQueue;
+		// A service disposed while the re-key landed reconnects nothing.
+		if (this.#disposed) return;
 		const entry = this.#entryForName(name);
 		if (entry === undefined) throw new Error(`Unknown MCP server: ${name || "<missing>"}`);
 		if (await entry.generationChanged?.()) {
