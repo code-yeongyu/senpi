@@ -79,16 +79,19 @@ async function execWithoutToken(
 	env: NodeJS.ProcessEnv,
 ): Promise<void> {
 	const { dlopen, FFIType, ptr } = await import("bun:ffi");
-	let libc;
-	try {
-		// libc's execve, not process.execve: Bun's closes every descriptor above 2, which would drop the pipe.
-		libc = dlopen(LIBC[platform], {
-			pipe: { args: [FFIType.ptr], returns: FFIType.i32 },
-			execve: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-		});
-	} catch {
-		return;
-	}
+	const openLibc = () => {
+		try {
+			// libc's execve, not process.execve: Bun's closes every descriptor above 2, which would drop the pipe.
+			return dlopen(LIBC[platform], {
+				pipe: { args: [FFIType.ptr], returns: FFIType.i32 },
+				execve: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+			});
+		} catch {
+			return undefined;
+		}
+	};
+	const libc = openLibc();
+	if (libc === undefined) return;
 	const fds = new Int32Array(2);
 	if (libc.symbols.pipe(ptr(fds)) !== 0) return;
 	const [readFd, writeFd] = [fds[0], fds[1]];

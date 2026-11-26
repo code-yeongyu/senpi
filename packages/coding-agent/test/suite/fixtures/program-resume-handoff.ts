@@ -2,11 +2,17 @@
 // children it starts can see of OSC7577_TOKEN. A child started without an env gets Bun's startup environment.
 import "../../../src/program-resume-startup.ts";
 
+interface BunSpawner {
+	spawn(cmd: string[], options: { stdout: "pipe" }): { stdout: ReadableStream<Uint8Array> };
+	spawnSync(cmd: string[]): { stdout: { toString(): string } };
+}
+const bun = (globalThis as { Bun?: BunSpawner }).Bun;
+if (bun === undefined) throw new Error("this fixture runs under Bun");
 const read = async (stream: ReadableStream<Uint8Array>) => (await new Response(stream).text()).trim();
-const probe = ["sh", "-c", 'printf %s "${OSC7577_TOKEN-unset}"'];
+const probe = ["sh", "-c", "printenv OSC7577_TOKEN || printf unset"];
 
-const spawnChild = await read(Bun.spawn(probe, { stdout: "pipe" }).stdout);
-const spawnSyncChild = Bun.spawnSync(probe).stdout.toString().trim();
+const spawnChild = await read(bun.spawn(probe, { stdout: "pipe" }).stdout);
+const spawnSyncChild = bun.spawnSync(probe).stdout.toString().trim();
 const worker = new Worker(
 	URL.createObjectURL(
 		new Blob([
