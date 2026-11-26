@@ -3032,12 +3032,7 @@ export class InteractiveMode {
 		this.updateAvailableProviderCount();
 		this.updateEditorBorderColor();
 		this.updateTerminalTitle();
-		this.syncProgramResume();
-	}
-
-	/** Keep the terminal's OSC 7577 record on the current session; `refresh` re-reports an unchanged command. */
-	private syncProgramResume(options?: { refresh?: boolean }): void {
-		this.programResume?.sync(programResumeTarget(this.sessionManager), options);
+		this.programResume?.sync(programResumeTarget(this.sessionManager));
 	}
 
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
@@ -5633,7 +5628,7 @@ export class InteractiveMode {
 
 			case "message_end":
 				if (event.message.role === "user") break;
-				this.syncProgramResume();
+				this.programResume?.sync(programResumeTarget(this.sessionManager));
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingReveal.stop();
@@ -5752,7 +5747,7 @@ export class InteractiveMode {
 			}
 
 			case "agent_end":
-				this.syncProgramResume();
+				this.programResume?.sync(programResumeTarget(this.sessionManager));
 				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(false);
 				}
@@ -7241,7 +7236,7 @@ export class InteractiveMode {
 			takeOverInteractiveStderr();
 			this.ui.start();
 			// Another program may have replaced the terminal's record while this one was stopped.
-			this.syncProgramResume({ refresh: true });
+			this.programResume?.sync(programResumeTarget(this.sessionManager), { refresh: true });
 			this.resumeQuestionMouseCapture();
 			this.ui.requestRender(true);
 		});

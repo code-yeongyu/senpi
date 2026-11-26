@@ -342,8 +342,8 @@ describe("Windows private descriptor pairs (#4859)", () => {
 		const source = readFileSync(join(import.meta.dirname, "../../src/cli.ts"), "utf8");
 		const imports = [...source.matchAll(/^import .*?["']([^"']+)["'];/gm)].map((match) => match[1]);
 		expect(imports.slice(0, 4)).toEqual([
-			"./program-resume-startup.ts",
 			"./valid-cwd.ts",
+			"./program-resume-startup.ts",
 			"./private-fd-startup-release.ts",
 			"./private-fds.ts",
 		]);
