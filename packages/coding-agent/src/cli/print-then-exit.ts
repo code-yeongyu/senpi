@@ -1,3 +1,4 @@
+import { startupPowerThrottlingRecorded } from "../windows-power-throttling-startup.ts";
 import { format } from "node:util";
 
 /** The longest a print-then-exit command waits for its reader before exiting anyway. */
@@ -65,7 +66,11 @@ function delivered(stream: NodeJS.WriteStream, text: string): Promise<void> {
 }
 
 export async function exitAfterOutput(output = "", code?: ExitCode): Promise<never> {
-	await Promise.all([delivered(process.stdout, output), delivered(process.stderr, "")]);
+	await Promise.all([
+		delivered(process.stdout, output),
+		delivered(process.stderr, ""),
+		startupPowerThrottlingRecorded,
+	]);
 	process.exit(code);
 }
 
