@@ -50,11 +50,14 @@ interface Terminal {
  * Hands a delivery to the terminal and asks it to drain, the way a sender does, then answers every admission of that
  * delivery. The endpoint also drains on its own (the inbox watch, its arming, idle and emitted wakes), and one of those
  * passes can take the delivery before the sender's wake runs; the sender's wake then answers nothing (senpi#7483). The
- * contract is that the delivery is admitted exactly once, so the answer collects every pass, not only the sender's.
+ * contract is that the delivery is admitted exactly once, so the answer collects every pass, not only the sender's,
+ * after waiting for the admission itself: the helper must not depend on which pass ran or on that pass recording its
+ * admission before the sender's wake answers.
  */
 async function admit(tui: Terminal, id: string, text: string): Promise<SessionControlAdmission[]> {
 	tui.send(id, text);
 	await controlData(tui.socket, { type: "wake" });
+	await tui.admitted(id);
 	return tui.admissions.filter((admission) => admission.delivery_id === id);
 }
 
