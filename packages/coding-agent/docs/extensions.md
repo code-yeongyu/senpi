@@ -1448,6 +1448,10 @@ Optional read-only getter for the absolute path to the current session's authori
 
 Shell tools and eval kernels expose this value as `PI_GOAL_STORE_FILE` and `ctx.cwd` as `PI_SESSION_CWD`. Hand-built contexts and older hosts may omit the getter, in which case `PI_GOAL_STORE_FILE` is unset.
 
+### ctx.telemetryPermitted
+
+Optional read-only getter: whether telemetry attributed to this session may be collected or delivered right now. It is `true` only while the host's own setting permits telemetry AND every caller of the session granted it (see `telemetry_consent` in `docs/rpc.md`). A classic launch has no caller but the host, so the host's setting alone decides. The value changes while the session runs, so read it when an event is collected and again before delivering anything buffered; drop what it no longer permits. A runner with no session answers `false`; hand-built contexts and older hosts may omit the getter, which a reader treats as `false`.
+
 ### ctx.onUserActivity()
 
 Optional subscription-only hook for host-authenticated activity. `ctx.onUserActivity(listener)` calls a synchronous listener with `"draft"` for actual terminal composer edits or `"prompt"` for user-originated prompt, steer, or follow-up admission, including RPC. It returns an unsubscribe function and is also removed when the extension generation retires. The host owns the emitter; `pi.events.emit("user_activity", ...)` cannot invoke this hook. Extension `pasteToEditor`, programmatic draft restoration, and lifecycle events do not publish activity.

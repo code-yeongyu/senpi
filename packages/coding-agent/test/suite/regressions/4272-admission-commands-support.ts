@@ -135,5 +135,6 @@ export const admissionCommands = [
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"set_session_context",
+	"set_telemetry_consent",
 	"warm",
 ] as const satisfies readonly RpcCommand["type"][];

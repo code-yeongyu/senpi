@@ -24,7 +24,9 @@ import { holdOpenConnection, type OpenReplyAs, ownOpen, publishOpen, replyOpen }
 import { closePark } from "./session-router-park.ts";
 import { relocationConnection } from "./session-router-relocation.ts";
 import { syncRetainedRecord } from "./session-router-residency.ts";
+import { declareTelemetry } from "./session-router-telemetry.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
+import { RpcSessionRegistryError } from "./session-registry-types.ts";
 
 export function openWithBarrier(
 	host: RouterContext,
@@ -176,6 +178,15 @@ export async function open(
 		if (lane) host.writer.registerAcceptance(openedSession.sessionId, lane);
 		if (options?.accept) await options.accept(openedSession);
 		ownOpen(host, openedSession, owner, options?.accept !== undefined);
+		const telemetryKind = openedSession.attached ? "attach" : "answer";
+		const telemetry = await declareTelemetry(
+			host,
+			openedSession.sessionId,
+			owner,
+			command.telemetry?.consent,
+			telemetryKind,
+		);
+		if (telemetry !== "confirmed") throw new RpcSessionRegistryError("telemetry_update_unconfirmed");
 		if (!host.bindings.has(openedSession.sessionId)) {
 			host.bindings.set(
 				openedSession.sessionId,

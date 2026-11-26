@@ -25,6 +25,7 @@ import {
 	rpcMessageLengthError,
 	sessionContextError,
 	sessionRetryFallbackError,
+	sessionTelemetryError,
 } from "./rpc-input-validation.ts";
 import { sessionEnvShapeError } from "./session-caller-env.ts";
 
@@ -88,7 +89,12 @@ function fieldBoundsError(record: Record<string, unknown>): string | undefined {
 		if (context !== undefined) return context;
 	}
 	if (record.type === "open_session" || record.type === "claim_session")
-		return sessionRetryFallbackError(record.retryFallback) ?? sessionEnvShapeError(record.env);
+		return (
+			sessionRetryFallbackError(record.retryFallback) ??
+			sessionEnvShapeError(record.env) ??
+			sessionTelemetryError(record.telemetry)
+		);
+	if (record.type === "attach_session") return sessionTelemetryError(record.telemetry);
 	if (record.type === "set_retry_fallback") return sessionRetryFallbackError(record.retryFallback);
 	return undefined;
 }
