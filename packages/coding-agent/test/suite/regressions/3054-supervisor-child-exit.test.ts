@@ -22,7 +22,7 @@ import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
 import { hostChildAlive } from "../../../src/modes/rpc/host-stalled-evidence.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
 import { prepareSocketPath } from "../../../src/modes/rpc/host-lifecycle-proxy.ts";
-import { CHILD_KILL_EXIT_TIMEOUT_MS, CHILD_LIVENESS_RECHECK_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
+import { CHILD_KILL_EXIT_TIMEOUT_MS, childLivenessRecheckMs } from "../../../src/modes/rpc/host-stop-intent.ts";
 import { processStartTimeMs, readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { removeHostScratch } from "../../helpers/host-scratch-removal.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
@@ -196,6 +196,8 @@ async function releaseRig(r: Rig): Promise<void> {
 }
 
 type RigHandle = Awaited<ReturnType<typeof rig>>;
+/** The supervisor's own per-platform re-check cadence: 15 s on Linux, 60 s on macOS (senpi#7525 delta review). */
+const LIVENESS_RECHECK_MS = childLivenessRecheckMs();
 const expiredRechecks = new WeakMap<RigHandle, Set<unknown>>();
 
 /** Fires the supervisor's armed child re-check: the newest one queued, since each re-check re-arms the next. */
@@ -203,12 +205,12 @@ async function expireLivenessRecheck(r: RigHandle): Promise<void> {
 	const expired = expiredRechecks.get(r) ?? new Set<unknown>();
 	expiredRechecks.set(r, expired);
 	const pending = () =>
-		r.messages.filter((message) => message.type === "wait" && message.ms === CHILD_LIVENESS_RECHECK_MS).at(-1);
+		r.messages.filter((message) => message.type === "wait" && message.ms === LIVENESS_RECHECK_MS).at(-1);
 	const latest = pending();
 	const armed =
 		latest && !expired.has(latest.id)
 			? latest
-			: await r.wait("wait", r.messages.length, (message) => message.ms === CHILD_LIVENESS_RECHECK_MS);
+			: await r.wait("wait", r.messages.length, (message) => message.ms === LIVENESS_RECHECK_MS);
 	expired.add(armed.id);
 	r.child.send({ type: "expire", id: armed.id });
 }
@@ -467,6 +469,9 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 		const before = r.messages.length;
 		r.child.kill("SIGUSR1");
 		await r.wait("exit-held", before);
+		// The lifetime EOF's own check is the first observation. Off Linux it waits on `ps`, so the confirming re-check is
+		// fired only once that first one has seen the child gone.
+		await stderrIncludes(r, "its exit was not observed; confirming");
 		await expireLivenessRecheck(r);
 
 		expect(await r.exited, r.stderr()).toEqual([1, null]);
@@ -503,7 +508,7 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 		r.child.kill("SIGUSR1");
 		await r.wait("exit-held", before);
 		// The first re-check already saw the child gone and armed its confirmation.
-		await r.wait("wait", before, (message) => message.ms === CHILD_LIVENESS_RECHECK_MS);
+		await r.wait("wait", before, (message) => message.ms === LIVENESS_RECHECK_MS);
 		r.child.send({ type: "release-exit" });
 
 		expect(await r.exited, r.stderr()).toEqual([0, null]);

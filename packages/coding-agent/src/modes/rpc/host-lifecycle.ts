@@ -206,7 +206,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			generation.childPidFile,
 			child.pid,
 			() => child.exitCode === null && child.signalCode === null,
-		).then((startTime) => identity.recordStartTime(startTime));
+		);
 	child.once("exit", (code, signal) => {
 		// Recorded BEFORE any shutdown it triggers: `shutdown` ends in `process.exit`. A stop the
 		// supervisor is performing itself is recorded too, as the engine stop it is.

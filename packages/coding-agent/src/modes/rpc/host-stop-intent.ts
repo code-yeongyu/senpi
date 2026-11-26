@@ -43,6 +43,11 @@ export const CHILD_LIVENESS_RECHECK_MS = 15_000;
 /** The same re-check off Linux, where each one spawns a `ps`: once a minute. */
 export const CHILD_LIVENESS_RECHECK_PS_MS = 60_000;
 
+/** The re-check cadence on `platform`; the supervisor and its tests both read it here. */
+export function childLivenessRecheckMs(platform: NodeJS.Platform = process.platform): number {
+	return platform === "linux" ? CHILD_LIVENESS_RECHECK_MS : CHILD_LIVENESS_RECHECK_PS_MS;
+}
+
 const SENDER_KINDS: ReadonlySet<string> = new Set(["ensure", "supervisor", "stop", "successor", "handoff"]);
 
 export interface HostStopIntent {

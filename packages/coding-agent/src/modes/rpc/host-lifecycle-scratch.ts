@@ -112,8 +112,7 @@ async function readChildStartTime(pid: number, timeoutMs: number): Promise<strin
  * 1 s CIM probe fired right after spawn came back empty on every Windows generation (#3658). An identity
  * read after the child exited is never recorded: its pid may already name an unrelated process.
  */
-/** Resolves to the start time it recorded, the one the supervisor later proves the pid against (senpi#7525). */
-export async function recordChildPid(file: string, pid: number, running: () => boolean): Promise<string | undefined> {
+export async function recordChildPid(file: string, pid: number, running: () => boolean): Promise<void> {
 	try {
 		await writeJsonAtomic(file, { pid, processStartTime: null });
 		const processStartTime =
@@ -122,14 +121,12 @@ export async function recordChildPid(file: string, pid: number, running: () => b
 			)) ?? (await readChildStartTime(pid, CHILD_START_TIME_UNHURRIED_MS).catch(() => undefined));
 		if (processStartTime === undefined) {
 			supervisorLog(`host child pid ${pid} start time unreadable at recording`);
-			return undefined;
+			return;
 		}
-		if (!running()) return undefined;
+		if (!running()) return;
 		await writeJsonAtomic(file, { pid, processStartTime });
-		return processStartTime;
 	} catch (cause) {
 		supervisorLog(`could not record the host child pid: ${errorMessage(cause)}`);
-		return undefined;
 	}
 }
 
