@@ -9,7 +9,8 @@ export interface BuiltinSelection {
 
 /**
  * The internal builtins the given selected ids require, in registry order. An internal builtin is never matched
- * against the user's allowlist or denylist: it loads exactly when something selected needs it (senpi#1146).
+ * against the user's allowlist or denylist: the loader adds it at final assembly exactly when something in the
+ * final set needs it (senpi#1146).
  */
 export function requiredInternalBuiltins(
 	registry: readonly BuiltinExtensionFactory[],
@@ -21,7 +22,7 @@ export function requiredInternalBuiltins(
 	return registry.filter((builtin) => builtin.internal && required.has(builtin.id));
 }
 
-/** Ids of the registry and bundled builtins to load for this selection, internal dependencies included. */
+/** Ids of the registry and bundled builtins the settings select. Internal builtins are never selected here. */
 export function selectActiveBuiltinIds(
 	registry: readonly BuiltinExtensionFactory[],
 	bundledIds: readonly string[],
@@ -33,7 +34,6 @@ export function selectActiveBuiltinIds(
 	const active = new Set(
 		registry.filter((builtin) => !builtin.internal && selectable(builtin.id)).map((builtin) => builtin.id),
 	);
-	for (const builtin of requiredInternalBuiltins(registry, active)) active.add(builtin.id);
 	for (const id of bundledIds) if (selectable(id)) active.add(id);
 	return active;
 }

@@ -1031,15 +1031,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 			runtime,
 			this.buildGlobalDefaultExtensionLoadOptions(),
 		);
-		const requestedBuiltinPaths = paths.filter(isBuiltinPath);
-		const activeRegistryIds =
-			requestedBuiltinPaths.length > 0 ? this.getActiveBuiltinExtensionIds() : new Set<string>();
-		// A builtin named by path brings the internal builtins it requires, ahead of it (senpi#1146).
-		const pathRegistryIds = new Set(requestedBuiltinPaths.map((path) => path.slice(BUILTIN_PATH_PREFIX.length)));
-		const pathInternals = requiredInternalBuiltins(this.builtinExtensionFactories, pathRegistryIds)
-			.filter((builtin) => !activeRegistryIds.has(builtin.id) && !pathRegistryIds.has(builtin.id))
-			.map((builtin) => `${BUILTIN_PATH_PREFIX}${builtin.id}`);
-		const builtinPaths = [...pathInternals, ...requestedBuiltinPaths];
+		const builtinPaths = paths.filter(isBuiltinPath);
+		const activeRegistryIds = builtinPaths.length > 0 ? this.getActiveBuiltinExtensionIds() : new Set<string>();
 		for (const path of builtinPaths) {
 			const name = path.slice(BUILTIN_PATH_PREFIX.length);
 			const registryBuiltin = this.builtinExtensionFactories.find((extension) => extension.id === name);
@@ -1077,6 +1070,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const extensionsResult = await this.loadExtensionPaths(extensionPaths);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
+			await this.prependRequiredInternalBuiltins(extensionsResult);
 			const replacementWarnings: Array<{ path: string; warning: string }> = [];
 			extensionsResult.extensions = omitReplacedExtensions(extensionsResult.extensions, replacementWarnings);
 			mergeExtensionWarnings(extensionsResult, replacementWarnings);
@@ -1117,18 +1111,66 @@ export class DefaultResourceLoader implements ResourceLoader {
 			.filter((extension): extension is Extension => extension !== undefined);
 		orderedExtensions.unshift(...factoryExtensions);
 
-		const replacementWarnings: Array<{ path: string; warning: string }> = [];
-		const extensionsResult: LoadExtensionsResult = {
-			extensions: omitReplacedExtensions(orderedExtensions, replacementWarnings),
+		const assembled: LoadExtensionsResult = {
+			extensions: orderedExtensions,
 			errors: [...preTrustExtensions.errors, ...remainingExtensions.errors],
 			warnings: [...(preTrustExtensions.warnings ?? []), ...(remainingExtensions.warnings ?? [])],
 			runtime: preTrustExtensions.runtime,
 			eventBus: preTrustExtensions.eventBus ?? remainingExtensions.eventBus ?? this.eventBus,
 		};
+		await this.prependRequiredInternalBuiltins(assembled);
+		const replacementWarnings: Array<{ path: string; warning: string }> = [];
+		const extensionsResult: LoadExtensionsResult = {
+			...assembled,
+			extensions: omitReplacedExtensions(assembled.extensions, replacementWarnings),
+		};
 		mergeExtensionWarnings(extensionsResult, replacementWarnings);
 		this.rebuildExtensionFlagDefaults(extensionsResult);
 		this.addExtensionConflictDiagnostics(extensionsResult);
 		return extensionsResult;
+	}
+
+	/**
+	 * The one place internal builtins enter a final extension set (senpi#1146): whichever group selected the builtins
+	 * that require them (settings, an explicit `builtin:<name>` path, before or after project trust), they load once
+	 * and lead the set in registry order, ahead of every builtin that may re-publish liveness in its session_start.
+	 */
+	private async prependRequiredInternalBuiltins(result: LoadExtensionsResult): Promise<void> {
+		const builtinIdOf = (path: string): string | undefined =>
+			path.startsWith("<builtin:") && path.endsWith(">")
+				? path.slice("<builtin:".length, -1)
+				: path.startsWith(BUILTIN_PATH_PREFIX)
+					? path.slice(BUILTIN_PATH_PREFIX.length)
+					: undefined;
+		const selected = new Set(result.extensions.flatMap((extension) => builtinIdOf(extension.path) ?? []));
+		const internals = requiredInternalBuiltins(this.builtinExtensionFactories, selected);
+		if (internals.length === 0) return;
+		const internalIds = new Set(internals.map((builtin) => builtin.id));
+		const isInternal = (extension: Extension) => internalIds.has(builtinIdOf(extension.path) ?? "");
+		const leading: Extension[] = [];
+		for (const builtin of internals) {
+			const path = `<builtin:${builtin.id}>`;
+			const loaded = result.extensions.find((extension) => builtinIdOf(extension.path) === builtin.id);
+			if (loaded) {
+				leading.push(loaded);
+				continue;
+			}
+			try {
+				leading.push(
+					await loadExtensionFromFactory(
+						builtin.factory,
+						this.cwd,
+						this.eventBus,
+						result.runtime,
+						path,
+						this.extensionSession,
+					),
+				);
+			} catch (error) {
+				result.errors.push({ path, error: error instanceof Error ? error.message : "failed to load extension" });
+			}
+		}
+		result.extensions = [...leading, ...result.extensions.filter((extension) => !isInternal(extension))];
 	}
 
 	private addExtensionConflictDiagnostics(extensionsResult: LoadExtensionsResult): void {
