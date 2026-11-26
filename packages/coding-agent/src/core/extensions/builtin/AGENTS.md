@@ -50,6 +50,8 @@
 
 Plus bundled extension **codemode** (`@code-yeongyu/senpi-codemode`, resolved by resource-loader.ts) and 4 **global default extensions** (resolved fast-path): `diff`, `files`, `prompt-url-widget`, `tps` (in `globalDefaultExtensionFactories`). Shared non-factory modules: `rule-activation/` (appendRuleActivation + renderer, consumed by `rules/` and `ttsr/`) and `monitor-state-event.ts` (consumed by `goal/` and `terminal/`).
 
+`session-liveness/` is the session's one liveness fold (senpi#1146): turn start/settle, `herdr:blocked`, the terminal monitor state, wake sources and the child-task records on disk (at start, on settle and every 4 s), folded by `state.ts`. It is registered FIRST in `builtinExtensions` and binds in its `session_start`; consumers (`herdr/` publishes it to the pane, `todotools/` draws the paused list) get its handle with `connectSessionLiveness(pi.events)` from their own `session_start`. It starts each session from a fresh fold, so an owner of a liveness input re-publishes its live state at its own `session_start` or rebind (terminal on bundle bind, codemode in `startSession`, ask-user on `reattach`).
+
 ## ADDING A NEW BUILTIN EXTENSION
 
 1. Create `builtin/<name>/index.ts` exporting `default function(pi: ExtensionAPI) { … }`. Single-file extensions go in `builtin/<name>.ts`.
