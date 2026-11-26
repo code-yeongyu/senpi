@@ -55,21 +55,45 @@ describe("the hand's wake outbox file", () => {
 	});
 
 	it("keeps a scope's bound of un-acked wakes, refuses later ones before they are sent, and reports them as overflow", async () => {
+		// Every offer is a durable commit (two fsyncs), so the bound is driven at a small size: the production bound of
+		// 256 took 300 commits and 37-117 s alone, past the case budget on a loaded host (senpi#7496).
 		const path = await storePath("h3-overflow");
-		const outbox = await openHandWakeOutbox(path);
+		const outbox = await openHandWakeOutbox(path, { limits: { perScope: 4, total: 16 } });
 		const refused: string[] = [];
-		for (let index = 0; index < 300; index++)
+		for (let index = 0; index < 6; index++)
 			await outbox.offer(wakeOf("s", index)).catch((error: Error) => void refused.push(error.name));
 		const kept = await outbox.pending();
 
-		expect([kept.length, refused.length, new Set(refused)]).toEqual([256, 44, new Set(["WakeOverflowError"])]);
+		expect([kept.length, refused.length, new Set(refused)]).toEqual([4, 2, new Set(["WakeOverflowError"])]);
 		expect(kept[0]?.payload).toMatchObject({ message: { content: "m0" } });
 		const brain = await brainInbox();
 		const link = connect(brain, outbox);
 		closers.push(() => link.close());
 		await link.hand.ready;
 		const drop = await brain.committed.next("the overflow report");
-		expect(drop).toMatchObject({ scope: "s", source: "wake.dropped", payload: { reason: "overflow", count: 44 } });
+		expect(drop).toMatchObject({ scope: "s", source: "wake.dropped", payload: { reason: "overflow", count: 2 } });
+	});
+
+	it("keeps 256 un-acked wakes per scope by default: the 256th is kept and the 257th refused", async () => {
+		const path = await storePath("h3-default-bound");
+		const seed = await openHandWakeOutbox(path);
+		const first = await seed.offer(wakeOf("s", 0));
+		const file = JSON.parse(readFileSync(path, "utf8")) as { documents: [string, { pending: unknown[] }][] };
+		const [, record] = file.documents.find(([key]) => key.startsWith("execution.wake-outbox:")) ?? [];
+		if (!record) throw new Error("the outbox document was not written");
+		record.pending = Array.from({ length: 255 }, (_, index) =>
+			index === 0 ? record.pending[0] : { ...wakeOf("s", index), eventId: `${first.eventId}-seed-${index}` },
+		);
+		writeFileSync(path, JSON.stringify(file));
+		const outbox = await openHandWakeOutbox(path);
+
+		await outbox.offer(wakeOf("s", 255));
+		const refused = await outbox.offer(wakeOf("s", 256)).then(
+			() => undefined,
+			(error: Error) => error.name,
+		);
+
+		expect([(await outbox.pending()).length, refused]).toEqual([256, "WakeOverflowError"]);
 	});
 
 	it("drops a malformed pending entry with a fault and a drop report, and never offers it", async () => {
