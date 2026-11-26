@@ -16,13 +16,13 @@ export async function takeProgramResumeToken(env: NodeJS.ProcessEnv = process.en
 async function unsetLibcVariable(name: string, platform = process.platform): Promise<void> {
 	if (platform !== "darwin" && platform !== "linux") return;
 	if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") return;
-	const { dlopen, FFIType } = await import("bun:ffi");
+	const { dlopen, FFIType, ptr } = await import("bun:ffi");
 	try {
 		const libc = dlopen(platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
-			unsetenv: { args: [FFIType.cstring], returns: FFIType.i32 },
+			unsetenv: { args: [FFIType.ptr], returns: FFIType.i32 },
 		});
-		libc.symbols.unsetenv(Buffer.from(`${name}\0`));
-		libc.close();
+		const cName = Buffer.from(`${name}\0`, "utf8");
+		libc.symbols.unsetenv(ptr(cName));
 	} catch {
 		// No usable libc: the JS-level delete above still covers every child spawned through process.env.
 	}

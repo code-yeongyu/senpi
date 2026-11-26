@@ -35,8 +35,11 @@ export interface ProgramResumeReporterDependencies {
 
 export class ProgramResumeReporter {
 	private reported: string | undefined;
+	private readonly deps: ProgramResumeReporterDependencies;
 
-	constructor(private readonly deps: ProgramResumeReporterDependencies) {}
+	constructor(deps: ProgramResumeReporterDependencies) {
+		this.deps = deps;
+	}
 
 	/**
 	 * Report `target`, or clear the record when there is none or it cannot be reported. `refresh` reports an unchanged
