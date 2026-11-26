@@ -11,7 +11,8 @@ import {
 } from "../../bridge/reserved.ts";
 import { type KernelPreludePlan, KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import type { JavaScriptKernelOptions as BaseJavaScriptKernelOptions } from "./kernel-contract.ts";
-import { hasDynamicCodeCapability, rewriteImports } from "./rewrite-imports.ts";
+import { hasDynamicCodeCapability } from "./rewrite-imports.ts";
+import { javaScriptCellSource } from "./typescript-cell.ts";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
 
@@ -19,6 +20,8 @@ export interface LocalModuleLoaderOptions {
 	readonly cwd: string;
 	readonly localRoots?: Readonly<Record<string, string>>;
 	readonly artifactsDir?: string;
+	/** `jsCells.typescript`: run cells written in TypeScript with their types erased. */
+	readonly typescriptCells?: boolean;
 }
 
 export type JavaScriptKernelOptions = BaseJavaScriptKernelOptions & LocalModuleLoaderOptions;
@@ -139,11 +142,13 @@ function contributionPrelude(plan: KernelPreludePlan): string {
 export class LocalModuleLoader {
 	readonly #prelude: string;
 	readonly #cwdUrl: string;
+	readonly #typescriptCells: boolean;
 	readonly #contributions = new KernelPreludeTracker();
 
 	constructor(options: LocalModuleLoaderOptions) {
 		this.#prelude = loaderPrelude(runtimeContext(options));
 		this.#cwdUrl = directoryUrl(options.cwd);
+		this.#typescriptCells = options.typescriptCells === true;
 	}
 
 	prepareCell(
@@ -156,6 +161,6 @@ export class LocalModuleLoader {
 		const cwdUrl = sourceFile === undefined ? this.#cwdUrl : directoryUrl(dirname(sourceFile));
 		const base = `\nglobalThis.__senpi_module_context__ = { ...globalThis.__senpi_module_context__, cwdUrl: ${JSON.stringify(cwdUrl)}, packageRootUrl: ${JSON.stringify(packageRoot === undefined ? null : directoryUrl(packageRoot))} };`;
 		const prelude = `${this.#prelude}${base}\n${contributionPrelude(this.#contributions.plan(contributions))}`;
-		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: rewriteImports(code), dynamicCodeCapability: hasDynamicCodeCapability(code), ...(sourceFile === undefined ? {} : { sourceFile }) })}`;
+		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: javaScriptCellSource(code, this.#typescriptCells), dynamicCodeCapability: hasDynamicCodeCapability(code), ...(sourceFile === undefined ? {} : { sourceFile }) })}`;
 	}
 }
