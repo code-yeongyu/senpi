@@ -12,6 +12,21 @@
 
 ### Removed
 
+## [2026.11.26] - 2026-11-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A supervised RPC host keeps its private hop socket in its own daemon directory instead of the shared temp directory, the hop reaper never removes a directory whose socket is still being listened on, and a host whose hop disappears anyway re-binds it, or drains so the supervisor can be replaced, instead of staying reachable to no new client ([#7453](https://github.com/code-yeongyu/senpi/pull/7453))
+- A message another session sends while a previous message's turn is still starting now joins that turn, so messages sent together reach an idle session in one turn, in the order they were sent ([#7461](https://github.com/code-yeongyu/senpi/pull/7461)).
+
+### Removed
+
 ## [2026.11.25] - 2026-11-25
 
 ### Breaking Changes
