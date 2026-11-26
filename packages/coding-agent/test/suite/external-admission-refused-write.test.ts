@@ -7,11 +7,26 @@
  */
 import { chmodSync, readFileSync } from "node:fs";
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { AgentSession } from "../../src/core/agent-session.ts";
+import { SESSION_CONTROL_DELIVERY_TYPE } from "../../src/core/extensions/session-control-types.ts";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
 
 const unprivileged = process.platform !== "win32" && process.getuid?.() !== 0;
+
+/** Refuse the transcript entry, not the preceding custody write (which must now succeed for a positive receipt). */
+function refuseNextRun(session: AgentSession, sessionPath: string): void {
+	const manager = session.sessionManager;
+	const append = manager.appendCustomMessageEntry.bind(manager);
+	const write = vi.spyOn(manager, "appendCustomMessageEntry").mockImplementation((...args) => {
+		if (args[0] === SESSION_CONTROL_DELIVERY_TYPE) {
+			write.mockRestore();
+			chmodSync(sessionPath, 0o444);
+		}
+		return append(...args);
+	});
+}
 
 function deliveryCopiesOnDisk(sessionPath: string, marker: string): number {
 	const transcript = readFileSync(sessionPath, "utf8")
@@ -37,7 +52,7 @@ describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses"
 			fauxAssistantMessage("redelivered reply"),
 		]);
 		const { sessionId, sessionPath, session } = await host.open("refused-delivery");
-		chmodSync(sessionPath, 0o444);
+		refuseNextRun(session, sessionPath);
 
 		// When: a delivery starts a turn whose entries the file refuses.
 		let settled = nextEvent(session, "agent_settled");
@@ -119,7 +134,7 @@ describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses"
 			if (event.type === "transcript_write_failed" && event.role === "custom") chmodSync(sessionPath, 0o644);
 		});
 		redeliverMidRun = () => host.send({ type: "wake", id: "w2", sessionId, delivery_ids: ["refused-1"] }, "mid-run");
-		chmodSync(sessionPath, 0o444);
+		refuseNextRun(session, sessionPath);
 
 		// When: the delivery runs, the sender retries it inside that run, and again after the run settled.
 		let settled = nextEvent(session, "agent_settled");
@@ -153,7 +168,7 @@ describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses"
 		await using host = await startReleaseHost(gateway.extension);
 		host.faux.setResponses([fauxAssistantMessage("seed reply"), fauxAssistantMessage("refused reply")]);
 		const { sessionId, sessionPath, session } = await host.open("refused-loop");
-		chmodSync(sessionPath, 0o444);
+		refuseNextRun(session, sessionPath);
 		const settled = nextEvent(session, "agent_settled");
 		await host.send({ type: "wake", id: "w1", sessionId, delivery_ids: ["refused-1"] });
 		await settled;

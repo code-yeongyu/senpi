@@ -20,8 +20,10 @@ import { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import type { TurnDeadlineKind } from "./turn-deadline.ts";
 import { isRecord } from "./work-custody-record.ts";
+import { markInputTurnOrigin } from "./turn-origin.ts";
 
 interface LifecycleBindingHost {
+	heldDelivery(ticket: string): { readonly noticeIds: readonly string[]; readonly message: AgentMessage } | undefined;
 	append(type: string, data: unknown): string;
 	emit(event: SessionLifecycleEvent): void;
 	holdInterruptedRun(): void;
@@ -50,6 +52,7 @@ export class LifecycleSessionBinding {
 	private retireFactEvents: (() => void) | undefined;
 	/** After dispose() nothing the controller decides is written or emitted: the session file is no longer this session's. */
 	private disposed = false;
+	private readonly restoredExternal = new Set<string>();
 
 	constructor(session: AgentSession, host: LifecycleBindingHost) {
 		this.session = session;
@@ -85,6 +88,20 @@ export class LifecycleSessionBinding {
 		// A crashed receiver may have durable custody but no transcript entry yet. Recovery owns that
 		// delivery already; register it before session_start can let the gateway enqueue a second carrier.
 		const deliveries = session.sessionManager.reduceHistory(lifecycleDeliveryEntries);
+		// A Stop Resume consumes held briefs together. Their notice handoff is the durable identity even when
+		// the transcript has a single combined resume entry rather than individual delivery entries.
+		for (const record of this.controller.obligations.heldExternal) {
+			if (!record.ticketId || !record.payload || !record.external) continue;
+			const ticket = record.ticketId;
+			const held = host.heldDelivery(ticket);
+			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
+			const id = deliveryIdOf(message);
+			if (!held) session.externalAdmission.observePersisted(message);
+			else if (id !== undefined) {
+				markInputTurnOrigin(held.message, record.external.turnMark);
+				session.externalAdmission.restoreQueued(id, () => host.heldDelivery(ticket) !== undefined);
+			}
+		}
 		for (const record of this.controller.obligations.active) {
 			// Discover consumed work before session_start can queue another automatic turn. The later
 			// recovery pass still writes interruption/tool records, but must not be the first to close admission.
@@ -92,6 +109,7 @@ export class LifecycleSessionBinding {
 				this.controller.ledger.interrupted = true;
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
 			const ticketId = record.ticketId;
+			if (record.external) this.restoredExternal.add(ticketId);
 			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
 			const deliveryId = deliveryIdOf(message);
 			if (deliveryId === undefined) continue;
@@ -102,6 +120,7 @@ export class LifecycleSessionBinding {
 					() =>
 						// Consumption writes the entry before message_end observes it in external admission.
 						session.sessionManager.reduceHistory(lifecycleDeliveryEntries).has(ticketId) ||
+						(record.external !== undefined && host.heldDelivery(ticketId) !== undefined) ||
 						this.controller.obligations.active.some(
 							(current) => current.ticketId === ticketId && current.state === "queued",
 						),
@@ -293,7 +312,32 @@ export class LifecycleSessionBinding {
 		for (const record of this.controller.obligations.active) {
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
 			if (this.disposed) return;
-			await this.session.sendCustomMessage(record.payload.message, {
+			const message = record.payload.message;
+			if (record.external) {
+				// Binding can finish after a live admission. Replay only tickets inherited from disk.
+				if (!this.restoredExternal.delete(record.ticketId)) continue;
+				const held = this.host.heldDelivery(record.ticketId);
+				if (held) {
+					markInputTurnOrigin(held.message, record.external.turnMark);
+					const noticeId = held.noticeIds[0];
+					if (noticeId) this.controller.obligations.held(record.ticketId, noticeId);
+					continue;
+				}
+				if (record.external.queueOnly && isRecord(message.details)) {
+					const carrier = {
+						...message,
+						role: "custom" as const,
+						details: { ...message.details, ticketId: record.ticketId },
+						timestamp: Date.now(),
+					};
+					markInputTurnOrigin(carrier, record.external.turnMark);
+					if (record.payload.deliverAs === "steer") this.session.agent.steer(carrier);
+					else this.session.agent.followUp(carrier);
+					continue;
+				}
+				markInputTurnOrigin(message, record.external.turnMark);
+			}
+			await this.session.sendCustomMessage(message, {
 				triggerTurn: true,
 				deliverAs: record.payload.deliverAs,
 				ticket: record.ticketId,

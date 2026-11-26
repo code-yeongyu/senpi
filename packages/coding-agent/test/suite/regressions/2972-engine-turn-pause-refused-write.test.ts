@@ -14,7 +14,7 @@ async function drain(harness: Harness): Promise<void> {
 
 /** A session whose automatic-turn budget after the user's message is spent (senpi#2967). */
 async function spentHarness(): Promise<Harness> {
-	const harness = await createHarness({ settings: { engineTurns: { maxPerUserInput: 1 } } });
+	const harness = await createHarness({ persistSession: true, settings: { engineTurns: { maxPerUserInput: 1 } } });
 	harness.setResponses([
 		fauxAssistantMessage([fauxText("user reply")]),
 		fauxAssistantMessage([fauxText("d-1 reply")]),
@@ -33,6 +33,7 @@ function stateHas(harness: Harness, marker: string): boolean {
 async function spentItemizedHarness(): Promise<{ harness: Harness; api: () => ExtensionAPI }> {
 	let api: ExtensionAPI | undefined;
 	const harness = await createHarness({
+		persistSession: true,
 		settings: { engineTurns: { maxPerUserInput: 1 } },
 		extensionFactories: [
 			(pi: ExtensionAPI) => {

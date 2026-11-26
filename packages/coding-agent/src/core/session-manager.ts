@@ -1189,6 +1189,11 @@ const LIFECYCLE_ENTRY_TYPES: ReadonlySet<string> = new Set(["session-lifecycle",
 
 /** A `custom` entry is disposable when its writer marked it as startup bookkeeping (senpi#3263) or it is lifecycle bookkeeping. */
 function isDisposableEntry(entry: FileEntry): boolean {
+	// Even a session with no conversation may have acknowledged a peer's first delivery.
+	if (
+		entry.type === "custom" && entry.customType === "work-custody" &&
+		typeof entry.data === "object" && entry.data !== null && "external" in entry.data
+	) return false;
 	if (entry.type === "custom") return entry.startupBookkeeping === true || LIFECYCLE_ENTRY_TYPES.has(entry.customType);
 	return SETUP_ENTRY_TYPES.has(entry.type);
 }

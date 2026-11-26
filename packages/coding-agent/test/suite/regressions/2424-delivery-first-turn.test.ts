@@ -87,6 +87,7 @@ async function createDeliveryHarness(): Promise<{ harness: Harness; choices: unk
 	const choices: unknown[] = [];
 	const triggers: string[] = [];
 	const harness = await createHarness({
+		persistSession: true,
 		api: "openai-completions",
 		extensionFactories: [todotoolsExtension, triggerRecorder(triggers)],
 	});

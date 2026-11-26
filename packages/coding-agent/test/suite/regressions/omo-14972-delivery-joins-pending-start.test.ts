@@ -16,7 +16,7 @@ const PROBE = /JOIN-PROBE-\d/g;
 
 describe("a delivery admitted while a delivery start is pending (omo#14972)", () => {
 	it("joins the pending start: the first provider request carries both deliveries in order", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: false } } });
+		const harness = await createHarness({ persistSession: true, settings: { retry: { enabled: false } } });
 		harnesses.push(harness);
 		const requests: string[][] = [];
 		const record = (context: { readonly messages: readonly unknown[] }) => {
@@ -38,7 +38,7 @@ describe("a delivery admitted while a delivery start is pending (omo#14972)", ()
 	});
 
 	it("still queues a follow-up behind a run that has begun", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: false } } });
+		const harness = await createHarness({ persistSession: true, settings: { retry: { enabled: false } } });
 		harnesses.push(harness);
 		const requests: string[][] = [];
 		let second: ReturnType<typeof harness.session.externalAdmission.admit> | undefined;

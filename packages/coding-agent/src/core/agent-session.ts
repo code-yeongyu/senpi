@@ -1661,13 +1661,40 @@ export class AgentSession {
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
 		heldBy: () => this._peerDeliveryHolds(),
+		owns: (ticket) =>
+			this.workObligations.externalTicket(ticket) !== undefined || this._heldExternalDelivery(ticket) !== undefined,
+		retain: (message, lane, queueOnly, turnMark) => {
+			if (this._disposed || this._sizesOnlyStartup) throw new Error("Session cannot take delivery custody");
+			if (!this.sessionManager.getSessionFile()) throw new Error("The session has no persistent file");
+			return this.workObligations.admitExternal(
+				`${ENGINE_DELIVERY_KEY_PREFIX}${message.customType}:${message.details.delivery_id}`,
+				{ message, ...(lane === "start" ? {} : { deliverAs: lane }) },
+				{ queueOnly, turnMark: turnMark ?? (recordIsDelegated() ? "delegated" : "engine") },
+			);
+		},
 		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
-		start: (message) =>
-			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
-				this._sessionLogger.warn("external_delivery_start_failed", {
-					error: error instanceof Error ? error.message : String(error),
+		start: async (message, ticket) => {
+			const generation = this._userAbortGeneration;
+			for (let launch = 0; ; launch++) {
+				await this.sendCustomMessage(message, { triggerTurn: true, ticket }).catch((error: unknown) => {
+					this._sessionLogger.warn("external_delivery_start_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					});
 				});
-			}),
+				const record = this.workObligations.externalTicket(ticket);
+				if (
+					this._disposed || this.isStreaming || record?.state !== "queued" ||
+					this._queuedTicketCarrier(ticket) || this._heldExternalDelivery(ticket) ||
+					!this.externalAdmission.list().pending.includes(message.details.delivery_id)
+				) return;
+				// No turn or queue took this launch. Re-arm it once without waiting for another sender.
+				// Never spin on a failure or undo a person's abort; the next input or reload takes the ticket.
+				if (launch > 0 || record.delivery === "failed" || generation !== this._userAbortGeneration) {
+					this.agent.followUp(message);
+					return;
+				}
+			}
+		},
 	});
 	private _controlEndpointHost: ControlEndpointHost | undefined;
 	/** The current extension generation's `pi.session`; a reload retires it with its runner. */
@@ -7767,7 +7794,8 @@ export class AgentSession {
 				if (startsTurn) this._pendingCustomTurnHeaders--;
 			}
 			if (generation !== this._userAbortGeneration) {
-				if (ticket) this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
+				if (ticket && !obligations.externalTicket(ticket))
+					this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
 				deferredTurnClaim?.resolve("finished-without-start");
 				readmit = itemized !== undefined;
 				return;
@@ -7784,7 +7812,8 @@ export class AgentSession {
 					...this.agent.peekQueuedMessages({ all: true }),
 					...this._pendingNextTurnMessages,
 				].some((queued) => queued.role === "custom" && messageTicket(queued) === ticket);
-				if (!retainedForLater) this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
+				if (!retainedForLater && !obligations.externalTicket(ticket))
+					this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
 			}
 		} catch (error) {
 			if (ticket) obligations.failed(ticket);
@@ -7831,7 +7860,9 @@ export class AgentSession {
 			if (cause === "cleared") {
 				if (engineOwned) this.workObligations.cancel(ticket);
 				else this.workObligations.retire(ticket);
-			} else if (engineOwned) this.workObligations.passive(ticket);
+			} else if (engineOwned && !this.workObligations.externalTicket(ticket)) {
+				this.workObligations.passive(ticket);
+			}
 		}
 	}
 
@@ -8364,19 +8395,24 @@ export class AgentSession {
 		onQueued?: () => void,
 		resumeCause: "stop" | "interrupted" = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
+		const heldWakes = this._engineTurnHold.messages();
 		return startRunResumeTurn({
 			resumeCause,
 			heldInputs: () => heldInputs,
 			continueInputs: () => [...continues],
-			heldWakes: () => this._engineTurnHold.messages(),
+			heldWakes: () => heldWakes,
 			send: (message) =>
 				this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true, undefined, onQueued),
 			turnStarted: (until) => this._nextTurnStart(until),
 			idle: () => this.waitForIdle(),
 			current: () => generation === this._userAbortGeneration,
-			consume: (inputIds, sources) => {
+			consume: (inputIds) => {
 				this._heldInputs.consume(inputIds);
-				for (const source of sources) this._engineTurnHold.consume(source);
+				// Stop Resume writes the notices together in one transcript entry rather than one per delivery.
+				for (const { source, noticeIds, message } of heldWakes) {
+					this._engineTurnHold.consume(source, noticeIds);
+					if (deliveryIdOf(message)) this.externalAdmission.observePersisted(message);
+				}
 			},
 			sendFailed: (error) => this._sessionLogger.warn("resume_turn_send_failed", { error: String(error) }),
 		});
@@ -8653,6 +8689,7 @@ export class AgentSession {
 
 	private _createLifecycleBinding(): LifecycleSessionBinding {
 		return new LifecycleSessionBinding(this, {
+			heldDelivery: (ticket) => this._heldExternalDelivery(ticket),
 			append: (type, data) => {
 				const startupBookkeeping =
 					type === "session-lifecycle" &&
@@ -8750,7 +8787,20 @@ export class AgentSession {
 		return true;
 	}
 
+	private _heldExternalDelivery(ticket: string) {
+		return this._engineTurnHold.messages().find(({ message }) => messageTicket(message) === ticket);
+	}
+
 	private _noteHeldWake(appMessage: CustomMessage, ticket: string | undefined): void {
+		const deliveryId = deliveryIdOf(appMessage);
+		if (deliveryId !== undefined && ticket && this.workObligations.externalTicket(ticket)) {
+			// Plain notices coalesce by source. Each admitted brief needs its own carrier until consumed.
+			const [notice] = this._engineTurnHold.noteItems([
+				{ source: appMessage.customType, message: appMessage, item: { itemId: deliveryId } },
+			]);
+			if (notice) this.workObligations.held(ticket, notice.noticeId);
+			return;
+		}
 		this._engineTurnHold.note(engineWakeSource(appMessage.customType), appMessage);
 		if (!ticket) return;
 		const noticeId = heldLifecycleNotice(this, ticket, appMessage.customType);

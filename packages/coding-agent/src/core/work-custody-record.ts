@@ -1,6 +1,7 @@
 import type { CustomMessage } from "./messages.ts";
 import { normalizeWaitItems, type WaitSourceItems } from "./lifecycle-wait-items.ts";
 import type { ObligationKind } from "./session-lifecycle-types.ts";
+import type { InputTurnMark } from "./turn-origin.ts";
 
 export interface CustodyPayload {
 	readonly message: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
@@ -24,6 +25,8 @@ export interface WorkCustodyRecord extends WaitSourceItems {
 	readonly transcriptEntryId?: string;
 	readonly noticeId?: string;
 	readonly delivery?: "failed" | "retired";
+	/** External admission owns this payload until written or explicitly handed back. */
+	readonly external?: { readonly queueOnly: boolean; readonly turnMark: InputTurnMark };
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -47,6 +50,7 @@ export function readWorkCustody(value: unknown): WorkCustodyRecord | undefined {
 			return undefined;
 	}
 	const payload = readPayload(value.payload);
+	const external = readExternalAdmission(value.external);
 	return {
 		id: value.id,
 		key: value.key,
@@ -58,11 +62,20 @@ export function readWorkCustody(value: unknown): WorkCustodyRecord | undefined {
 		...(typeof value.detail === "string" ? { detail: value.detail } : {}),
 		...(typeof value.ticketId === "string" ? { ticketId: value.ticketId } : {}),
 		...(payload ? { payload } : {}),
+		...(external ? { external } : {}),
 		...(typeof value.runId === "string" ? { runId: value.runId } : {}),
 		...(typeof value.transcriptEntryId === "string" ? { transcriptEntryId: value.transcriptEntryId } : {}),
 		...(typeof value.noticeId === "string" ? { noticeId: value.noticeId } : {}),
 		...(value.delivery === "failed" || value.delivery === "retired" ? { delivery: value.delivery } : {}),
 	};
+}
+
+function readExternalAdmission(value: unknown): WorkCustodyRecord["external"] {
+	if (!isRecord(value) || typeof value.queueOnly !== "boolean") return undefined;
+	const { turnMark } = value;
+	if (turnMark !== "local" && turnMark !== "engine" && turnMark !== "join" && turnMark !== "delegated")
+		return undefined;
+	return { queueOnly: value.queueOnly, turnMark };
 }
 
 function readPayload(value: unknown): CustodyPayload | undefined {

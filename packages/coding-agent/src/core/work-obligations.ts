@@ -67,8 +67,35 @@ export class SessionWorkObligations implements WorkObligations {
 		return this.active.reduce((sum, record) => sum + (record.activeCount ?? 1), 0);
 	}
 
+	get heldExternal(): readonly WorkCustodyRecord[] {
+		return [...this.records.values()].filter((record) => record.external && record.state === "held");
+	}
+
+	externalTicket(ticket: string): WorkCustodyRecord | undefined {
+		const record = this.records.get(ticket);
+		return record?.external && custodyIsOpen(record) ? record : undefined;
+	}
+
 	get persisted(): boolean {
 		return this.unpersisted.size === 0;
+	}
+
+	/** A remote receipt transfers custody: unlike install(), a refused append cannot fall back to memory. */
+	admitExternal(key: string, payload: CustodyPayload, external: NonNullable<WorkCustodyRecord["external"]>): string {
+		// A transcript refusal can make an admission retryable before its original queued ticket is consumed.
+		const ticketId =
+			this.active.find((record) => record.external && record.key === key)?.ticketId ?? crypto.randomUUID();
+		const record: WorkCustodyRecord = {
+			id: ticketId,
+			ticketId,
+			key,
+			kind: "background",
+			state: "queued",
+			payload,
+			external,
+		};
+		this.install(record, true);
+		return ticketId;
 	}
 
 	open(key: string, kind: ObligationKind, detail?: string): ObligationToken {
@@ -248,12 +275,12 @@ export class SessionWorkObligations implements WorkObligations {
 		if (ended.length > 0) this.store.changed();
 	}
 
-	private install(record: WorkCustodyRecord): void {
+	private install(record: WorkCustodyRecord, requirePersistence = false): void {
 		try {
 			this.store.append(record);
 			this.unpersisted.delete(record.id);
 		} catch (error) {
-			if (!(error instanceof Error)) throw error;
+			if (requirePersistence || !(error instanceof Error)) throw error;
 			this.unpersisted.set(record.id, record);
 		}
 		this.records.set(record.id, record);
@@ -282,7 +309,11 @@ export class SessionWorkObligations implements WorkObligations {
 	private close(id: string, state: "settled" | "held" | "cancelled" | "passive", noticeId?: string): void {
 		const record = this.owned(id);
 		this.sending.delete(id);
-		this.install({ ...record, state, ...(noticeId === undefined ? {} : { noticeId }) });
+		// A typed handback cannot leave a queued record on disk for the next owner to replay.
+		this.install(
+			{ ...record, state, ...(noticeId === undefined ? {} : { noticeId }) },
+			state === "cancelled" && record.external !== undefined,
+		);
 		this.store.changed();
 	}
 

@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import { SessionManager } from "../../src/core/session-manager.ts";
 import { RELEASE_QUEUED_HINT, RELEASED_ADMISSION_CLOSED } from "../../src/modes/rpc/session-release.ts";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { afterReleased, heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
@@ -57,7 +58,14 @@ describe("release_session and gateway deliveries (real host)", () => {
 			data: { released: true, dropped: { deliveries: ["q-1"], user_messages: [] } },
 		});
 		expect(session.externalAdmission.list()).toEqual({ pending: [], emitted: [] });
-		expect(readFileSync(sessionPath, "utf8")).not.toContain("DELIVERY q-1");
+		const entries = SessionManager.open(sessionPath).getEntries();
+		const custody = entries.filter((entry) => entry.type === "custom" && entry.customType === "work-custody");
+		expect(custody.findLast((entry) => JSON.stringify(entry).includes("DELIVERY q-1"))).toMatchObject({
+			data: { key: "delivery:session_control_delivery:q-1", state: "cancelled" },
+		});
+		expect(
+			JSON.stringify(entries.filter((entry) => entry.type !== "custom" || entry.customType !== "work-custody")),
+		).not.toContain("DELIVERY q-1");
 		expect(afterReleased(sessionPath)).toEqual([]);
 	});
 

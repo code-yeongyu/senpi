@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 async function idleHarness(): Promise<{ harness: Harness; starts: () => number }> {
-	const harness = await createHarness({ settings: { retry: { enabled: false } } });
+	const harness = await createHarness({ persistSession: true, settings: { retry: { enabled: false } } });
 	harnesses.push(harness);
 	harness.setResponses([fauxAssistantMessage("ran")]);
 	let starts = 0;
