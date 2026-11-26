@@ -185,10 +185,12 @@ if (mode === "host" || mode === "host-term" || mode === "host-drain" || mode ===
 					childArgs: ["--max-old-space-size=256", realCli, "--mode", "rpc", "--multi-session"],
 				}
 			: mode === "wrapped-gate-exit"
-				? // A launcher that drops the lifetime slot and replaces its image with the host.
+				? // A launcher that drops the lifetime slot and replaces its image with the host. The close is its own
+					// `exec` with no command, which POSIX makes permanent: `exec 3>&- cmd` lets bash 3.2 (macOS /bin/sh)
+					// keep a saved copy of the slot at fd 10 in the exec'd host, so the slot never closed there.
 					{
 						childCommand: "/bin/sh",
-						childArgs: ["-c", 'exec 3>&- "$0" "$@"', process.execPath, import.meta.filename, hostMode],
+						childArgs: ["-c", 'exec 3>&-; exec "$0" "$@"', process.execPath, import.meta.filename, hostMode],
 					}
 				: { childCommand: process.execPath, childArgs: [import.meta.filename, hostMode] };
 	await runHostSupervisor({ socket, agentDir, hostArgs: [], ...launchCommand });
