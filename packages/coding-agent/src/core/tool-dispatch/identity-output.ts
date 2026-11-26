@@ -32,18 +32,29 @@ function sanitize(
 	let changed = false;
 	const descriptors = Object.getOwnPropertyDescriptors(value);
 	for (const [key, desc] of Object.entries(descriptors)) {
-		if (!("value" in desc) || (!desc.enumerable && !error)) continue;
-		const child: unknown = desc.value;
+		const accessor = !("value" in desc);
+		if ((accessor && !desc.get) || (!desc.enumerable && !error)) continue;
+		let child: unknown;
+		try {
+			child = accessor ? desc.get?.call(value) : desc.value;
+		} catch {
+			// A getter that throws yields no value to any reader; leave it as it is.
+			continue;
+		}
 		const sensitive =
 			(isPrivateField(key) && isSecretBytes(child)) ||
 			(human && (key === "secretKey" || key === "sealedKey") && typeof child === "string");
 		const next = sensitive
 			? IDENTITY_MASK
 			: sanitize(child, visited, filter, `${path}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`, key);
-		if (next === child) continue;
+		// A copied getter could still return the secret later: evaluate it into a data property.
+		if (next === child && !(accessor && !error)) continue;
 		changed = true;
-		if (error) Object.defineProperty(output, key, { ...desc, value: next });
-		else desc.value = next;
+		const replaced = accessor
+			? { value: next, enumerable: desc.enumerable, configurable: true, writable: true }
+			: { ...desc, value: next };
+		if (error) Object.defineProperty(output, key, replaced);
+		else descriptors[key] = replaced;
 	}
 	if (!error && !changed) {
 		visited.set(value, value);

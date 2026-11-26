@@ -10008,9 +10008,21 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/machine-ops/src/process/identity-output.ts#prefixes": {
+		"packages/machine-ops/src/process/identity-text.ts#NAMES": {
 			"class": "constant",
-			"reason": "immutable prefix vocabulary for the per-stream output filter"
+			"reason": "lookup data literal of private field names; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#PRIVATE_TAIL": {
+			"class": "constant",
+			"reason": "pattern built once at load; used only through exec without the global flag, so it holds no state"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#PRIVATE_VALUE": {
+			"class": "constant",
+			"reason": "pattern built once at load; read only through matchAll, which clones it, so its lastIndex is never shared"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#TOKEN": {
+			"class": "constant",
+			"reason": "pattern literal read only through matchAll, which clones it, so its lastIndex is never shared"
 		},
 		"packages/machine-ops/src/process/handles.ts#ANSI": {
 			"class": "per-copy-safe",

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { expect, it } from "vitest";
-import { redactIdentityOutput } from "./identity-output.ts";
+import { identityUpdateFilter, redactIdentityOutput } from "./identity-output.ts";
 import { IdentityOutputStream } from "@code-yeongyu/senpi-machine-ops";
 
 it("filters prefixed tokens anywhere and limits human-record masking to its own object", () => {
@@ -90,5 +90,25 @@ it("masks only the accepted numeric-array and binary encoding lengths", () => {
 			expect(redactIdentityOutput<Record<string, unknown>>({ [name]: secret })[name] === "[REDACTED]").toBe(true);
 		for (const other of ["a".repeat(42), "b".repeat(45), [1, 2, 3], [...a.slice(1), 999]])
 			expect(redactIdentityOutput<Record<string, unknown>>({ [name]: other })[name] === other).toBe(true);
+	}
+});
+
+it("masks a getter-backed private field in an object result", () => {
+	const secret = randomBytes(32).toString("base64url");
+	const details: { label: string; signing?: string } = Object.defineProperty({ label: "fixture" }, "signing", {
+		enumerable: true,
+		get: () => secret,
+	});
+	const clean = redactIdentityOutput({ details });
+	expect(clean.details.signing === "[REDACTED]" && clean.details.label === "fixture").toBe(true);
+});
+
+it("shows every streamed row of an open JSON object through the update filter", () => {
+	const filter = identityUpdateFilter();
+	let text = '{"rows":[';
+	for (let i = 0; i < 200; i++) {
+		text += `{"id":${i},"name":"row ${i}"},`;
+		const frame = filter({ content: [{ type: "text", text }], details: {} });
+		expect((frame.content[0] as { text: string }).text === text).toBe(true);
 	}
 });

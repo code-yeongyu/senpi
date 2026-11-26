@@ -1,8 +1,9 @@
+import { randomBytes } from "node:crypto";
 import { linkSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_LIMITS, IdentityOutputStream } from "../src/index.ts";
+import { DEFAULT_LIMITS, IdentityOutputStream, redactIdentityText } from "../src/index.ts";
 import { mountedIdentityAliases } from "../src/files/identity-walk.ts";
 import { createLocalMachineOps } from "../src/local.ts";
 import { createInProcessHolderLink } from "../src/process/in-process-holder.ts";
@@ -185,6 +186,74 @@ describe("shell output is redacted before capture and callbacks", () => {
 			expect(clean === JSON.stringify({ signing: "[REDACTED]", key: fake, sk: fake, Key: "photos/file.jpg" })).toBe(
 				true,
 			);
+		}
+	});
+});
+
+describe("streamed output holds only a tail that can still become a masked value", () => {
+	it("shows a later line in the same push after an unclosed brace", () => {
+		const stream = new IdentityOutputStream();
+		let shown = stream.push("env = {\n");
+		for (let i = 0; i < 20; i++) shown += stream.push(`listening step ${i}\n`);
+		const ready = stream.push("READY\n");
+		expect(ready).toBe("READY\n");
+		expect(shown + ready).toBe(
+			`env = {\n${Array.from({ length: 20 }, (_, i) => `listening step ${i}\n`).join("")}READY\n`,
+		);
+	});
+	it("never hides or replaces a long run after an apostrophe inside an open object", () => {
+		const stream = new IdentityOutputStream();
+		const lines = ["env = {\n", "it's starting\n"];
+		for (let i = 0; i < 100000; i++) lines.push(`2026-11-26T20:00:00Z INFO step ${i} {"ok":true,"n":${i}}\n`);
+		let shown = "";
+		for (const line of lines) {
+			const out = stream.push(line);
+			expect(out).toBe(line);
+			shown += out;
+		}
+		expect(shown + stream.finish()).toBe(lines.join(""));
+	});
+	it("shows every row of an open JSON object as it streams", () => {
+		const stream = new IdentityOutputStream();
+		expect(stream.push('{"rows":[')).toBe('{"rows":[');
+		for (let i = 0; i < 200; i++) {
+			const row = `{"id":${i},"name":"row ${i}"},`;
+			expect(stream.push(row)).toBe(row);
+		}
+	});
+	it("releases an undecided human credential masked, never dropped", () => {
+		const open = '{"kind":"human","v":1,"name":"x","secretKey":"fixture-password","log":"';
+		const stream = new IdentityOutputStream();
+		let shown = stream.push(open);
+		for (let i = 0; i < 4000; i++) shown += stream.push(`line of ordinary output ${i}\\n`);
+		expect(shown.includes("fixture-password")).toBe(false);
+		expect(shown.includes("line of ordinary output 3000")).toBe(true);
+		const end = stream.push("tail") + stream.finish();
+		expect((shown + end).includes("fixture-password")).toBe(false);
+		expect((shown + end).endsWith("tail")).toBe(true);
+	});
+	it("masks the additional encodings at every split position", () => {
+		const secret = randomBytes(32).toString("base64url");
+		const record = JSON.stringify({ v: 1, signing: secret, ek: "public" });
+		let nested = record;
+		for (let i = 0; i < 5; i++) nested = JSON.stringify({ stdout: nested });
+		const shapes = [
+			`v: 1\nsigning: ${secret}\n`,
+			`signing\t${secret}\n`,
+			`export SIGNING="${secret}"\nexport SEALING='${secret}'\n`,
+			`{"sign\\u0069ng":"${secret}"}\n`,
+			nested,
+		];
+		for (const shape of shapes) {
+			const whole = redactIdentityText(shape);
+			expect(whole.includes(secret.slice(0, 12))).toBe(false);
+			expect(whole.includes("[REDACTED]")).toBe(true);
+			for (let cut = 0; cut <= shape.length; cut++) {
+				const stream = new IdentityOutputStream();
+				const first = stream.push(shape.slice(0, cut));
+				expect(first.includes(secret.slice(0, 12))).toBe(false);
+				expect(first + stream.push(shape.slice(cut)) + stream.finish()).toBe(whole);
+			}
 		}
 	});
 });
