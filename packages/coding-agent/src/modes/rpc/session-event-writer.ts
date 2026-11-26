@@ -193,6 +193,9 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		// Reconstruct so desktop `refresh-senpi-events.ts` sees literal `type:` sites in this file.
 		let wire: RpcRecord;
 		switch (record.type) {
+			case "host_telemetry_containment":
+				wire = { type: "host_telemetry_containment", sessionId: record.sessionId, exitCode: record.exitCode };
+				break;
 			case "host_superseded":
 				wire = {
 					type: "host_superseded",

@@ -48,6 +48,11 @@ export interface RpcSessionIdlePolicy {
 	emptyExitMs?: number;
 	/** Host shutdown hook fired by the empty-exit window; called at most once. */
 	onEmptyExit?: () => void;
+	/**
+	 * Called when a worker told to stop after a telemetry revocation was not seen to stop (senpi#7446). Defaults to
+	 * `exitForTelemetryContainment` (the host process ends); a test injects an observer instead.
+	 */
+	onTelemetryContainmentLost?: (sessionId: string) => void;
 	/** Close connections whose last attached session has finished handoff parking. */
 	onHandoffParked?: (connections: readonly string[]) => Promise<void>;
 	/**

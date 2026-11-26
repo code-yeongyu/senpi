@@ -713,6 +713,7 @@ export class ExtensionRunner {
 	});
 	private getBrowserEngineFn: NonNullable<ExtensionContextActions["getBrowserEngine"]> = () => undefined;
 	private getSessionEnvFn: NonNullable<ExtensionContextActions["getSessionEnv"]> = () => undefined;
+	private getTelemetryPermittedFn: NonNullable<ExtensionContextActions["getTelemetryPermitted"]> = () => false;
 	// A runner with no session (a hand's runtime) runs its tools on this machine, so its device files are local.
 	private getDeviceFilesFn: NonNullable<ExtensionContextActions["getDeviceFiles"]> = localDeviceFiles;
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
@@ -958,6 +959,7 @@ export class ExtensionRunner {
 		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		if (contextActions.getBrowserEngine) this.getBrowserEngineFn = contextActions.getBrowserEngine;
 		if (contextActions.getSessionEnv) this.getSessionEnvFn = contextActions.getSessionEnv;
+		if (contextActions.getTelemetryPermitted) this.getTelemetryPermittedFn = contextActions.getTelemetryPermitted;
 		if (contextActions.getDeviceFiles) this.getDeviceFilesFn = contextActions.getDeviceFiles;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
@@ -1826,6 +1828,10 @@ export class ExtensionRunner {
 			get sessionEnv() {
 				runner.assertActive();
 				return runner.getSessionEnvFn();
+			},
+			get telemetryPermitted() {
+				runner.assertActive();
+				return runner.getTelemetryPermittedFn();
 			},
 			get deviceFiles() {
 				runner.assertActive();

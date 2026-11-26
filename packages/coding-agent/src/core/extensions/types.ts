@@ -579,6 +579,13 @@ export interface ExtensionContext {
 	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
 	readonly sessionEnv?: Readonly<Record<string, string>>;
 	/**
+	 * Whether telemetry attributed to THIS session may be collected or delivered now (senpi#7446): the host permits it
+	 * AND every caller of the session granted it. It changes while the session runs, so read it when an event is
+	 * collected and again before a buffered event is delivered. Optional for contexts built outside a runner, and
+	 * `false` on a runner that has no session.
+	 */
+	readonly telemetryPermitted?: boolean;
+	/**
 	 * The files of the device this session's tools run on (senpi#5839): the local filesystem on a fused session and on a
 	 * hand, the hand's file channel on the loop side of a split session. Data that must stay on the device goes through
 	 * it. Optional for contexts built outside a runner; every runner-built context has it.
@@ -3931,6 +3938,7 @@ export interface ExtensionContextActions {
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
+	getTelemetryPermitted?: () => boolean;
 	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
 	getDeviceFiles?: () => DeviceFiles;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
