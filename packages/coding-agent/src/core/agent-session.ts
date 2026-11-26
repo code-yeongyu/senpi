@@ -12851,6 +12851,9 @@ export class AgentSession {
 						} catch (error) {
 							outcome = isCompactionExecutionAborted(error) ? "aborted" : "failed";
 							if (!compactionExecutionOwnsTerminalTransition(error)) {
+								// A newer generation owns the terminal event, but this request still ended: its caller hears
+								// that, or it waits forever for a compaction that will never report (senpi#7482).
+								options?.onError?.(error instanceof Error ? error : new Error(String(error)));
 								return;
 							}
 							const message = error instanceof Error ? error.message : String(error);
