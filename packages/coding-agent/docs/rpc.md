@@ -3079,6 +3079,20 @@ with code 79 (`TELEMETRY_CONTAINMENT_EXIT_CODE`), ending every session it holds.
 what the worker exports between the answer and its acknowledgement or end, at most 4000 ms end to end. An in-process
 session (every socket host) takes the answer at once and never reaches this path. The SDK sends the change with `RpcClient.setTelemetryConsent(consent, sessionId?)`.
 
+#### set_telemetry_consent
+
+Multi-session hosts that advertise `telemetry_consent` only. Changes the sending connection's telemetry answer on a
+session it is attached to, without restarting anything; the contract is the section above.
+
+```json
+{"type":"set_telemetry_consent","sessionId":"0197…","consent":"declined"}
+```
+
+`consent` is `granted`, `declined` or `unanswered`. The answer is `success: true` with no `data` once the session
+confirmed the policy the change produces. Refusals: `invalid_telemetry_consent` (malformed `consent`, with
+`errorData.reason`), `session_not_attached` (this connection is not attached to the session) and
+`telemetry_update_unconfirmed` (the session did not confirm; nothing is kept).
+
 #### Fallback chain per session (`retry_fallback_profile`)
 
 `open_session.retryFallback: { modelFallback: boolean, fallbackChains: Record<string, string[]> }` is the fallback
