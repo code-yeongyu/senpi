@@ -70,9 +70,10 @@ describe("config value env var syntax migration", () => {
 	});
 
 	it.each([
-		["malformed", '{\n  "providers": {\n'],
-		["blank", ""],
-	])("does not throw on %s models.json during migrations", async (_name, content) => {
+		["malformed", '{\n  "providers": {\n', true],
+		// oh-my-openagent#14414: a blank models.json declares no providers instead of failing to parse.
+		["blank", "", false],
+	])("does not throw on %s models.json during migrations", async (_name, content, failsToParse) => {
 		const agentDir = createAgentDir();
 		const modelsPath = path.join(agentDir, "models.json");
 		fs.writeFileSync(modelsPath, content, "utf-8");
@@ -82,6 +83,10 @@ describe("config value env var syntax migration", () => {
 		expect(fs.readFileSync(modelsPath, "utf-8")).toBe(content);
 		const registry = await createModelRegistry(AuthStorage.create(path.join(agentDir, "auth.json")), modelsPath);
 		const loadError = registry.getError();
+		if (!failsToParse) {
+			expect(loadError).toBeUndefined();
+			return;
+		}
 		expect(loadError).toContain("Failed to parse models.json");
 		expect(loadError).toContain(`File: ${modelsPath}`);
 	});

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { normalizeProviderId } from "@earendil-works/pi-ai";
 import type { TLocalizedValidationError } from "typebox/error";
-import { stripJsonComments } from "../utils/json.ts";
+import { jsonSyntaxErrorPosition, stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import {
@@ -506,14 +506,17 @@ export class ModelConfig {
 	}
 
 	private static parse(content: string, path: string): ModelConfig {
+		const json = stripJsonComments(stripBom(content));
+		// An empty models.json declares no providers, like a missing one (oh-my-openagent#14414).
+		if (json.trim() === "") return new ModelConfig(new Map());
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(stripJsonComments(stripBom(content)));
+			parsed = JSON.parse(json);
 		} catch (error) {
 			return new ModelConfig(
 				new Map(),
 				new Set(),
-				`Failed to parse models.json: ${error instanceof Error ? error.message : error}\n\nFile: ${path}`,
+				`Failed to parse models.json at ${jsonSyntaxErrorPosition(json)}: ${error instanceof Error ? error.message : error}\n\nFile: ${path}`,
 			);
 		}
 
