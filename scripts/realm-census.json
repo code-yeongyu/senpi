@@ -11825,10 +11825,6 @@
 		"packages/coding-agent/src/cli/invocation-class.ts#INVOCATION_CLASSES": {
 			"class": "constant",
 			"reason": "invocation class table data literal; never written after load"
-		},
-		"packages/coding-agent/src/cli/invocation-class.ts#FIRST_ONLY": {
-			"class": "constant",
-			"reason": "fixed set of first-argument exemptions; never written after load"
 		}
 	}
 }
