@@ -349,6 +349,8 @@ Configuration is loaded in this order:
 | `sandbox.memoryMb` | `64` | Memory cap (MiB) for a sandbox cell. Env override: `SENPI_CODEMODE_SANDBOX_MEMORY_MB` (a positive integer wins). |
 | `sandbox.timeoutSeconds` | `300` | Time limit for a sandbox cell. |
 | `prompt.advertiseHelpers` | `false` | When `true`, one pointer line to `tool_schema('eval:helpers')` is appended to the eval description. |
+| `jsCells.typescript` | `false` | When `true`, a JS cell the engine rejects as JavaScript but that parses as TypeScript runs with its types erased in place (never type-checked; every token keeps its line and column, so errors and parse diagnostics point at the submitted text). Valid JavaScript is never reinterpreted. `enum`, `namespace`, constructor parameter properties, `import =` and `export =` are refused with their position. The eval description says so. |
+| `jsCells.scope` | `false` | When `true`, JS cells get the `scope()` helper below and a Bun kernel's eval description documents it with `using` / `await using`. |
 | `kernelTools.enabled` | `true` | Allows cells to define kernel tools. `false` makes JavaScript `tool(fn)` and Python `@tool` refuse with `tools_unavailable`, naming this setting. |
 
 Every key in the table takes the effect its row describes.
@@ -392,6 +394,7 @@ options object and asynchronous helpers are `await`-able.
 | `workpool(agent, name, mode?, tools?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. `tools` is a list of kernel-tool names this cell defined; the pool's workers may call exactly those, the host refuses any name the caller doesn't hold, and a value that isn't a list of names raises `invalid_tools`. Ruby and Julia define no kernel tools, so they have nothing to grant. |
 | `output(ids, format?, offset?, limit?)` | Delegates transcript retrieval to the configured active `taskTools.output` tool. |
 | `parallel(thunks)` | Runs thunks through the configured bounded pool while preserving input order. |
+| `scope()` | JS, with `jsCells.scope`: an `AsyncDisposableStack` for `await using s = scope()`. `s.serve(opts)`, `s.spawn(cmd, opts)` (Bun), `await s.tempDir(prefix?)` and `await s.monitor(args)` start a resource and register its teardown; everything closes in reverse order when the block exits, on throw too, and disposing twice is a no-op. `s.move()` hands the open resources to a new stack. A stopped or timed-out cell still loses them: cell ownership ends its servers and children, the release hook removes its temp dirs, and the host stops its scoped watches. `persistent: true` watches are refused; start those with `tool.monitor`. |
 | `pipeline(items, ...stages)` | Applies stages left to right with a barrier between stages. |
 | `log(message)` / `phase(title)` | Emits progress text and starts a status phase. |
 

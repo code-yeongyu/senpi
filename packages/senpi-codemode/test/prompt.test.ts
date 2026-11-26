@@ -254,6 +254,35 @@ describe("buildEvalPrompt", () => {
 		expect(jsDisabled).not.toContain(bunSkillPath);
 	});
 
+	// senpi#7381: prompt-byte contract of the opt-in jsCells profile; off keeps the default description byte-identical.
+	it("documents TypeScript cells and scope() only under jsCells, and scope() only on a Bun kernel", () => {
+		const enabled = { py: true, js: true, rb: true, jl: false };
+		const bun = { name: "bun", version: "1.4.5" };
+		const plain = buildEvalPrompt(enabled, { spawns: false, jsRuntime: bun }).description;
+		const off = buildEvalPrompt(enabled, {
+			spawns: false,
+			jsRuntime: bun,
+			jsCells: { typescript: false, scope: false },
+		}).description;
+		const on = buildEvalPrompt(enabled, {
+			spawns: false,
+			jsRuntime: bun,
+			jsCells: { typescript: true, scope: true },
+		}).description;
+		const node = buildEvalPrompt(enabled, {
+			spawns: false,
+			jsRuntime: { name: "node", version: "24.22.0" },
+			jsCells: { typescript: true, scope: true },
+		}).description;
+
+		expect(off).toBe(plain);
+		expect(on).toContain('A `"js"` cell may be written in TypeScript');
+		expect(on).toContain("`await using s = scope()`");
+		expect(on).toContain("scope() → AsyncDisposableStack (JS only)");
+		expect(node).toContain('A `"js"` cell may be written in TypeScript');
+		expect(node).not.toContain("scope()");
+	});
+
 	it("throws when no kernels are enabled", () => {
 		expect(() => buildEvalPrompt({ py: false, js: false, rb: false, jl: false })).toThrow(/no kernels enabled/i);
 	});

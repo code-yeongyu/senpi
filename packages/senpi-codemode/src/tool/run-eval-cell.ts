@@ -7,7 +7,7 @@ import {
 	kernelToolsStorage,
 } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
-import { resolveSandbox } from "../config/feature-settings.ts";
+import { resolveJsCells, resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
 import type { JsEnvironments } from "../environments/js-environments.ts";
 import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
@@ -326,7 +326,8 @@ async function executeCell(
 				invocation.input.language === "js" &&
 				magic.kind === "ordinary"
 			) {
-				const message = jsCellParseMessage(invocation.input.code, result.error.message);
+				const typescript = resolveJsCells(options.settings ?? {}).typescript;
+				const message = jsCellParseMessage(invocation.input.code, result.error.message, typescript);
 				return await handler.finalize({ ...result, error: { ...result.error, message } });
 			}
 			return await handler.finalize(result);
@@ -353,7 +354,10 @@ async function executeCell(
 		state.active = false;
 		bridgeAbortController.abort();
 		execution.finish();
-		if (handler) await handler.flushOutput();
+		if (handler) {
+			await handler.stopScopedWatches();
+			await handler.flushOutput();
+		}
 		// The cell settled: stop the kernel dispatcher from holding this cell's listener (#2260).
 		options.kernelManager.releaseKernelListener?.(invocation.input.language, onMessage);
 	}
