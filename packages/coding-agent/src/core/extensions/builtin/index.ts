@@ -61,6 +61,13 @@ import websearchExtension from "./websearch/index.ts";
 export interface BuiltinExtensionFactory {
 	id: string;
 	factory: ExtensionFactory;
+	/** Internal builtins this one needs; the loader loads them whenever this one is selected. */
+	requires?: readonly string[];
+	/**
+	 * Not selectable: `enabledBuiltinExtensions` / `disabledBuiltinExtensions` never name it. It loads exactly when a
+	 * selected builtin `requires` it, at its own position in this list.
+	 */
+	internal?: true;
 }
 
 export const globalDefaultExtensionIds = ["diff", "files", "prompt-url-widget", "tps"] as const;
@@ -73,8 +80,9 @@ export const globalDefaultExtensionFactories = {
 } satisfies Record<(typeof globalDefaultExtensionIds)[number], ExtensionFactory>;
 
 export const builtinExtensions: BuiltinExtensionFactory[] = [
-	// First: its session_start fold must be listening before any owner re-publishes its liveness state there.
-	{ id: "session-liveness", factory: sessionLivenessExtension },
+	// Internal, required by herdr and todowrite. First, so its session_start fold is listening before any owner
+	// re-publishes its liveness state there, whichever of its consumers is selected.
+	{ id: "session-liveness", factory: sessionLivenessExtension, internal: true },
 	// Loop guard owns the first veto opportunity so repeated calls never re-run hooks or permission prompts.
 	{ id: "loop-guard", factory: loopGuardExtension },
 	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.
@@ -87,14 +95,14 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
 	{ id: "ask-user", factory: askUserExtension },
-	{ id: "herdr", factory: herdrExtension },
+	{ id: "herdr", factory: herdrExtension, requires: ["session-liveness"] },
 	{ id: "imagegen", factory: imageGenExtension },
 	// Follows imagegen so the native injector's bypass wiring observes the registered client tool.
 	{ id: "openai-image-gen", factory: openaiImageGenExtension },
 	{ id: "prompt-preset", factory: promptPresetExtension },
 	// Follows prompt-preset (both key on the prompt surface) so later message_end handlers see the scrubbed reply.
 	{ id: "chat-reply-scrub", factory: chatReplyScrubExtension },
-	{ id: "todowrite", factory: todowriteExtension },
+	{ id: "todowrite", factory: todowriteExtension, requires: ["session-liveness"] },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "anthropic-web-search", factory: anthropicWebSearchExtension },
 	{ id: "anthropic-bash", factory: anthropicBashExtension },

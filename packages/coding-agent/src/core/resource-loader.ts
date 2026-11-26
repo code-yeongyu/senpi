@@ -23,6 +23,7 @@ export { loadProjectContextFiles };
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { requiredInternalBuiltins, selectActiveBuiltinIds } from "./builtin-extension-selection.ts";
 import { bundledBuiltinExtensions } from "./bundled-resources.ts";
 import { type ContextFile, loadProjectContextFiles } from "./context-files.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
@@ -1030,8 +1031,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 			runtime,
 			this.buildGlobalDefaultExtensionLoadOptions(),
 		);
-		const builtinPaths = paths.filter(isBuiltinPath);
-		const activeRegistryIds = builtinPaths.length > 0 ? this.getActiveBuiltinExtensionIds() : new Set<string>();
+		const requestedBuiltinPaths = paths.filter(isBuiltinPath);
+		const activeRegistryIds =
+			requestedBuiltinPaths.length > 0 ? this.getActiveBuiltinExtensionIds() : new Set<string>();
+		// A builtin named by path brings the internal builtins it requires, ahead of it (senpi#1146).
+		const pathRegistryIds = new Set(requestedBuiltinPaths.map((path) => path.slice(BUILTIN_PATH_PREFIX.length)));
+		const pathInternals = requiredInternalBuiltins(this.builtinExtensionFactories, pathRegistryIds)
+			.filter((builtin) => !activeRegistryIds.has(builtin.id) && !pathRegistryIds.has(builtin.id))
+			.map((builtin) => `${BUILTIN_PATH_PREFIX}${builtin.id}`);
+		const builtinPaths = [...pathInternals, ...requestedBuiltinPaths];
 		for (const path of builtinPaths) {
 			const name = path.slice(BUILTIN_PATH_PREFIX.length);
 			const registryBuiltin = this.builtinExtensionFactories.find((extension) => extension.id === name);
@@ -1405,32 +1413,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private getActiveBuiltinExtensionIds(): Set<string> {
-		const enabledBuiltinExtensions = this.settingsManager.getEnabledBuiltinExtensions();
-		const enabledBuiltinExtensionSet = enabledBuiltinExtensions ? new Set(enabledBuiltinExtensions) : undefined;
-		const disabledBuiltinExtensions = new Set(this.settingsManager.getDisabledBuiltinExtensions());
-		const activeBuiltinExtensionIds = new Set<string>();
-
-		for (const builtinExtension of this.builtinExtensionFactories) {
-			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(builtinExtension.id)) {
-				continue;
-			}
-			if (disabledBuiltinExtensions.has(builtinExtension.id)) {
-				continue;
-			}
-
-			activeBuiltinExtensionIds.add(builtinExtension.id);
-		}
-		for (const bundledExtension of bundledBuiltinExtensions) {
-			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(bundledExtension.id)) {
-				continue;
-			}
-			if (disabledBuiltinExtensions.has(bundledExtension.id)) {
-				continue;
-			}
-			activeBuiltinExtensionIds.add(bundledExtension.id);
-		}
-
-		return activeBuiltinExtensionIds;
+		return selectActiveBuiltinIds(
+			this.builtinExtensionFactories,
+			bundledBuiltinExtensions.map((extension) => extension.id),
+			{
+				enabled: this.settingsManager.getEnabledBuiltinExtensions(),
+				disabled: this.settingsManager.getDisabledBuiltinExtensions(),
+			},
+		);
 	}
 
 	private getShadowedVendoredBuiltinPackageNames(): Set<string> {
