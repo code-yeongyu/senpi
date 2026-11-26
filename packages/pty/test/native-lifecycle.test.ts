@@ -26,6 +26,22 @@ async function waitForThreadCountAtMost(expected: number): Promise<number> {
 }
 
 describe.skipIf(!hasDarwinArm64Prebuild)("native callback lifecycle", () => {
+	it("uses an exact supplied environment while inheriting when env is omitted", () => {
+		const result = spawnSync(process.execPath, [fixture("native-environment.mjs").pathname], {
+			encoding: "utf8",
+			timeout: 15_000,
+			env: { ...process.env, SENPI_PTY_ENV_SENTINEL: "parent" },
+		});
+
+		expect(result.status, result.stderr).toBe(0);
+		expect(JSON.parse(result.stdout)).toEqual({
+			inherited: "parent",
+			empty: null,
+			deleted: null,
+			explicit: "caller",
+		});
+	});
+
 	it("delivers delayed data before waitExit resolves in a live environment", () => {
 		const result = spawnSync(process.execPath, [fixture("native-delayed-callback.mjs").pathname], {
 			encoding: "utf8",
