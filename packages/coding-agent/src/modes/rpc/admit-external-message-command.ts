@@ -11,11 +11,14 @@
  * runs first, and an id the transcript already holds is answered `already_admitted` after a restart too.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import type { ExternalAdmissionKind } from "../../core/extensions/session-control-types.ts";
 import { writtenDeliveryIds } from "../../core/external-admission.ts";
+import { type DeliveryAdmission, deliveryUnder, messageDigest, noteDeliveryAdmitted } from "./admission-id-book.ts";
 import type { ConnectionOrigin, InputTurnMark } from "../../core/turn-origin.ts";
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
 import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
+import { ClientAdmissions } from "./client-admissions.ts";
 import { RPC_ERROR_SESSION_CLOSING } from "./rpc-error-types.ts";
 
 /** The connection a delivery arrived on, as the host knows it. */
@@ -42,6 +45,20 @@ function ledgerId(deliveryId: string, origin: RpcRemoteOrigin | undefined): stri
 	return origin === undefined
 		? `rpc:local/${deliveryId}`
 		: `device:${encodeURIComponent(origin.deviceId)}/${deliveryId}`;
+}
+
+/** What a later prompt under the delivery's id is told: an admission that took the delivery, in the prompt's words. */
+function firstAnswer(kind: ExternalAdmissionKind, epoch: number, digest: string): DeliveryAdmission | undefined {
+	switch (kind) {
+		case "started":
+		case "steered":
+			return { digest, disposition: "started", turnId: String(epoch) };
+		case "queued":
+		case "held":
+			return { digest, disposition: "queued" };
+		default:
+			return undefined;
+	}
 }
 
 /** The turn a delivery opens: a steer joins the running turn; anything else counts as the connection's turn origin. */
@@ -78,10 +95,21 @@ export function admitExternalMessage(
 	// A release or a graceful close ended admission (oh-my-openagent#14313): the sender keeps the delivery, typed.
 	if (admission.closed !== undefined)
 		return { ok: false, refusal: { message: admission.closed, errorCode: RPC_ERROR_SESSION_CLOSING } };
-	const answer = (kind: RpcAdmitExternalMessageReply["kind"], epoch: number): AdmitExternalMessageAnswer => ({
+	const answer = (kind: ExternalAdmissionKind, epoch: number | string): AdmitExternalMessageAnswer => ({
 		ok: true,
 		data: { kind, turnId: String(epoch) },
 	});
+	// One id space with prompts, across every origin (senpi#7479): the same message under an admitted id is that
+	// admission, a different one the conflict; either answer names the outcome and the id, nothing of the first message.
+	const digest = messageDigest(command.text);
+	const prior =
+		ClientAdmissions.admittedUnder(session, command.deliveryId) ?? deliveryUnder(session, command.deliveryId);
+	if (prior !== undefined) {
+		const priorDigest = "digest" in prior ? prior.digest : prior.messageDigest;
+		if (priorDigest !== undefined && priorDigest !== digest)
+			return { ok: true, data: { kind: "id_conflict", deliveryId: command.deliveryId } };
+		return answer("already_admitted", prior.turnId ?? admission.turnEpoch);
+	}
 	const id = ledgerId(command.deliveryId, origin);
 	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id))
 		return answer("already_admitted", admission.turnEpoch);
@@ -104,6 +132,8 @@ export function admitExternalMessage(
 			turnMark: deliveryTurnMark(command, peer),
 		},
 	);
+	const first = firstAnswer(result.kind, result.turn_epoch, digest);
+	if (first !== undefined) noteDeliveryAdmitted(session, command.deliveryId, first);
 	if (result.holds === undefined) return answer(result.kind, result.turn_epoch);
 	return { ok: true, data: { kind: result.kind, turnId: String(result.turn_epoch), holds: [...result.holds] } };
 }

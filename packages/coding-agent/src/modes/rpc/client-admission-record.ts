@@ -25,6 +25,8 @@ const admissionIdentitySchema = clientMessageIdentitySchema.extend({
 	clientMessageId: z.string().min(1).max(256),
 	durableSessionId: z.string(),
 	fingerprint: z.string(),
+	/** The text and images a delivery under the same id is compared by (senpi#7479); older admissions omit it. */
+	messageDigest: z.string().optional(),
 	disposition: z.enum(["queued", "started", "handled"]),
 	/** The engine turn this admission started; older, queued, and handled admissions omit it. */
 	turnId: z.string().optional(),
@@ -53,10 +55,10 @@ export const clientAdmissionRecordSchema = z.discriminatedUnion("state", [
 ]);
 
 export type ClientAdmissionRecord = z.infer<typeof clientAdmissionRecordSchema>;
-export type ClientMessageAdmission = Omit<ClientAdmissionRecord, "fingerprint" | "prepared">;
+export type ClientMessageAdmission = Omit<ClientAdmissionRecord, "fingerprint" | "prepared" | "messageDigest">;
 
 export function admissionSnapshot(record: ClientAdmissionRecord): ClientMessageAdmission {
-	const { fingerprint: _fingerprint, prepared: _prepared, ...snapshot } = record;
+	const { fingerprint: _fingerprint, prepared: _prepared, messageDigest: _messageDigest, ...snapshot } = record;
 	return snapshot;
 }
 

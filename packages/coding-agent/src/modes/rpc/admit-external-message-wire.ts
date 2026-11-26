@@ -15,7 +15,10 @@ import type {
 export interface RpcAdmitExternalMessageCommand {
 	id?: string;
 	type: "admit_external_message";
-	/** The delivery's id: admitting an id this runtime already holds or wrote answers `already_admitted`. */
+	/**
+	 * The delivery's id, in the same id space as a prompt's `clientMessageId` (senpi#7479): the same message under an id
+	 * the session already admitted answers `already_admitted`, a different one `id_conflict`.
+	 */
 	deliveryId: string;
 	/** What the model reads, provenance included. */
 	text: string;
@@ -32,13 +35,24 @@ export interface RpcAdmitExternalMessageCommand {
 	chainCount?: number;
 }
 
-export interface RpcAdmitExternalMessageReply {
+export interface RpcAdmitExternalMessageAdmission {
 	kind: ExternalAdmissionKind;
 	/** The session's turn when the delivery was admitted, in `get_state.currentTurnId`'s form. */
 	turnId: string;
 	/** `held` only: the kinds of the holds that keep the delivery until a person releases them (senpi#6490). */
 	holds?: HoldKind[];
 }
+
+/**
+ * The session already admitted a different message under this id, as a prompt or as a delivery (senpi#7479). Nothing
+ * was admitted, and the answer names the id only: never the other message, its sender or its device.
+ */
+export interface RpcAdmitExternalMessageIdConflict {
+	kind: "id_conflict";
+	deliveryId: string;
+}
+
+export type RpcAdmitExternalMessageReply = RpcAdmitExternalMessageAdmission | RpcAdmitExternalMessageIdConflict;
 
 export interface RpcAdmitExternalMessageResponse {
 	id?: string;
