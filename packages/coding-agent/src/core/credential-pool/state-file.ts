@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { type HeldFileLock, lockWithLossHandling } from "../file-lock.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_OPTIONS, isLockError } from "../lockfile-policy.ts";
-import { isTransientRenameError, renameRetryingTransient } from "../../modes/rpc/host-state-json.ts";
+import { isTransientRenameError, renameRetryingTransient } from "../../utils/paths.ts";
 
 const FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 

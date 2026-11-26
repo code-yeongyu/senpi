@@ -3,7 +3,8 @@ import { rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { renameRetryingTransient, writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
+import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
+import { renameRetryingTransient } from "../../../src/utils/paths.ts";
 
 // senpi#7499 review: host state files are now replaced by rename, and Windows refuses a replace for a moment while
 // another process (an antivirus, the indexer, a lock-free reader) has the target open. Those refusals are retried with

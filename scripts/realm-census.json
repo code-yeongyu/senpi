@@ -8834,7 +8834,7 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/host-state-json.ts#TRANSIENT_RENAME_CODES": {
+		"packages/coding-agent/src/utils/paths.ts#TRANSIENT_RENAME_CODES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
