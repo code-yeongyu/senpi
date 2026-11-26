@@ -83,6 +83,8 @@ export interface JavaScriptKernelOptions {
 	readonly hostToolNames?: KernelToolNameSource;
 	/** `kernelTools.enabled`; false makes `tool(fn)` refuse with `tools_unavailable`. Unset keeps them on. */
 	readonly kernelToolsEnabled?: boolean;
+	/** `jsCells.scope`: install the `scope()` helper (init protocol). Unset leaves it out. */
+	readonly scopeHelper?: boolean;
 	/** The kill guard (senpi#5349): where the worker imports the judge from, and the agent host's pid. Absent = guard off. */
 	readonly killGuard?: { readonly moduleUrl: string | URL; readonly agentPid: number };
 	/** Tool names registered in another kernel language, denied as JS kernel-tool identifiers. */

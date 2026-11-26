@@ -10,7 +10,7 @@ import {
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
-import { resolveJsIsolation, resolveKernelToolsEnabled } from "../config/feature-settings.ts";
+import { resolveJsCells, resolveJsIsolation, resolveKernelToolsEnabled } from "../config/feature-settings.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
@@ -300,6 +300,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		if (language === "js") {
 			const memoryThresholds = resolveKernelMemoryThresholds(this.#options.settings.memory);
 			const processIsolation = resolveJsIsolation(this.#options.settings) === "process";
+			const jsCells = resolveJsCells(this.#options.settings);
 			const kernel = new JavaScriptKernel({
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
@@ -315,6 +316,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 					? { processMemory: { thresholds: memoryThresholds, readFootprint: readProcessFootprint } }
 					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
+				...(jsCells.typescript ? { typescriptCells: true } : {}),
+				...(jsCells.scope ? { scopeHelper: true } : {}),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(this.#options.inheritedEnv ? { inheritedEnv: this.#options.inheritedEnv } : {}),
 				...(this.#options.killGuard === true

@@ -21,6 +21,7 @@ import {
 } from "./detached-cell-state.ts";
 import { detachedStatusEntries, detachedWakeSourceState } from "./detached-cell-status.ts";
 import { DetachedNotificationQueue } from "./detached-notification-queue.ts";
+import { SettlingCells } from "./detached-settling.ts";
 import { createManagedCell, type LiveResultProvider, type ManagedCell } from "./managed-cell.ts";
 import { SettledImageSpill } from "./settled-image-spill.ts";
 import { TerminalSnapshotStore } from "./terminal-snapshot-store.ts";
@@ -90,6 +91,9 @@ export class EvalDetachedCellManager {
 	readonly #cells = new Map<string, ManagedCell>();
 	readonly #interrupting = new Map<string, ManagedCell>();
 	readonly #detached = new Map<string, ManagedCell>();
+	/** Ended cells whose final result is still settling, by id; a new cell under the id supersedes the old one. */
+	readonly #amending = new Map<string, ManagedCell>();
+	readonly #settling = new SettlingCells<ManagedCell>(() => this.#emitWakeSourceState([...this.#detached.values()]));
 	readonly #terminalSnapshots: TerminalSnapshotStore;
 	readonly #notificationQueue: DetachedNotificationQueue;
 	readonly #now: () => number;
@@ -130,6 +134,7 @@ export class EvalDetachedCellManager {
 			this.#cells.delete(cellId);
 		}
 		this.#terminalSnapshots.delete(cellId);
+		this.#amending.delete(cellId);
 		const cell = createManagedCell({
 			cellId,
 			input,
@@ -191,13 +196,29 @@ export class EvalDetachedCellManager {
 		return true;
 	}
 
-	complete(cell: ManagedCell, result: AgentToolResult<EvalToolDetails>): boolean {
+	/**
+	 * Ends the cell with `result` now. When `final` is given, the cell's result becomes what it resolves to (the result
+	 * with its written files) and the completion notification waits for it; the state never does.
+	 */
+	complete(
+		cell: ManagedCell,
+		result: AgentToolResult<EvalToolDetails>,
+		final?: Promise<AgentToolResult<EvalToolDetails>>,
+	): boolean {
 		const state =
 			result.details.cells?.[0]?.status === "cancelled"
 				? "cancelled"
 				: result.details.isError === true
 					? "failed"
 					: "completed";
+		if (final !== undefined && allowsDetachedCellTransition(cell.state, state)) {
+			this.#amending.set(cell.cellId, cell);
+			// A settlement that fails keeps the result the cell ended with.
+			cell.finalResult = final.then(
+				(amended) => this.#amend(cell, amended),
+				() => this.#amend(cell, undefined),
+			);
+		}
 		return this.#settle(cell, state, result);
 	}
 
@@ -235,9 +256,13 @@ export class EvalDetachedCellManager {
 		return { live: this.liveCells(), recent: this.#terminalSnapshots.list() };
 	}
 
+	/** The cell's final snapshot: once it ended and its result has its written files. */
 	async waitForTerminal(cellId: string): Promise<EvalDetachedCellSnapshot> {
-		const live = this.#cells.get(cellId);
-		return live === undefined ? this.#terminal(cellId) : await live.terminal.promise;
+		const cell = this.#cells.get(cellId) ?? this.#amending.get(cellId);
+		if (cell === undefined) return this.#terminal(cellId);
+		await cell.terminal.promise;
+		await cell.finalResult;
+		return this.#snapshot(cell);
 	}
 
 	async dispose(): Promise<void> {
@@ -279,6 +304,10 @@ export class EvalDetachedCellManager {
 		this.#refreshTerminalSnapshot(cell);
 		if (cell.wasDetached) {
 			this.#detached.delete(cell.cellId);
+			const settling =
+				cell.finalResult === undefined || cell.notificationQueued
+					? undefined
+					: { ready: cell.finalResult, onDelivered: this.#settling.hold(cell) };
 			this.#emitStatus();
 			if (!cell.notificationQueued) {
 				cell.notificationQueued = true;
@@ -287,6 +316,7 @@ export class EvalDetachedCellManager {
 						await cell.interruptOutcome?.promise;
 						return this.#snapshot(cell);
 					},
+					...settling,
 				});
 			}
 		}
@@ -337,6 +367,14 @@ export class EvalDetachedCellManager {
 		}
 	}
 
+	#amend(cell: ManagedCell, result: AgentToolResult<EvalToolDetails> | undefined): void {
+		if (this.#amending.get(cell.cellId) !== cell) return;
+		this.#amending.delete(cell.cellId);
+		if (result === undefined) return;
+		cell.terminalResult = result;
+		this.#refreshTerminalSnapshot(cell);
+	}
+
 	#refreshTerminalSnapshot(cell: ManagedCell): void {
 		if (!this.#cells.has(cell.cellId)) this.#terminalSnapshots.remember(this.#snapshot(cell));
 	}
@@ -348,7 +386,7 @@ export class EvalDetachedCellManager {
 	}
 
 	#emitWakeSourceState(liveCells: readonly ManagedCell[]): void {
-		this.#onWakeSourceState?.(detachedWakeSourceState(liveCells));
+		this.#onWakeSourceState?.(detachedWakeSourceState([...liveCells, ...this.#settling.values()]));
 	}
 
 	#snapshot(cell: ManagedCell): EvalDetachedCellSnapshot {

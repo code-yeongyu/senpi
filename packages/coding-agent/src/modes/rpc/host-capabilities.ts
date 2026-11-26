@@ -38,6 +38,7 @@ import {
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
+	TELEMETRY_CONSENT_CAPABILITY,
 	SESSION_ENV_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
@@ -204,6 +205,8 @@ export function multiSessionHostCapabilities(options: {
 			SESSION_ENV_CAPABILITY,
 			// Each session's fallback chain is its own in-memory settings override, never the host's file.
 			RETRY_FALLBACK_PROFILE_CAPABILITY,
+			// Each session's telemetry is decided from the host's setting and its own callers' answers (senpi#7446).
+			TELEMETRY_CONSENT_CAPABILITY,
 			ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
 			AUTO_PERMISSION_PRESET_CAPABILITY,
 			// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
