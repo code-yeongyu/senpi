@@ -60,7 +60,6 @@ export interface SessionUnloadPort extends ReleaseSettlePort {
 	otherRequests(sessionId: string): number;
 	/** Attachments held by connections other than the caller's. */
 	otherAttachments(sessionId: string): number;
-	/** Open worker sessions on this host whose context names `durableSessionId` as parent or root. */
 	/** The ids of the session rows registered on this host, in any lifecycle state, that name this one as parent or root. */
 	openChildSessions(durableSessionId: string): readonly string[];
 	/** The park teardown, sealed `session_parked { reason: "unloaded" }`. `false` when another close owns it. */
