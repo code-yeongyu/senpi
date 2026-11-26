@@ -159,8 +159,10 @@ describe("multi-session RPC close routing", () => {
 	});
 
 	test("does not dispose a binding twice when idle eviction races explicit close", async () => {
-		const entry: { state: "open" | "closing"; runtime: object } = {
+		const entry: { state: "open" | "closing"; profile: object; runtime: object } = {
 			state: "open",
+			// Every registry entry carries its launch profile; an open reads the caller's telemetry answer from it (senpi#7446).
+			profile: {},
 			runtime: {
 				session: {
 					model: undefined,

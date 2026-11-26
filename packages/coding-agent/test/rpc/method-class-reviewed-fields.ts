@@ -222,6 +222,8 @@ export const REVIEWED_FIELDS = {
 			"retryFallback",
 			"sessionPath",
 			"spawnedBy",
+			// `telemetry` (senpi#7446) is the caller's own consent answer: no path, credential or process, class unchanged.
+			"telemetry",
 			"thinkingLevel",
 			"type",
 		],
@@ -252,6 +254,7 @@ export const REVIEWED_FIELDS = {
 		],
 	},
 	set_session_context: { fields: ["admissionId", "id", "patch", "sessionId", "type"] },
+	set_telemetry_consent: { fields: ["admissionId", "consent", "id", "sessionId", "type"] },
 	attach_session: {
 		fields: [
 			"admissionId",
@@ -262,6 +265,7 @@ export const REVIEWED_FIELDS = {
 			"retry",
 			"sessionId",
 			"takeover",
+			"telemetry",
 			"type",
 		],
 	},

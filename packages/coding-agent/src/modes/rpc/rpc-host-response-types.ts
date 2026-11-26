@@ -190,4 +190,5 @@ export type RpcHostCommandResponse =
 			command: "set_session_context";
 			success: true;
 			data: { context: Readonly<Record<string, string | number | boolean>> };
-	  };
+	  }
+	| { id?: string; type: "response"; command: "set_telemetry_consent"; success: true };

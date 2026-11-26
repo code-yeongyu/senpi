@@ -131,13 +131,13 @@ async function scenarioPersistentNeverIdleExits() {
 
 async function scenarioSupervisorKillReapsInternalHost() {
 	const qa = makeScratch("kill9");
-	const internalBefore = new Set(internalHostDirs());
+	const internalBefore = new Set(internalHostDirs(qa));
 	// A long idle window guarantees only the lifetime binding - never idle exit -
 	// can reap the internal host during this scenario.
 	const ensured = await ensure(qa, { idleExitMs: 600_000 });
 	const children = await waitForChildren(ensured.pid);
 	if (children.length === 0) throw new Error(`supervisor ${ensured.pid} spawned no internal host`);
-	const internalDirs = internalHostDirs().filter((dir) => !internalBefore.has(dir));
+	const internalDirs = internalHostDirs(qa).filter((dir) => !internalBefore.has(dir));
 	transcript.push(`assert kill9-setup supervisor=${ensured.pid} internal-host=${children.join(",")}`);
 
 	process.kill(ensured.pid, "SIGKILL");
@@ -164,10 +164,15 @@ async function scenarioSupervisorKillReapsInternalHost() {
 	rmSync(qa.socket, { force: true });
 }
 
-function internalHostDirs() {
-	return readdirSync(tmpdir())
-		.filter((name) => name.startsWith("senpi-rpc-host-internal-"))
-		.map((name) => join(tmpdir(), name));
+// The hop lives in the endpoint's daemon directory, or in the temp dir when that is too deep for sun_path (senpi#7452).
+function internalHostDirs(qa) {
+	return [daemonPaths(qa).dir, tmpdir()].flatMap((root) =>
+		existsSync(root)
+			? readdirSync(root)
+					.filter((name) => name.startsWith("senpi-rpc-host-internal-"))
+					.map((name) => join(root, name))
+			: [],
+	);
 }
 
 async function waitForChildren(pid) {

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { encodedSessionId } from "../../../session-sidecar-store.ts";
+import { EXTENSION_RPC_SUBSCRIBED_CHANNEL } from "../../../event-bus.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
@@ -10,6 +11,7 @@ import {
 	buildToolContext,
 	bundleSinks,
 	createBundle,
+	replayTerminalState,
 	sessionKeyOf,
 	type TerminalExtensionState,
 } from "./extension-state.ts";
@@ -126,6 +128,7 @@ function bindNotifiers(pi: ExtensionAPI, state: TerminalExtensionState): void {
 export function registerTerminalExtension(pi: ExtensionAPI): void {
 	let reducedMotion = false;
 	let agentBusy = false;
+	let stopReplay: (() => void) | undefined;
 	const state: TerminalExtensionState = {
 		bundle: null,
 		settings: TERMINAL_SETTINGS_DEFAULTS,
@@ -198,6 +201,10 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.bundle ??= createBundle(state);
 		state.bundle.monitors.setRunawayGuard(state.settings.monitorRunaway);
 		state.bundle.bind(bundleSinks(pi, state));
+		stopReplay?.();
+		stopReplay = pi.events?.on(EXTENSION_RPC_SUBSCRIBED_CHANNEL, (reply) => {
+			if (typeof reply === "function" && state.bundle) replayTerminalState(state.bundle, (event) => reply(event));
+		});
 		const holdsLease = sessionKey !== undefined && currentLeaseToken(encodedSessionId(sessionKey)) !== undefined;
 		if (event.reason === "reload" && holdsLease) {
 			// Park/claim and the lease stay untouched: the same pid keeps holding it. The
@@ -271,6 +278,8 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	);
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		stopReplay?.();
+		stopReplay = undefined;
 		state.monitorNotifier?.dispose();
 		state.monitorNotifier = null;
 		state.notifier = null;

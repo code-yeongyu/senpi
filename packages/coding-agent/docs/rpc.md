@@ -3047,6 +3047,52 @@ one of them is still building the replacement. Probe `prompt_surface` in
 `chat`: a host without it refuses `chat` with `invalid_launch_profile`, so a gateway falls back to `app`. Any value other
 than `terminal`, `app` or `chat` is refused with `invalid_launch_profile`.
 
+#### Telemetry answer per caller (`telemetry_consent`)
+
+`open_session.telemetry: { consent: "granted" | "declined" | "unanswered" }` is this caller's live answer for the
+telemetry attributed to the session (senpi#7446). The host decides it in one place: telemetry is collected and
+delivered only while the host's own setting permits it (install telemetry, or `PI_TELEMETRY`) AND every caller of the
+session answered `granted`. A caller's grant never overrides a host opt-out, and an open without the field answers
+`unanswered`, so an older peer never grants. `attach_session.telemetry` adds the attaching caller's answer for as long
+as it stays attached: while any attached caller has not granted, the session's telemetry is off for everyone on it.
+`set_telemetry_consent { sessionId, consent }` changes the sending connection's answer on a live session without
+restarting anything. A stdio host has no per-connection identity: its one client is the caller of every session, as for
+`set_session_context`. On a session a caller opened,
+the open's answer and every `set_telemetry_consent` also become the session's standing answer, which it keeps after the
+connection leaves (a retained session stays off after a revocation until a caller grants on purpose) and which a
+handover reopen replays; an attach's answer counts only while that connection stays attached. One session's callers never decide for
+another session of the same host. Extensions read the decision as `ctx.telemetryPermitted` at collection and again
+before delivering anything they buffered. Provider attribution headers (app identity only) keep the host's rule for an
+unanswered caller and are removed from the next request once any caller of the session declines or revokes. Probe
+`telemetry_consent` in `get_protocol_info` before sending the field. A malformed answer on `open_session`,
+`attach_session` or `set_telemetry_consent` is refused with `errorCode: "invalid_telemetry_consent"` and
+`errorData.reason`; `set_telemetry_consent` from a connection that is not attached is refused with
+`errorCode: "session_not_attached"`. A change is reported only after the session confirmed the policy it produces (an
+in-process session takes it at once, a worker acknowledges it); otherwise nothing is kept, an attach is undone, and the
+answer is `errorCode: "telemetry_update_unconfirmed"`. A worker session collects and exports its telemetry inside its
+worker, so a stricter policy the worker does not acknowledge within 2 s (`TELEMETRY_REVOKE_ACK_MS`) ends that worker
+(its clients receive `session_error` with that code); the refusal's `errorData.workerEnded` is true only once the host
+observed the worker exit within a further 2 s (`TELEMETRY_END_CONFIRM_MS`). A looser policy it did not confirm leaves
+it on its stricter one. If an ended worker is not seen to exit by 4000 ms after the stricter answer, the host itself ends,
+unconditionally at that bound: 250 ms before it, best effort and never awaited, it sends every connection `{"type": "host_telemetry_containment", "sessionId", "exitCode": 79}`, writes one stderr line, and exits
+with code 79 (`TELEMETRY_CONTAINMENT_EXIT_CODE`), ending every session it holds. For a worker session the residual is
+what the worker exports between the answer and its acknowledgement or end, at most 4000 ms end to end. An in-process
+session (every socket host) takes the answer at once and never reaches this path. The SDK sends the change with `RpcClient.setTelemetryConsent(consent, sessionId?)`.
+
+#### set_telemetry_consent
+
+Multi-session hosts that advertise `telemetry_consent` only. Changes the sending connection's telemetry answer on a
+session it is attached to, without restarting anything; the contract is the section above.
+
+```json
+{"type":"set_telemetry_consent","sessionId":"0197…","consent":"declined"}
+```
+
+`consent` is `granted`, `declined` or `unanswered`. The answer is `success: true` with no `data` once the session
+confirmed the policy the change produces. Refusals: `invalid_telemetry_consent` (malformed `consent`, with
+`errorData.reason`), `session_not_attached` (this connection is not attached to the session) and
+`telemetry_update_unconfirmed` (the session did not confirm; nothing is kept).
+
 #### Fallback chain per session (`retry_fallback_profile`)
 
 `open_session.retryFallback: { modelFallback: boolean, fallbackChains: Record<string, string[]> }` is the fallback
@@ -4194,7 +4240,7 @@ names a valid preset.
 | `release_attachment` | `sessionId` | `{ deferred: boolean }` | Releases exactly one caller hold with disconnect semantics; `deferred` is true only when settlement owns the final release, and false while draining. Capability `release_attachment`. |
 | `reclaim_session` | `sessionPath`, `durableSessionId`, `expectedHostInstance` | `{ reclaimed: true, sessionId }` | Atomic attach-and-claim of every caller hold; refuses other connections before aborting. Capability `reclaim_session`. |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, method_classes: { version, digest }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `session_held` (the active foreign-holder admission guard, in both runtimes), `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `moved_path_guard` (senpi resolves and guards paths the OmO desktop moved with its data home), `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?`, `env?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); an omitted `cwd` means the folder the file's header names when `sessionPath` is an existing session file (capability `open_session_header_cwd`; see "The folder an open_session works in"), and the host's cwd otherwise; `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?`, `env?`, `telemetry?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); an omitted `cwd` means the folder the file's header names when `sessionPath` is an existing session file (capability `open_session_header_cwd`; see "The folder an open_session works in"), and the host's cwd otherwise; `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_hands` | `sessionId?` | `{ hands: [{ device, label, platform, reachable }], selected? }` | Headless engine with a hand directory only (capability `hand_selection`; otherwise `hand_selection_unsupported`). See "Hand selection (headless engine)". |
 | `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
@@ -4219,7 +4265,7 @@ Hosts that do this advertise `open_session_header_cwd`. A host without it opens 
 
 #### attach_session
 
-`attach_session { sessionId, durableSessionId, expectedHostInstance? }` attaches the current connection
+`attach_session { sessionId, durableSessionId, expectedHostInstance?, telemetry? }` attaches the current connection
 only to the live session selected by both routing and durable identity. A vanished or non-open target
 returns `unknown_session`; a recycled routing id or mismatching host instance returns
 `session_identity_mismatch`. A draining or shutting-down host refuses before admission with
@@ -7044,11 +7090,27 @@ Emitted when an extension calls `pi.rpc.emit(name, data)` and the client adverti
 the specific event name before applying it. In multi-session mode the record also includes the
 routing `sessionId`; delivery preserves the owning session and per-session event order.
 
-Events are not replayed: a client receives those emitted after it starts receiving extension events
-(by its handshake capabilities or a `set_client_info` that declares `extension_events`). At that
-moment Senpi emits `senpi:extension-rpc-subscribed` (no data) on the in-process `pi.events` bus, so an
-extension that keeps a state snapshot can send it once instead of waiting for its next change; other
-subscribed clients may then receive the same snapshot again.
+A client receives the events emitted after it starts receiving extension events (by its handshake
+capabilities or a `set_client_info` that declares `extension_events`). At that moment Senpi emits
+`senpi:extension-rpc-subscribed` on the in-process `pi.events` bus. Its data is a reply function,
+`(event: { name: string; data: unknown }) => void`, that delivers an event to the new client only;
+other subscribed clients receive nothing from it. The function works only during that synchronous
+emit: a listener calls it before returning, and a call after that, or from an async continuation,
+is dropped. An extension that keeps a state snapshot uses it to send that state once instead of
+waiting for its next change.
+
+On a shared host, a client that joins an already open in-process session (the default runtime of a
+`--listen` host) with `attach_session` and receives extension events gets the same replay for itself, even when the session is idle: Senpi runs
+`senpi:extension-rpc-subscribed` again with a reply function that reaches that attachment only.
+Nothing else is replayed: events extensions emitted before the attach do not reach the new client.
+The attaching client's own `extension_events` declaration decides, whatever the session's opener declared.
+A replay that has not reached the client when it releases the attachment is dropped.
+
+The terminal builtin replays its current state this way, even when nothing is running: one
+`terminal_monitor_state` event, then two `wake_source_state` events. The first has `source:
+"terminal-monitors"`, `activeCount` and a `monitors` list (`id`, `description`, `startedAtMs`); the
+second has `source: "terminal-background-sessions"`, `activeCount` and an `items` list, one entry
+per live background session.
 
 The terminal builtin emits `terminal_monitor_state` on this path whenever the active monitor set
 changes. `data` is `{ activeCount, monitors }`, where each monitor entry has `id`, `description`,
@@ -7713,6 +7775,14 @@ Response `data` is `{ok: true}` or `{ok: false, reason, status?}`:
 - `unreachable`: no answer, a timeout, or a 5xx.
 - `unsupported`: the key cannot be checked this way. Either the provider's API has no probe, the list is not where it was expected (another 4xx or 3xx), or the list answers any key (OpenRouter, keyless local servers). In that last case a 200 proves nothing, so the host also asks with a made-up key and reports `ok` only when that one is refused.
 - `unknown-provider`: no model is configured for the provider.
+
+A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"global"`) takes the same `region` as `login_api_key`, and the key is checked on the host for that region — the same mapping `/login` uses — instead of the catalog host. Without a region the check probes the catalog host, as before:
+
+```json
+{"type": "verify_api_key", "provider": "kimi-coding", "key": "<key>", "region": "global"}
+```
+
+A region the provider does not offer fails the command and checks nothing.
 
 #### login_api_key
 

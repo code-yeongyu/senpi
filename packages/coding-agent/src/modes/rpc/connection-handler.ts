@@ -8,6 +8,7 @@ import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-p
 import { startOpenTimer } from "../../core/open-timing.ts";
 import { admitExternalMessage } from "./admit-external-message-command.ts";
 import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
+import { verifyApiKeyRegionBaseUrl } from "./verify-api-key-region.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
 import type { ExtensionOwner } from "./extension-owner.ts";
@@ -295,6 +296,8 @@ export interface RpcConnectionHandler {
 	cancelPendingExtensionUiRequests(): void;
 	/** A shared host's connection left this session; what it was offering ends. */
 	connectionDetached(connectionId: string): void;
+	/** Sends the extensions' current state to one receiver, as `extension_event` records. */
+	replayExtensionEvents(receiver: (record: RpcExtensionEvent) => void): void;
 	/**
 	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
 	 * caller exits right after (senpi#3711).
@@ -2474,11 +2477,24 @@ export function createRpcConnectionHandler(
 			}
 
 			case "verify_api_key": {
+				const signal = AbortSignal.timeout(15_000);
+				// A region moves the probe to the host the region's accounts live on (senpi#5649);
+				// without one the catalog host is probed, as before.
+				const baseUrl =
+					command.region === undefined
+						? undefined
+						: await verifyApiKeyRegionBaseUrl(
+								session.modelRuntime.getProvider(command.provider),
+								command.key,
+								command.region,
+								signal,
+							);
 				const verification = await verifyApiKey({
 					models: session.modelRegistry.getAll(),
 					provider: command.provider,
 					key: command.key,
-					signal: AbortSignal.timeout(15_000),
+					...(baseUrl === undefined ? {} : { baseUrl }),
+					signal,
 				});
 				return success(id, "verify_api_key", verification);
 			}
@@ -2767,6 +2783,9 @@ export function createRpcConnectionHandler(
 					secretOwners.delete(id);
 				}
 			relocation?.connectionDetached(connectionId);
+		},
+		replayExtensionEvents(receiver) {
+			session.extensionRunner.replayRpcState(({ name, data }) => receiver({ type: "extension_event", name, data }));
 		},
 		async dispose(disposeOptions) {
 			rpcOwners.dispose();

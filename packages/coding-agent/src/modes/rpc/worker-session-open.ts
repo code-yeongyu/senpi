@@ -149,7 +149,11 @@ export async function openWorkerSession(
 			// that died, and the actual reason reaches stderr alone (#1953).
 			workerFailure = error;
 			entry.state = "quarantined";
-			process.stderr.write(`senpi rpc session ${handle} quarantined: ${error}\n`);
+			try {
+				process.stderr.write(`senpi rpc session ${handle} quarantined: ${error}\n`);
+			} catch {
+				// Best effort: the quarantine itself never depends on stderr (senpi#7446).
+			}
 		},
 	});
 	entry.worker = worker;

@@ -1,3 +1,58 @@
+## 2026-11-22 - OpenAI-family SSE reports transport activity (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/api/openai-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts` report body chunks through a shared fetch wrapper before the SDK parses them.
+- `packages/ai/src/api/openai-codex-responses.ts` reports body chunks from its SSE reader before decoding. WebSocket paths are unchanged.
+
+### Why
+
+- SSE keep-alive comments never become assistant events. Reporting the bytes lets the agent loop re-arm its existing start and idle bounds while waiting for content.
+
+### Why an extension could not handle it
+
+- The SDK fetch boundary and the Codex SSE reader are internal to the adapters.
+
+### Expected merge conflict zones
+
+- LOW: the SDK client fetch options and the Codex `parseSSE` read loop.
+
+## 2026-11-22 - Preserve Mistral HTTP status in provider diagnostics (senpi#3251)
+
+### What changed
+
+- `packages/ai/src/api/mistral-conversations.ts`: attaches the response status to the HTTP error with the shared diagnostic carrier and copies it to the terminal assistant message without changing the displayed error.
+
+### Why
+
+- The response status distinguishes an actual 408 from a 400 whose body quotes one.
+
+### Why an extension could not handle it
+
+- The adapter sees the HTTP response before turning the failure into an assistant message.
+
+### Expected merge conflict zones
+
+- LOW: the non-OK response and stream catch in `packages/ai/src/api/mistral-conversations.ts`.
+
+## 2026-11-04 - Kimi K3.1 Pro never receives disabled thinking (senpi#5720)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts` omits disabled thinking for K3.1 Pro, including gateway rows without catalog metadata. The catalog models send only `output_config.effort: low` at their floor, whether the caller requests off or the agent has already clamped it to low.
+
+### Why
+
+- Kimi Code answers `thinking: {type: "disabled"}` on K3.1 Pro with `400 K3.1 Pro does not support disabled thinking mode`; no `thinking` plus effort `low` is accepted (code-yeongyu/oh-my-openagent#12316).
+
+### Why an extension could not handle it
+
+- The thinking block is built inside the Anthropic request builder.
+
+### Expected merge conflict zones
+
+- LOW: the marker list.
+
 ## 2026-11-23 - sk-ant-oat API keys are sent as plain x-api-key instead of being refused (senpi#7391)
 
 ### What changed
