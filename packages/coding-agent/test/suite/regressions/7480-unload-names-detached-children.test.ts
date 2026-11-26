@@ -48,6 +48,30 @@ describe('unload_session { children: "detach" } names the children it left runni
 			expect(await client.request({ type: "get_state", sessionId })).toMatchObject({ success: true });
 	});
 
+	it("does not name a child whose close finished before the unload", async () => {
+		const rig = await host();
+		const client = rig.client("A");
+		const parent = String(dataOf(await client.request({ type: "open_session", cwd: rig.cwd })).sessionId);
+		const durable = await durableIdOf(client, parent);
+		const open = async () =>
+			String(
+				dataOf(
+					await client.request({ type: "open_session", cwd: rig.cwd, context: { parent_session_id: durable } }),
+				).sessionId,
+			);
+		const kept = await open();
+		const closed = await open();
+		expect(dataOf(await client.request({ type: "unload_session", sessionId: closed, force: true }))).toMatchObject({
+			outcome: "unloaded",
+		});
+
+		const answer = dataOf(
+			await client.request({ type: "unload_session", sessionId: parent, force: true, children: "detach" }),
+		);
+
+		expect(answer).toMatchObject({ outcome: "unloaded", detached: [kept] });
+	});
+
 	it("names none when the session has no child open on this host", async () => {
 		const rig = await host();
 		const client = rig.client("A");

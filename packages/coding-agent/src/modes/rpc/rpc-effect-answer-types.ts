@@ -46,8 +46,10 @@ export interface RpcUnloadAnswer {
 	 */
 	dropped?: { deliveries: readonly string[]; user_messages?: readonly string[] };
 	/**
-	 * An RPC host's `unloaded` answer: the child sessions open on this host that the unload left running (`children:
-	 * "detach"`), read in the step that claimed the close; `[]` when there were none or `children` was not `detach`.
+	 * An RPC host's `unloaded` answer with `children: "detach"`: a snapshot, taken in the step that claimed the close, of
+	 * the child session rows registered on this host (parent or root names the unloaded session), in any lifecycle state
+	 * (opening, open or closing): the same set the `children_live` refusal counts. `[]` when there were none or `children`
+	 * was not `detach`. A child that finished closing before the unload is not named.
 	 */
 	detached?: readonly string[];
 	/** A graceful close that ended the session: the turn it waited for and the work sources it stopped. */
