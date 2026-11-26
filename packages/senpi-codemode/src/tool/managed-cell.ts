@@ -22,6 +22,8 @@ export type ManagedCell = {
 	interruptOutcome: PromiseWithResolvers<void> | undefined;
 	liveResult: LiveResultProvider | undefined;
 	terminalResult: AgentToolResult<EvalToolDetails> | undefined;
+	/** Holds the completion notification until the result the cell ended with has its written files. */
+	finalResult: Promise<void> | undefined;
 	notificationQueued: boolean;
 	readonly deadlines: CellDeadlines;
 	readonly hardLimitSeconds: number;
@@ -69,6 +71,7 @@ export function createManagedCell(init: ManagedCellInit): ManagedCell {
 		interruptOutcome: undefined,
 		liveResult: undefined,
 		terminalResult: undefined,
+		finalResult: undefined,
 		notificationQueued: false,
 		deadlines,
 		hardLimitSeconds,

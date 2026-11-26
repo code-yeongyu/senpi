@@ -47,6 +47,11 @@ export interface ToolEventDispatchOptions {
 	 * forwarder carries the event only, so a handler served on the loop side of a forward sees its loop-hook signal.
 	 */
 	readonly signal?: AbortSignal;
+	/**
+	 * `tool_result` only: receives each handler that threw, timed out or was interrupted, in addition to the extension
+	 * error listeners, so a caller that owns the event can show the failure next to its own result.
+	 */
+	readonly onHandlerFailure?: (failure: { readonly extensionPath: string; readonly error: string }) => void;
 }
 
 const undeclaredHandlers = (extension: Extension, event: ExtensionEvent["type"]): HandlerFn[] =>
