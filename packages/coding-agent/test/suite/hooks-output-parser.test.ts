@@ -204,4 +204,22 @@ describe("builtin hooks output parser", () => {
 			expect.objectContaining({ code: "unsupported_field", path: "stdout.systemMessage" }),
 		);
 	});
+
+	it("accepts plain-text stdout as additionalContext for exit-0 SessionStart hooks only", () => {
+		const plain = parse("SessionStart", "You are running inside Rex.\nUse `rex capture` to inspect panes.\n");
+		const failed = parse("SessionStart", "fatal traceback: secret", { exitCode: 1 });
+		const jsonArray = parse("SessionStart", "[1, 2, 3]");
+		const otherEvent = parse("UserPromptSubmit", "plain text should stay invalid");
+
+		expect(plain.output).toEqual({
+			additionalContext: "You are running inside Rex.\nUse `rex capture` to inspect panes.",
+		});
+		expect(plain.diagnostics).toEqual([]);
+		expect(failed.output).toEqual({});
+		expect(failed.diagnostics).toContainEqual(expect.objectContaining({ code: "invalid_root", path: "stdout" }));
+		expect(jsonArray.output).toEqual({});
+		expect(jsonArray.diagnostics).toContainEqual(expect.objectContaining({ code: "invalid_root", path: "stdout" }));
+		expect(otherEvent.output).toEqual({});
+		expect(otherEvent.diagnostics).toContainEqual(expect.objectContaining({ code: "invalid_root", path: "stdout" }));
+	});
 });

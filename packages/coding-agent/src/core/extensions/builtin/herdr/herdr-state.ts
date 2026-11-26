@@ -1,7 +1,13 @@
+import type { ProgramStatus } from "../../types.ts";
 import type { TerminalMonitorStateEvent } from "../monitor-state-event.ts";
 
-/** How the user must act on a block, as OSC 7501 names it: a permission approval or a typed answer. */
-export type HerdrBlockedKind = "permission" | "question";
+/** How the user must act on a block, as OSC 7501 names it: a permission approval, typed answer, or sign-in. */
+export type HerdrBlockedKind = "permission" | "question" | "auth";
+
+export type HerdrTurnOutcome =
+	| { readonly kind: "idle" }
+	| { readonly kind: "done" }
+	| { readonly kind: "error"; readonly message?: string };
 
 export interface HerdrBlock {
 	readonly label?: string;
@@ -11,6 +17,7 @@ export interface HerdrBlock {
 export interface HerdrState {
 	readonly blocked: ReadonlyMap<string, HerdrBlock>;
 	readonly turnActive: boolean;
+	readonly turnOutcome: HerdrTurnOutcome;
 	readonly childCount: number;
 	readonly monitorCount: number;
 	/** Live monitors with no deadline (persistent watches, or watches without a timeout): they may never fire. */
@@ -21,6 +28,7 @@ export interface HerdrState {
 export type HerdrStateEvent =
 	| { type: "blocked"; active: boolean; id: string; label?: string; kind?: HerdrBlockedKind }
 	| { type: "turn"; active: boolean }
+	| { type: "outcome"; outcome: HerdrTurnOutcome }
 	| { type: "children"; count: number }
 	| { type: "monitors"; count: number; openEnded: number }
 	| { type: "wake-source"; source: string; count: number };
@@ -61,6 +69,7 @@ export function initialHerdrState(): HerdrState {
 	return {
 		blocked: new Map(),
 		turnActive: false,
+		turnOutcome: { kind: "idle" },
 		childCount: 0,
 		monitorCount: 0,
 		openEndedMonitorCount: 0,
@@ -71,7 +80,18 @@ export function initialHerdrState(): HerdrState {
 export function reduceHerdrState(state: HerdrState, event: HerdrStateEvent): HerdrState {
 	switch (event.type) {
 		case "turn":
-			return { ...state, turnActive: event.active };
+			return event.active
+				? { ...state, turnActive: true, turnOutcome: { kind: "idle" } }
+				: { ...state, turnActive: false };
+		case "outcome":
+			if (
+				state.turnOutcome.kind === event.outcome.kind &&
+				(state.turnOutcome.kind !== "error" ||
+					(event.outcome.kind === "error" && state.turnOutcome.message === event.outcome.message))
+			) {
+				return state;
+			}
+			return { ...state, turnOutcome: event.outcome };
 		case "children":
 			return { ...state, childCount: event.count };
 		case "monitors":
@@ -119,6 +139,29 @@ export function selectHerdrBlockedKind(state: HerdrState): HerdrBlockedKind | un
 	return state.blocked.values().next().value?.kind;
 }
 
+export function selectProgramStatus(state: HerdrState): ProgramStatus {
+	const report = selectHerdrReport(state);
+	if (report.state === "blocked") {
+		const kind = selectHerdrBlockedKind(state);
+		return {
+			state: "blocked",
+			...(kind === undefined ? {} : { kind }),
+			...(report.message === undefined ? {} : { message: report.message }),
+		};
+	}
+	if (report.state === "working") {
+		return report.message === undefined ? { state: "working" } : { state: "working", message: report.message };
+	}
+	if (state.turnOutcome.kind === "error") {
+		const message = state.turnOutcome.message ?? report.message;
+		return message === undefined ? { state: "error" } : { state: "error", message };
+	}
+	if (state.turnOutcome.kind === "done") {
+		return report.message === undefined ? { state: "done" } : { state: "done", message: report.message };
+	}
+	return report.message === undefined ? { state: "idle" } : { state: "idle", message: report.message };
+}
+
 export function isHerdrBlockedEvent(
 	data: unknown,
 ): data is { active: boolean; id: string; label?: string; kind?: HerdrBlockedKind } {
@@ -131,6 +174,10 @@ export function isHerdrBlockedEvent(
 		typeof data.id === "string" &&
 		data.id.length > 0 &&
 		(!("label" in data) || data.label === undefined || typeof data.label === "string") &&
-		(!("kind" in data) || data.kind === undefined || data.kind === "permission" || data.kind === "question")
+		(!("kind" in data) ||
+			data.kind === undefined ||
+			data.kind === "permission" ||
+			data.kind === "question" ||
+			data.kind === "auth")
 	);
 }

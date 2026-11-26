@@ -9649,7 +9649,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.loginProvider(dialog, providerId, "api_key");
+			await this.loginProvider(dialog, providerId, providerName, "api_key");
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
 		} catch (error: unknown) {
@@ -9746,23 +9746,35 @@ export class InteractiveMode {
 	private async loginProvider(
 		dialog: LoginDialogComponent,
 		providerId: string,
+		providerName: string,
 		method: "api_key" | "oauth",
 	): Promise<void> {
-		// A replacement recorded by another login path must not be reported as this one's.
-		this.session.modelRegistry.authStorage.takeReplacement(providerId);
-		await this.session.modelRuntime.login(
-			providerId,
-			method,
-			{
-				signal: dialog.signal,
-				prompt: (prompt) => this.showAuthPrompt(dialog, prompt),
-				notify: (event) => this.notifyAuthDialog(dialog, event),
-			},
-			{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
-		);
-		// A login of the other kind replaced the stored one: say where it went (senpi#3448).
-		const replacement = this.session.modelRegistry.authStorage.takeReplacement(providerId);
-		if (replacement) this.showWarning(describeCredentialReplacement(providerId, replacement));
+		const blockId = crypto.randomUUID();
+		this.session.emitExtensionEvent("herdr:blocked", {
+			active: true,
+			id: blockId,
+			label: `Sign in to ${providerName}`,
+			kind: "auth",
+		});
+		try {
+			// A replacement recorded by another login path must not be reported as this one's.
+			this.session.modelRegistry.authStorage.takeReplacement(providerId);
+			await this.session.modelRuntime.login(
+				providerId,
+				method,
+				{
+					signal: dialog.signal,
+					prompt: (prompt) => this.showAuthPrompt(dialog, prompt),
+					notify: (event) => this.notifyAuthDialog(dialog, event),
+				},
+				{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
+			);
+			// A login of the other kind replaced the stored one: say where it went (senpi#3448).
+			const replacement = this.session.modelRegistry.authStorage.takeReplacement(providerId);
+			if (replacement) this.showWarning(describeCredentialReplacement(providerId, replacement));
+		} finally {
+			this.session.emitExtensionEvent("herdr:blocked", { active: false, id: blockId });
+		}
 	}
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
@@ -9781,7 +9793,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.loginProvider(dialog, providerId, "oauth");
+			await this.loginProvider(dialog, providerId, providerName, "oauth");
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "oauth", previousModel);
 		} catch (error: unknown) {

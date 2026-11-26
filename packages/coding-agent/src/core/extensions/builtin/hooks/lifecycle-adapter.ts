@@ -313,6 +313,10 @@ function lifecycleResultDetails(
 	const diagnostics = [...result.diagnostics, ...commandFailureDiagnostics(event, result)];
 	const contexts: string[] = [];
 	for (const summary of result.summaries) {
+		if (event === "SessionStart") {
+			if (summary.output.additionalContext !== undefined) contexts.push(summary.output.additionalContext);
+			continue;
+		}
 		const output = readLifecycleHookOutput(event, summary.run.stdout);
 		if (output?.additionalContext !== undefined && event !== "PreCompact") {
 			contexts.push(output.additionalContext);
