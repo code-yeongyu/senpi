@@ -89,6 +89,8 @@ export function classifyInvocation(args: readonly string[]): InvocationClass {
 	if (FIRST_ONLY.has(args[0] ?? "")) return "no_session";
 	const end = args.indexOf("--");
 	const options = end === -1 ? args : args.slice(0, end);
+	// main() takes the attach branch before the tips branch, so an attach always reads the table (review 6069794971).
+	if (options.includes("--attach")) return "reads_table";
 	let best = Number.NEGATIVE_INFINITY;
 	let classes: InvocationClass[] = [];
 	for (const command of ENGINE_COMMANDS) {

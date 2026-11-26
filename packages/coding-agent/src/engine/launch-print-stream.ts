@@ -73,7 +73,14 @@ export function printRun(
 						}
 					})()
 				: (async () => {
-						for await (const chunk of stdout) push({ type: "output", text: String(chunk) });
+						// One decoder across chunks: a UTF-8 character split between two reads is joined, not replaced.
+						const decoder = new TextDecoder();
+						for await (const chunk of stdout) {
+							const text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+							if (text !== "") push({ type: "output", text });
+						}
+						const rest = decoder.decode();
+						if (rest !== "") push({ type: "output", text: rest });
 					})();
 	void Promise.all([lines.catch(() => undefined), exited]).then(([, exit]) => {
 		push(

@@ -112,39 +112,105 @@ afterAll(() => {
 	rmSync(root, { recursive: true, force: true });
 });
 
-const OUTCOMES: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
-	["auth.check ok", () => engine.auth.check({ provider: "openai", refresh: false })],
-	["auth.check oauth ok", () => engine.auth.check({ provider: "chatgpt-subscription", refresh: false })],
-	["auth.check refused", () => engine.auth.check({})],
-	["auth.credentials refused", () => engine.auth.credentials({ provider: "openai" })],
-	["auth.credentials invalid", () => engine.auth.credentials({})],
-	["auth.apiKey refused", () => engine.auth.apiKey({ provider: "openai" })],
-	["auth.bearerToken refused", () => engine.auth.bearerToken({ provider: "chatgpt-subscription" })],
-	["auth.bearerToken invalid", () => engine.auth.bearerToken({ provider: "x", min_expiry_ms: -1 })],
+interface Expected {
+	readonly kind: "ok" | "error";
+	readonly code?: string;
+	/** The file the launched process wrote the key to: the one destination a key may reach. */
+	readonly keyOut?: string;
+}
+const ok: Expected = { kind: "ok" };
+const refused = (code: string): Expected => ({ kind: "error", code });
+const keyOut = (name: string): string => join(root, `key-out-${name}`);
+
+const OUTCOMES: ReadonlyArray<readonly [string, () => Promise<unknown>, () => Expected]> = [
+	["auth.check ok", () => engine.auth.check({ provider: "openai", refresh: false }), () => ok],
+	["auth.check oauth ok", () => engine.auth.check({ provider: "chatgpt-subscription", refresh: false }), () => ok],
+	["auth.check refused", () => engine.auth.check({}), () => refused("invalid_input")],
 	[
-		"host.status with a key root",
-		() => engine.host.status({ endpoint: { socket: join(root, "none.sock"), key_root: join(root, "keys") } }),
+		"auth.credentials refused",
+		() => engine.auth.credentials({ provider: "openai" }),
+		() => refused("delivery_unavailable"),
 	],
-	["host.stop refused input", () => engine.host.stop({ wait_ms: 5, endpoint: { key_root: join(root, "keys") } })],
-	["host.ensure bad presenter", () => engine.host.ensure({ presenter: { bootstrap_fd: 3 } as never })],
-	["models.list with setup", () => engine.models.list({ setup: { extensions: { none: true } } })],
-	["models.list refused setup", () => engine.models.list({ setup: { session_runtime: "bogus" } as never })],
-	["promptSizes refused setup", () => engine.promptSizes({ setup: { tool_runtime: "bogus" } as never })],
+	["auth.credentials invalid", () => engine.auth.credentials({}), () => refused("invalid_input")],
+	["auth.apiKey refused", () => engine.auth.apiKey({ provider: "openai" }), () => refused("delivery_unavailable")],
+	[
+		"auth.bearerToken refused",
+		() => engine.auth.bearerToken({ provider: "chatgpt-subscription" }),
+		() => refused("delivery_unavailable"),
+	],
+	[
+		"auth.bearerToken invalid",
+		() => engine.auth.bearerToken({ provider: "x", min_expiry_ms: -1 }),
+		() => refused("invalid_input"),
+	],
+	[
+		"host.status with a key root, no host",
+		() => engine.host.status({ endpoint: { socket: join(root, "none.sock"), key_root: join(root, "keys") } }),
+		() => refused("refused"),
+	],
+	[
+		"host.stop refused input",
+		() => engine.host.stop({ wait_ms: 5, endpoint: { key_root: join(root, "keys") } }),
+		() => refused("usage"),
+	],
+	[
+		"host.ensure bad presenter",
+		() => engine.host.ensure({ presenter: { bootstrap_fd: 3 } as never }),
+		() => refused("invalid_input"),
+	],
+	["models.list with setup", () => engine.models.list({ setup: { extensions: { none: true } } }), () => ok],
+	[
+		"models.list refused setup",
+		() => engine.models.list({ setup: { session_runtime: "bogus" } as never }),
+		() => refused("invalid_input"),
+	],
+	[
+		"promptSizes refused setup",
+		() => engine.promptSizes({ setup: { tool_runtime: "bogus" } as never }),
+		() => refused("invalid_input"),
+	],
 	[
 		"launch refused, key given",
 		() => launchHand(ports(), { api_key: launchKey(), input: { messages: ["x"] } } as never),
+		() => refused("invalid_input"),
 	],
 	[
 		"launch fault: no engine, key given",
 		() => launchHeadless(ports({}, join(root, "no-such-engine")), { api_key: launchKey() }),
+		() => refused("launch_failed"),
 	],
-	["launch.interactive ok, key given", () => launchInteractive(ports(), { api_key: launchKey() })],
+	...(["interactive", "hand", "headless"] as const).map(
+		(mode) =>
+			[
+				`launch.${mode} ok, key given`,
+				() => {
+					const launch = { interactive: launchInteractive, hand: launchHand, headless: launchHeadless }[mode];
+					return launch(ports({ FAKE_ENGINE_KEY_OUT: keyOut(mode) }), { api_key: launchKey() });
+				},
+				(): Expected => ({ kind: "ok", keyOut: keyOut(mode) }),
+			] as const,
+	),
 ];
 
+/** A launch handle settles when its process exits, so the key destination is read after the process wrote it. */
+async function settled(answer: unknown): Promise<void> {
+	const value: unknown = typeof answer === "object" && answer !== null ? Reflect.get(answer, "value") : undefined;
+	const exited: unknown = typeof value === "object" && value !== null ? Reflect.get(value, "exited") : undefined;
+	if (exited instanceof Promise) await exited;
+}
+
 describe("no canary reaches a prohibited output (security design 6, senpi#7451)", () => {
-	it.each(OUTCOMES)("%s", async (_outcome, call) => {
+	it.each(OUTCOMES)("%s", async (_outcome, call, expectation) => {
+		const expected = expectation();
 		const before = printed.length;
 		const answer = await call();
+		await settled(answer);
+		expect(answer).toMatchObject(
+			expected.code === undefined
+				? { kind: expected.kind }
+				: { kind: expected.kind, error: { code: expected.code } },
+		);
+		if (expected.keyOut !== undefined) expect(readFileSync(expected.keyOut, "utf8")).toBe(CANARIES.launch_key);
 		expect(leaked(serialized(answer))).toEqual([]);
 		expect(leaked(printed.slice(before).join("\n"))).toEqual([]);
 	});

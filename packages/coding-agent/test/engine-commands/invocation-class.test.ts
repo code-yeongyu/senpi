@@ -40,6 +40,7 @@ const REFUSED: ReadonlyArray<readonly string[]> = [
 	["-p", "--model", "--list-tips", "hello"],
 	["--system-prompt", "--list-tips", "hello"],
 	["--internal-rpc-host-supervisor", "x", "--list-tips"],
+	["--list-tips", "--attach", "unix:///tmp/x.sock", "--session", "s-1"],
 	["--system-prompt", "--version", "hello"],
 	["auth", "check", "--help"],
 	["models", "discover", "--help"],
@@ -205,6 +206,19 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe.each(ENTRIES)("the real %s entry", (_name, entry) => {
+	it.each(
+		EXEMPT.flatMap((args) => [args, [...args, "--attach", "unix:///tmp/e1as-none.sock", "--session", "s-1"]]).map(
+			(args) => [args.join(" "), args] as const,
+		),
+	)("the class of %s is the branch main() takes (review 6069794971)", async (_args, args) => {
+		const broken = await realEngine(args, { root, table: '{"presenter":4,', entry });
+		if (classifyInvocation(args) === "reads_table") {
+			expect(broken.code).toBe(LAUNCH_KEY_FAILED_EXIT_CODE);
+			return;
+		}
+		expect(broken).toEqual(await realEngine(args, { root, table: undefined, entry }));
+	});
+
 	it.each(
 		REFUSED.flatMap((args) => UNREADABLE.map(([shape, table]) => [args.join(" "), shape, args, table] as const)),
 	)("refuses %s on a table %s with exit 78", async (_args, _shape, args, table) => {

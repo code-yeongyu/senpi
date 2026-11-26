@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchHand, launchHeadless, launchInteractive, launchPrint, launchRpc } from "../../src/engine/launch.ts";
-import type { LaunchPrintEvent, LaunchPrintRun } from "../../src/engine/launch-print-stream.ts";
+import { type LaunchPrintEvent, type LaunchPrintRun, printRun } from "../../src/engine/launch-print-stream.ts";
 import type { LaunchPorts } from "../../src/engine/launch-process.ts";
 
 const FAKE_ENGINE = join(__dirname, "..", "fixtures", "engine-launch-fake.ts");
@@ -105,6 +105,20 @@ describe("engine.launch.print (senpi#7451)", () => {
 	});
 });
 
+describe("text output keeps a character split between two reads (review 7184403047 M3)", () => {
+	it("reconstructs the exact text when a UTF-8 sequence arrives in two chunks", async () => {
+		const bytes = Buffer.from("가한나", "utf8");
+		const split = bytes.indexOf(Buffer.from("한", "utf8")) + 1;
+		const stdout = Readable.from([bytes.subarray(0, split), bytes.subarray(split)]);
+		const run = printRun({ stdout, kill: () => true } as never, Promise.resolve({ exit_code: 0 }), {
+			json: false,
+			ephemeral: false,
+		});
+		const text = (await drain(run)).flatMap((event) => (event.type === "output" ? [event.text] : [])).join("");
+		expect(text).toBe("가한나");
+	});
+});
+
 describe("refusals come before anything starts", () => {
 	it.each<readonly [string, () => Promise<{ readonly kind: string; readonly error?: { readonly message: string } }>]>([
 		["hand with input", () => launchHand(ports(), { input: { messages: ["hi"] } } as never)],
@@ -118,6 +132,24 @@ describe("refusals come before anything starts", () => {
 		["print with no input", () => launchPrint(ports(), { mode: "json" } as never)],
 		["print with options that are not an object", () => launchPrint(ports(), null as never)],
 		["rpc with options that are not an object", () => launchRpc(ports(), [] as never)],
+		["interactive with listen", () => launchInteractive(ports(), { listen: "unix://x" } as never)],
+		["interactive with a print mode", () => launchInteractive(ports(), { mode: "json" } as never)],
+		[
+			"print with presenter",
+			() =>
+				launchPrint(ports(), { input: { messages: ["x"] }, mode: "json", presenter: { bootstrap_fd: 4 } } as never),
+		],
+		["rpc with tui_mode", () => launchRpc(ports(), { tui_mode: "regular" } as never)],
+		["headless with multi_session", () => launchHeadless(ports(), { multi_session: true } as never)],
+		["hand with gated", () => launchHand(ports(), { gated: { grok_neo: true } } as never)],
+		[
+			"a message that begins with @",
+			() => launchPrint(ports(), { input: { messages: ["@notes.md"] }, mode: "json" }),
+		],
+		[
+			"interactive with a message that begins with @",
+			() => launchInteractive(ports(), { input: { messages: ["ok", "@x"] } }),
+		],
 	])("%s", async (_case, launch) => {
 		expect(await launch()).toMatchObject({ kind: "error", error: { code: "invalid_input" } });
 		expect(spawned).toEqual([]);

@@ -7,7 +7,7 @@ import type { LaunchMode, LaunchOptions, LaunchSetup } from "./launch-options.ts
 import type { EngineCommandFlag, EngineCommandMetadata } from "./metadata-flags.ts";
 import { LAUNCH_COMMANDS } from "./metadata-launch.ts";
 
-function commandOf(mode: LaunchMode): EngineCommandMetadata {
+export function commandOf(mode: LaunchMode): EngineCommandMetadata {
 	const command = LAUNCH_COMMANDS.find((entry) => entry.call === `launch.${mode}`);
 	if (command === undefined) throw new Error(`no launch metadata for ${mode}`);
 	return command;
