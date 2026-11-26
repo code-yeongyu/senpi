@@ -35,7 +35,7 @@ export const INVOCATION_CLASSES: Readonly<Record<string, InvocationRow>> = {
 	"packages.remove": { kind: "no_session", reason: "removes a package: no credential, no start" },
 	"packages.list": { kind: "no_session", reason: "lists packages: no credential, no start" },
 	"packages.update": { kind: "no_session", reason: "updates packages: no credential, no start" },
-	"models.update": { kind: "reads_table", reason: "fetches the model catalog" },
+	"models.update": { kind: "reads_table", reason: "uses a provider credential (owner ruling D22-18)" },
 	"models.discover": { kind: "reads_table", reason: "uses a provider credential" },
 	"models.list": { kind: "reads_table", reason: "resolves models with their credentials" },
 	"config.resources": { kind: "no_session", reason: "the config selector: no credential, no start" },
@@ -59,6 +59,23 @@ function startsWith(args: readonly string[], words: readonly string[]): boolean 
 }
 
 /**
+ * Whether `options` names this command form. Subcommand words and the first token are always read as such by the
+ * parser; any later token may be an option's value (`--system-prompt --list-tips`). So a root flag exempts only as the
+ * first token, and anywhere else a token can only move an invocation toward reading the table, never away from it.
+ */
+function names(
+	argv: readonly string[],
+	required: readonly string[],
+	flagsGiven: boolean,
+	kind: InvocationClass,
+	options: readonly string[],
+): boolean {
+	if (argv.length > 0) return startsWith(options, argv);
+	if (required.length === 0 || !flagsGiven) return false;
+	return kind === "reads_table" || (required.length === 1 && options[0] === required[0]);
+}
+
+/**
  * The class of `args`: help and version exempt only as the first argument; options end at `--`. Otherwise the most specific command form that matches decides
  * (subcommand words plus the required flags given, or for a root form its required flag); a tie is exempt only if every tied form is.
  */
@@ -71,12 +88,11 @@ export function classifyInvocation(args: readonly string[]): InvocationClass {
 	for (const command of ENGINE_COMMANDS) {
 		const required = command.flags.filter((flag) => flag.required).map((flag) => flag.names[0] ?? "");
 		const flagsGiven = required.every((name) => options.includes(name));
-		const named = command.argv.length > 0 ? startsWith(options, command.argv) : required.length > 0 && flagsGiven;
-		if (!named) continue;
+		const kind = INVOCATION_CLASSES[command.call]?.kind ?? "reads_table";
+		if (!names(command.argv, required, flagsGiven, kind, options)) continue;
 		// A form whose required flag is given is the more specific one (`update --models`); a subcommand form whose
 		// required flag is missing still names the command, below any form that needs no flag.
 		const specificity = command.argv.length * 10 + (flagsGiven ? required.length : -0.5);
-		const kind = INVOCATION_CLASSES[command.call]?.kind ?? "reads_table";
 		if (specificity > best) {
 			best = specificity;
 			classes = [kind];

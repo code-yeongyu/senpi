@@ -2,6 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseArgs } from "../../src/cli/args.ts";
 import { classifyInvocation, INVOCATION_CLASSES } from "../../src/cli/invocation-class.ts";
 import { LAUNCH_KEY_FAILED_EXIT_CODE } from "../../src/cli/launch-key.ts";
 import { ENGINE_COMMANDS } from "../../src/engine/metadata.ts";
@@ -35,6 +36,8 @@ const REFUSED: ReadonlyArray<readonly string[]> = [
 	["host", "ensure", "--help"],
 	["--print", "--", "--help"],
 	["--print", "--", "--version"],
+	["-p", "--system-prompt", "--list-tips", "hello"],
+	["--system-prompt", "--version", "hello"],
 	["auth", "check", "--help"],
 	["models", "discover", "--help"],
 	["schedule", "run", "--help"],
@@ -98,6 +101,27 @@ describe("the invocation classifier (security design B10, F3 ruling)", () => {
 		expect(classifyInvocation(args)).toBe("no_session"),
 	);
 
+	const valueOptions = [
+		...new Set(
+			ENGINE_COMMANDS.filter((command) => command.argv.length === 0)
+				.flatMap((command) => command.flags)
+				.filter((flag) => flag.takesValue)
+				.flatMap((flag) => flag.names),
+		),
+	];
+	it.each(
+		valueOptions.flatMap((option) =>
+			["--list-tips", "--help", "--version", "-h", "-v"].map((exempt) => [exempt, option] as const),
+		),
+	)("refuses %s as the value of %s: a token the parser may consume as a value never exempts", (exempt, option) => {
+		expect(classifyInvocation(["-p", option, exempt, "hello"])).toBe("reads_table");
+		expect(classifyInvocation([option, exempt, "hello"])).toBe("reads_table");
+	});
+
+	it("still exempts --list-tips as the first argument", () => {
+		expect(classifyInvocation(["--list-tips", "--offline"])).toBe("no_session");
+	});
+
 	it.each(EXEMPT)("exempts %s", (...args) => expect(classifyInvocation(args)).toBe("no_session"));
 	it.each(REFUSED)("refuses %s", (...args) => expect(classifyInvocation(args)).toBe("reads_table"));
 
@@ -118,6 +142,49 @@ describe("the invocation classifier (security design B10, F3 ruling)", () => {
 		expect(classifyInvocation(args)).toBe("reads_table");
 	});
 });
+
+describe("the real parser agrees with every root exemption, in the safe direction", () => {
+	const firstTokens = {
+		"--help": "help",
+		"-h": "help",
+		"--version": "version",
+		"-v": "version",
+		"--list-tips": "listTips",
+	} as const;
+	const tails: ReadonlyArray<readonly string[]> = [[], ["--offline"], ["-p", "hello"], ["--mode", "rpc"], ["--", "x"]];
+
+	it.each(Object.entries(firstTokens).flatMap(([token, field]) => tails.map((tail) => [token, tail, field] as const)))(
+		"exempts %s %j only where the parser reads it as %s",
+		(token, tail, field) => {
+			const args = [token, ...tail];
+			if (classifyInvocation(args) === "no_session") expect(parseArgs([...args])[field]).toBe(true);
+			if (tail.length === 0) expect(classifyInvocation(args)).toBe("no_session");
+		},
+	);
+
+	it("refuses a first-token exemption that also names a session start: a tie never exempts", () => {
+		expect(classifyInvocation(["--list-tips", "--mode", "rpc"])).toBe("reads_table");
+	});
+
+	it.each(
+		valueOptionsOfRootForms().flatMap((option) =>
+			Object.keys(firstTokens).map((exempt) => [exempt, option] as const),
+		),
+	)("never exempts %s where %s may consume it as a value", (exempt, option) => {
+		expect(classifyInvocation(["-p", option, exempt, "hello"])).toBe("reads_table");
+	});
+});
+
+function valueOptionsOfRootForms(): string[] {
+	return [
+		...new Set(
+			ENGINE_COMMANDS.filter((command) => command.argv.length === 0)
+				.flatMap((command) => command.flags)
+				.filter((flag) => flag.takesValue)
+				.flatMap((flag) => flag.names),
+		),
+	];
+}
 
 let root: string;
 beforeEach(() => {
