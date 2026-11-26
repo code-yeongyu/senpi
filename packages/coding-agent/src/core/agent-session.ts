@@ -12830,12 +12830,18 @@ export class AgentSession {
 							| { readonly kind: "complete"; readonly result: CompactionResult }
 							| { readonly kind: "error"; readonly error: Error }
 							| undefined;
-						const reportCompactFailure = (failure: unknown) =>
-							runner.emitError({
-								extensionPath: RUNTIME_EXTENSION_PATH,
-								event: "compact",
-								error: failure instanceof Error ? failure.message : String(failure),
-							});
+						// Never throws: a throwing error listener must not cost the caller its terminal callback.
+						const reportCompactFailure = (failure: unknown) => {
+							try {
+								runner.emitError({
+									extensionPath: RUNTIME_EXTENSION_PATH,
+									event: "compact",
+									error: failure instanceof Error ? failure.message : String(failure),
+								});
+							} catch (reportError) {
+								console.error("extension compaction failure could not be reported", failure, reportError);
+							}
+						};
 
 						// One lifetime finally over the operation and the callback, so neither a throwing observer nor a
 						// throwing callback skips the admission release and the queue recovery (senpi#7482 review).

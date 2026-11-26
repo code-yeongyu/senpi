@@ -1,5 +1,5 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createReductionHandoff } from "../../../src/core/extensions/builtin/compaction/context-reduction-handoff.ts";
 import type { CompactOptions, ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../harness.ts";
@@ -217,6 +217,35 @@ describe("#7482 every terminal path of an extension compaction reports to its ca
 		expect(await ending).toBe("error");
 		expect(await reported).toMatchObject({ event: "compact", error: "observer failed" });
 		expect(target.endings).toEqual(["error"]);
+		await expectHandoffRecovers(target);
+	});
+
+	it("a throwing error listener on top of a throwing observer still lets onError reach the caller", async () => {
+		const target = await setup();
+		harness = target.harness;
+		target.harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider down" }),
+		]);
+		const stopObserver = target.harness.session.subscribe((event) => {
+			if (event.type !== "compaction_end" || event.errorMessage === undefined) return;
+			stopObserver();
+			throw new Error("observer failed");
+		});
+		const stopListener = target.harness.getExtensionRunner().onError(() => {
+			stopListener();
+			throw new Error("error listener failed");
+		});
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const ending = target.nextEnding();
+		target.handoff.request(target.ctx);
+
+		expect(await ending).toBe("error");
+		expect(target.endings).toEqual(["error"]);
+		expect(logged).toHaveBeenCalledTimes(1);
+		logged.mockRestore();
 		await expectHandoffRecovers(target);
 	});
 
