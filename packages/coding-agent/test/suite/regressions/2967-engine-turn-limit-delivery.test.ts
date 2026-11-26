@@ -19,7 +19,7 @@ describe("senpi#2967 a cross-session delivery refused by the engine-turn limit",
 
 	it("is recorded and settled instead of staying pending", async () => {
 		// given a session whose automatic-turn budget after the user's message is spent
-		harness = await createHarness({ settings: { engineTurns: { maxPerUserInput: 1 } } });
+		harness = await createHarness({ persistSession: true, settings: { engineTurns: { maxPerUserInput: 1 } } });
 		harness.setResponses([
 			fauxAssistantMessage([fauxText("user reply")]),
 			fauxAssistantMessage([fauxText("d-1 reply")]),

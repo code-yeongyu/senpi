@@ -30,17 +30,28 @@ import type { CustomMessage } from "./messages.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
 
-export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
+export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails> & {
+	details: SessionControlDeliveryDetails;
+};
+
+export class ExternalCustodyRefused extends Error {}
 
 export interface ExternalAdmissionPort {
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
 	readonly isBusy: () => boolean;
 	/** The holds a delivery cannot release, so a start is kept as a held notice instead (senpi#6490); empty when none. */
 	readonly heldBy: () => readonly HoldKind[];
+	readonly retain: (
+		message: SessionControlDeliveryMessage,
+		lane: ExternalDeliverAs | "start",
+		queueOnly: boolean,
+		mark?: InputTurnMark,
+	) => string;
+	readonly owns: (ticket: string) => boolean;
 	/** Synchronously enqueues into the runtime's own queue for `lane`. */
 	readonly enqueue: (message: SessionControlDeliveryMessage, lane: ExternalDeliverAs) => void;
 	/** Starts a turn carrying `message`; settles when that run is over, whether or not it wrote the entry. */
-	readonly start: (message: SessionControlDeliveryMessage) => Promise<void>;
+	readonly start: (message: SessionControlDeliveryMessage, ticket: string) => Promise<void>;
 }
 
 export interface EditorHoldState {
@@ -176,14 +187,29 @@ export class ExternalAdmission {
 			return { kind: "turn_conflict", turn_epoch };
 		}
 		const message = deliveryMessage(input, stamp);
+		const retain = (lane: ExternalDeliverAs | "start") => {
+			this.pending.set(id, lane);
+			try {
+				const ticketId = this.port.retain(message, lane, input.whenIdle === "queue", stamp.turnMark);
+				const carrier = { ...message, details: { ...message.details, ticketId } };
+				if (stamp.turnMark !== undefined) markInputTurnOrigin(carrier, stamp.turnMark);
+				return carrier;
+			} catch (cause) {
+				this.pending.delete(id);
+				throw new ExternalCustodyRefused(`Could not retain delivery ${id}: ${String(cause)}`, { cause });
+			}
+		};
 		if (!this.isBusy() && input.whenIdle !== "queue") {
 			const holds = this.port.heldBy();
-			this.pending.set(id, "start");
-			this.startIssuedAt = turn_epoch;
-			// A start that settles without writing the entry left it queued for later (the runtime's
-			// admission-retention path): from then on it is held like any queued delivery.
-			void this.port.start(message).finally(() => {
-				if (this.pending.get(id) === "start") this.pending.set(id, "followUp");
+			const carrier = retain("start");
+			const ticket = carrier.details.ticketId;
+			const owns = () => this.port.owns(ticket);
+			// A held notice has no pending turn for a second delivery to join.
+			if (holds.length > 0) this.pending.set(id, owns);
+			else this.startIssuedAt = turn_epoch;
+			// Until consumed, the ticket replays after unload even if launch never took the carrier.
+			void this.port.start(carrier, ticket).finally(() => {
+				if (this.pending.get(id) === "start") this.pending.set(id, owns);
 			});
 			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
 			return holds.length > 0 ? { kind: "held", holds: [...holds], turn_epoch } : { kind: "started", turn_epoch };
@@ -191,20 +217,17 @@ export class ExternalAdmission {
 		// Input meant to start a turn that finds a delivery start whose run has not begun joins that start, as a prompt
 		// joins a pending prompt start: the run takes the steering queue before its first provider request (omo#14972).
 		if (input.whenIdle !== "queue" && this.startPending()) {
-			this.pending.set(id, "steer");
-			this.port.enqueue(message, "steer");
+			this.port.enqueue(retain("steer"), "steer");
 			return { kind: "steered", turn_epoch };
 		}
 		if (input.deliverAs === "steer" && this.isBusy()) {
 			if (input.expected_turn_id === undefined) return { kind: "turn_conflict", turn_epoch };
-			this.pending.set(id, "steer");
-			this.port.enqueue(message, "steer");
+			this.port.enqueue(retain("steer"), "steer");
 			return { kind: "steered", turn_epoch };
 		}
 		// Mid-turn follow-up, or input an idle session holds for its next turn in the mode it was sent as.
 		const mode = this.isBusy() ? "followUp" : input.deliverAs;
-		this.pending.set(id, mode);
-		this.port.enqueue(message, mode);
+		this.port.enqueue(retain(mode), mode);
 		return { kind: "queued", turn_epoch };
 	}
 

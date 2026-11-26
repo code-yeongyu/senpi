@@ -11,7 +11,7 @@
  * runs first, and an id the transcript already holds is answered `already_admitted` after a restart too.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
-import { writtenDeliveryIds } from "../../core/external-admission.ts";
+import { ExternalCustodyRefused, writtenDeliveryIds } from "../../core/external-admission.ts";
 import type { ConnectionOrigin, InputTurnMark } from "../../core/turn-origin.ts";
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
 import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
@@ -88,22 +88,27 @@ export function admitExternalMessage(
 	const expected = command.expectedTurnId;
 	if (expected !== undefined && !CANONICAL_TURN_ID.test(expected)) return answer("turn_conflict", admission.turnEpoch);
 	const displayText = command.displayText ?? (origin === undefined ? undefined : command.text);
-	const result = admission.admit(
-		{
-			delivery_id: id,
-			text: command.text,
-			deliverAs: command.deliverAs,
-			...(command.sender === undefined ? {} : { sender: command.sender }),
-			...(displayText === undefined ? {} : { display_text: displayText }),
-			...(expected === undefined ? {} : { expected_turn_id: Number(expected) }),
-			...(command.whenIdle === undefined ? {} : { whenIdle: command.whenIdle }),
-		},
-		{
-			...(origin === undefined ? {} : { remoteOrigin: origin }),
-			...(chain.chainCount === undefined ? {} : { chainCount: chain.chainCount }),
-			turnMark: deliveryTurnMark(command, peer),
-		},
-	);
-	if (result.holds === undefined) return answer(result.kind, result.turn_epoch);
-	return { ok: true, data: { kind: result.kind, turnId: String(result.turn_epoch), holds: [...result.holds] } };
+	try {
+		const result = admission.admit(
+			{
+				delivery_id: id,
+				text: command.text,
+				deliverAs: command.deliverAs,
+				...(command.sender === undefined ? {} : { sender: command.sender }),
+				...(displayText === undefined ? {} : { display_text: displayText }),
+				...(expected === undefined ? {} : { expected_turn_id: Number(expected) }),
+				...(command.whenIdle === undefined ? {} : { whenIdle: command.whenIdle }),
+			},
+			{
+				...(origin === undefined ? {} : { remoteOrigin: origin }),
+				...(chain.chainCount === undefined ? {} : { chainCount: chain.chainCount }),
+				turnMark: deliveryTurnMark(command, peer),
+			},
+		);
+		if (result.holds === undefined) return answer(result.kind, result.turn_epoch);
+		return { ok: true, data: { kind: result.kind, turnId: String(result.turn_epoch), holds: [...result.holds] } };
+	} catch (error) {
+		if (!(error instanceof ExternalCustodyRefused)) throw error;
+		return { ok: false, refusal: { message: error.message, errorCode: "delivery_not_persisted" } };
+	}
 }

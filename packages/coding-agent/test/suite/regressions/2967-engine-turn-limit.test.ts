@@ -197,7 +197,15 @@ describe("senpi#2967 engine-originated turns are bounded for every source", () =
 			try {
 				await expect(harness.session.prompt("go")).rejects.toThrow(/EACCES/);
 				await drain(harness);
-				harness.session.externalAdmission.admit({ delivery_id: "dx", text: "DELIVERY dx", deliverAs: "followUp" });
+				const delivery = { delivery_id: "dx", text: "DELIVERY dx", deliverAs: "followUp" } as const;
+				const admission = harness.session.externalAdmission;
+				expect(() => admission.admit(delivery)).toThrow(/Could not retain delivery dx: .*EACCES/);
+				expect(admission.list()).toEqual({ pending: [], emitted: [] });
+
+				// Let the synchronous custody write succeed; refuse the capped turn's subsequent transcript write.
+				chmodSync(sessionFile, 0o644);
+				expect(admission.admit(delivery).kind).toBe("started");
+				lockSessionFile();
 				await drain(harness);
 			} finally {
 				chmodSync(sessionFile, 0o644);

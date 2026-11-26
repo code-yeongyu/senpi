@@ -7,7 +7,7 @@ import type { Goal } from "./extensions/builtin/goal/types.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
 import { StaleExtensionContextError } from "./extensions/stale-context-error.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
-import { deliveryIdOf } from "./external-admission.ts";
+import { deliveryIdOf, writtenDeliveryIds } from "./external-admission.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
 import { readLifecycleGoal } from "./lifecycle-goal.ts";
 import { lastRunEnd, lifecycleHistory } from "./lifecycle-history.ts";
@@ -20,12 +20,15 @@ import { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import type { TurnDeadlineKind } from "./turn-deadline.ts";
 import { isRecord } from "./work-custody-record.ts";
+import { markInputTurnOrigin } from "./turn-origin.ts";
 
 interface LifecycleBindingHost {
+	heldDelivery(ticket: string): { readonly noticeIds: readonly string[]; readonly message: AgentMessage } | undefined;
 	append(type: string, data: unknown): string;
 	emit(event: SessionLifecycleEvent): void;
 	holdInterruptedRun(): void;
 	factsFailed(error: unknown): void;
+	replayFailed(ticket: string, error: unknown): void;
 }
 
 /** Attaches durable lifecycle to the real session event/admission boundaries. */
@@ -50,6 +53,7 @@ export class LifecycleSessionBinding {
 	private retireFactEvents: (() => void) | undefined;
 	/** After dispose() nothing the controller decides is written or emitted: the session file is no longer this session's. */
 	private disposed = false;
+	private pendingReplay = new Map<string, "send" | "cancel-duplicate">();
 
 	constructor(session: AgentSession, host: LifecycleBindingHost) {
 		this.session = session;
@@ -85,6 +89,22 @@ export class LifecycleSessionBinding {
 		// A crashed receiver may have durable custody but no transcript entry yet. Recovery owns that
 		// delivery already; register it before session_start can let the gateway enqueue a second carrier.
 		const deliveries = session.sessionManager.reduceHistory(lifecycleDeliveryEntries);
+		const claimedIds = new Set<string>();
+		// A Stop Resume consumes held briefs together. Their notice handoff is the durable identity even when
+		// the transcript has a single combined resume entry rather than individual delivery entries.
+		for (const record of this.controller.obligations.heldExternal) {
+			if (!record.ticketId || !record.payload || !record.external) continue;
+			const ticket = record.ticketId;
+			const held = host.heldDelivery(ticket);
+			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
+			const id = deliveryIdOf(message);
+			if (id !== undefined) claimedIds.add(id);
+			if (!held) session.externalAdmission.observePersisted(message);
+			else if (id !== undefined) {
+				markInputTurnOrigin(held.message, record.external.turnMark);
+				session.externalAdmission.restoreQueued(id, () => host.heldDelivery(ticket) !== undefined);
+			}
+		}
 		for (const record of this.controller.obligations.active) {
 			// Discover consumed work before session_start can queue another automatic turn. The later
 			// recovery pass still writes interruption/tool records, but must not be the first to close admission.
@@ -92,16 +112,24 @@ export class LifecycleSessionBinding {
 				this.controller.ledger.interrupted = true;
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
 			const ticketId = record.ticketId;
+			this.pendingReplay.set(ticketId, "send");
 			const message = { role: "custom" as const, ...record.payload.message, timestamp: 0 };
 			const deliveryId = deliveryIdOf(message);
 			if (deliveryId === undefined) continue;
-			if (deliveries.has(ticketId)) session.externalAdmission.observePersisted(message);
+			const written = session.sessionManager.reduceHistory(writtenDeliveryIds).has(deliveryId);
+			// Older receivers could journal several tickets for one delivery. A written entry or held
+			// notice wins; otherwise only the first queued ticket gets a carrier.
+			if (!deliveries.has(ticketId) && (written || claimedIds.has(deliveryId)))
+				this.pendingReplay.set(ticketId, "cancel-duplicate");
+			claimedIds.add(deliveryId);
+			if (written || deliveries.has(ticketId)) session.externalAdmission.observePersisted(message);
 			else
 				session.externalAdmission.restoreQueued(
 					deliveryId,
 					() =>
 						// Consumption writes the entry before message_end observes it in external admission.
 						session.sessionManager.reduceHistory(lifecycleDeliveryEntries).has(ticketId) ||
+						(record.external !== undefined && host.heldDelivery(ticketId) !== undefined) ||
 						this.controller.obligations.active.some(
 							(current) => current.ticketId === ticketId && current.state === "queued",
 						),
@@ -142,6 +170,10 @@ export class LifecycleSessionBinding {
 
 	get isRestored(): boolean {
 		return this.restored;
+	}
+
+	get needsRestore(): boolean {
+		return !this.restored || this.pendingReplay.size > 0;
 	}
 
 	startRun(): void {
@@ -246,7 +278,7 @@ export class LifecycleSessionBinding {
 	}
 
 	restore(): Promise<void> {
-		if (this.restored) return Promise.resolve();
+		if (this.restored) return this.replayPending();
 		this.restoring ??= this.recover();
 		return this.restoring;
 	}
@@ -290,15 +322,60 @@ export class LifecycleSessionBinding {
 		this.host.holdInterruptedRun();
 		this.controller.obligations.retireRestoredSources();
 		this.controller.restoreComplete();
-		for (const record of this.controller.obligations.active) {
-			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;
-			if (this.disposed) return;
-			await this.session.sendCustomMessage(record.payload.message, {
-				triggerTurn: true,
-				deliverAs: record.payload.deliverAs,
-				ticket: record.ticketId,
-			});
-		}
+		await this.replayPending();
+	}
+
+	private async replayPending(): Promise<void> {
+		// Claim this pass before any send can re-enter restore. A rejection schedules only its own
+		// ticket for a later pass; completed or explicitly handed-back tickets stay out.
+		const tickets = this.pendingReplay;
+		this.pendingReplay = new Map();
+		await Promise.all(
+			this.controller.obligations.active.map(async (record) => {
+				if (record.state !== "queued" || !record.payload || !record.ticketId) return;
+				const ticket = record.ticketId;
+				const action = tickets.get(ticket);
+				if (!action) return;
+				if (this.disposed) return;
+				try {
+					if (action === "cancel-duplicate") {
+						this.controller.obligations.cancel(ticket);
+						return;
+					}
+					const message = record.payload.message;
+					if (record.external) {
+						const held = this.host.heldDelivery(ticket);
+						if (held) {
+							markInputTurnOrigin(held.message, record.external.turnMark);
+							const noticeId = held.noticeIds[0];
+							if (noticeId) this.controller.obligations.held(ticket, noticeId);
+							return;
+						}
+						if (record.external.queueOnly && isRecord(message.details)) {
+							const carrier = {
+								...message,
+								role: "custom" as const,
+								details: { ...message.details, ticketId: ticket },
+								timestamp: Date.now(),
+							};
+							markInputTurnOrigin(carrier, record.external.turnMark);
+							if (record.payload.deliverAs === "steer") this.session.agent.steer(carrier);
+							else this.session.agent.followUp(carrier);
+							return;
+						}
+						markInputTurnOrigin(message, record.external.turnMark);
+					}
+					await this.session.sendCustomMessage(message, {
+						triggerTurn: true,
+						deliverAs: record.payload.deliverAs,
+						ticket,
+					});
+				} catch (error) {
+					this.pendingReplay.set(ticket, action);
+					this.host.replayFailed(ticket, error);
+				}
+			}),
+		);
 	}
 
 	private recordInterruptedTools(transcriptEntryId: string | undefined): void {
