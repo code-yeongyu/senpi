@@ -51,6 +51,11 @@ const ID_KEYS = new Set([
 const BLOB_ID_FIELDS = new Set(["conversationState.rootPromptMessagesJson", "conversationState.turns"]);
 /** Ids shorter than this are only tokenized under their key, never searched for inside other text. */
 const EMBEDDED_ID_MIN = 6;
+// A generated id that happens to hold no digit. The session entry id (packages/coding-agent/src/core/session-manager.ts
+// generateId: `randomUUID().slice(0, 8)`) is exactly 8 lowercase hex characters, so about 1 in 2600 has no digit
+// (`bfcdbaee`). A digitless keyed value of any other shape is a fixed fixture name (`call_a`, `call_lazy`, `mock-model`)
+// that the goldens keep literal where it is embedded.
+const RANDOM_HEX_ID = /^[a-f]{8}$/;
 const TIME_KEY = /^(ts|at|since|time|timestamp|date)$|(Time|At|Timestamp|Since)(Ms)?$/;
 // `wall_time_seconds` is the bash tool's structured result field (packages/coding-agent/src/core/tools/bash.ts), the
 // command's wall time rounded to 0.1 s (P0-05e: E28 runs bash through the sandbox example).
@@ -140,15 +145,15 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 		};
 		// An id seen under an id key is the same id wherever else it is embedded (`turnKey: "1:<entry id>"`): it gets the
 		// same token there. Tokens are numbered by first keyed occurrence. An id of at least EMBEDDED_ID_MIN characters
-		// with a digit is replaced anywhere in text. One without a digit (a random hex entry id can have none: `bfcdbaee`)
-		// is replaced only as a whole token (no letter or digit on either side) of a structured value, a string without
-		// whitespace, so a word-like id never masks prose.
+		// with a digit is replaced anywhere in text. A random hex id without a digit (`bfcdbaee`, RANDOM_HEX_ID) is replaced
+		// only as a whole token (no letter or digit on either side) of a structured value, a string without whitespace, so
+		// it never masks prose; other digitless ids are fixture names and stay literal where they are embedded.
 		for (const raw of keyedIds) token("id", raw);
 		const searched = [...maps.id.keys()]
 			.filter((raw) => raw.length >= EMBEDDED_ID_MIN)
 			.sort((a, b) => b.length - a.length);
 		const embedded = searched.filter((raw) => /\d/.test(raw));
-		const digitless = searched.filter((raw) => !/\d/.test(raw));
+		const digitless = searched.filter((raw) => RANDOM_HEX_ID.test(raw));
 		const digitlessToken =
 			digitless.length === 0
 				? undefined

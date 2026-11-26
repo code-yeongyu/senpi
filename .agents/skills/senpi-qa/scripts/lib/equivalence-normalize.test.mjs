@@ -35,23 +35,53 @@ test("an id seen under an id key gets the same token where it is embedded in oth
 	assert.deepEqual(out, [{ id: "<id:1>" }, { turnKey: "1:<id:1>" }, { id: "<id:2>" }, { text: "the reader" }]);
 });
 
-test("a keyed id with no digit is replaced where it is a whole token in a structured value, and prose keeps its words", () => {
+test("a random hex id with no digit is replaced where it is a whole token in a structured value, and prose keeps its words", () => {
 	const normalize = createNormalizer();
 	const out = normalize([
 		{ leafId: "bfcdbaee" },
 		{ turnKey: "1:bfcdbaee" },
-		{ id: "facade" },
-		{ ref: "entry/facade" },
+		{ ref: "entry/bfcdbaee" },
 		{ text: "the facade of bfcdbaee" },
 		{ label: "bfcdbaeef" },
 	]);
 	assert.deepEqual(out, [
 		{ leafId: "<id:1>" },
 		{ turnKey: "1:<id:1>" },
-		{ id: "<id:2>" },
-		{ ref: "entry/<id:2>" },
+		{ ref: "entry/<id:1>" },
 		{ text: "the facade of bfcdbaee" },
 		{ label: "bfcdbaeef" },
+	]);
+});
+
+// The goldens keep fixed fixture ids literal where they are embedded (EQ E01/E04/E06): a digitless keyed value that is
+// not a random hex id is a fixture name, not a generated id.
+test("a digitless keyed fixture name stays literal where it is embedded", () => {
+	const normalize = createNormalizer();
+	const out = normalize([
+		{ id: "call_a" },
+		{ tool_call_id: "call_a" },
+		{ hookRunId: "call_a:PreToolUse:0" },
+		{ id: "call_lazy" },
+		{ tool_call_id: "call_lazy" },
+		{ id: "mock-model" },
+		{ name: "mock-model" },
+		{ id: "facade" },
+		{ ref: "entry/facade" },
+		{ id: "bfcdbaeef" },
+		{ ref: "entry/bfcdbaeef" },
+	]);
+	assert.deepEqual(out, [
+		{ id: "<id:1>" },
+		{ tool_call_id: "call_a" },
+		{ hookRunId: "call_a:PreToolUse:0" },
+		{ id: "<id:2>" },
+		{ tool_call_id: "call_lazy" },
+		{ id: "<id:3>" },
+		{ name: "mock-model" },
+		{ id: "<id:4>" },
+		{ ref: "entry/facade" },
+		{ id: "<id:5>" },
+		{ ref: "entry/bfcdbaeef" },
 	]);
 });
 
