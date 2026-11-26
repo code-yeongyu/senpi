@@ -5,6 +5,7 @@ vi.hoisted(() => {
 	delete process.env.SENPI_PRIVATE_FDS;
 });
 
-import { defineTableShapeSuite } from "./table-shape-suite.ts";
+import { defineTableShapeSuite, warmHelpAnswer } from "./table-shape-suite.ts";
 
+await warmHelpAnswer();
 defineTableShapeSuite("none");

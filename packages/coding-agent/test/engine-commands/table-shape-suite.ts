@@ -119,6 +119,24 @@ async function answerOf(args: readonly string[], stopAtActions: boolean): Promis
 	return { exit: ended.code, stdout: stdout.join(""), stderr: stderr.join("") };
 }
 
+/**
+ * Answers help once before any row runs, so no row pays the first help answer's one-time cost: resolving the
+ * extensions' help flags and loading the modules that does, a cost no test limit should carry (senpi#7522,
+ * senpi#7526). A shape file awaits it at its top level, where collection is not under a test's limit. It asserts
+ * its own answer, so a broken help path fails the file at collection instead of hiding behind a warm-up.
+ */
+export async function warmHelpAnswer(): Promise<void> {
+	const savedExitCode = process.exitCode;
+	process.exitCode = undefined;
+	const answer = await answerOf(["--help"], true);
+	process.exitCode = savedExitCode;
+	const first = firstLine(answer.stdout);
+	if (answer.exit !== 0 || first !== helpScreenFirstLine())
+		throw new Error(
+			`the warm-up help answer was not the help screen: exit ${String(answer.exit)}, first line ${first}`,
+		);
+}
+
 /** One shape's suite: the guard that the shape is the one the module captured, then the generated rows. */
 export function defineTableShapeSuite(shape: TableShape): void {
 	let savedExitCode: typeof process.exitCode;

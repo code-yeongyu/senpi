@@ -5,6 +5,7 @@ vi.hoisted(() => {
 	process.env.SENPI_PRIVATE_FDS = '{"presenter":4,';
 });
 
-import { defineTableShapeSuite } from "./table-shape-suite.ts";
+import { defineTableShapeSuite, warmHelpAnswer } from "./table-shape-suite.ts";
 
+await warmHelpAnswer();
 defineTableShapeSuite("unreadable");
