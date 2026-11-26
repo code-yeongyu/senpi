@@ -25,7 +25,7 @@ import {
 } from "./cli/auth-command.ts";
 import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
-import { classifyInvocation } from "./cli/invocation-class.ts";
+import { classifyInvocation, firstTokenMetaRequest } from "./cli/invocation-class.ts";
 import { LAUNCH_KEY_FAILED_EXIT_CODE, LaunchKeyError, readLaunchKey } from "./cli/launch-key.ts";
 import { createModelListingServices, resolveCliPaths } from "./cli/model-listing.ts";
 import { sessionFlagRefusal } from "./cli/session-flag-refusal.ts";
@@ -1154,6 +1154,30 @@ export function createCliRuntimeFactory(
 	});
 }
 
+/** Prints the help screen from the flags alone and exits 0; never loads the model runtime or a session. */
+async function answerHelp(
+	parsed: Args,
+	cwd: string,
+	agentDir: string,
+	extensionFactories: InlineExtension[],
+): Promise<never> {
+	const projectTrusted = resolveHelpProjectTrust(parsed, cwd, agentDir);
+	const scope = helpFlagsScope(parsed, cwd, agentDir, projectTrusted);
+	const { flags, extensionPaths } = await resolveHelpExtensionFlags({
+		cwd,
+		agentDir,
+		settingsManager: SettingsManager.create(cwd, agentDir, { projectTrusted }),
+		additionalExtensionPaths: resolveCliPaths(cwd, parsed.extensions) ?? [],
+		noExtensions: parsed.noExtensions === true,
+		extensionFactories,
+	});
+	writeHelpFlagsCache({ scope, flags, extensionPaths });
+	return printThenExit(() => {
+		printHelp(flags);
+		printTimings();
+	}, 0);
+}
+
 export async function main(args: string[], options?: MainOptions) {
 	// First statement: seals the slot before any extension or resource path can load code (D11, senpi#4249).
 	const presenterAccountAuthority = takePresenterAccountAuthority();
@@ -1162,6 +1186,11 @@ export async function main(args: string[], options?: MainOptions) {
 	// over when the first statement runs, so it is read from the process clock rather than measured.
 	recordTiming("processStart->main", Math.round(process.uptime() * 1000));
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
+	// Help or version as the first token is answered here, before any branch can start or run anything: the classifier
+	// calls these invocations exempt by the same predicate, so they never read the private table (B10).
+	const metaRequest = firstTokenMetaRequest(args);
+	if (metaRequest === "version") await printThenExit(() => console.log(DISPLAY_VERSION), 0);
+	if (metaRequest === "help") await answerHelp(parseArgs(args), process.cwd(), getAgentDir(), extensionFactories);
 	const offlineMode =
 		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
 	if (offlineMode) {
@@ -1327,28 +1356,11 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
 	reportDiagnostics(collectSettingsDiagnosticsWithContext(startupSettingsManager, "startup session lookup"));
-	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
 
 	// Help is answered from the flags alone, so it stops here instead of continuing into the model
 	// runtime, the session manager and the rest of the resource load. The flags are cached for the
 	// next run, which `cli.ts` then answers before this module is even imported.
-	if (isPlainHelpRequest(parsed)) {
-		const projectTrusted = resolveHelpProjectTrust(parsed, cwd, agentDir);
-		const scope = helpFlagsScope(parsed, cwd, agentDir, projectTrusted);
-		const { flags, extensionPaths } = await resolveHelpExtensionFlags({
-			cwd,
-			agentDir,
-			settingsManager: SettingsManager.create(cwd, agentDir, { projectTrusted }),
-			additionalExtensionPaths: resolvedExtensionPaths ?? [],
-			noExtensions: parsed.noExtensions === true,
-			...(extensionFactories ? { extensionFactories } : {}),
-		});
-		writeHelpFlagsCache({ scope, flags, extensionPaths });
-		await printThenExit(() => {
-			printHelp(flags);
-			printTimings();
-		}, 0);
-	}
+	if (isPlainHelpRequest(parsed)) await answerHelp(parsed, cwd, agentDir, extensionFactories);
 
 	if (parsed.listTips) {
 		const { listTips } = await import("./cli/list-tips.ts");

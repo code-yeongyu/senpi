@@ -58,8 +58,17 @@ export const INVOCATION_CLASSES: Readonly<Record<string, InvocationRow>> = {
 	"host.shardPath": { kind: "reads_table", reason: "default refuse: manages host state" },
 };
 
-/** Help and version exempt only as the first argument: anywhere later the command decides (owner ruling). */
-const FIRST_ONLY: ReadonlySet<string> = new Set(["--help", "-h", "--version", "-v"]);
+/**
+ * The owner's help/version rule: `-h`/`--help` or `-v`/`--version` as the FIRST token is the whole request, whatever
+ * follows (anywhere later the command decides). The classifier's exemption and main()'s early answer are this one
+ * predicate, so an exempt invocation can only ever print help or the version (security design B10, review 6070848877).
+ */
+export function firstTokenMetaRequest(args: readonly string[]): "help" | "version" | undefined {
+	const first = args[0];
+	if (first === "--help" || first === "-h") return "help";
+	if (first === "--version" || first === "-v") return "version";
+	return undefined;
+}
 
 function startsWith(args: readonly string[], words: readonly string[]): boolean {
 	return words.every((word, index) => args[index] === word);
@@ -87,7 +96,7 @@ function names(
  * (subcommand words plus the required flags given, or for a root form its required flag); a tie is exempt only if every tied form is.
  */
 export function classifyInvocation(args: readonly string[]): InvocationClass {
-	if (FIRST_ONLY.has(args[0] ?? "")) return "no_session";
+	if (firstTokenMetaRequest(args) !== undefined) return "no_session";
 	const end = args.indexOf("--");
 	const options = end === -1 ? args : args.slice(0, end);
 	// main() takes the attach branch before the tips branch, so an attach always reads the table (review 6069794971).
