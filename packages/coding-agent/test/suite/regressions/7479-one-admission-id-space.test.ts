@@ -20,11 +20,17 @@ describe("one admission id space for prompts and deliveries (senpi#7479)", () =>
 	const setup = async () => {
 		const fixture = await createIdentityHarness();
 		fixtures.push(fixture);
-		fixture.harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
+		fixture.harness.setResponses([
+			fauxAssistantMessage("one"),
+			fauxAssistantMessage("two"),
+			fauxAssistantMessage("three"),
+		]);
 		const entries = () => fixture.session.sessionManager.getEntries();
 		const userMessages = () => entries().filter((entry) => entry.type === "message" && entry.message.role === "user");
 		const deliveries = () =>
-			entries().filter((entry) => entry.type === "custom_message" && entry.customType === SESSION_CONTROL_DELIVERY_TYPE);
+			entries().filter(
+				(entry) => entry.type === "custom_message" && entry.customType === SESSION_CONTROL_DELIVERY_TYPE,
+			);
 		return { fixture, userMessages, deliveries };
 	};
 

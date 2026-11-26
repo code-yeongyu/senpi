@@ -37,7 +37,7 @@ export interface DeliveryAdmission {
 }
 
 /** The raw id a delivery's ledger key carries: `rpc:local/X` and `device:<id>/X` are both `X`; any other key is itself. */
-export function rawDeliveryId(ledgerId: string): string {
+function rawDeliveryId(ledgerId: string): string {
 	if (ledgerId.startsWith("rpc:local/")) return ledgerId.slice("rpc:local/".length);
 	const device = /^device:[^/]*\//.exec(ledgerId);
 	return device === null ? ledgerId : ledgerId.slice(device[0].length);
