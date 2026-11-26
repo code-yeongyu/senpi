@@ -41,6 +41,7 @@ const REFUSED: ReadonlyArray<readonly string[]> = [
 	["--system-prompt", "--list-tips", "hello"],
 	["--internal-rpc-host-supervisor", "x", "--list-tips"],
 	["--list-tips", "--attach", "unix:///tmp/x.sock", "--session", "s-1"],
+	["--list-tips", "--attach=unix:///tmp/x.sock", "--session", "s-1"],
 	["--system-prompt", "--version", "hello"],
 	["auth", "check", "--help"],
 	["models", "discover", "--help"],
@@ -198,6 +199,35 @@ function valueOptionsOfRootForms(): string[] {
 		),
 	];
 }
+
+describe("every spelling the parser accepts classes the same (review 6070067184)", () => {
+	/** Each option that turns an invocation into a start, and how the parser's own result shows it started. */
+	const STARTS: ReadonlyArray<readonly [string, readonly string[], (args: ReturnType<typeof parseArgs>) => boolean]> =
+		[
+			["print", ["--print", "-p"], (args) => args.print === true],
+			["rpc", ["--mode"], (args) => args.mode === "rpc"],
+			["hand", ["--hand"], (args) => args.hand === true],
+			["headless", ["--headless"], (args) => args.headless === true],
+			["attach", ["--attach"], (args) => args.attach !== undefined],
+		];
+	const value = { print: [], rpc: ["rpc"], hand: [], headless: [], attach: ["unix:///tmp/x.sock"] } as const;
+	const spellings = STARTS.flatMap(([name, flags, started]) =>
+		flags.flatMap((flag) => {
+			const operand: readonly string[] = value[name as keyof typeof value];
+			const joined = flag.startsWith("--") && operand.length > 0 ? [[`${flag}=${operand[0]}`]] : [];
+			return [[flag, ...operand], ...joined].map((spelled) => [name, spelled, started] as const);
+		}),
+	);
+
+	it.each(spellings.map(([name, spelled, started]) => [spelled.join(" "), name, spelled, started] as const))(
+		"--list-tips %s refuses exactly when the parser reads a %s start",
+		(_spelled, _name, spelled, started) => {
+			const args = ["--list-tips", ...spelled, "--session", "s-1"];
+			const parsed = parseArgs([...args]);
+			expect(classifyInvocation(args)).toBe(started(parsed) ? "reads_table" : "no_session");
+		},
+	);
+});
 
 let root: string;
 beforeEach(() => {

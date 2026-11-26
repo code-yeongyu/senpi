@@ -1,10 +1,18 @@
 import type { Args } from "./args.ts";
 
+/** The parser reads `--attach <address>` and `--attach=<address>` alike, through its unknown-flag table. */
+const ATTACH_OPTION = "attach";
+
+/** True for a token the parser reads as the attach option, in either spelling. The classifier shares it. */
+export function isAttachToken(token: string): boolean {
+	return token === `--${ATTACH_OPTION}` || token.startsWith(`--${ATTACH_OPTION}=`);
+}
+
 /** Attachment flags are resolved before mode selection or any local session initialization. */
 export function applyAttachArgs(args: Args): void {
-	const value = args.unknownFlags.get("attach");
+	const value = args.unknownFlags.get(ATTACH_OPTION);
 	if (value === undefined) return;
-	args.unknownFlags.delete("attach");
+	args.unknownFlags.delete(ATTACH_OPTION);
 	const error = (message: string) => args.diagnostics.push({ type: "error", message });
 	if (typeof value !== "string" || value.length === 0) {
 		error("--attach requires a local RPC endpoint address");
