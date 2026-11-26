@@ -1,7 +1,8 @@
 import type { Dirent } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { MachineOpError } from "../errors.ts";
+import { checkIdentityAccess, openToolFile } from "./identity-access.ts";
 import type { GrepMatch, GrepResult } from "../types.ts";
 
 const DEFAULT_LIMIT = 100;
@@ -26,6 +27,7 @@ export async function localGrep(
 	if (!Number.isInteger(effectiveLimit) || effectiveLimit <= 0) {
 		throw new MachineOpError("invalid_argument", "limit must be a positive integer");
 	}
+	await checkIdentityAccess(root);
 	const info = await stat(root);
 	const files: string[] = [];
 	if (info.isFile()) {
@@ -57,8 +59,14 @@ export async function localGrep(
 	const matches: GrepMatch[] = [];
 	for (const file of files) {
 		if (signal.aborted) throw new MachineOpError("aborted", "Operation aborted");
-		if (file !== root && (await stat(file)).size > readMaxBytes) continue;
-		const content = await readFile(file);
+		const handle = await openToolFile(file);
+		let content: Buffer;
+		try {
+			if (file !== root && (await handle.stat()).size > readMaxBytes) continue;
+			content = await handle.readFile();
+		} finally {
+			await handle.close();
+		}
 		if (content.includes(0)) continue;
 		const lines = content.toString("utf8").split("\n");
 		for (let index = 0; index < lines.length; index += 1) {

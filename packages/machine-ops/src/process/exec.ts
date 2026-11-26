@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { MachineOpError } from "../errors.ts";
 import type { ExecRequest, ExecResult, ExecShell, OpContext } from "../types.ts";
+import { IdentityOutputStream } from "./identity-output.ts";
 import { preferExecChildAsOomVictim } from "./oom-score.ts";
 import { newScopeToken, RUNTIME_ENV, SCOPE_ENV, type ScopeRegistry } from "./scopes.ts";
 import { waitForChildProcess } from "./wait-child.ts";
@@ -151,8 +152,17 @@ export async function runExec(req: ExecRequest, ctx: OpContext, deps: ExecDepend
 			kill();
 		}
 	};
-	child.stdout?.on("data", (chunk: Buffer) => onData(chunk, "stdout"));
-	child.stderr?.on("data", (chunk: Buffer) => onData(chunk, "stderr"));
+	for (const stream of ["stdout", "stderr"] as const) {
+		const redactor = new IdentityOutputStream();
+		child[stream]?.on("data", (raw: Buffer) => {
+			const clean = redactor.pushBytes(raw);
+			if (clean.length) onData(clean, stream);
+		});
+		child[stream]?.once("end", () => {
+			const tail = redactor.finish();
+			if (tail) onData(Buffer.from(tail), stream);
+		});
+	}
 	const onAbort = () => {
 		aborted = true;
 		kill();
