@@ -3172,11 +3172,15 @@ export class AgentSession {
 		});
 	}
 
-	/** Emit an event to all listeners */
+	/** RPC publication is best effort: the entry is already committed. */
 	private _emitEntryAppended(entryId: string): void {
 		if (this._extensionMode !== "rpc") return;
-		const entry = this.sessionManager.getEntry(entryId);
-		if (entry) this._emit({ type: "entry_appended", entry });
+		try {
+			const entry = this.sessionManager.getEntry(entryId);
+			if (entry) this._emit({ type: "entry_appended", entry });
+		} catch (error) {
+			this._sessionLogger.warn("entry_appended_notification_failed", { entryId, error: String(error) });
+		}
 	}
 
 	/** Append a transport-provided entry and publish it on the RPC event stream. */
@@ -6868,7 +6872,7 @@ export class AgentSession {
 			// Flush any pending bash messages before the new prompt
 			this._flushPendingBashMessages();
 
-			if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
+			if (this._extensionBindingPromptReadiness === undefined && this._lifecycleBinding.needsRestore)
 				await this._lifecycleBinding.restore();
 			await this._assertModelReadyForTurn();
 
@@ -8719,6 +8723,7 @@ export class AgentSession {
 				this._holdForInterruptedRun({ triggerTurn: true });
 			},
 			factsFailed: (error) => this._sessionLogger.warn("lifecycle_goal_read_failed", { error: String(error) }),
+			replayFailed: (ticket, error) => this._sessionLogger.warn("lifecycle_delivery_replay_failed", { ticket, error: String(error) }),
 		});
 	}
 
@@ -12553,7 +12558,7 @@ export class AgentSession {
 		}
 		await Promise.all(bindingPromptReadiness);
 		if (this._lifecycleBinding.isRestored) await this._lifecycleBinding.refreshFacts();
-		else await this._lifecycleBinding.restore();
+		if (this._lifecycleBinding.needsRestore) await this._lifecycleBinding.restore();
 		this._continueAfterHostRestart();
 	}
 

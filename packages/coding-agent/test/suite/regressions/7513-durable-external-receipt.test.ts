@@ -1,5 +1,6 @@
 import { type FauxResponseStep, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { expect, it, vi } from "vitest";
+import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/session-control-types.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { admitExternalMessage } from "../../../src/modes/rpc/admit-external-message-command.ts";
 import { createHarness, getMessageText, type Harness } from "../harness.ts";
@@ -13,6 +14,103 @@ function nextEvent(h: Harness, type: "session_notice" | "agent_idle"): Promise<v
 		});
 	});
 }
+
+async function reopen(h: Harness): Promise<Harness> {
+	const file = h.sessionManager.getSessionFile();
+	if (!file) throw new Error("expected a persistent session");
+	h.session.dispose();
+	return createHarness({ siblingOf: h, sessionManager: SessionManager.open(file) });
+}
+
+function deliveredBriefs(h: Harness) {
+	return h.sessionManager
+		.getEntries()
+		.flatMap((entry) =>
+			entry.type === "custom_message" && entry.customType === SESSION_CONTROL_DELIVERY_TYPE ? [entry.content] : [],
+		);
+}
+
+// #7513: publication happens after custody has committed, even if the RPC observer fails.
+it("acknowledges committed custody when an entry subscriber throws", async () => {
+	const h = await createHarness({ persistSession: true });
+	await h.session.bindExtensions({ mode: "rpc" });
+	await h.sessionManager.persistHeaderNow();
+	const peer = { connectionOrigin: "local", origin: undefined } as const;
+	const command = {
+		type: "admit_external_message",
+		deliveryId: "once",
+		text: "one brief",
+		deliverAs: "followUp",
+		whenIdle: "queue",
+	} as const;
+	let notifications = 0;
+	const stop = h.session.subscribe((event) => {
+		if (
+			event.type === "entry_appended" &&
+			event.entry.type === "custom" &&
+			event.entry.customType === "work-custody"
+		) {
+			notifications++;
+			throw new Error("subscriber failed after append");
+		}
+	});
+	const receipt = admitExternalMessage(h.session, command, peer);
+	stop();
+	expect(notifications).toBe(1);
+	expect(receipt).toMatchObject({ ok: true, data: { kind: "queued" } });
+	expect(admitExternalMessage(h.session, command, peer)).toMatchObject({ data: { kind: "already_admitted" } });
+	const restored = await reopen(h);
+	expect(restored.session.workObligations.active.filter((record) => record.external)).toHaveLength(1);
+	expect(admitExternalMessage(restored.session, command, peer)).toMatchObject({ data: { kind: "already_admitted" } });
+	restored.setResponses([fauxAssistantMessage("ready"), fauxAssistantMessage("received")]);
+	await restored.session.prompt("take queued work");
+	expect(deliveredBriefs(restored)).toEqual([command.text]);
+});
+
+it.each([false, true])("recovers a delivery id once from duplicate tickets (already written=%s)", async (written) => {
+	const h = await createHarness({ persistSession: true });
+	await h.sessionManager.persistHeaderNow();
+	const input = { delivery_id: "duplicate", text: "one brief", deliverAs: "followUp", whenIdle: "queue" } as const;
+	expect(h.session.externalAdmission.admit(input).kind).toBe("queued");
+	const record = h.session.workObligations.active.find((entry) => entry.external);
+	if (!record) throw new Error("expected external ticket");
+	// A file left by an older receiver that returned a refusal after its first commit.
+	h.sessionManager.appendCustomEntry("work-custody", {
+		...record,
+		sessionId: h.session.sessionId,
+		id: "second",
+		ticketId: "second",
+	});
+	if (written) {
+		h.setResponses([fauxAssistantMessage("ready"), fauxAssistantMessage("received")]);
+		await h.session.prompt("take original");
+	}
+	const restored = await reopen(h);
+	restored.setResponses(Array.from({ length: 3 }, () => fauxAssistantMessage("ack")));
+	await restored.session.prompt("take recovered work");
+	expect(deliveredBriefs(restored)).toEqual([input.text]);
+	expect(restored.session.workObligations.active.filter((entry) => entry.external)).toEqual([]);
+});
+
+// #7513: the sender no longer has either brief. Recovery must settle each separately.
+it("delivers later restored work when the first replay rejects and retries only the failed brief", async () => {
+	const h = await createHarness({ persistSession: true });
+	await h.sessionManager.persistHeaderNow();
+	vi.spyOn(h.session, "sendCustomMessage").mockResolvedValue(undefined);
+	for (const [index, id] of ["first brief", "second brief"].entries()) {
+		expect(h.session.externalAdmission.admit({ delivery_id: id, text: id, deliverAs: "followUp" }).kind).toBe(
+			index === 0 ? "started" : "steered",
+		);
+	}
+	const restored = await reopen(h);
+	restored.setResponses(Array.from({ length: 4 }, () => fauxAssistantMessage("ack")));
+	vi.spyOn(restored.session, "sendCustomMessage").mockRejectedValueOnce(new Error("first replay refused"));
+	await expect(restored.session.bindExtensions({ mode: "rpc" })).resolves.toBeUndefined();
+	expect(deliveredBriefs(restored)).toEqual(["second brief"]);
+	await restored.session.prompt("next input");
+	expect(deliveredBriefs(restored)).toEqual(["second brief", "first brief"]);
+	expect(restored.session.externalAdmission.list()).toEqual({ pending: [], emitted: ["second brief", "first brief"] });
+});
 
 // #7513: the sender drops its copy on a positive receipt. Only the file crosses this boundary.
 it.each(["start", "queue"] as const)(
