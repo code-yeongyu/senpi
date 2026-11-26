@@ -1,4 +1,5 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { readFileSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/session-control-types.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
@@ -10,6 +11,11 @@ import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 const CANARY_A = "CANARY-7479-first-message";
 const CANARY_B = "CANARY-7479-second-message";
 const SENDER = { kind: "agent", session_id: "CANARY-7479-sender-session", name: "CANARY-7479-sender" } as const;
+
+/** One session-file line with every messageDigest key removed, as an engine before the digest wrote it. */
+function withoutDigest(line: string): string {
+	return JSON.stringify(JSON.parse(line), (key, value: unknown) => (key === "messageDigest" ? undefined : value));
+}
 
 describe("one admission id space for prompts and deliveries (senpi#7479)", () => {
 	const fixtures: Awaited<ReturnType<typeof createIdentityHarness>>[] = [];
@@ -105,6 +111,28 @@ describe("one admission id space for prompts and deliveries (senpi#7479)", () =>
 
 		expect(await reopened.send(delivery("x-5", CANARY_A))).toMatchObject({ data: { kind: "already_admitted" } });
 		expect(await reopened.send(delivery("x-5", CANARY_B))).toMatchObject({ data: { kind: "id_conflict" } });
+	});
+
+	it("reads an admission written before the digest existed: the same id answers already admitted, whatever its text", async () => {
+		const { fixture } = await setup();
+		const first = fixture.bind();
+		await first.send({ type: "prompt", message: CANARY_A, clientMessageId: "x-old" });
+		await Promise.all(first.handler.pendingPrompts());
+		await fixture.session.waitForIdle();
+		// An engine before senpi#7479 wrote the admission without messageDigest: take it out of the file as that engine left it.
+		const file = fixture.harness.sessionManager.getSessionFile();
+		if (!file) throw new Error("the fixture has no session file");
+		const written = readFileSync(file, "utf8");
+		const lines = written.split("\n").map((line) => (line.includes('"messageDigest"') ? withoutDigest(line) : line));
+		expect(written).toContain('"messageDigest"');
+		writeFileSync(file, lines.join("\n"));
+		expect(readFileSync(file, "utf8")).not.toContain('"messageDigest"');
+
+		const reopened = await fixture.reopen();
+
+		// No digest to compare by: the id is that admission, so a different text is not refused as a conflict.
+		expect(await reopened.send(delivery("x-old", CANARY_B))).toMatchObject({ data: { kind: "already_admitted" } });
+		expect(await reopened.send(delivery("x-old", CANARY_A))).toMatchObject({ data: { kind: "already_admitted" } });
 	});
 
 	it("admits a delivery again once the engine cleared it unwritten, and runs it once", async () => {
