@@ -19,10 +19,18 @@ describe("host session command", () => {
 			["open", "--cwd", ".", "--model", "anthropic/mock"],
 			{ action: "open", cwd: resolve("."), model: { provider: "anthropic", id: "mock" } },
 		],
+		[
+			["open", "--cwd", ".", "--model", "magpie/group/claude-sonnet-5-5"],
+			{ action: "open", cwd: resolve("."), model: { provider: "magpie", id: "group/claude-sonnet-5-5" } },
+		],
 		[["close", "rpc-1"], { action: "close", ref: "rpc-1" }],
 		[
 			["model", "rpc-1", "anthropic/mock"],
 			{ action: "model", ref: "rpc-1", model: { provider: "anthropic", id: "mock" } },
+		],
+		[
+			["model", "rpc-1", "p/a/b"],
+			{ action: "model", ref: "rpc-1", model: { provider: "p", id: "a/b" } },
 		],
 		[["prompt", "rpc-1", "hello"], { action: "prompt", ref: "rpc-1", text: "hello" }],
 		[["steer", "rpc-1", "hello"], { action: "steer", ref: "rpc-1", text: "hello" }],
@@ -52,7 +60,8 @@ describe("host session command", () => {
 			["bogus"],
 			["open"],
 			["open", "--cwd", ".", "--model", "foo"],
-			["model", "ref", "p/a/b"],
+			["model", "ref", "/id"],
+			["model", "ref", "provider/"],
 			["read", "ref", "--tail", "0"],
 			["read", "ref", "--tail", "1.2"],
 			["wait", "ref", "--until", "later"],
