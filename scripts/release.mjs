@@ -278,7 +278,7 @@ async function main() {
 		log(`dry-run complete; would have prepared v${version}`);
 	} else {
 		log(
-			`prepared v${version}; the tag's Build Binaries run publishes it (it dispatches publish-npm.yml publish-only itself). Dispatch publish-only by hand only to recover a Build Binaries run that failed (senpi#7469).`,
+			`prepared v${version}; the tag's Build Binaries run publishes it (it dispatches publish-npm.yml publish-only itself). If that publish-only run fails, re-run it (gh run rerun <its run id> --failed), which keeps build_run_id so finalize runs again; dispatch publish-only by hand only when Build Binaries itself failed (senpi#7469).`,
 		);
 	}
 }

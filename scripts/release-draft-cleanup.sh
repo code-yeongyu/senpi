@@ -131,12 +131,13 @@ fi
 
 # senpi#7469: when this release had a dispatched publish run that failed, another publish run of the same version may
 # have published it (a duplicate run that met the registry's lag, as in 2026.11.25). The draft is orphaned only if no
-# publish-npm.yml run of the version succeeded; never delete one another run published.
+# publish-npm.yml run of the version succeeded; never delete one another run published. Only a successful dispatched
+# "publish-only" run that is not a "dry-run" publishes (run-name); the stamp run and dry runs carry the version too.
 if [[ -n "${PUBLISH_RUN_ID}" ]]; then
 published_cmd="gh run list --workflow publish-npm.yml --event workflow_dispatch --limit 30"
 if ! published_runs="$("${GH_BIN}" run list --workflow publish-npm.yml --event workflow_dispatch --limit 30 \
-	--json databaseId,displayTitle,conclusion \
-	--jq "[.[] | select(.conclusion == \"success\" and (.displayTitle | split(\" \") | any(. == \"${version}\"))) | .databaseId | tostring] | join(\" \")" 2>/dev/null)"; then
+	--json databaseId,displayTitle,conclusion,event \
+	--jq "[.[] | select(.conclusion == \"success\" and .event == \"workflow_dispatch\") | select(.displayTitle | split(\" \") | (any(. == \"${version}\") and any(. == \"publish-only\") and (any(. == \"dry-run\") | not))) | .databaseId | tostring] | join(\" \")" 2>/dev/null)"; then
 	keep_for_publish_run "the publish-npm.yml runs could not be listed" "${published_cmd}"
 fi
 if [[ -n "${published_runs}" ]]; then

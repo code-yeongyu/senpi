@@ -1,6 +1,7 @@
 name: Release
-# senpi#7469: the version is in the run title, so the draft cleanup can see whether any run already published it.
-run-name: Release ${{ inputs.version || 'auto' }}${{ inputs.publish-only && ' publish-only' || '' }}
+# senpi#7469: the version is in the run title, so the draft cleanup and the publisher guard can see which run published it.
+# Only a "publish-only" run that is not a "dry-run" publishes; the stamp run and dry runs carry the version too.
+run-name: Release ${{ inputs.version || 'auto' }}${{ inputs.publish-only && ' publish-only' || '' }}${{ inputs.dry_run && ' dry-run' || '' }}
 
 'on':
   workflow_dispatch:
@@ -105,8 +106,11 @@ jobs:
       # ref guard, so off main it is refused even as a dry run.
       # senpi#7469: a tag push runs Build Binaries, which dispatches this tag's publish-only run itself (with build_run_id).
       # A second, manual publish-only run of the same tag races it, and the loser's finalize used to delete the draft
-      # GitHub Release on registry lag. A manual run is for recovering a Build Binaries run that failed, so it is refused
-      # while one for the tag is queued, running or has succeeded. It runs before anything is checked out or published.
+      # GitHub Release on registry lag. A manual run is refused while a Build Binaries run for the tag (a tag push, or a
+      # dispatched recovery run titled with the tag) is in flight, and while another publish-only run of the version is in
+      # flight or has published it. When Build Binaries succeeded but its publish-only run failed, the recovery is to re-run
+      # that run (it keeps build_run_id, so finalize runs again), which the refusal names. It runs before anything is
+      # checked out or published.
       - name: Refuse a second publisher for the tag
         if: inputs.publish-only == true && inputs.build_run_id == '' && inputs.dry_run != true
         env:
@@ -115,10 +119,29 @@ jobs:
           RELEASE_TAG: v${{ inputs.version }}
         run: |
           set -euo pipefail
-          runs="$(gh run list --workflow build-binaries.yml --branch "${RELEASE_TAG}" --limit 20 --json databaseId,status,conclusion \
-            --jq '[.[] | select(.status != "completed" or .conclusion == "success") | .databaseId | tostring] | join(" ")')"
-          if [ -n "${runs}" ]; then
-            echo "::error::Build Binaries run(s) ${runs} for ${RELEASE_TAG} publish this tag themselves (senpi#7469); a manual publish-only run is only for recovering a Build Binaries run that failed." >&2
+          export RELEASE_VERSION="${RELEASE_TAG#v}"
+          # A Build Binaries run for the tag: a tag push (head_branch is the tag) or a dispatched recovery (titled with it).
+          build="$(gh run list --workflow build-binaries.yml --limit 50 --json databaseId,status,conclusion,headBranch,displayTitle \
+            --jq '[.[] | select(.headBranch == $ENV.RELEASE_TAG or (.displayTitle | split(" ") | any(. == $ENV.RELEASE_TAG)))]
+              | {running: ([.[] | select(.status != "completed") | .databaseId | tostring] | join(" ")),
+                 succeeded: ([.[] | select(.conclusion == "success") | .databaseId | tostring] | join(" "))} | "\(.running)|\(.succeeded)"')"
+          # Another publish-only run of the version that is not a dry run and not this run.
+          publish="$(gh run list --workflow publish-npm.yml --event workflow_dispatch --limit 50 --json databaseId,status,conclusion,displayTitle \
+            --jq '[.[] | select(.databaseId != ($ENV.GITHUB_RUN_ID | tonumber))
+                    | select(.displayTitle | split(" ") | (any(. == $ENV.RELEASE_VERSION) and any(. == "publish-only") and (any(. == "dry-run") | not)))]
+              | {live: ([.[] | select(.status != "completed" or .conclusion == "success") | .databaseId | tostring] | join(" ")),
+                 failed: (([.[] | select(.status == "completed" and .conclusion != "success") | .databaseId] | max // "") | tostring)} | "\(.live)|\(.failed)"')"
+          build_running="${build%%|*}"; build_succeeded="${build#*|}"; publish_live="${publish%%|*}"; publish_failed="${publish#*|}"
+          if [ -n "${build_running}" ]; then
+            echo "::error::Build Binaries run(s) ${build_running} for ${RELEASE_TAG} are still running; each dispatches this tag's publish-only run itself (senpi#7469)." >&2
+            exit 1
+          fi
+          if [ -n "${publish_live}" ]; then
+            echo "::error::publish-only run(s) ${publish_live} of ${RELEASE_VERSION} are running or already published it (senpi#7469)." >&2
+            exit 1
+          fi
+          if [ -n "${build_succeeded}" ] && [ -n "${publish_failed}" ]; then
+            echo "::error::Build Binaries run(s) ${build_succeeded} for ${RELEASE_TAG} succeeded and their publish-only run ${publish_failed} failed: recover with 'gh run rerun ${publish_failed} --failed' (it keeps build_run_id, so finalize runs again), not a second publish-only dispatch (senpi#7469)." >&2
             exit 1
           fi
 
