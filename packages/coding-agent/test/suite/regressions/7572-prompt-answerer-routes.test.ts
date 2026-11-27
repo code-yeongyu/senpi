@@ -13,6 +13,10 @@ import type { Peer, WireRecord } from "../rpc-delegated-peer.ts";
 type Runtime = "in-process" | "worker";
 
 let host: DelegatedHost | undefined;
+function live(): DelegatedHost {
+	if (host === undefined) throw new Error("no host is running");
+	return host;
+}
 afterEach(async () => {
 	await host?.dispose();
 	host = undefined;
@@ -82,19 +86,19 @@ describe.each<Runtime>(["in-process", "worker"])("#7572 who answers a run's prom
 	it("leaves a run that did not ask for the rule as it was: no key, and an attached client's answer settles the prompt", async () => {
 		const run = await runWithPendingPrompt(runtime, { designatedAnswerer: false });
 		expect(run.answerKey).toBeUndefined();
-		const other = await host!.proven();
+		const other = await live().proven();
 		const otherLog = new FrameLog(other);
 		expect(
 			await other.send({ type: "attach_session", sessionId: run.sessionId, durableSessionId: run.durableSessionId }),
 		).toMatchObject({ success: true, data: { answerer: true } });
 		expect(await settle(otherLog, other, run.sessionId, answer(run, "Allow once"))).toContain(PROBE_TEXT);
-	}, 120_000);
+	});
 
 	it("refuses an attached client without the key, keeps the prompt, and makes a client attached with the key the answerer", async () => {
 		const run = await runWithPendingPrompt(runtime);
 		const attach = { type: "attach_session", sessionId: run.sessionId, durableSessionId: run.durableSessionId };
 
-		const stranger = await host!.proven();
+		const stranger = await live().proven();
 		expect(await stranger.send(attach)).toMatchObject({ success: true, data: { answerer: false } });
 		expect(await stranger.send(answer(run, "Allow once"))).toMatchObject({
 			success: false,
@@ -104,21 +108,21 @@ describe.each<Runtime>(["in-process", "worker"])("#7572 who answers a run's prom
 		expect(await stranger.send(attach)).toMatchObject({ data: { answerer: false } });
 		expect(await stranger.send({ ...attach, answerKey: "not-the-key" })).toMatchObject({ data: { answerer: false } });
 
-		const holder = await host!.proven();
+		const holder = await live().proven();
 		const holderLog = new FrameLog(holder);
 		expect(await holder.send({ ...attach, answerKey: run.answerKey })).toMatchObject({
 			success: true,
 			data: { answerer: true },
 		});
 		expect(await settle(holderLog, holder, run.sessionId, answer(run, "Allow once"))).toContain(PROBE_TEXT);
-	}, 120_000);
+	});
 
 	it("takes one answer carrying the key, and asks a reconnect after a drop for the key again", async () => {
 		const run = await runWithPendingPrompt(runtime, { retain_on_disconnect: true });
-		await host!.drop(run.opener);
+		await live().drop(run.opener);
 		const attach = { type: "attach_session", sessionId: run.sessionId, durableSessionId: run.durableSessionId };
 
-		const back = await host!.proven();
+		const back = await live().proven();
 		const backLog = new FrameLog(back);
 		expect(await back.send(attach)).toMatchObject({ success: true, data: { answerer: false } });
 		expect(await back.send(answer(run, "Deny"))).toMatchObject({
@@ -129,5 +133,5 @@ describe.each<Runtime>(["in-process", "worker"])("#7572 who answers a run's prom
 		expect(
 			await settle(backLog, back, run.sessionId, answer(run, "Deny", { answerKey: run.answerKey })),
 		).not.toContain(PROBE_TEXT);
-	}, 120_000);
+	});
 });

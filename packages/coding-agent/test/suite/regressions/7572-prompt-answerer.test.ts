@@ -154,5 +154,5 @@ describe("#7572 only the designated answerer resolves a session's prompts", () =
 			`${JSON.stringify({ type: "extension_ui_response", sessionId: session.sessionId, id: readDialog.id, value: "Allow once" })}\n`,
 		);
 		expect(JSON.stringify(await ended)).toContain(PROBE_TEXT);
-	}, 120_000);
+	});
 });

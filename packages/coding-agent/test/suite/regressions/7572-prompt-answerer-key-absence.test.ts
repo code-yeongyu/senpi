@@ -112,5 +112,5 @@ describe("#7572 the answer key never leaves the opener and the host's memory", (
 		expect(Object.values(process.env).filter((value) => value?.includes(key))).toEqual([]);
 		const descriptors = await readFile(join(cwd, "child-fds.txt"), "utf8");
 		expect(descriptors).not.toContain(join(host.scratch, "s"));
-	}, 120_000);
+	});
 });

@@ -13,6 +13,10 @@ import { FrameLog, PROBE_TEXT, permissionHost, probeTurns } from "../rpc-delegat
 import type { Peer, WireRecord } from "../rpc-delegated-peer.ts";
 
 let host: DelegatedHost | undefined;
+function live(): DelegatedHost {
+	if (host === undefined) throw new Error("no host is running");
+	return host;
+}
 afterEach(async () => {
 	await host?.dispose();
 	host = undefined;
@@ -58,7 +62,7 @@ describe("#7572 a designated-answerer run across a host handover", () => {
 	it("reopens with no answerer, detectably, refuses every answer, and a close and reopen takes a new key", async () => {
 		const run = await handedOver(true);
 		const attach = { type: "attach_session", sessionId: run.sessionId, durableSessionId: run.durableSessionId };
-		const client = await host!.proven();
+		const client = await live().proven();
 		const log = new FrameLog(client);
 		expect(await client.send({ ...attach, answerKey: run.first.answerKey })).toMatchObject({
 			success: true,
@@ -82,7 +86,7 @@ describe("#7572 a designated-answerer run across a host handover", () => {
 
 		expect(await client.send({ type: "close_session", sessionId: run.sessionId })).toMatchObject({ success: true });
 		// The close ended the first turn inside its call, so its scripted reply was never taken: start the script again.
-		host!.faux.setResponses(probeTurns(4));
+		live().faux.setResponses(probeTurns(4));
 		const reopened = await client.send({
 			type: "open_session",
 			sessionPath: run.first.state.sessionFile,
@@ -100,11 +104,11 @@ describe("#7572 a designated-answerer run across a host handover", () => {
 			`${JSON.stringify({ type: "extension_ui_response", sessionId: fresh.sessionId, id: again.id, value: "Allow once" })}\n`,
 		);
 		expect(JSON.stringify(await ended)).toContain(PROBE_TEXT);
-	}, 120_000);
+	});
 
 	it("reopens a record an older engine wrote (no flag) with the rule off, as before", async () => {
 		const run = await handedOver(true, true);
-		const client = await host!.proven();
+		const client = await live().proven();
 		const log = new FrameLog(client);
 		expect(
 			await client.send({
@@ -119,5 +123,5 @@ describe("#7572 a designated-answerer run across a host handover", () => {
 			`${JSON.stringify({ type: "extension_ui_response", sessionId: run.sessionId, id: dialog.id, value: "Allow once" })}\n`,
 		);
 		expect(JSON.stringify(await ended)).toContain(PROBE_TEXT);
-	}, 120_000);
+	});
 });
