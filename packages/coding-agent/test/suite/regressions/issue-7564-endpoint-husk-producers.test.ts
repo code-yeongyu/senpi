@@ -15,6 +15,7 @@ import {
 	generationPaths,
 	HostDaemonStateError,
 } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { writeHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { createSessionPathReservations, reservationFile } from "../../../src/modes/rpc/host-reservations.ts";
 
 const roots: string[] = [];
@@ -66,6 +67,24 @@ describe("writers never recreate a removed endpoint directory", () => {
 		await createGenerationDirectory(generation);
 
 		expect(await readdir(generation.dir)).toEqual(["scratch"]);
+	});
+
+	it("a registration, which holds the ensure lock, creates its endpoint before endpoint.json as the TUI registrant does", async () => {
+		const { agentDir, paths } = endpoint();
+
+		await writeHostRegistration(
+			paths,
+			{
+				record: { pid: process.pid, processStartTime: null },
+				socket: join(agentDir, "s", "e.sock"),
+				instanceId: "g-1",
+				generation: 0,
+				launchProfileId: "tui",
+			},
+			{ fresh: true },
+		);
+
+		await expect(stat(generationPaths(paths, "g-1").pidFile)).resolves.toBeDefined();
 	});
 
 	it("a generation directory against a removed endpoint is refused and creates nothing", async () => {
