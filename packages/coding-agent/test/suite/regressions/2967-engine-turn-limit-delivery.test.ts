@@ -36,8 +36,8 @@ describe("senpi#2967 a cross-session delivery refused by the engine-turn limit",
 		});
 		await drain(harness);
 
-		// then it started no turn, but it is in the session and no longer pending
-		expect(result.kind).toBe("started");
+		// then it started no turn and is answered held with the cap (senpi#7138), but it is in the session and no longer pending
+		expect(result).toMatchObject({ kind: "held", engine_turn_cap: { reason: "cap-per-message", count: 1 } });
 		expect(harness.faux.getCallLog()).toHaveLength(2);
 		expect(harness.session.externalAdmission.list()).toEqual({ pending: [], emitted: ["d-1", "d-2"] });
 	});
