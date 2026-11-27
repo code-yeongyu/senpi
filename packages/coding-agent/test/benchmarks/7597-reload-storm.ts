@@ -1,5 +1,8 @@
-// Run with Bun from the checkout. The isolated stdio RPC host shares one global extension directory.
-// Compare the host watchdog's summed drift (>1 ms) over the rewrite through the following heartbeat.
+// Run with Bun from the checkout: `bun packages/coding-agent/test/benchmarks/7597-reload-storm.ts [sessions] [runs]`.
+// Each run starts a fresh isolated stdio RPC host whose sessions share one global extension directory, rewrites a
+// generated shim, then writes a user extension. Reload count and peak concurrent reloads come from the config-reload
+// log. Block time is the host watchdog's summed drift (>1 ms) over the change through the following heartbeat; one
+// run of it is noise, so the summary reports the minimum across runs.
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -8,119 +11,150 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { JsonlPeer } from "../helpers/rpc-jsonl-peer.ts";
 
+type Kind = "generated" | "authored";
+type Measurement = { kind: Kind; reloads: number; peakConcurrentReloads: number; totalBlockMs: number };
+
 const sessions = Number(process.argv[2] ?? 8);
+const runs = Number(process.argv[3] ?? 5);
 if (!Number.isSafeInteger(sessions) || sessions < 1) throw new Error("Expected a positive session count");
-const root = mkdtempSync(join(tmpdir(), "reload-bench-"));
-const agentDir = join(root, "agent");
-mkdirSync(agentDir, { mode: 0o700 });
-writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ enabledBuiltinExtensions: ["config-reload"] }));
+if (!Number.isSafeInteger(runs) || runs < 1) throw new Error("Expected a positive run count");
 const cli = resolve(import.meta.dirname, "../../src/cli.ts");
 const provider = resolve(import.meta.dirname, "3110-scripted-provider.ts");
-const host = spawn(
-	process.execPath,
-	[
-		cli,
-		"--mode",
-		"rpc",
-		"--multi-session",
-		"--session-runtime",
-		"in-process",
-		"-e",
-		provider,
-		"--provider",
-		"bench3110",
-		"--model",
-		"m1",
-		"--no-skills",
-		"--no-context-files",
-	],
-	{
-		cwd: root,
-		env: {
-			PATH: process.env.PATH,
-			HOME: root,
-			TMPDIR: process.env.TMPDIR,
-			NODE_COMPILE_CACHE: process.env.NODE_COMPILE_CACHE,
-			BUN_RUNTIME_TRANSPILER_CACHE_PATH: process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH,
-			SENPI_CODING_AGENT_DIR: agentDir,
-			SENPI_TELEMETRY_DISABLED: "1",
-			PI_OFFLINE: "1",
-			SENPI_RPC_LOOP_LAG_WARN_MS: "1",
-			SENPI_RPC_LOOP_LAG_ERROR_MS: "1",
+
+async function runOnce(): Promise<Measurement[]> {
+	const root = mkdtempSync(join(tmpdir(), "reload-bench-"));
+	const agentDir = join(root, "agent");
+	mkdirSync(agentDir, { mode: 0o700 });
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ enabledBuiltinExtensions: ["config-reload"] }));
+	const host = spawn(
+		process.execPath,
+		[
+			cli,
+			"--mode",
+			"rpc",
+			"--multi-session",
+			"--session-runtime",
+			"in-process",
+			"-e",
+			provider,
+			"--provider",
+			"bench3110",
+			"--model",
+			"m1",
+			"--no-skills",
+			"--no-context-files",
+		],
+		{
+			cwd: root,
+			env: {
+				PATH: process.env.PATH,
+				HOME: root,
+				TMPDIR: process.env.TMPDIR,
+				NODE_COMPILE_CACHE: process.env.NODE_COMPILE_CACHE,
+				BUN_RUNTIME_TRANSPILER_CACHE_PATH: process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH,
+				SENPI_CODING_AGENT_DIR: agentDir,
+				SENPI_TELEMETRY_DISABLED: "1",
+				PI_OFFLINE: "1",
+				SENPI_RPC_LOOP_LAG_WARN_MS: "1",
+				SENPI_RPC_LOOP_LAG_ERROR_MS: "1",
+			},
+			stdio: ["pipe", "pipe", "inherit"],
 		},
-		stdio: ["pipe", "pipe", "inherit"],
-	},
-);
-const exited = once(host, "close");
-const peer = new JsonlPeer(host.stdout, (line) => host.stdin.write(line));
-const log = join(agentDir, "logs", "config-reload.log");
-function events() {
-	return readFileSync(log, "utf8")
-		.trim()
-		.split("\n")
-		.map((line) => String(JSON.parse(line).event));
+	);
+	const exited = once(host, "close");
+	const peer = new JsonlPeer(host.stdout, (line) => host.stdin.write(line));
+	const log = join(agentDir, "logs", "config-reload.log");
+	const events = () =>
+		readFileSync(log, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => String(JSON.parse(line).event));
+
+	async function measure(kind: Kind, rewrite: () => void): Promise<Measurement> {
+		const baseline = events().length;
+		const firstMessage = peer.messages.length;
+		rewrite();
+		const deadline = performance.now() + 90_000;
+		for (;;) {
+			await delay(50);
+			const records = events().slice(baseline);
+			if (
+				records.filter((event) => event === "generated_shim_change_suppressed" || event === "reload_completed")
+					.length >= sessions
+			)
+				break;
+			if (performance.now() >= deadline)
+				throw new Error(`Missing watcher decisions for ${kind}: ${records.join(", ")}`);
+		}
+		await delay(1000);
+		let active = 0;
+		let peak = 0;
+		let reloads = 0;
+		for (const event of events().slice(baseline)) {
+			if (event === "reload_requested") {
+				reloads++;
+				peak = Math.max(peak, ++active);
+			}
+			if (event === "reload_completed") active--;
+		}
+		if (active !== 0) throw new Error("A requested reload has not completed");
+		const totalBlockMs = peer.messages
+			.slice(firstMessage)
+			.reduce((sum, message) => sum + (message.type === "host_stalled" ? Number(message.driftMs) : 0), 0);
+		return { kind, reloads, peakConcurrentReloads: peak, totalBlockMs };
+	}
+
+	try {
+		for (let index = 0; index < sessions; index++) {
+			const response = await peer.request(
+				{ id: `open-${index}`, type: "open_session", cwd: root, persist: true },
+				60_000,
+			);
+			if (!response.success) throw new Error(`open_session failed: ${response.error}`);
+		}
+		const shim = join(agentDir, "extensions", "diff.js");
+		const original = readFileSync(shim, "utf8");
+		return [
+			await measure("generated", () =>
+				writeFileSync(
+					shim,
+					original.replace(/^\/\/ Generated by .*?\. Delete/, "// Generated by Alternate.Product. Delete"),
+				),
+			),
+			await measure("authored", () =>
+				writeFileSync(join(agentDir, "extensions", "user.js"), "export default () => {};\n"),
+			),
+		];
+	} finally {
+		peer.close();
+		host.kill("SIGTERM");
+		const timer = setTimeout(() => host.kill("SIGKILL"), 5000);
+		try {
+			await exited;
+		} finally {
+			clearTimeout(timer);
+			rmSync(root, { recursive: true, force: true });
+		}
+	}
 }
 
-async function measure(kind: "generated" | "authored", rewrite: () => void) {
-	const baseline = events().length;
-	const firstMessage = peer.messages.length;
-	rewrite();
-	const deadline = performance.now() + 90_000;
-	for (;;) {
-		await delay(50);
-		const records = events().slice(baseline);
-		if (
-			records.filter((event) => event === "generated_shim_change_suppressed" || event === "reload_completed")
-				.length >= sessions
-		)
-			break;
-		if (performance.now() >= deadline)
-			throw new Error(`Missing watcher decisions for ${kind}: ${records.join(", ")}`);
+const results: Measurement[] = [];
+for (let run = 1; run <= runs; run++) {
+	for (const measurement of await runOnce()) {
+		console.log(JSON.stringify({ run, sessions, ...measurement }));
+		results.push(measurement);
 	}
-	await delay(1000);
-	let active = 0;
-	let peak = 0;
-	let count = 0;
-	for (const event of events().slice(baseline)) {
-		if (event === "reload_requested") {
-			count++;
-			peak = Math.max(peak, ++active);
-		}
-		if (event === "reload_completed") active--;
-	}
-	if (active !== 0) throw new Error("A requested reload has not completed");
-	const totalBlockMs = peer.messages
-		.slice(firstMessage)
-		.reduce((sum, message) => sum + (message.type === "host_stalled" ? Number(message.driftMs) : 0), 0);
-	console.log(JSON.stringify({ kind, sessions, reloads: count, peakConcurrentReloads: peak, totalBlockMs }));
 }
-try {
-	for (let index = 0; index < sessions; index++) {
-		const response = await peer.request(
-			{ id: `open-${index}`, type: "open_session", cwd: root, persist: true },
-			60_000,
-		);
-		if (!response.success) throw new Error(`open_session failed: ${response.error}`);
-	}
-	const shim = join(agentDir, "extensions", "diff.js");
-	const original = readFileSync(shim, "utf8");
-	await measure("generated", () =>
-		writeFileSync(
-			shim,
-			original.replace(/^\/\/ Generated by .*?\. Delete/, "// Generated by Alternate.Product. Delete"),
-		),
+for (const kind of ["generated", "authored"] as const) {
+	const ofKind = results.filter((measurement) => measurement.kind === kind);
+	console.log(
+		JSON.stringify({
+			summary: kind,
+			sessions,
+			runs,
+			reloads: [...new Set(ofKind.map((measurement) => measurement.reloads))],
+			peakConcurrentReloads: Math.max(...ofKind.map((measurement) => measurement.peakConcurrentReloads)),
+			minTotalBlockMs: Math.min(...ofKind.map((measurement) => measurement.totalBlockMs)),
+		}),
 	);
-	await measure("authored", () =>
-		writeFileSync(join(agentDir, "extensions", "user.js"), "export default () => {};\n"),
-	);
-} finally {
-	peer.close();
-	host.kill("SIGTERM");
-	const timer = setTimeout(() => host.kill("SIGKILL"), 5000);
-	try {
-		await exited;
-	} finally {
-		clearTimeout(timer);
-		rmSync(root, { recursive: true, force: true });
-	}
 }
