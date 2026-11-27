@@ -11,6 +11,7 @@ import { getPendingQuestions } from "../../../src/core/extensions/builtin/ask-us
 import type {
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionFactory,
 	QuestionResponse,
 	ToolDefinition,
 } from "../../../src/core/extensions/types.ts";
@@ -41,11 +42,16 @@ export interface AskUserDelivery {
 
 export const ASYNC_QUESTIONS = [{ header: "Library", question: "Which library?", multiSelect: false }];
 
-export async function createAskUserDelivery(timeoutMinutes = 30): Promise<AskUserDelivery> {
+/** `leading` extensions load ahead of ask-user, as builtins registered before it do in the host. */
+export async function createAskUserDelivery(
+	timeoutMinutes = 30,
+	leading: readonly ExtensionFactory[] = [],
+): Promise<AskUserDelivery> {
 	const deliveries: DeliveredMessage[] = [];
 	const wakeEvents: unknown[] = [];
 	let api: ExtensionAPI | undefined;
 	const factories = [
+		...leading.map((factory) => ({ factory })),
 		{
 			factory: (pi: ExtensionAPI) => {
 				api = pi;

@@ -35,6 +35,20 @@ export interface EngineTurnStop {
 	readonly toolFreeInWindow: number;
 }
 
+/** The `engine-paused` reason a stop records, and the count it stopped at (senpi#7138: read by admission, state and Resume). */
+export interface EngineTurnCap {
+	readonly reason: "cap-per-resume-window" | "cap-per-message" | "cap-per-minute";
+	readonly count: number;
+}
+
+export function engineTurnCapOf(stop: EngineTurnStop): EngineTurnCap {
+	if (stop.reason === "tool-free-rate") return { reason: "cap-per-minute", count: stop.toolFreeInWindow };
+	return {
+		reason: stop.reason === "resume-window" ? "cap-per-resume-window" : "cap-per-message",
+		count: stop.sinceUserInput,
+	};
+}
+
 export function engineTurnLimitNotice(stop: EngineTurnStop): string {
 	if (stop.reason === "resume-window") {
 		return `Paused: the agent started ${stop.sinceUserInput} turns on its own in this resume window. Send any message to continue.`;
