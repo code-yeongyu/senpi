@@ -133,5 +133,5 @@ describe.skipIf(process.platform === "win32")("an idle handover asked by another
 			else process.env.SENPI_RPC_KEY_ROOT = saved;
 		}
 		await expectStillServing(host);
-	}, 120_000);
+	});
 });
