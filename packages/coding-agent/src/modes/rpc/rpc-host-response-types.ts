@@ -80,6 +80,8 @@ export type RpcHostCommandResponse =
 				answerer?: boolean;
 				/** The new run's answer key, in this reply only: keep it in memory, never in a file or the environment. */
 				answerKey?: string;
+				/** Why nobody can answer the run: the host reopened it after a handover (close and reopen for a new key). */
+				answererUnavailable?: "host_handover";
 			};
 	  }
 	| { id?: string; type: "response"; command: "close_session"; success: true; data: Record<string, never> }

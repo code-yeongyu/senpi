@@ -4,7 +4,11 @@
  * worker isolate.
  */
 import type { OpenRpcSession } from "./session-registry.ts";
-import { DESIGNATED_ANSWERER_BY_DEFAULT, RPC_ERROR_PROMPT_ANSWERER_REQUIRED } from "./prompt-answerer.ts";
+import {
+	type AnswererUnavailable,
+	DESIGNATED_ANSWERER_BY_DEFAULT,
+	RPC_ERROR_PROMPT_ANSWERER_REQUIRED,
+} from "./prompt-answerer.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
@@ -32,20 +36,33 @@ export function designateOpener(
 	if (key !== undefined) mintedKeys.set(opened, key);
 }
 
+type AnswererFields = {
+	readonly answerer: boolean;
+	readonly answerKey?: string;
+	readonly answererUnavailable?: AnswererUnavailable;
+};
+
+function answererFields(host: RouterContext, sessionId: string, answerer: boolean): AnswererFields {
+	const unavailable = host.answerers.unavailable(sessionId);
+	return unavailable === undefined ? { answerer } : { answerer, answererUnavailable: unavailable };
+}
+
 /**
- * The answerer fields of an open or claim reply. A reopen the host makes on its own (no reply) leaves the run with no
- * answerer; a run whose opener has no connection identity (stdio) is designated here, where that open replies.
+ * The answerer fields of an open or claim reply. A reopen the host makes on its own (no reply) of a run that asked for
+ * the rule leaves it with no answerer, detectably (`answererUnavailable`); one that did not ask stays without the rule.
+ * A run whose opener has no connection identity (stdio) is designated here, where that open replies.
  */
 export function openReplyAnswerer(
 	host: RouterContext,
 	opened: OpenRpcSession,
 	reply: boolean,
 	designated: boolean | undefined,
-): { readonly answerer: boolean; readonly answerKey?: string } {
+): AnswererFields {
 	const owner = host.writer.currentConnection();
 	if (!reply) {
-		host.answerers.openUnanswered(opened.sessionId);
-		return { answerer: false };
+		if (designated === true) host.answerers.openAfterHandover(opened.sessionId);
+		else host.answerers.forgetSession(opened.sessionId);
+		return answererFields(host, opened.sessionId, designated !== true);
 	}
 	if (!opened.attached) {
 		const wanted = designated ?? DESIGNATED_ANSWERER_BY_DEFAULT;
@@ -54,15 +71,14 @@ export function openReplyAnswerer(
 	}
 	const answerKey = mintedKeys.get(opened);
 	mintedKeys.delete(opened);
-	return {
-		answerer: host.answerers.isAnswerer(opened.sessionId, owner, attached(host, owner, opened.sessionId)),
-		...(answerKey === undefined ? {} : { answerKey }),
-	};
+	const answerer = host.answerers.isAnswerer(opened.sessionId, owner, attached(host, owner, opened.sessionId));
+	return { ...answererFields(host, opened.sessionId, answerer), ...(answerKey === undefined ? {} : { answerKey }) };
 }
 
 /** `attach_session`: a caller presenting the run's key becomes its answerer; the reply says whether it is one. */
-export function attachAnswerer(host: RouterContext, owner: string, sessionId: string, key: unknown): boolean {
-	return host.answerers.present(sessionId, owner, key, attached(host, owner, sessionId));
+export function attachAnswerer(host: RouterContext, owner: string, sessionId: string, key: unknown): AnswererFields {
+	const answerer = host.answerers.present(sessionId, owner, key, attached(host, owner, sessionId));
+	return answererFields(host, sessionId, answerer);
 }
 
 /**
@@ -80,9 +96,15 @@ export function answererGate(host: RouterContext, command: RpcCommand): RpcRespo
 	const key: unknown = Reflect.get(command, "answerKey");
 	if (host.answerers.admits(sessionId, connection, attached(host, connection, sessionId), key)) return undefined;
 	const id: unknown = Reflect.get(command, "id");
+	const handover = host.answerers.unavailable(sessionId) === "host_handover";
 	return error(typeof id === "string" ? id : undefined, type, RPC_ERROR_PROMPT_ANSWERER_REQUIRED, {
-		reason: "only this run's designated answerer answers its prompts",
-		action: "answer from the client that opened the run, or attach_session with its answerKey",
+		reason: handover ? "host_handover" : "not_answerer",
+		detail: handover
+			? "the host reopened this run after a handover, so no client holds its key"
+			: "only this run's designated answerer answers its prompts",
+		action: handover
+			? "close_session and open_session again to take a new answerKey"
+			: "answer from the client that opened the run, or attach_session with its answerKey",
 	});
 }
 

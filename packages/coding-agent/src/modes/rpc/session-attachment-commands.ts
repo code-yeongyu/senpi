@@ -114,14 +114,14 @@ export function attachSession(
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
-	const answerer = (): boolean => attachAnswerer(host, owner, command.sessionId, command.answerKey);
+	const answerer = () => attachAnswerer(host, owner, command.sessionId, command.answerKey);
 	if (command.takeover === true)
 		return takeOver(host, command, owner, () => attachWithState(host, owner, command.sessionId)).then(
 			async (reply) => {
 				if (!reply.success) return reply;
 				const unconfirmed = await confirmAttachTelemetry(host, owner, command);
 				if (unconfirmed !== undefined) return unconfirmed;
-				return reply.command === "attach_session" ? { ...reply, data: { ...reply.data, answerer: answerer() } } : reply;
+				return reply.command === "attach_session" ? { ...reply, data: { ...reply.data, ...answerer() } } : reply;
 			},
 		);
 	if (command.admissionId !== undefined && host.admissions) {
@@ -160,7 +160,7 @@ export function attachSession(
 				type: "response",
 				command: command.type,
 				success: true,
-				data: { sessionId: command.sessionId, attached: true, answerer: answerer() },
+				data: { sessionId: command.sessionId, attached: true, ...answerer() },
 			},
 	);
 }

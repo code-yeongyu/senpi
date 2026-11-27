@@ -22,10 +22,14 @@ export const DESIGNATED_ANSWERER_BY_DEFAULT = false;
 /** The answerer of a host with no per-connection identity (stdio): its one client opened every run. */
 const SOLE_CLIENT = "\u0000sole-client";
 
+/** Why a run that asked for the rule has no answerer at all: the host reopened it after a handover. */
+export type AnswererUnavailable = "host_handover";
+
 interface Run {
 	/** Absent for a run the host reopened on its own: nobody holds a key for it. */
 	readonly digest: Buffer | undefined;
 	readonly designated: Set<string>;
+	readonly unavailable?: AnswererUnavailable;
 }
 
 function digestOf(key: string): Buffer {
@@ -49,9 +53,14 @@ export class PromptAnswerers {
 		return key;
 	}
 
-	/** A run the host reopened with no requesting connection: no key exists, so no client can answer it. */
-	openUnanswered(sessionId: string): void {
-		this.runs.set(sessionId, { digest: undefined, designated: new Set() });
+/** A run that asked for the rule, reopened by the host after a handover: no key exists, so no client answers it. */
+	openAfterHandover(sessionId: string): void {
+		this.runs.set(sessionId, { digest: undefined, designated: new Set(), unavailable: "host_handover" });
+	}
+
+	/** Why nobody can answer this run, when that is the case. */
+	unavailable(sessionId: string): AnswererUnavailable | undefined {
+		return this.runs.get(sessionId)?.unavailable;
 	}
 
 	/** Whether `key` is this run's key. A run without a key, or a missing or malformed key, never matches. */

@@ -47,6 +47,8 @@ export type RpcAttachmentResponse =
 				readonly released?: number;
 				/** Whether this connection answers the run's prompts now (senpi#7572). */
 				readonly answerer?: boolean;
+				/** Why nobody can answer the run: the host reopened it after a handover (close and reopen for a new key). */
+				readonly answererUnavailable?: "host_handover";
 			};
 	  }
 	| {
