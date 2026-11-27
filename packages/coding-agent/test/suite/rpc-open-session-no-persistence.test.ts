@@ -158,7 +158,7 @@ it("advertises session_persistence_none in get_protocol_info", async () => {
 	expect(info.capabilities).toContain("session_persistence_none");
 });
 
-it("marks a memory-only session's list_sessions row persistence none, and only that one", async () => {
+it("marks a memory-only session's list_sessions row persistence none, and still counts it as a live session", async () => {
 	await using host = await contextHost();
 	const ephemeral = responseData(
 		await host.send("conn-a", wire({ type: "open_session", cwd: host.cwd, persistence: "none" })),
@@ -166,8 +166,11 @@ it("marks a memory-only session's list_sessions row persistence none, and only t
 	const persisted = await host.open("conn-a", {});
 
 	const rows = sessionRows(await host.send("conn-a", { type: "list_sessions" }));
+	// A non-forced host stop counts exactly these rows (`probeSessionCount`): a memory-only session keeps it refused.
+	const counted = sessionRows(await host.send("conn-a", { type: "list_sessions", include_workers: true }));
 
 	expect(rows.find((row) => row.sessionId === ephemeral.sessionId)?.persistence).toBe("none");
+	expect(counted.map((row) => row.sessionId)).toContain(ephemeral.sessionId);
 	expect(rows.find((row) => row.sessionId === persisted.sessionId)).not.toHaveProperty("persistence");
 });
 
