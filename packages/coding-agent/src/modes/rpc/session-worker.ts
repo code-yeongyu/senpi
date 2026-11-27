@@ -419,6 +419,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			binding?.cancelPendingExtensionUiRequests?.();
 			send({ type: "control_done", control: "cancel_ui" });
 			return;
+		case "answerer_presence":
+			binding?.setAnswererPresence?.(message.present);
+			return;
 		case "close":
 			closing = true;
 			unsubscribe?.();

@@ -138,6 +138,8 @@ export type HostToSessionWorker =
 	| { type: "telemetry_callers"; request: number; verdict: TelemetryCallersVerdict }
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
+	/** senpi#7572: whether one of the run's designated answerers is attached; the flag only, never the key. */
+	| { type: "answerer_presence"; present: boolean }
 	| { type: "cancel_grant"; id: string }
 	| { type: "cancel_secret"; id: string }
 	/** A sealed answer the host authenticated (D11 secret phase 5.5); the isolate runs 7.1 steps 3 and 6 on it. */
