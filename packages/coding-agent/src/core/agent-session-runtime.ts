@@ -28,6 +28,7 @@ import { assertSessionCwdExists } from "./session-cwd.ts";
 import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
 import { holdSessionFile, type SessionHold } from "./session-holders.ts";
 import { SessionManager } from "./session-manager.ts";
+import type { SessionPersona } from "./session-persona.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
@@ -78,6 +79,8 @@ export interface AgentSessionLaunchProfile {
 	 * another session on the host or the user's settings. Absent means the host's settings decide.
 	 */
 	retryFallback?: SessionRetryFallbackProfile;
+	/** Per-session instructions and tool policy (`open_session.persona`); they narrow the host's own flags. */
+	persona?: SessionPersona;
 	/**
 	 * Per-session caller env (`open_session.env`, senpi#4381): the variables THIS session's tool
 	 * subprocesses see on top of the process environment. Never the host's own, never another session's.

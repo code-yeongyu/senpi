@@ -107,6 +107,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
+import { personaToolsUnsupported, withSessionPersona } from "./core/session-persona.ts";
 import { assertValidSessionId, SessionManager, sessionFileNameId } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
@@ -114,7 +115,8 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { startOpenTimer } from "./core/open-timing.ts";
-import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
+import { armStartupStallNotice, isStdioRpcLaunch, RPC_STARTUP_STALL_DEADLINE_MS } from "./core/startup-stall-notice.ts";
+import { lastTimedPhase, printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import {
 	getSavedProjectTrustState,
 	hasTrustRequiringProjectResources,
@@ -1096,6 +1098,7 @@ export function createCliRuntimeFactory(
 				noContextFiles: parsed.noContextFiles,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
+				appendSystemPromptText: launchProfile?.persona?.appendSystemPrompt,
 				extensionFactories,
 			},
 		});
@@ -1147,11 +1150,20 @@ export function createCliRuntimeFactory(
 		// Multi-session opens carry their per-session startup choices here rather
 		// than through process argv. This deliberately feeds the same resolver as
 		// --provider/--model/--thinking, preserving classic flag semantics.
+		if (
+			personaToolsUnsupported(launchProfile?.persona, {
+				...parsed,
+				defaultTools: settingsManager.getDefaultTools(),
+			})
+		)
+			throw new Error(
+				"persona_tools_unsupported: this host restricts its built-in tools by default (--no-builtin-tools or settings defaultTools) without --tools, so open_session.persona.tools cannot be applied without risking a wider tool set",
+			);
 		const runtimeParsed: Args =
 			launchProfile === undefined
 				? parsed
 				: {
-						...parsed,
+						...withSessionPersona(parsed, launchProfile.persona),
 						...(launchProfile.creationModel === undefined
 							? {}
 							: {
@@ -1250,6 +1262,15 @@ export async function main(args: string[], options?: MainOptions) {
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.
 	recordTiming("processStart->main", Math.round(process.uptime() * 1000));
+	// A stdio RPC client sees nothing until startup ends, so a stall names its last phase on stderr (senpi#7556).
+	const rpcStartupStall = isStdioRpcLaunch(args)
+		? armStartupStallNotice({
+				deadlineMs: RPC_STARTUP_STALL_DEADLINE_MS,
+				label: `${APP_NAME} rpc`,
+				lastPhase: lastTimedPhase,
+				write: (line) => void process.stderr.write(line),
+			})
+		: undefined;
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
 	const offlineMode =
 		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
@@ -1761,6 +1782,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
+		rpcStartupStall?.ready();
 		await runRpcMode(runtime, toolRuntime);
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the

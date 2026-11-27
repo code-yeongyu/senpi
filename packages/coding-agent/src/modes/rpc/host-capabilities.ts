@@ -38,6 +38,7 @@ import {
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
+	SESSION_PERSONA_CAPABILITY,
 	TELEMETRY_CONSENT_CAPABILITY,
 	SESSION_ENV_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
@@ -134,6 +135,7 @@ export function multiSessionHostCapabilities(options: {
 			SESSION_MODEL_SCOPE_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
+			"session_row_hold",
 			RESUME_SESSION_CAPABILITY,
 			ATTENDED_CAPABILITY,
 			// `get_state`/`get_entries` marked `observe` never attach, and history reads page backward too (senpi#4267).
@@ -205,6 +207,8 @@ export function multiSessionHostCapabilities(options: {
 			SESSION_ENV_CAPABILITY,
 			// Each session's fallback chain is its own in-memory settings override, never the host's file.
 			RETRY_FALLBACK_PROFILE_CAPABILITY,
+			// Each session's instructions and tool policy narrow its own runtime, held on its launch profile (omo#13057).
+			SESSION_PERSONA_CAPABILITY,
 			// Each session's telemetry is decided from the host's setting and its own callers' answers (senpi#7446).
 			TELEMETRY_CONSENT_CAPABILITY,
 			ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
