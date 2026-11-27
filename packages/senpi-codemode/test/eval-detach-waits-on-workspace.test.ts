@@ -27,9 +27,9 @@ describe("a cell detached while the workspace scan holds it (senpi#7535)", () =>
 		const writtenFiles = new WrittenFiles({
 			cwd: harness.workspace.cwd,
 			artifactsDir: harness.workspace.absolute("artifacts"),
-			git: async (args) => {
+			git: async (args, options) => {
 				await scanHeld.opened;
-				return await harness.workspace.git(args);
+				return await harness.workspace.git(args, options);
 			},
 			fs: harness.workspace.fs,
 		});
