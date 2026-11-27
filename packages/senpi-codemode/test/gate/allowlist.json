@@ -7259,6 +7259,13 @@
 			],
 			"reason": "senpi#7032 (oh-my-openagent#14291): contract test that the eval description names the session's eval-only tools within Claude Code's 4096-char MCP description cap even when the rest of the description is longer, by putting that line right after the first sentence. It passed in main's CI measurement. No prompt cell moves (240/240 match the baseline).",
 			"changes": []
+		},
+		"senpi#7472": {
+			"additions": [
+				"legacyContracts/test/py-kernel.test.ts/PythonKernel live a held interpreter past the stall threshold gets exactly one diagnostic bundle and keeps running"
+			],
+			"reason": "senpi#7472 (senpi#3600 diagnostics): the new live test drives the test-only stall watch (test/py-kernel/stall-diagnostics.ts) with a held interpreter past a 300 ms threshold and asserts exactly one bundle with the event history, the stdio record, the thread state and the py-spy attempt. It runs in the Windows kernel job, where the bundle is uploaded as the py-kernel-stall-diagnostics artifact. No product module and no prompt cell change.",
+			"changes": []
 		}
 	}
 }

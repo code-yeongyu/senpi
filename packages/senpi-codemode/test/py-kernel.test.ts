@@ -1,11 +1,15 @@
 // allow: SIZE_OK — parity cases stay beside the live kernel harness they exercise.
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type BridgeHttpCallRequest, startBridgeServer } from "../src/bridge/http-server.ts";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { createInterpreterDetector } from "../src/interpreters/detect.ts";
 import { type KernelSpawnOptions, PythonKernel } from "../src/kernels/py/kernel.ts";
+import { splitCommand } from "../src/kernels/py/process.ts";
 import { FakeChild, hasPython3, liveKernel, runCell } from "./py-kernel/fixtures.ts";
+import { DEFAULT_DIAGNOSTICS_DIRECTORY, watchLiveKernel } from "./py-kernel/stall-diagnostics.ts";
 
 describe("PythonKernel transport", () => {
 	it("prelude speaks the loopback bridge server HTTP contract", async () => {
@@ -57,6 +61,60 @@ describe("PythonKernel transport", () => {
 });
 
 describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
+	// senpi#3600: the stall watch must be seen to fire. On the Windows CI job its bundle lands in the uploaded artifact.
+	it("a held interpreter past the stall threshold gets exactly one diagnostic bundle and keeps running", async () => {
+		// Given: the kernel's own spawn path, watched with a short threshold, running an interpreter that never progresses
+		const onWindowsCi = process.platform === "win32" && process.env.GITHUB_ACTIONS === "true";
+		const directory = onWindowsCi ? DEFAULT_DIAGNOSTICS_DIRECTORY : await mkdtemp(join(tmpdir(), "py-stall-"));
+		const label = "forced-stall-self-test";
+		const watch = watchLiveKernel(label, { force: true, stallMs: 300, checkEveryMs: 50, directory });
+		if (watch === undefined) throw new Error("a forced watch is always created");
+		const detected = await createInterpreterDetector().detect("py");
+		if (!detected.ok) throw new Error("python unavailable");
+		const { command, args } = splitCommand(detected.path);
+		const held = watch.spawnProcess({
+			command,
+			args: [...args, "-c", "import sys, time; print('held', flush=True); time.sleep(120)"],
+			cwd: process.cwd(),
+			env: process.env,
+		});
+		let heldExited = false;
+		const exited = new Promise<void>((resolve) =>
+			held.once("exit", () => {
+				heldExited = true;
+				resolve();
+			}),
+		);
+		try {
+			// When: it makes no progress past the threshold
+			const file = await watch.bundle;
+
+			// Then: one bundle for this interpreter, naming what it was doing, and the interpreter was left alone
+			const pid = held.pid;
+			const ours = (await readdir(directory)).filter((name) => name.startsWith(`${label}-${pid}-`));
+			expect(ours).toEqual([basename(file)]);
+			const report = JSON.parse(await readFile(file, "utf8"));
+			expect(report).toMatchObject({ label, stalledForMs: 300, children: [{ pid }] });
+			expect(report.events).toEqual(
+				expect.arrayContaining([expect.stringMatching(`spawn pid ${pid}$`), expect.stringMatching(/ stdout$/)]),
+			);
+			const [state] = report.interpreters;
+			expect(state.pid).toBe(pid);
+			if (process.platform === "linux")
+				expect(state.stdio).toMatchObject({ fd0: expect.stringMatching(/^(NUL|pipe)$/), fd1: "pipe", fd2: "pipe" });
+			else expect(state.stdio.unavailable).toContain(process.platform);
+			expect(state.pyspy.command).toContain(`--pid ${pid}`);
+			if (state.pyspy.available) expect(typeof state.pyspy.exitCode).toBe("number");
+			else expect(state.pyspy.output).toContain("py-spy not available");
+			if (onWindowsCi)
+				expect(state.pyspy, JSON.stringify(state.pyspy)).toMatchObject({ available: true, exitCode: 0 });
+			expect(heldExited, "the watch never touches the interpreter").toBe(false);
+		} finally {
+			held.kill();
+			await exited;
+		}
+	});
+
 	it("persists state across cells and reset clears it", async () => {
 		const kernel = await liveKernel();
 		try {
