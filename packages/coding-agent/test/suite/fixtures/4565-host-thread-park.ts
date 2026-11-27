@@ -59,14 +59,18 @@ for (const name of [
 fs.realpathSync.native = park("realpathSync.native", fs.realpathSync.native);
 
 // The trigger is the only automount this host knows of; the view is read once before anything is decided.
-answerAutomountTriggersFrom(async () => ({
-	mounts: [
-		{ mountPoint: "/", type: "ext4" },
-		{ mountPoint: trigger, type: "autofs" },
-	],
-	aliases: new Map(),
-	caseInsensitive: false,
-}));
+answerAutomountTriggersFrom(
+	async () => ({
+		mounts: [
+			{ mountPoint: "/", type: "ext4" },
+			{ mountPoint: trigger, type: "autofs" },
+		],
+		aliases: new Map(),
+		caseInsensitive: false,
+	}),
+	{},
+	{ platform: "darwin" },
+);
 await automountTriggerPath("/");
 
 const agentDir = join(root, "agent");
@@ -103,7 +107,7 @@ const authorizer = createDispatchAuthorizer(
 );
 const ctx = { cwd: projectDir, sessionManager: undefined } as unknown as ExtensionContext;
 
-const socket = join(root, "host.sock");
+const socket = join(process.argv[5] ?? root, "host.sock");
 const server = createServer((connection) => {
 	process.stdout.write("accepted\n");
 	connection.end();

@@ -1,10 +1,6 @@
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-	answerAutomountTriggersFrom,
-	defaultTriggerView,
-	type MountView,
-} from "../../../../machine-ops/src/files/automount-trigger.ts";
+import { answerAutomountTriggersFrom, type MountView } from "../../../../machine-ops/src/files/automount-trigger.ts";
 import { existsAtName } from "../../../src/core/extensions/builtin/permission-system/auto-paths.ts";
 import { createDispatchAuthorizer } from "../../../src/core/extensions/builtin/permission-system/dispatch-policy.ts";
 import { createLocalEventEmitter } from "../../../src/core/extensions/builtin/permission-system/events.ts";
@@ -65,11 +61,7 @@ beforeAll(() => {
 	originals.set("realpathSync.native", native);
 	Reflect.set(realpath, "native", record("realpathSync.native", native));
 	syncBuiltinESMExports();
-	restoreView = answerAutomountTriggersFrom(
-		() => new Promise<MountView>(() => {}),
-		{},
-		{ fallback: defaultTriggerView("darwin") },
-	);
+	restoreView = answerAutomountTriggersFrom(() => new Promise<MountView>(() => {}), {}, { platform: "darwin" });
 });
 
 afterAll(() => {

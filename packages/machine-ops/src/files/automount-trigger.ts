@@ -147,14 +147,25 @@ interface ActiveTriggers {
 	/** The view the latest finished read returned: what the synchronous check answers from. */
 	settled: MountView | undefined;
 	readonly fallback: MountView | undefined;
+	/** Whether the synchronous check refuses anything: only where a lookup of an unanswered trigger parks the thread. */
+	readonly refusesSync: boolean;
+}
+
+/** What {@link answerAutomountTriggersFrom} may replace besides the view and the resolver. */
+export interface AutomountTriggerBounds {
+	readonly helpers?: AutomountHelperPoolOptions;
+	/** The view the synchronous check answers from before the first read; defaults to the platform's default map. */
+	readonly fallback?: MountView;
+	/** The platform whose synchronous-check policy applies; defaults to this process's. */
+	readonly platform?: NodeJS.Platform;
 }
 
 function activeFrom(
 	readView: () => Promise<MountView>,
 	resolve: AutomountRealpathOptions,
-	fallback: MountView | undefined,
-	helpers: AutomountHelperPoolOptions = {},
+	bounds: AutomountTriggerBounds,
 ): ActiveTriggers {
+	const platform = bounds.platform ?? process.platform;
 	const state: ActiveTriggers = {
 		lookup: createAutomountTriggerLookup(async () => {
 			const view = await readView();
@@ -162,9 +173,10 @@ function activeFrom(
 			return view;
 		}),
 		resolve,
-		helpers: createAutomountHelperPool(realpathOutOfProcess, helpers),
+		helpers: createAutomountHelperPool(realpathOutOfProcess, bounds.helpers),
 		settled: undefined,
-		fallback,
+		fallback: bounds.fallback ?? defaultTriggerView(platform),
+		refusesSync: platform === "darwin",
 	};
 	return state;
 }
@@ -174,22 +186,21 @@ export function defaultTriggerView(platform: NodeJS.Platform = process.platform)
 	return platform === "darwin" ? DARWIN_DEFAULT_VIEW : undefined;
 }
 
-let active = activeFrom(readMountView, {}, defaultTriggerView());
+let active = activeFrom(readMountView, {}, {});
 
 /**
  * Make {@link automountTriggerPath} answer from `readView` instead of the live mount table, and
- * {@link realpathUnderAutomount} resolve with `resolve` under `bounds.helpers` (limit, unanswered window, clock),
- * with `bounds.fallback` answering the synchronous check before the first read, until the returned function restores
- * the previous state. Tests use it to stand a temporary directory in for a trigger;
+ * {@link realpathUnderAutomount} resolve with `resolve` under `bounds` (helper limits, the synchronous check's
+ * fallback view and platform), until the returned function restores the previous state. Tests use it to stand a temporary directory in for a trigger;
  * the live table cannot be written.
  */
 export function answerAutomountTriggersFrom(
 	readView: () => Promise<MountView>,
 	resolve: AutomountRealpathOptions = {},
-	bounds: { readonly helpers?: AutomountHelperPoolOptions; readonly fallback?: MountView } = {},
+	bounds: AutomountTriggerBounds = {},
 ): () => void {
 	const previous = active;
-	active = activeFrom(readView, resolve, bounds.fallback, bounds.helpers);
+	active = activeFrom(readView, resolve, bounds);
 	return () => {
 		active = previous;
 	};
@@ -223,13 +234,18 @@ export function automountTriggerPath(path: string): Promise<string | undefined> 
  * A synchronous `lstat`/`stat`/`readdir`/`realpath` of a path under a trigger whose automounter does not answer never
  * returns and parks the whole process, so such a path must be answered "not on this machine" before any of them runs.
  *
- * It answers from the view the latest finished read returned, without touching the filesystem or waiting. Before the
- * first read has finished, macOS answers from the automounter's default map and other platforms find no trigger. A view
- * older than the lookup's maximum age starts a background re-read, so a trigger that mounted since stops being refused
- * once that read lands.
+ * Only macOS refuses: there a lookup under an automount whose automounter does not answer blocks in the kernel, and
+ * `/home` is such a trigger by default. On Linux a lookup under an autofs mount point mounts it (an indirect `/home`,
+ * `/net`, a systemd automount after its idle unmount), so a path there stays an ordinary path and nothing is refused.
+ *
+ * It answers from the view the latest finished read returned, and never waits or looks at the path itself. Before the
+ * first read has finished it answers from the automounter's default map. A view older than the lookup's maximum age
+ * starts a background re-read (macOS reads the table with `mount` in a child process), so a trigger that mounted since
+ * stops being refused once that read lands.
  */
 export function automountTriggerPathSync(path: string): string | undefined {
 	const state = active;
+	if (!state.refusesSync) return undefined;
 	// The lookup re-reads the view only when its last read is stale, and the root is never under a trigger.
 	state.lookup(sep).catch(() => undefined);
 	const view = state.settled ?? state.fallback;

@@ -32,7 +32,7 @@ const homeView: MountView = {
 describe("automountTriggerPathSync before and after the first mount-table read", () => {
 	it("answers a macOS /home, /net and /Network/Servers path from the automounter's default map before any read lands", () => {
 		// Given a host whose first mount-table read has not finished
-		restores.push(answerAutomountTriggersFrom(never, {}, { fallback: defaultTriggerView("darwin") }));
+		restores.push(answerAutomountTriggersFrom(never, {}, { platform: "darwin" }));
 
 		// When / Then: the default map's triggers are refused, everything else is left alone
 		expect(automountTriggerPathSync("/home/someone/omo-runs/run-a/t4.done")).toBe(
@@ -45,13 +45,20 @@ describe("automountTriggerPathSync before and after the first mount-table read",
 		expect(automountTriggerPathSync("/tmp/x")).toBeUndefined();
 	});
 
-	it("refuses nothing on Linux before the first read, and a /home on a real filesystem stays valid after it", async () => {
-		// Given a Linux host before its first read
+	it("refuses nothing on Linux, before or after the first read, even under an unmounted autofs /home", async () => {
+		// Given a Linux host whose /home is an indirect autofs map (a lookup there mounts it) and no read yet
 		restores.push(
 			answerAutomountTriggersFrom(
-				async () => ({ mounts: [{ mountPoint: "/", type: "ext4" }], aliases: new Map(), caseInsensitive: false }),
+				async () => ({
+					mounts: [
+						{ mountPoint: "/", type: "ext4" },
+						{ mountPoint: "/home", type: "autofs" },
+					],
+					aliases: new Map(),
+					caseInsensitive: false,
+				}),
 				{},
-				{ fallback: defaultTriggerView("linux") },
+				{ platform: "linux" },
 			),
 		);
 		expect(defaultTriggerView("linux")).toBeUndefined();
@@ -60,14 +67,16 @@ describe("automountTriggerPathSync before and after the first mount-table read",
 		// When the table has been read
 		await automountTriggerPath("/");
 
-		// Then /home is still an ordinary path
+		// Then /home is still an ordinary path for the synchronous check, while the async route still knows the trigger
 		expect(automountTriggerPathSync("/home/me/project/file.ts")).toBeUndefined();
+		expect(() => refuseUnmountedAutomountPath("/home/me/project/file.ts")).not.toThrow();
+		expect(await automountTriggerPath("/home/me/project/file.ts")).toBe("/home/me/project/file.ts");
 	});
 
 	it("answers from the latest read once it lands, so a trigger that mounted is no longer refused", async () => {
 		// Given a view with an unmounted trigger, read once
 		let view = homeView;
-		restores.push(answerAutomountTriggersFrom(async () => view));
+		restores.push(answerAutomountTriggersFrom(async () => view, {}, { platform: "darwin" }));
 		await automountTriggerPath("/");
 		expect(automountTriggerPathSync("/automount-home/alice/x")).toBe("/automount-home/alice/x");
 
@@ -80,7 +89,7 @@ describe("automountTriggerPathSync before and after the first mount-table read",
 	});
 
 	it("throws a typed error for a refused path instead of probing it", async () => {
-		restores.push(answerAutomountTriggersFrom(async () => homeView));
+		restores.push(answerAutomountTriggersFrom(async () => homeView, {}, { platform: "darwin" }));
 		await automountTriggerPath("/");
 		expect(() => refuseUnmountedAutomountPath("/automount-home/alice/x")).toThrow(
 			expect.objectContaining({ code: UNMOUNTED_AUTOMOUNT, path: "/automount-home/alice/x" }),

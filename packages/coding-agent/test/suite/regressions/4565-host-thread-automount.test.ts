@@ -16,8 +16,8 @@ interface Child {
 	next(matches: (line: string) => boolean, label: string): Promise<string>;
 }
 
-function start(root: string): Child {
-	const child = spawn("bun", [fixture, root, TRIGGER, `${TRIGGER}/someone/omo-runs/run-a`], {
+function start(root: string, socketDir: string): Child {
+	const child = spawn("bun", [fixture, root, TRIGGER, `${TRIGGER}/someone/omo-runs/run-a`, socketDir], {
 		cwd: join(import.meta.dirname, "..", "..", ".."),
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -71,7 +71,10 @@ describe("4565 an automount path in a tool call never parks the host thread", ()
 		// Given a host thread with an accept loop, a heartbeat and a filesystem that parks under the trigger
 		const root = mkdtempSync(join(tmpdir(), "senpi-4565-"));
 		roots.push(root);
-		const child = start(root);
+		// A unix socket path must stay under the platform limit, which a long TMPDIR exceeds.
+		const socketDir = mkdtempSync("/tmp/s4565-");
+		roots.push(socketDir);
+		const child = start(root, socketDir);
 		children.push(child.process);
 		const socket = (await child.next((line) => line.startsWith("ready "), "ready")).slice("ready ".length);
 
@@ -81,10 +84,14 @@ describe("4565 an automount path in a tool call never parks the host thread", ()
 
 		// Then the decision completes, a new connection is accepted and the heartbeat advances
 		const accepted = child.next((line) => line === "accepted", "accept");
-		connect(socket).on("error", () => {});
+		const client = connect(socket);
+		const connectFailed = new Promise<string>((resolve) =>
+			client.once("error", (error) => resolve(`connect failed: ${error.message}`)),
+		);
 		child.process.stdin.write("tick\n");
 		const beat = child.next((line) => /^beat [1-9]\d*$/.test(line), "heartbeat after the clock moved");
-		const events = await Promise.allSettled([decided, accepted, beat]);
+		const events = await Promise.allSettled([decided, Promise.race([accepted, connectFailed]), beat]);
+		client.destroy();
 		expect(events.map((event) => (event.status === "fulfilled" ? event.value : String(event.reason)))).toEqual([
 			expect.stringMatching(/^decided (ask|allow|deny)$/),
 			"accepted",
