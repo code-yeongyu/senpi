@@ -638,6 +638,13 @@ export class ModelConfig {
 		return this.disabledProviders.has(providerId) || this.providers.get(providerId)?.disabled === true;
 	}
 
+	/** This config keeping `previous`'s disabled providers: a models.json that fails to load never re-enables one (senpi#3503). */
+	keepingDisabledProvidersOf(previous: ModelConfig): ModelConfig {
+		const disabled = new Set(previous.disabledProviders);
+		for (const [providerId, provider] of previous.providers) if (provider.disabled === true) disabled.add(providerId);
+		return new ModelConfig(this.providers, disabled, this.error, this.warnings);
+	}
+
 	getError(): string | undefined {
 		return this.error;
 	}

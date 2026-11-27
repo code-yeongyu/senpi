@@ -252,6 +252,7 @@ export type {
 	ToolAnnotations,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolCallReadyEvent,
 	ToolDefinition,
 	ToolExecutionEndEvent,
 	ToolExecutionMode,
@@ -302,6 +303,11 @@ export {
 	kernelToolsStorage,
 } from "./core/extensions/kernel-tools-context.ts";
 export { ReservedCustodyKey } from "./core/extensions/lifecycle-api.ts";
+export type {
+	ReportedToolResult,
+	ReportedToolResultFailure,
+	ReportedToolResultOutcome,
+} from "./core/extensions/reported-tool-result.ts";
 // Notice primitives
 export {
 	buildNoticeBox,

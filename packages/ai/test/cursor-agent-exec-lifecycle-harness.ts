@@ -1,5 +1,6 @@
 import * as http2 from "node:http2";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import { vi } from "vitest";
 import { AgentClientMessageSchema, AgentServerMessageSchema } from "../src/api/cursor-agent/gen/agent_pb.ts";
 import type { CursorAgentOptions, CursorExecHandlers } from "../src/api/cursor-agent/types.ts";
 import { frameConnectMessage, stream as streamCursorAgent } from "../src/api/cursor-agent.ts";
@@ -120,8 +121,31 @@ async function observeServerTask(task: Promise<void>): Promise<unknown> {
 	}
 }
 
+export const STREAM_HEALTH_THRESHOLD_MS = 50;
+const CHECKPOINTED_TEXT = "checkpointed";
+const HEARTBEAT_GAP_MS = 20;
+const HEARTBEAT_COUNT = 5;
+
+/**
+ * Resolves once the client has handled every frame written so far. The write
+ * callback puts the frame on the socket ahead of the PING, the client acks the
+ * PING only after consuming those bytes, and its synchronous `data` handler
+ * runs before this same-process server can read the ack.
+ */
+async function clientConsumed(httpStream: http2.ServerHttp2Stream, frame: Buffer): Promise<void> {
+	await new Promise<void>((resolve, reject) =>
+		httpStream.write(frame, (error) => (error ? reject(error) : resolve())),
+	);
+	const session = httpStream.session;
+	if (!session) throw new Error("Expected an open HTTP/2 session");
+	await new Promise<void>((resolve, reject) => {
+		session.ping((error) => (error ? reject(error) : resolve()));
+	});
+}
+
 export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 	readonly attempts: number;
+	readonly heartbeatSpanMs: number;
 	readonly actions: readonly ("userMessageAction" | "resumeAction" | undefined)[];
 	readonly message: AssistantMessage;
 }> {
@@ -129,6 +153,7 @@ export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 	const sessions = new Set<http2.ServerHttp2Session>();
 	const actions: ("userMessageAction" | "resumeAction" | undefined)[] = [];
 	let attempts = 0;
+	let heartbeatSpanMs = 0;
 	server.on("session", (session) => {
 		sessions.add(session);
 		session.once("close", () => sessions.delete(session));
@@ -147,9 +172,12 @@ export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 			const actionCase = runRequest.message.value.action?.action.case;
 			actions.push(actionCase === "userMessageAction" || actionCase === "resumeAction" ? actionCase : undefined);
 			if (mode === "heartbeatOnly") {
-				for (let index = 0; index < 5; index += 1) {
-					httpStream.write(heartbeatFrame());
-					await new Promise<void>((resolve) => setTimeout(resolve, 20));
+				// The clock moves only after the client handled each heartbeat, so every
+				// gap it sees stays below the threshold while the span exceeds it.
+				for (let index = 0; index < HEARTBEAT_COUNT; index += 1) {
+					await clientConsumed(httpStream, heartbeatFrame());
+					await vi.advanceTimersByTimeAsync(HEARTBEAT_GAP_MS);
+					heartbeatSpanMs += HEARTBEAT_GAP_MS;
 				}
 				httpStream.write(textDeltaFrame("alive"));
 				httpStream.write(turnEndedFrame());
@@ -157,6 +185,7 @@ export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 			}
 			if (mode === "checkpointResume" && attempt === 1) {
 				httpStream.write(checkpointFrame());
+				httpStream.write(textDeltaFrame(CHECKPOINTED_TEXT));
 				return;
 			}
 			if (mode === "checkpointResume") {
@@ -167,24 +196,34 @@ export async function runStreamHealthScenario(mode: StreamHealthMode): Promise<{
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
 	if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+	// heartbeatOnly and checkpointResume own the clock: the health timer only fires when the server advances it
+	// between heartbeats, or the drain loop below advances it after the checkpoint, never because the host stalled.
+	const driveClock = mode === "heartbeatOnly" || mode === "checkpointResume";
+	if (driveClock) vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 	try {
 		const cursorStream = streamCursorAgent(
 			buildModel(`http://127.0.0.1:${address.port}`),
 			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] satisfies Message[] }),
 			{
 				apiKey: "test-token",
-				streamHealthFailThresholdMs: 50,
+				streamHealthFailThresholdMs: STREAM_HEALTH_THRESHOLD_MS,
 				streamHealthHeartbeatOnlyThresholdMs: 50,
 				streamStallMaxRetries: mode === "retryExhaustion" ? 1 : 10,
-				streamStallRetryDelayMs: 1,
+				streamStallRetryDelayMs: driveClock ? 0 : 1,
 				turnEndDrainTimeoutMs: 50,
 			} satisfies CursorAgentOptions,
 		);
-		for await (const _event of cursorStream) {
-			// Drain the public stream while the fake server drives retry behavior.
+		for await (const event of cursorStream) {
+			// Drain the public stream while the fake server drives retry behavior. The
+			// client handles frames in order, so this delta proves it processed the
+			// checkpoint written before it; only then does the silence reach the stall.
+			if (driveClock && event.type === "text_delta" && event.delta === CHECKPOINTED_TEXT) {
+				await vi.advanceTimersByTimeAsync(STREAM_HEALTH_THRESHOLD_MS);
+			}
 		}
-		return { attempts, actions, message: await cursorStream.result() };
+		return { attempts, heartbeatSpanMs, actions, message: await cursorStream.result() };
 	} finally {
+		if (driveClock) vi.useRealTimers();
 		for (const session of sessions) session.destroy();
 		await new Promise<void>((resolve) => server.close(() => resolve()));
 	}

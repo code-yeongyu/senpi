@@ -1,4 +1,5 @@
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
+import { ModelsError } from "../utils/models-error.ts";
 import { captureOAuthRefreshes } from "./oauth-refresh.ts";
 import { listSlots, projectSlot, type PooledCredential } from "./pool/slots.ts";
 import type {
@@ -11,6 +12,33 @@ import type {
 	OAuthCredential,
 	OAuthRevocationResult,
 } from "./types.ts";
+
+function staleLogin(providerId: string): ModelsError {
+	return new ModelsError(
+		"stale_login",
+		`The ${providerId} sign-in changed since it was shown; nothing was signed out`,
+	);
+}
+
+/** Throw `stale_login` unless `current` is the sign-in `expectedLoginId` names; call it inside the store's write. */
+export function assertExpectedLogin(
+	providerId: string,
+	current: Credential | undefined,
+	expectedLoginId: string | undefined,
+): void {
+	if (expectedLoginId !== undefined && current?.loginId !== expectedLoginId) throw staleLogin(providerId);
+}
+
+/** Remove the entry; with `expectedLoginId`, only while it is still that sign-in (senpi#7406). */
+export async function deleteStored(
+	credentials: CredentialStore,
+	providerId: string,
+	expectedLoginId: string | undefined,
+	options?: AuthOperationOptions,
+): Promise<void> {
+	if (expectedLoginId === undefined) return credentials.delete(providerId, options);
+	if (!(await credentials.deleteLogin?.(providerId, expectedLoginId, options))) throw staleLogin(providerId);
+}
 
 /** Clear session secrets without discarding the registration's non-secret metadata. */
 function clearTokens<T extends object>(credential: T) {
@@ -36,6 +64,7 @@ export async function revokeStoredOAuth(
 	// Slot selection and its token snapshot share the same lock as refresh writes.
 	await credentials
 		.modify(providerId, async (current: PooledCredential | undefined) => {
+			assertExpectedLogin(providerId, current, options?.expectedLoginId);
 			if (current?.type !== "oauth") return undefined;
 			handled = true;
 			const slots = listSlots(current).filter(
@@ -151,6 +180,14 @@ export class InMemoryCredentialStore implements CredentialStore {
 			async () => {
 				this.credentials.delete(providerId);
 			},
+			options,
+		);
+	}
+
+	deleteLogin(providerId: string, loginId: string, options?: AuthOperationOptions): Promise<boolean> {
+		return this.enqueue(
+			providerId,
+			async () => this.credentials.get(providerId)?.loginId === loginId && this.credentials.delete(providerId),
 			options,
 		);
 	}

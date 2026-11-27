@@ -8,6 +8,7 @@ import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-p
 import { startOpenTimer } from "../../core/open-timing.ts";
 import { admitExternalMessage } from "./admit-external-message-command.ts";
 import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
+import { verifyApiKeyRegionBaseUrl } from "./verify-api-key-region.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
 import type { ExtensionOwner } from "./extension-owner.ts";
@@ -31,9 +32,9 @@ import { ExtensionOwnerLifetime } from "./extension-owner-lifetime.ts";
 
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import { type ImageContent, ModelsError, type OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
-import { VERSION } from "../../config.ts";
+import { APP_NAME, VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
@@ -295,6 +296,8 @@ export interface RpcConnectionHandler {
 	cancelPendingExtensionUiRequests(): void;
 	/** A shared host's connection left this session; what it was offering ends. */
 	connectionDetached(connectionId: string): void;
+	/** Sends the extensions' current state to one receiver, as `extension_event` records. */
+	replayExtensionEvents(receiver: (record: RpcExtensionEvent) => void): void;
 	/**
 	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
 	 * caller exits right after (senpi#3711).
@@ -1262,6 +1265,16 @@ export function createRpcConnectionHandler(
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
 				onDeviceCode: (info) => {
+					// The user code is what the user types on the verification page; the URL alone cannot finish
+					// the login (omo-desktop-app#8413). The URL event follows for clients that only open it.
+					outputEvent({
+						type: "device_code",
+						provider,
+						userCode: info.userCode,
+						verificationUri: info.verificationUri,
+						intervalSeconds: info.intervalSeconds,
+						expiresInSeconds: info.expiresInSeconds,
+					});
 					outputEvent({ type: "auth_login_url", provider, url: info.verificationUri });
 				},
 				...createRpcLoginPromptCallbacks(createExtensionUIContext(), loginSignal),
@@ -1270,6 +1283,9 @@ export function createRpcConnectionHandler(
 				},
 				signal: controller.signal,
 			};
+			// Sign in with ChatGPT names the host it signs in: both logins carry this installation's device id,
+			// as the TUI's does (senpi#7127).
+			const getDeviceId = () => session.settingsManager.getOrCreateDeviceId();
 			if (slotId !== undefined) {
 				const reauthorize = selectedOAuthAccount(authStorage, provider, slotId);
 				await session.modelRuntime.login(
@@ -1304,11 +1320,11 @@ export function createRpcConnectionHandler(
 							}
 						},
 					},
-					{ reauthorize, reauthorizeSlot: slotId },
+					{ reauthorize, reauthorizeSlot: slotId, getDeviceId },
 				);
 				emitProviderAccountsChanged(provider);
 			} else {
-				await authStorage.login(provider as OAuthProviderId, callbacks);
+				await authStorage.login(provider as OAuthProviderId, callbacks, { getDeviceId, appName: APP_NAME });
 			}
 			session.modelRegistry.refresh();
 			emitProviderAccountsChanged(provider, "login");
@@ -2408,6 +2424,7 @@ export function createRpcConnectionHandler(
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
 				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => {
 					const origin = modelRegistry.getProviderOrigin(info.id);
+					const loginId = modelRegistry.authStorage.get(info.id)?.loginId;
 					return {
 						id: info.id,
 						name: info.name,
@@ -2415,6 +2432,7 @@ export function createRpcConnectionHandler(
 						status: authMethodStatus(modelRegistry, info),
 						...storedKeyHint(modelRegistry, info),
 						...(origin === undefined ? {} : { origin }),
+						...(loginId === undefined ? {} : { loginId }),
 					};
 				});
 				// Read after the rows: building them re-reads a store that failed to load (#4413).
@@ -2459,11 +2477,24 @@ export function createRpcConnectionHandler(
 			}
 
 			case "verify_api_key": {
+				const signal = AbortSignal.timeout(15_000);
+				// A region moves the probe to the host the region's accounts live on (senpi#5649);
+				// without one the catalog host is probed, as before.
+				const baseUrl =
+					command.region === undefined
+						? undefined
+						: await verifyApiKeyRegionBaseUrl(
+								session.modelRuntime.getProvider(command.provider),
+								command.key,
+								command.region,
+								signal,
+							);
 				const verification = await verifyApiKey({
 					models: session.modelRegistry.getAll(),
 					provider: command.provider,
 					key: command.key,
-					signal: AbortSignal.timeout(15_000),
+					...(baseUrl === undefined ? {} : { baseUrl }),
+					signal,
 				});
 				return success(id, "verify_api_key", verification);
 			}
@@ -2474,9 +2505,19 @@ export function createRpcConnectionHandler(
 				// signs out one ChatGPT account and keeps its registration.
 				if (command.slotId !== undefined)
 					selectedOAuthAccount(session.modelRegistry.authStorage, command.provider, command.slotId);
-				const { notices, revocation } = await session.modelRuntime.logoutProvider(command.provider, {
-					slotId: command.slotId,
-				});
+				let signedOut: Awaited<ReturnType<typeof session.modelRuntime.logoutProvider>>;
+				try {
+					signedOut = await session.modelRuntime.logoutProvider(command.provider, {
+						slotId: command.slotId,
+						expectedLoginId: command.expectedLoginId,
+					});
+				} catch (cause) {
+					// The shown sign-in was replaced or removed; nothing changed, so the client re-reads and asks again (senpi#7406).
+					if (cause instanceof ModelsError && cause.code === "stale_login")
+						return error(id, "logout", cause.message, "stale_login");
+					throw cause;
+				}
+				const { notices, revocation } = signedOut;
 				if (command.slotId === undefined) session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
 				await session.modelRegistry.refresh();
 				emitProviderAccountsChanged(command.provider);
@@ -2742,6 +2783,9 @@ export function createRpcConnectionHandler(
 					secretOwners.delete(id);
 				}
 			relocation?.connectionDetached(connectionId);
+		},
+		replayExtensionEvents(receiver) {
+			session.extensionRunner.replayRpcState(({ name, data }) => receiver({ type: "extension_event", name, data }));
 		},
 		async dispose(disposeOptions) {
 			rpcOwners.dispose();

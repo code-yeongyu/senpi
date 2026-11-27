@@ -13,6 +13,8 @@ export interface JavaScriptKernelHarnessOptions {
 	readonly sessionEnv?: JavaScriptKernelOptions["sessionEnv"];
 	readonly inheritedEnv?: JavaScriptKernelOptions["inheritedEnv"];
 	readonly workerEntryUrl?: JavaScriptKernelOptions["workerEntryUrl"];
+	readonly typescriptCells?: boolean;
+	readonly scopeHelper?: boolean;
 }
 
 export async function withJavaScriptKernel<T>(
@@ -28,6 +30,8 @@ export async function withJavaScriptKernel<T>(
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
 		...(options.inheritedEnv === undefined ? {} : { inheritedEnv: options.inheritedEnv }),
 		...(options.workerEntryUrl === undefined ? {} : { workerEntryUrl: options.workerEntryUrl }),
+		...(options.typescriptCells === undefined ? {} : { typescriptCells: options.typescriptCells }),
+		...(options.scopeHelper === undefined ? {} : { scopeHelper: options.scopeHelper }),
 	});
 	try {
 		return await run(kernel);

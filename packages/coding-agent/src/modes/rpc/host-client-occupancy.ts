@@ -26,6 +26,8 @@ export class ClientOccupancy {
 	private readonly attached = new Set<Duplex>();
 	private readonly held = new Set<Duplex>();
 	private readonly dependents = new Set<Duplex>();
+	private readonly refused = new Set<Duplex>();
+	private readonly classifiers = new Map<Duplex, (chunk: Buffer) => void>();
 	private readonly onAttach: () => void;
 	private readonly ownInstance: string | undefined;
 	private closed = false;
@@ -54,7 +56,23 @@ export class ClientOccupancy {
 	}
 
 	get unclassifiedCount(): number {
-		return this.clients.size - this.observers.size - this.attached.size - this.dependents.size;
+		return this.clients.size - this.observers.size - this.attached.size - this.dependents.size - this.refused.size;
+	}
+
+	/**
+	 * The supervisor could not reach its host for this client (senpi#7388): it stays connected only to read its
+	 * `host_unavailable` refusals, so it never holds the host's idle exit, whatever it sends (senpi#7425).
+	 */
+	refuse(client: Duplex): void {
+		if (!this.clients.has(client)) return;
+		const classify = this.classifiers.get(client);
+		if (classify) client.off("data", classify);
+		this.classifiers.delete(client);
+		this.observers.delete(client);
+		this.attached.delete(client);
+		this.held.delete(client);
+		this.dependents.delete(client);
+		this.refused.add(client);
 	}
 
 	admit(client: Duplex): boolean {
@@ -98,6 +116,7 @@ export class ClientOccupancy {
 			}
 			if (pending.length > MAX_CLASSIFIED_LINE_BYTES) attach();
 		};
+		this.classifiers.set(client, classify);
 		client.on("data", classify);
 		return true;
 	}
@@ -108,8 +127,11 @@ export class ClientOccupancy {
 			this.clients.has(client) &&
 			!this.observers.has(client) &&
 			!this.attached.has(client) &&
-			!this.dependents.has(client);
+			!this.dependents.has(client) &&
+			!this.refused.has(client);
 		this.clients.delete(client);
+		this.classifiers.delete(client);
+		this.refused.delete(client);
 		this.observers.delete(client);
 		this.attached.delete(client);
 		this.held.delete(client);

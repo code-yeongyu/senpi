@@ -1,3 +1,75 @@
+## 2026-11-24 - ModelsError code stale_login (senpi#7406)
+
+### What changed
+
+- `packages/ai/src/utils/models-error.ts`: adds `stale_login` to `ModelsErrorCode`.
+
+### Why
+
+- A conditional logout refused because the stored sign-in is no longer the confirmed one needs a typed outcome.
+
+### Why an extension could not handle it
+
+- The error code union is core.
+
+### Expected merge conflict zones
+
+- LOW: the `ModelsErrorCode` union.
+
+## 2026-11-22 - Report transport activity before SDK parsing (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/utils/transport-activity-fetch.ts` wraps the streaming SDK fetch and reports each non-empty successful response body chunk before forwarding it.
+
+### Why
+
+- The OpenAI SDK discards SSE comments before the adapters receive parsed events.
+
+### Why an extension could not handle it
+
+- The SDK clients set their fetch functions inside the adapters.
+
+### Expected merge conflict zones
+
+- LOW: new utility shared by the OpenAI SDK adapters.
+
+## 2026-11-22 - A 408 or a reset connection retries on the same model (senpi#3251)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts` and `packages/ai/src/utils/retry-profile/classifiers.ts`: retry classification prefers the structured HTTP status for 408. For legacy Mistral errors, it reads only the anchored `Mistral API error (NNN):` prefix for the 408 signal. Other legacy errors retain their existing status and reason-phrase rules. `ECONNRESET` remains retryable.
+
+### Why
+
+- An empty-body gateway 408 and a reset socket can recover on the same model. An HTTP 400 that merely mentions 408 should still take the hard-error fallback path without spending a same-model retry.
+
+### Why an extension could not handle it
+
+- Retry classification lives in pi-ai.
+
+### Expected merge conflict zones
+
+- LOW: provider error classification in `retry.ts` and the default retry profile's call to it.
+
+## 2026-11-04 - A disabled-thinking rejection is terminal (senpi#5720)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `NON_QUOTA_NON_RETRYABLE_PATTERNS` gains the Kimi (`does not support disabled thinking`) and Anthropic (`"thinking.type.disabled" is not supported`) rejections.
+
+### Why
+
+- The same payload fails every time; a gateway wrapping the Kimi 400 in a 500 classified it retryable (code-yeongyu/oh-my-openagent#12316).
+
+### Why an extension could not handle it
+
+- Retry classification is shared by every retry caller in this package.
+
+### Expected merge conflict zones
+
+- LOW: the request-shape block of the pattern list.
+
 ## 2026-11-14 - Tracker move for senpi#6663's missing-scope pattern entry
 
 ### What changed

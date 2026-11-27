@@ -6,6 +6,7 @@
  */
 import type { ChildProcess } from "node:child_process";
 import { readProcessStartTime } from "../../utils/process-identity.ts";
+import { type ChildPresenceProbe, HostChildIdentity, signalProvenChild } from "./host-child-identity.ts";
 import { type HostStopSender, recordHostCrash } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import { DEFAULT_HANDOFF_GRACE_MS, HANDOFF_GRACE_MS_ENV, parseIdleExitMs } from "./host-lifecycle-policy.ts";
@@ -22,11 +23,12 @@ export class SupervisorDrain {
 	private readonly beginStopping: () => void;
 	private readonly relay: { readonly file: string; readonly sender: HostStopSender } | undefined;
 	private readonly overdue: ((drainingForMs: number) => void) | undefined;
+	private readonly identity: ChildPresenceProbe;
 
 	/**
 	 * `relay` is the child's drain-request file (host-stop-intent.ts): the one way to reach a child
 	 * on every platform. Without it the request is the POSIX signal alone. `overdue` hears every grace
-	 * period the child is still draining (senpi#7098).
+	 * period the child is still draining (senpi#7098). `identity` proves the pid before SIGUSR1 (senpi#7525).
 	 */
 	constructor(
 		child: ChildProcess,
@@ -34,7 +36,9 @@ export class SupervisorDrain {
 		beginStopping: () => void = () => {},
 		relay?: { readonly file: string; readonly sender: HostStopSender },
 		overdue?: (drainingForMs: number) => void,
+		identity: ChildPresenceProbe = new HostChildIdentity(child.pid),
 	) {
+		this.identity = identity;
 		this.child = child;
 		this.shuttingDown = shuttingDown;
 		this.beginStopping = beginStopping;
@@ -109,11 +113,7 @@ export class SupervisorDrain {
 		}
 		// win32 has no SIGUSR1; on POSIX it stays the immediate wake ahead of the next poll of the relay.
 		if (process.platform === "win32") return;
-		try {
-			process.kill(child.pid, "SIGUSR1");
-		} catch (cause) {
-			supervisorLog(`could not ask the host to drain: ${errorMessage(cause)}`);
-		}
+		void signalProvenChild(child, this.identity, "SIGUSR1");
 	}
 }
 

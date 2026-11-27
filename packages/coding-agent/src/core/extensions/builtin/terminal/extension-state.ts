@@ -1,6 +1,7 @@
 /** The terminal extension's per-generation state, the bundle event sinks it binds, and the tool context over it. */
 
 import { getShellEnv } from "../../../../utils/shell.ts";
+import type { ExtensionRpcEvent } from "../../../event-bus.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import {
 	TERMINAL_BACKGROUND_AGE_EVENT,
@@ -11,6 +12,7 @@ import {
 import { withTerminalContext } from "./context-lifetime.ts";
 import { tapBackgroundSession, untapBackgroundSession } from "./job-widget-tap.ts";
 import type { MonitorNotifier } from "./monitor-notify.ts";
+import type { MonitorSnapshotEntry } from "./monitor-registry.ts";
 import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
 import type { MonitorStatusTicker } from "./monitor-status-ticker.ts";
 import { describeBackgroundAge, type TerminalNotifier } from "./notify.ts";
@@ -40,6 +42,60 @@ export function createBundle(state: TerminalExtensionState): TerminalSessionBund
 		maxSessions: state.settings.maxSessions,
 		scrollback: state.settings.scrollback,
 	});
+}
+
+function monitorState(snapshot: readonly MonitorSnapshotEntry[]) {
+	return {
+		activeCount: snapshot.length,
+		monitors: snapshot.map(
+			({
+				id,
+				description,
+				paused,
+				startedAtMs,
+				command,
+				filter,
+				persistent,
+				deadlineMs,
+				fireCount,
+				lastFiredAtMs,
+			}) => ({
+				id,
+				description,
+				paused,
+				startedAtMs,
+				command,
+				filter,
+				persistent,
+				deadlineMs,
+				fireCount,
+				lastFiredAtMs,
+			}),
+		),
+	};
+}
+
+function monitorWakeState(snapshot: readonly MonitorSnapshotEntry[]) {
+	return {
+		source: "terminal-monitors",
+		activeCount: snapshot.length,
+		monitors: snapshot.map((entry) => ({
+			id: entry.monitorId ?? entry.id,
+			description: entry.description,
+			startedAtMs: entry.startedAtMs,
+		})),
+	};
+}
+
+function backgroundWakeState(items: ReturnType<TerminalSessionBundle["backgroundSnapshot"]>) {
+	return { source: "terminal-background-sessions", activeCount: items.length, items };
+}
+
+export function replayTerminalState(bundle: TerminalSessionBundle, reply: (event: ExtensionRpcEvent) => void): void {
+	const monitors = bundle.monitors.snapshot();
+	reply({ name: TERMINAL_MONITOR_STATE_EVENT, data: monitorState(monitors) });
+	reply({ name: WAKE_SOURCE_STATE_EVENT, data: monitorWakeState(monitors) });
+	reply({ name: WAKE_SOURCE_STATE_EVENT, data: backgroundWakeState(bundle.backgroundSnapshot()) });
 }
 
 /** Sinks read the live instance state at call time, so notifier swaps need no re-bind. */
@@ -76,42 +132,19 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 		},
 		onMonitorState: (snapshot, transition = true) => {
 			if (!state.parked) state.statusTicker.sync(snapshot);
-			const payload = {
-				activeCount: snapshot.length,
-				monitors: snapshot.map((entry) => ({
-					id: entry.id,
-					description: entry.description,
-					paused: entry.paused,
-					startedAtMs: entry.startedAtMs,
-					command: entry.command,
-					filter: entry.filter,
-					persistent: entry.persistent,
-					deadlineMs: entry.deadlineMs,
-					fireCount: entry.fireCount,
-					lastFiredAtMs: entry.lastFiredAtMs,
-				})),
-			};
+			const payload = monitorState(snapshot);
 			pi.events?.emit(TERMINAL_MONITOR_STATE_EVENT, payload);
 			pi.rpc?.emit(TERMINAL_MONITOR_STATE_EVENT, payload);
 			if (!transition) return;
-			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
-				source: "terminal-monitors",
-				activeCount: snapshot.length,
-				// The stable "mon_" id: runtime ids churn on restore, and item ids feed the custody signature.
-				monitors: snapshot.map((entry) => ({
-					id: entry.monitorId ?? entry.id,
-					description: entry.description,
-					startedAtMs: entry.startedAtMs,
-				})),
-			});
+			const wake = monitorWakeState(snapshot);
+			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, wake);
+			pi.rpc?.emit(WAKE_SOURCE_STATE_EVENT, wake);
 			if (state.manifestWriter) void state.manifestWriter.observeMonitorState(snapshot);
 		},
 		onBackgroundState: (snapshot) => {
-			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
-				source: "terminal-background-sessions",
-				activeCount: snapshot.length,
-				items: snapshot,
-			});
+			const wake = backgroundWakeState(snapshot);
+			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, wake);
+			pi.rpc?.emit(WAKE_SOURCE_STATE_EVENT, wake);
 			const record = (): void => {
 				const writer = state.manifestWriter;
 				if (!writer) return;

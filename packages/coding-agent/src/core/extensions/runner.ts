@@ -59,6 +59,7 @@ import {
 } from "./handler-budget.ts";
 import { activeKernelToolInvoker, activeKernelTools, type ExtensionKernelTools } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
+import { emitReportedToolResult, type ReportedToolResult } from "./reported-tool-result.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
 import { isPresentationOnly } from "./ui-presentation.ts";
@@ -713,6 +714,7 @@ export class ExtensionRunner {
 	});
 	private getBrowserEngineFn: NonNullable<ExtensionContextActions["getBrowserEngine"]> = () => undefined;
 	private getSessionEnvFn: NonNullable<ExtensionContextActions["getSessionEnv"]> = () => undefined;
+	private getTelemetryPermittedFn: NonNullable<ExtensionContextActions["getTelemetryPermitted"]> = () => false;
 	// A runner with no session (a hand's runtime) runs its tools on this machine, so its device files are local.
 	private getDeviceFilesFn: NonNullable<ExtensionContextActions["getDeviceFiles"]> = localDeviceFiles;
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
@@ -958,6 +960,7 @@ export class ExtensionRunner {
 		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		if (contextActions.getBrowserEngine) this.getBrowserEngineFn = contextActions.getBrowserEngine;
 		if (contextActions.getSessionEnv) this.getSessionEnvFn = contextActions.getSessionEnv;
+		if (contextActions.getTelemetryPermitted) this.getTelemetryPermittedFn = contextActions.getTelemetryPermitted;
 		if (contextActions.getDeviceFiles) this.getDeviceFilesFn = contextActions.getDeviceFiles;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
@@ -1293,8 +1296,22 @@ export class ExtensionRunner {
 		const off = this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
 			handler(data as ExtensionRpcEvent);
 		});
-		this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, undefined);
+		this.replayRpcState(handler);
 		return off;
+	}
+
+	/**
+	 * Asks extensions to send their current state to one receiver only, the way a new subscription gets it: a client
+	 * that joins a session whose subscription already exists (a second attachment on a shared host) gets it this way.
+	 */
+	replayRpcState(receiver: (event: ExtensionRpcEvent) => void): void {
+		// The replay belongs to this one call; a bus listener must not keep a live client callback.
+		let replay: typeof receiver | undefined = receiver;
+		try {
+			this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, (event: ExtensionRpcEvent) => replay?.(event));
+		} finally {
+			replay = undefined;
+		}
 	}
 
 	/**
@@ -1813,6 +1830,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSessionEnvFn();
 			},
+			get telemetryPermitted() {
+				runner.assertActive();
+				return runner.getTelemetryPermittedFn();
+			},
 			get deviceFiles() {
 				runner.assertActive();
 				return runner.getDeviceFilesFn();
@@ -2090,6 +2111,8 @@ export class ExtensionRunner {
 		baseContext: ExtensionContext = this.createContext(),
 	): ExtensionToolContext {
 		const runner = this;
+		// One context per call, so this numbers the results the call reports.
+		let reportedResults = 0;
 		// createContext() returns a fresh object, so adding properties does not affect other contexts.
 		return Object.defineProperties(baseContext as ExtensionToolContext, {
 			issuedByModel: { value: runner.isModelIssuedToolCallFn(toolCallId) },
@@ -2118,6 +2141,17 @@ export class ExtensionRunner {
 						};
 					}
 					return runner.executeToolFn(toolCallId, name, args, { ...options, signal: options.signal ?? signal });
+				},
+			},
+			reportToolResult: {
+				value: async (report: ReportedToolResult) => {
+					runner.assertActive();
+					return emitReportedToolResult(
+						(event, options) => runner.emitToolResult(event, options),
+						toolCallId,
+						++reportedResults,
+						report,
+					);
 				},
 			},
 		});
@@ -2554,12 +2588,14 @@ export class ExtensionRunner {
 					if (waited.kind === "aborted") {
 						endStatus = "failed";
 						errorMessage = "interrupted";
+						options.onHandlerFailure?.({ extensionPath: ext.path, error: errorMessage });
 						continue;
 					}
 					if (waited.kind === "timed_out") {
 						endStatus = "failed";
 						errorMessage = `handler timed out after ${waited.elapsedMs}ms; the tool result continues without it`;
 						this.emitError({ extensionPath: ext.path, event: "tool_result", error: errorMessage });
+						options.onHandlerFailure?.({ extensionPath: ext.path, error: errorMessage });
 						continue;
 					}
 					if (waited.kind === "failed") throw waited.error;
@@ -2599,6 +2635,7 @@ export class ExtensionRunner {
 						error: message,
 						stack,
 					});
+					options.onHandlerFailure?.({ extensionPath: ext.path, error: message });
 				} finally {
 					hookRun.end(endStatus, errorMessage);
 				}
@@ -2684,7 +2721,33 @@ export class ExtensionRunner {
 			}
 		}
 
-		return result;
+		// Serving one forwarded handler (`only`) is part of a chain that ends where the call runs, which emits it once.
+		if (options.only !== undefined) return result;
+		return (await this.emitToolCallReady(event, options.signal)) ?? result;
+	}
+
+	/**
+	 * `tool_call_ready` for a call its whole `tool_call` chain let run, or that no `tool_call` handler was asked about
+	 * (senpi#7232): a deep copy of the arguments the call runs with, awaited before it runs. The turn's or the call's
+	 * abort ends the wait and blocks the call, as it does for a `tool_call` handler.
+	 */
+	async emitToolCallReady(event: ToolCallEvent, signal?: AbortSignal): Promise<ToolCallEventResult | undefined> {
+		if (!this.hasHandlers("tool_call_ready")) return undefined;
+		const waited = await waitForToolHook({
+			run: () =>
+				this.emit({
+					type: "tool_call_ready",
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
+					...(event.parentToolCallId === undefined ? {} : { parentToolCallId: event.parentToolCallId }),
+					input: structuredClone(event.input),
+				}),
+			signal: combinedToolCallSignal(signal, this.createContext().signal),
+			timeoutMs: 0,
+		});
+		if (waited.kind === "aborted") return { block: true, reason: "Operation aborted" };
+		if (waited.kind === "failed") throw waited.error;
+		return undefined;
 	}
 
 	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {

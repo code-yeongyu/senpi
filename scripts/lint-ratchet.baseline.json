@@ -383,9 +383,6 @@
   "packages/ai/test/anthropic-auth-token.test.ts": {
     "senpi-testing/no-module-mock": 1
   },
-  "packages/ai/test/anthropic-claude-oauth-token-refused.test.ts": {
-    "senpi-testing/no-module-mock": 1
-  },
   "packages/ai/test/anthropic-eager-tool-input-e2e.test.ts": {
     "senpi-testing/no-flake-masking": 2
   },
@@ -1258,9 +1255,6 @@
   },
   "packages/coding-agent/src/modes/rpc/tool-child/windows-job.win32.test.ts": {
     "senpi-testing/no-flake-masking": 1
-  },
-  "packages/coding-agent/src/package-manager-cli.ts": {
-    "typescript/no-non-null-assertion": 2
   },
   "packages/coding-agent/src/utils/image-resize-core.ts": {
     "typescript/no-non-null-assertion": 3

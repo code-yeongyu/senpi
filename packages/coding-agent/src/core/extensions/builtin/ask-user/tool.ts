@@ -1,6 +1,5 @@
 import { releaseQuestionInput } from "../../../question-input.ts";
 import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin, ToolDefinition } from "../../types.ts";
-import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import {
 	AskUserEscapeResidueError,
 	type EscapeResidueRetry,
@@ -25,6 +24,7 @@ import {
 	emitAskUserClosed,
 	emitAskUserNotification,
 } from "./notify.ts";
+import { emitQuestionBlocked, emitWake } from "./open-state.ts";
 import { createPendingQuestion } from "./pending.ts";
 import {
 	getPendingQuestions,
@@ -93,19 +93,6 @@ export function deliverAnswer(
 	pi.sendUserMessage(content, options);
 	if (response.status === "cancelled") return;
 	void emitAskUserNotification(pi, ctx, request, response, variant);
-}
-function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {
-	const entries = getPendingQuestions(sessionId).filter((e) => !e.request.waitForAnswer);
-	const event: WakeSourceStateEvent = {
-		source: "ask-user",
-		activeCount: entries.length,
-		items: entries.map((e) => ({
-			id: e.request.requestId,
-			deadlineAtMs: e.pending.deadlineAtMs,
-			description: e.request.questions.map((q) => q.header).join(", "),
-		})),
-	};
-	pi.events.emit(WAKE_SOURCE_STATE_EVENT, event);
 }
 export function startQuestion(
 	initialPi: Pick<ExtensionAPI, "sendUserMessage" | "events" | "appendEntry">,
@@ -217,6 +204,9 @@ export function startQuestion(
 			if (attached || settled) return;
 			attached = true;
 			controller = new AbortController();
+			// A reload gives listeners a fresh bus view: re-publish what this question holds open (senpi#1146).
+			if (!request.waitForAnswer) emitWake(pi, sessionId);
+			emitQuestionBlocked(pi, request);
 			attach();
 		},
 	});
@@ -226,13 +216,7 @@ export function startQuestion(
 	});
 	if (!request.waitForAnswer) emitWake(pi, sessionId);
 	pi.events.emit(ASK_USER_ASKED_EVENT, { ctx, request, variant } satisfies AskUserAskedEvent);
-	const first = request.questions[0];
-	pi.events.emit("herdr:blocked", {
-		active: true,
-		label: first ? `${first.header} - ${first.question}` : "Question",
-		id: request.requestId,
-		kind: "question",
-	});
+	emitQuestionBlocked(pi, request);
 	signal?.addEventListener("abort", abort, { once: true });
 	let draft: { answers: QuestionResponse["answers"]; comment?: string } = { answers: {} };
 	const opts: QuestionDialogOptions = {

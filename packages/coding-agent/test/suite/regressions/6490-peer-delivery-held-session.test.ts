@@ -59,7 +59,7 @@ it("a peer delivery to an unattended session releases the hold and starts its tu
 		text: "[from lead] merge the train",
 		deliverAs: "followUp",
 	});
-	expect(answer).toEqual({ kind: "started", turn_epoch: 0 });
+	expect(answer).toEqual({ kind: "started", turn_epoch: 1 });
 	expect(await outcome).toBe("idle");
 
 	expect(h.faux.state.callCount).toBe(1);
@@ -141,7 +141,7 @@ it("a peer delivery during an unattended Resume's release barrier attends the se
 			text: "[from lead] next step",
 			deliverAs: "followUp",
 		}),
-	).toEqual({ kind: "started", turn_epoch: 0 });
+	).toEqual({ kind: "started", turn_epoch: 1 });
 	release();
 	expect(await outcome).toBe("emitted");
 	await resumed;

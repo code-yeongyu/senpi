@@ -147,6 +147,9 @@ export async function mcpRuntimeWithScopes(options: McpScopedRuntimeOptions): Pr
 				executeTool: async () => {
 					throw new Error("nested tool calls are not part of this harness");
 				},
+				reportToolResult: async () => {
+					throw new Error("reported tool results are not part of this harness");
+				},
 			});
 			const result = await definition.execute(`call-${calls}`, args, undefined, undefined, context);
 			const content: readonly { readonly type: string; readonly text?: string }[] = result.content;

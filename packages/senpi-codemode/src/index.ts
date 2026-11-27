@@ -41,6 +41,7 @@ import {
 import { createEvalTool } from "./tool/eval-tool.ts";
 import { renderEvalCall, renderEvalResult } from "./tool/render.ts";
 import type { NestedToolRenderers } from "./tool/tool-widgets.ts";
+import { observeModelWrites } from "./written-files/model-writes.ts";
 
 // session_before_switch / session_before_fork are veto points another extension can cancel, so they never
 // tear the runtime down; a switch or fork that goes ahead emits session_shutdown before the old session ends.
@@ -48,7 +49,7 @@ const SESSION_LIFECYCLE_EVENTS = ["session_start", "session_shutdown"] as const;
 
 type SessionLifecycleEvent = (typeof SESSION_LIFECYCLE_EVENTS)[number];
 
-type CodemodeEvent = SessionLifecycleEvent | "model_select" | "turn_start";
+type CodemodeEvent = SessionLifecycleEvent | "model_select" | "turn_start" | "tool_call_ready" | "tool_execution_end";
 
 export interface CodemodeExtensionAPI {
 	registerTool(tool: ReturnType<typeof createEvalTool>): void;
@@ -195,6 +196,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 					jsEnvironments: runtime.jsEnvironments,
 					cellManager,
 					handles,
+					writtenFiles: runtime.writtenFiles,
 					executionTracker: manager,
 					onCellSettled,
 					renderers,
@@ -262,6 +264,10 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	);
 	registerRemovedToolHints(pi);
 	registerBunSkillContribution(pi);
+	observeModelWrites(
+		(event, handler) => pi.on(event, handler),
+		() => activeRuntime?.writtenFiles,
+	);
 
 	const startSession = async (event: unknown, ctx: ExtensionContext): Promise<void> => {
 		const previousCells = activeCells;
