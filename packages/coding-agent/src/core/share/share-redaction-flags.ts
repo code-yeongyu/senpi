@@ -24,19 +24,22 @@ const VALUE = String.raw`(?:(?<q>\\?["'])((?:(?!\k<q>)[^\n])*)\k<q>|(<redacted>|
 // A line continuation (`\` then a newline) is part of the command, as the shell reads it.
 const SEP = String.raw`(?:[ \t]|\\\r?\n)+`;
 const SAME_COMMAND = String.raw`(?:(?!&&|\|\||[;|])(?:\\\r?\n|[^\n]))*?`;
+// sshpass's own options come before the command it runs (`sshpass -e ssh -p 2222 host`): its `-p` rule must not reach past
+// them into that command.
+const SSHPASS_OPTIONS = String.raw`(?:${SEP}(?:-[ev]|-[fdP](?:${SEP})?[^\s-][^\s]*))*`;
 
 const FLAG_VALUE = new RegExp(
-	String.raw`(?<![\w-])(--[A-Za-z][A-Za-z0-9_-]{0,63})(=|[ \t]*\\\r?\n[ \t]*|[ \t]+)(?!-)${VALUE}`,
+	String.raw`(?<![\w-])(--[A-Za-z][A-Za-z0-9_-]{0,63})(=(?:[ \t]*\\\r?\n[ \t]*)*|${SEP})(?!-)${VALUE}`,
 	"g",
 );
 const FROM_ELSEWHERE = /-(?:stdin|file|path|env|prompt|command|cmd)$/i;
 const CLIENT_FLAG = new RegExp(
-	String.raw`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b${SAME_COMMAND}${SEP}-p|\bsshpass\b${SAME_COMMAND}${SEP}-p(?:${SEP})?|\bredis-cli\b${SAME_COMMAND}${SEP}-a${SEP})(?!assword)${VALUE}`,
+	String.raw`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b${SAME_COMMAND}${SEP}-p|\bsshpass\b${SSHPASS_OPTIONS}${SEP}-p(?:${SEP})?|\bredis-cli\b${SAME_COMMAND}${SEP}-a${SEP}|\bdocker\b${SAME_COMMAND}${SEP}login\b${SAME_COMMAND}${SEP}-p${SEP})(?!assword)${VALUE}`,
 	"g",
 );
 /** `curl -u user:pw`, `--user=user:pw`, `-uuser:pw`, quoted or not: only the password half goes, a quoted one whole. */
 const CURL_USER = new RegExp(
-	String.raw`(\bcurl\b${SAME_COMMAND}${SEP}(?:-u|--user)(?:=|${SEP})?)(?:(?<q>\\?["'])([^:\n"'\\]*:)((?:(?!\k<q>)[^\n])*)\k<q>|([^\s:"'\\]*:)(<redacted>|[^\s"'<\\][^\s"'\\]*))`,
+	String.raw`(\bcurl\b${SAME_COMMAND}${SEP}(?:-[A-Za-z]*u|--user(?![\w-]))(?:=|${SEP})?)(?:(?<q>\\?["'])([^:\n"'\\]*:)((?:(?!\k<q>)[^\n])*)\k<q>|([^\s:"'\\]*:)(<redacted>|[^\s"'<\\][^\s"'\\]*))`,
 	"g",
 );
 const SECRET_ENV =
@@ -105,11 +108,65 @@ export function redactFlagSecrets(text: string, onRedact: () => void): string {
 		);
 }
 
-/** `["--api-key", "<value>"]`: the item after a sensitive long flag (with no `=` value of its own) is its value. */
+type ArgvClient = "mysql" | "sshpass" | "redis" | "docker-login" | "curl" | undefined;
+
+function argvClient(items: readonly unknown[], index: number): ArgvClient {
+	const words = items.slice(0, index).filter((item): item is string => typeof item === "string");
+	const programs = words.map((word) => word.replace(/^.*[\\/]/, ""));
+	if (programs.some((word) => /^(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)$/.test(word))) return "mysql";
+	if (programs.includes("redis-cli")) return "redis";
+	if (programs.includes("curl")) return "curl";
+	if (programs.includes("docker") && words.includes("login")) return "docker-login";
+	const at = programs.indexOf("sshpass");
+	// Only sshpass's own options, before the command it runs, belong to it.
+	if (
+		at >= 0 &&
+		words.slice(at + 1).every((word, i, rest) => word.startsWith("-") || /^-[fdP]$/.test(rest[i - 1] ?? ""))
+	)
+		return "sshpass";
+	return undefined;
+}
+
+/** The value a client takes after (or glued to) a short flag, or undefined when `item` is not one. */
+function clientSecret(client: ArgvClient, previous: unknown, item: string): string | undefined {
+	const after = (flag: RegExp): boolean => typeof previous === "string" && flag.test(previous);
+	switch (client) {
+		case "mysql":
+			return /^-p(?!assword)./.test(item) ? "-p<redacted>" : undefined;
+		case "sshpass":
+			if (/^-p./.test(item)) return "-p<redacted>";
+			return after(/^-p$/) ? "<redacted>" : undefined;
+		case "redis":
+			return after(/^-a$/) ? "<redacted>" : undefined;
+		case "docker-login":
+			return after(/^-p$/) ? "<redacted>" : undefined;
+		case "curl": {
+			const glued = /^(-[A-Za-z]*u|--user=)([^:]*:)(.+)$/.exec(item);
+			if (glued !== null) return `${glued[1]}${glued[2]}<redacted>`;
+			const pair = /^([^:\s]*:)(.+)$/.exec(item);
+			return pair !== null && after(/^(?:-[A-Za-z]*u|--user)$/) ? `${pair[1]}<redacted>` : undefined;
+		}
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * An argument list (`["--api-key", "x"]`, `["mysql", "-ppw"]`, `["sshpass", "-p", "pw", "ssh", "host"]`): the item after a
+ * sensitive long flag (with no `=` value of its own), and a known client's password flag value, as the string rules
+ * treat the same command written out.
+ */
 export function redactFlagArguments(items: unknown[], onRedact: () => void): unknown[] {
 	return items.map((item, index) => {
 		const previous = items[index - 1];
-		if (typeof item !== "string" || item.length === 0 || item.startsWith("-") || placeholder(item)) return item;
+		if (typeof item !== "string" || item.length === 0 || placeholder(item) || item.endsWith("<redacted>"))
+			return item;
+		const client = clientSecret(argvClient(items, index), previous, item);
+		if (client !== undefined) {
+			onRedact();
+			return client;
+		}
+		if (item.startsWith("-")) return item;
 		if (typeof previous !== "string" || !/^--[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(previous)) return item;
 		const name = previous.slice(2);
 		if (!isSensitiveKeyName(name) || FROM_ELSEWHERE.test(name)) return item;

@@ -47,6 +47,12 @@ describe("share redacts secrets passed as flags and in prose (senpi#3577)", () =
 		["curl --user=user:password", `curl --user=alice:${PASSWORD} https://x`, PASSWORD],
 		["curl -u glued", `curl -ualice:${PASSWORD} https://x`, PASSWORD],
 		["sshpass -p glued", `sshpass -p${PASSWORD} ssh host`, PASSWORD],
+		// Third review of #7552 (7216126614).
+		["curl with clustered short flags", `curl -su alice:${PASSWORD} https://x`, PASSWORD],
+		["curl with a longer cluster", `curl -sSu alice:${PASSWORD} https://x`, PASSWORD],
+		["a continuation right after =", `tool --password=\\\n${PASSWORD}`, PASSWORD],
+		["a double continuation", `tool --password \\\n \\\n ${PASSWORD}`, PASSWORD],
+		["docker login -p", `docker login -u bob -p ${PASSWORD} registry.example.com`, PASSWORD],
 	])("%s", (_name, command, secret) => {
 		const bytes = sharedBytes({ command });
 		expect(bytes).not.toContain(secret);
@@ -76,6 +82,9 @@ describe("share redacts secrets passed as flags and in prose (senpi#3577)", () =
 		["ssh's port flag", "ssh -p 2222 host"],
 		["docker's port mapping", "docker run -p 8080:80 nginx"],
 		["curl -u with a user and no password", "curl -u alice https://example.com"],
+		["the command sshpass runs keeps its own -p (env password)", "sshpass -e ssh -p 2222 host"],
+		["the command sshpass runs keeps its own -p (file password)", "sshpass -f pwfile ssh -p 2222 host"],
+		["curl's --user-agent", "curl --user-agent=Foo:bar https://x"],
 		// A letters-only word after "password is" cannot be told from prose, so it stays (accepted, documented).
 		["a letters-only word after 'password is'", "my password is swordfish please"],
 		["a sentence about what a secret is", "the secret is that we cache"],
@@ -112,5 +121,21 @@ describe("a secret already redacted ahead of a later short flag (senpi#7552 revi
 		expect(first.tally.get("credential")).toBe(1);
 		const again = prepareShare((sanitize) => sanitize(first.html), context);
 		expect(again.html).toBe(first.html);
+	});
+});
+
+describe("argument lists that pass a client's password (senpi#7552 review)", () => {
+	it.each([
+		["mysql's glued -p", ["mysql", "-u", "root", `-p${PASSWORD}`, "db"]],
+		["sshpass -p and its value", ["sshpass", "-p", PASSWORD, "ssh", "host"]],
+		["redis-cli -a", ["redis-cli", "-a", PASSWORD, "ping"]],
+		["docker login -p", ["docker", "login", "-u", "bob", "-p", PASSWORD, "registry.example.com"]],
+		["curl -u user:password", ["curl", "-u", `alice:${PASSWORD}`, "https://x"]],
+	])("%s", (_name, args) => {
+		expect(sharedBytes({ args })).not.toContain(PASSWORD);
+	});
+
+	it("the command sshpass runs keeps its own -p", () => {
+		expect(sharedBytes({ args: ["sshpass", "-e", "ssh", "-p", "2222", "host"] })).toContain('"2222"');
 	});
 });
