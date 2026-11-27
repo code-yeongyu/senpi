@@ -6526,9 +6526,21 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_ENTRY_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_BOOKKEEPING_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/lifecycle-delivery.ts#lifecycleDeliveryEntries": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-history.ts#foldedSlots": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
 		"packages/coding-agent/src/core/lifecycle-history.ts#lifecycleHistory": {
 			"class": "constant",
@@ -6982,10 +6994,6 @@
 		"packages/coding-agent/src/core/session-manager.ts#DEFERRED_FILE_LOAD": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
-		},
-		"packages/coding-agent/src/core/session-manager.ts#LIFECYCLE_ENTRY_TYPES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
 		},
 		"packages/coding-agent/src/core/session-manager.ts#SETUP_ENTRY_TYPES": {
 			"class": "constant",
