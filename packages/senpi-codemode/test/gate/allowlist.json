@@ -1,6 +1,14 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#7536": {
+			"additions": [
+				"legacyContracts/test/config.test.ts/codemode settings uses statusTicker default true and reads false from the settings file",
+				"legacyContracts/test/eval-status-ticker.test.ts/EvalStatusTicker with the ticker off, renders on every cell-set change but never ticks the elapsed label"
+			],
+			"reason": "senpi#7536 (part of #7535): the statusTicker setting (default true, product unchanged) stops the footer's per-second eval-cells refresh so equivalence runs record no wall-clock status ticks. The two contract titles are the new tests that pin the setting's default and file value, and that with the ticker off the footer renders on every cell-set change but never ticks. No module enters either import scope, and no prompt cell, schema or existing measurement moves.",
+			"changes": 0
+		},
 		"senpi#7232": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/written-files/model-writes.ts",
