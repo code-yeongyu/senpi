@@ -9,11 +9,19 @@
  *
  * This module only defines and reads the setting; the enforcement points (engine cleanups, shell
  * interception) consume it in later changes. `retentionDays` and `maxTrashBytes` bound the
- * freedesktop trash on Linux and are enforced on every trash write and by `senpi trash empty`.
+ * freedesktop-layout trash and are enforced on every trash write and by `senpi trash empty`.
+ *
+ * `macosTrash` picks the macOS backend. `fast` (default) is that same freedesktop-layout trash, a
+ * same-volume rename that takes milliseconds. `os` is the Finder Trash through `/usr/bin/trash`, which
+ * cost 35-38 s per call from a background session on macOS 26, with no saving from batching
+ * (senpi#7578), so it is an opt-in.
  */
 
 export const DELETE_POLICY_MODES = ["trash", "trash-only", "log-only"] as const;
 export type DeletePolicyMode = (typeof DELETE_POLICY_MODES)[number];
+
+export const MACOS_TRASH_BACKENDS = ["fast", "os"] as const;
+export type MacosTrashBackend = (typeof MACOS_TRASH_BACKENDS)[number];
 
 export const AUTO_TRASH_SHARE = 0.15;
 export const DEFAULT_RETENTION_DAYS = 14;
@@ -23,6 +31,7 @@ export interface DeletePolicy {
 	readonly retentionDays: number;
 	/** A byte count, or `auto` (15% of the volume that holds the trash). */
 	readonly maxTrashBytes: number | "auto";
+	readonly macosTrash: MacosTrashBackend;
 }
 
 export class DeletePolicySettingError extends Error {
@@ -58,6 +67,17 @@ function parseRetentionDays(value: unknown): number | undefined {
 	return value;
 }
 
+function parseMacosTrash(value: unknown): MacosTrashBackend | undefined {
+	if (value === undefined) return undefined;
+	const backend = MACOS_TRASH_BACKENDS.find((candidate) => candidate === value);
+	if (backend === undefined) {
+		throw new DeletePolicySettingError(
+			`macosTrash ${JSON.stringify(value)} is not one of ${MACOS_TRASH_BACKENDS.join(", ")}.`,
+		);
+	}
+	return backend;
+}
+
 function parseMaxTrashBytes(value: unknown): number | "auto" | undefined {
 	if (value === undefined || value === "auto") return value;
 	if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
@@ -82,5 +102,6 @@ export function resolveDeletePolicy(settings: object, env: NodeJS.ProcessEnv = p
 		mode: parseMode(field("mode")) ?? (isCi(env) ? "log-only" : "trash"),
 		retentionDays: parseRetentionDays(field("retentionDays")) ?? DEFAULT_RETENTION_DAYS,
 		maxTrashBytes: parseMaxTrashBytes(field("maxTrashBytes")) ?? "auto",
+		macosTrash: parseMacosTrash(field("macosTrash")) ?? "fast",
 	};
 }

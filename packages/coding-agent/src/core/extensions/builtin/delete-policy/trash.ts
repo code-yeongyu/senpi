@@ -39,7 +39,7 @@ const renameOf = (scope: TrashScope): RenameFn => scope.rename ?? rename;
 
 function backendOf(scope: TrashScope): TrashEntry["backend"] {
 	const platform = scope.platform ?? process.platform;
-	if (platform === "darwin") return "macos";
+	if (platform === "darwin") return scope.policy.macosTrash === "os" ? "macos" : "freedesktop";
 	if (platform === "win32") {
 		throw new TrashError("unsupported_platform", "The trash is not supported on Windows yet; nothing was deleted.");
 	}

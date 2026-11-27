@@ -48,7 +48,13 @@ export async function trashSandbox(): Promise<TrashSandbox> {
 			platform: "linux",
 			now: () => clock.now,
 			...overrides,
-			policy: { mode: "trash", retentionDays: 14, maxTrashBytes: 1_000_000, ...overrides.policy },
+			policy: {
+				mode: "trash",
+				retentionDays: 14,
+				maxTrashBytes: 1_000_000,
+				macosTrash: "fast",
+				...overrides.policy,
+			},
 		}),
 	};
 }

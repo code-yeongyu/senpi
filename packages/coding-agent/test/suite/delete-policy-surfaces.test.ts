@@ -42,18 +42,18 @@ function pointHomeAt(box: TrashSandbox): void {
 
 describe("deletePolicy setting", () => {
 	it.each([
-		["no setting, no CI", {}, {}, { mode: "trash", retentionDays: 14, maxTrashBytes: "auto" }],
+		["no setting, no CI", {}, {}, { mode: "trash", retentionDays: 14, maxTrashBytes: "auto", macosTrash: "fast" }],
 		[
 			"CI=true defaults to log-only",
 			{},
 			{ CI: "true" },
-			{ mode: "log-only", retentionDays: 14, maxTrashBytes: "auto" },
+			{ mode: "log-only", retentionDays: 14, maxTrashBytes: "auto", macosTrash: "fast" },
 		],
 		[
 			"an explicit mode wins over CI",
 			{ deletePolicy: { mode: "trash-only", retentionDays: 3, maxTrashBytes: 4096 } },
 			{ CI: "true" },
-			{ mode: "trash-only", retentionDays: 3, maxTrashBytes: 4096 },
+			{ mode: "trash-only", retentionDays: 3, maxTrashBytes: 4096, macosTrash: "fast" },
 		],
 	])("%s", (_name, settings, env, expected) => {
 		expect(resolveDeletePolicy(settings, env)).toEqual(expected);
@@ -64,6 +64,7 @@ describe("deletePolicy setting", () => {
 		[{ deletePolicy: { mode: "rm" } }],
 		[{ deletePolicy: { retentionDays: 0 } }],
 		[{ deletePolicy: { maxTrashBytes: "lots" } }],
+		[{ deletePolicy: { macosTrash: "finder" } }],
 	])("rejects %j", (settings) => {
 		expect(() => resolveDeletePolicy(settings, {})).toThrow(/Invalid deletePolicy setting/);
 	});
@@ -145,5 +146,12 @@ describe.skipIf(process.platform === "win32")("senpi trash CLI", () => {
 		const missing = await cli(["restore", "tr_0_00000000"]);
 		expect(missing).toMatchObject({ code: 1, stdout: "" });
 		expect(missing.stderr).toContain("No trash entry tr_0_00000000");
+	});
+});
+
+describe("the macOS trash backend (senpi#7578)", () => {
+	it("defaults to the fast same-volume trash, and takes the OS Trash only when asked", () => {
+		expect(resolveDeletePolicy({}, {}).macosTrash).toBe("fast");
+		expect(resolveDeletePolicy({ deletePolicy: { macosTrash: "os" } }, {}).macosTrash).toBe("os");
 	});
 });

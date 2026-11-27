@@ -126,3 +126,19 @@ describe.skipIf(process.platform === "win32")("freedesktop trash", () => {
 		expect(moves).toEqual([]);
 	});
 });
+
+describe.skipIf(process.platform === "win32")("macOS default backend (senpi#7578)", () => {
+	it("moves with a same-volume rename into the freedesktop-layout trash, without calling the OS Trash", async () => {
+		const box = await trashSandbox();
+		const worktree = join(box.work, "done");
+		await writeTree(worktree, { "a.txt": "a" });
+
+		const entry = await trashPath(box.scope({ platform: "darwin" }), worktree, "finished");
+
+		expect(entry.backend).toBe("freedesktop");
+		expect(entry.trashedPath).toBe(join(box.trashDir, "files", "done"));
+		await expect(readTree(entry.trashedPath)).resolves.toEqual({ "a.txt": "a" });
+		await restoreTrash(box.scope({ platform: "darwin" }), entry.id);
+		await expect(readTree(worktree)).resolves.toEqual({ "a.txt": "a" });
+	});
+});
