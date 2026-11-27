@@ -84,14 +84,15 @@ export async function readProcessStarts(
 		: ["-axo", "pid=,lstart="];
 	const stdout = await run(command, args, {
 		timeout: windows ? 5_000 : 1_000,
-		...(windows ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C" } }),
+		// lstart is rendered and read in UTC: a local rendering names two instants in a fall-back hour (omo#12108).
+		...(windows ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" } }),
 	});
 	if (stdout === undefined) return undefined;
 	const starts = new Map<number, number>();
 	for (const line of stdout.split("\n")) {
 		const row = /^\s*(\d+)\s+(.+)$/.exec(line);
 		if (!row) continue;
-		const start = processStartTimeMs(row[2]);
+		const start = processStartTimeMs(windows ? row[2] : `${row[2]} UTC`);
 		if (start !== undefined) starts.set(Number(row[1]), start);
 	}
 	return starts;

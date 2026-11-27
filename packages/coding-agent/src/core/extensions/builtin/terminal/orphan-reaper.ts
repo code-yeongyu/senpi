@@ -70,16 +70,19 @@ async function readLinuxEvidence(pid: number): Promise<ProcessEvidence> {
 	return { startedAtMs, environ, argv: cmdline.split("\0").filter(Boolean).join(" ") };
 }
 
-/** The darwin evidence for `pid` from `ps -o lstart=,command=`; `exec` runs `ps`. */
+/** The darwin evidence for `pid` from `ps -o lstart=,command=`, its start read in UTC (omo#12108); `exec` runs `ps`. */
 export async function readDarwinEvidence(
 	pid: number,
 	exec: (command: string, args: readonly string[], env?: NodeJS.ProcessEnv) => Promise<string> = execText,
 ): Promise<ProcessEvidence | undefined> {
 	const text = (
-		await exec("ps", ["-o", "lstart=,command=", "-p", String(pid)], { ...process.env, LC_ALL: "C" })
+		await exec("ps", ["-o", "lstart=,command=", "-p", String(pid)], { ...process.env, LC_ALL: "C", TZ: "UTC" })
 	).trim();
 	if (text.length <= LSTART_LENGTH) return undefined;
-	return { startedAtMs: new Date(text.slice(0, LSTART_LENGTH)).getTime(), argv: text.slice(LSTART_LENGTH).trim() };
+	return {
+		startedAtMs: new Date(`${text.slice(0, LSTART_LENGTH)} UTC`).getTime(),
+		argv: text.slice(LSTART_LENGTH).trim(),
+	};
 }
 
 async function readWindowsEvidence(pid: number): Promise<ProcessEvidence | undefined> {
