@@ -8,18 +8,22 @@ import { isSensitiveKeyName } from "./share-sensitive-key.ts";
  *   its value, quoted or not, also when the value is continued on the next line (`--password \\` newline `x`). A flag
  *   that names where the secret comes from (`--password-stdin`, `--token-file`) takes no value. `--max-tokens 4096`
  *   stays, as `max_tokens` is an ordinary name.
- * - Clients whose password is a short flag: `mysql -p<pw>` (glued, quoted or not), `sshpass -p pw`,
+ * - Clients whose password is a short flag, also across line continuations: `mysql -p<pw>` (glued, quoted or not), `sshpass -p pw`,
  *   `redis-cli -a pw`, and the password half of `curl -u user:pw`. A rule stays inside its own command: it never runs
  *   past `;`, `&&`, `||` or `|` (`mysql db && tar -pxf a.tar` keeps `-pxf`).
  * - Environment names that hold a password but read as one word (`PGPASSWORD=pw`, `MYSQL_PWD=pw`).
- * - Prose that states a password, passphrase, secret or token (`my password is x`, `the token is 'a b'`), except a value
- *   that is an ordinary word (`the password is required`) or a length (`the password is 12 characters`).
+ * - Prose that states a password, passphrase, secret or token (`my password is hunter2x`, `the token is 'a b'`), when the
+ *   value looks like a secret (`proseLooksSecret`).
  *
  * Every rule leaves an existing `<redacted>` alone, so a second pass changes and counts nothing.
  */
-// A quote may arrive JSON-escaped (`\"`), as the key/value rule also allows; a bare value never starts at a backslash.
-const VALUE = String.raw`(?:(?<q>\\?["'])((?:(?!\k<q>)[^\n])*)\k<q>|([^\s"'<\\][^\s"'\\]*))`;
-const SAME_COMMAND = String.raw`(?:(?!&&|\|\||[;|\n])[^\n])*?`;
+// A quote may arrive JSON-escaped (`\"`), as the key/value rule also allows; a bare value never starts at a backslash. An
+// existing placeholder is matched as a value too, so a rule consumes it (changing and counting nothing) instead of skipping
+// ahead to a later flag.
+const VALUE = String.raw`(?:(?<q>\\?["'])((?:(?!\k<q>)[^\n])*)\k<q>|(<redacted>|[^\s"'<\\][^\s"'\\]*))`;
+// A line continuation (`\` then a newline) is part of the command, as the shell reads it.
+const SEP = String.raw`(?:[ \t]|\\\r?\n)+`;
+const SAME_COMMAND = String.raw`(?:(?!&&|\|\||[;|])(?:\\\r?\n|[^\n]))*?`;
 
 const FLAG_VALUE = new RegExp(
 	String.raw`(?<![\w-])(--[A-Za-z][A-Za-z0-9_-]{0,63})(=|[ \t]*\\\r?\n[ \t]*|[ \t]+)(?!-)${VALUE}`,
@@ -27,26 +31,30 @@ const FLAG_VALUE = new RegExp(
 );
 const FROM_ELSEWHERE = /-(?:stdin|file|path|env|prompt|command|cmd)$/i;
 const CLIENT_FLAG = new RegExp(
-	String.raw`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b${SAME_COMMAND}[ \t]-p|\bsshpass\b${SAME_COMMAND}[ \t]-p[ \t]+|\bredis-cli\b${SAME_COMMAND}[ \t]-a[ \t]+|\bcurl\b${SAME_COMMAND}[ \t](?:-u|--user)[ \t]+["']?[^\s:"']*:)(?!assword)${VALUE}`,
+	String.raw`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b${SAME_COMMAND}${SEP}-p|\bsshpass\b${SAME_COMMAND}${SEP}-p(?:${SEP})?|\bredis-cli\b${SAME_COMMAND}${SEP}-a${SEP})(?!assword)${VALUE}`,
+	"g",
+);
+/** `curl -u user:pw`, `--user=user:pw`, `-uuser:pw`, quoted or not: only the password half goes, a quoted one whole. */
+const CURL_USER = new RegExp(
+	String.raw`(\bcurl\b${SAME_COMMAND}${SEP}(?:-u|--user)(?:=|${SEP})?)(?:(?<q>\\?["'])([^:\n"'\\]*:)((?:(?!\k<q>)[^\n])*)\k<q>|([^\s:"'\\]*:)(<redacted>|[^\s"'<\\][^\s"'\\]*))`,
 	"g",
 );
 const SECRET_ENV =
-	/\b((?:PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS)[ \t]*=[ \t]*)(?:(["'])((?:(?!\2)[^\n])*)\2|([^\s"'<][^\s"']*))/g;
+	/\b((?:PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS)[ \t]*=[ \t]*)(?:(["'])((?:(?!\2)[^\n])*)\2|(<redacted>|[^\s"'<][^\s"']*))/g;
 const PROSE_SECRET = new RegExp(
 	String.raw`\b((?:password|passphrase|passwd|secret|token)[ \t]+(?:is|was)[ \t]+)${VALUE}([ \t]+[A-Za-z]+)?`,
 	"gi",
 );
-/** Words that complete a sentence about a password rather than being one. */
-const ORDINARY_VALUE =
-	/^(?:required|optional|incorrect|wrong|invalid|missing|expired|expiring|revoked|rotated|leaked|compromised|empty|blank|set|unset|correct|valid|changed|reset|stored|saved|hidden|encrypted|available|unavailable|active|inactive|public|private|safe|weak|strong|long|short|too|not|now|the|a|an|in|on|at|used|needed|ok|okay|fine|same|different|new|old|null|none|undefined|redacted)$/i;
 const LENGTH_UNIT = /^[ \t]+(?:characters?|chars?|letters?|digits?|bytes?|long)$/i;
-/** A letters-only value shorter than this is an ordinary word far more often than a password (`the secret is out`). */
-const MIN_LETTERS_ONLY = 8;
 
-function ordinaryProse(value: string, next: string): boolean {
-	if (ORDINARY_VALUE.test(value)) return true;
-	if (/^[A-Za-z]+$/.test(value) && value.length < MIN_LETTERS_ONLY) return true;
-	return /^\d+$/.test(value) && LENGTH_UNIT.test(next);
+/**
+ * A bare value in prose is redacted only when it looks like a secret: a digit or a symbol in it (`hunter2x`, `p@ss`).
+ * A word, even a long or hyphenated one (`generated`, `short-lived`, `per-request`), reads as the sentence going on and
+ * stays: a letters-only password said in prose cannot be told from prose. A quoted value is always redacted.
+ */
+function proseLooksSecret(value: string, next: string): boolean {
+	if (/^\d+$/.test(value) && LENGTH_UNIT.test(next)) return false;
+	return !/^[A-Za-z]+(?:-[A-Za-z]+)*$/.test(value);
 }
 
 const placeholder = (value: string): boolean => value === "<redacted>";
@@ -69,6 +77,21 @@ export function redactFlagSecrets(text: string, onRedact: () => void): string {
 		.replace(CLIENT_FLAG, (_match, prefix: string, quote: string | undefined, quoted: string, bare: string) =>
 			redactValue(prefix, quote, quote === undefined ? bare : quoted),
 		)
+		.replace(
+			CURL_USER,
+			(
+				_match,
+				prefix: string,
+				quote: string | undefined,
+				quotedUser: string,
+				quotedPassword: string,
+				user: string,
+				password: string,
+			) =>
+				quote === undefined
+					? redactValue(`${prefix}${user}`, undefined, password)
+					: `${prefix}${quote}${quotedUser}${redactValue("", undefined, quotedPassword)}${quote}`,
+		)
 		.replace(SECRET_ENV, (_match, prefix: string, quote: string | undefined, quoted: string, bare: string) =>
 			redactValue(prefix, quote, quote === undefined ? bare : quoted),
 		)
@@ -76,7 +99,7 @@ export function redactFlagSecrets(text: string, onRedact: () => void): string {
 			PROSE_SECRET,
 			(match, lead: string, quote: string | undefined, quoted: string, bare: string, next = "") => {
 				const value = quote === undefined ? bare : quoted;
-				if (quote === undefined && ordinaryProse(value, next)) return match;
+				if (quote === undefined && !proseLooksSecret(value, next)) return match;
 				return redactValue(lead, quote, value) + next;
 			},
 		);
