@@ -2,9 +2,12 @@ import { on, once } from "node:events";
 import { readFileSync, watch } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { startWorkerHost } from "../suite/rpc-worker-host-support.ts";
+import { startWorkerHost } from "../rpc-worker-host-support.ts";
 
-const faux = new URL("../../../ai/dist/providers/faux.js", import.meta.url).href;
+// senpi#7588: every peer delivery held while paused reaches the model once, in admission order, across a host restart;
+// a resend of a held id after the restart is answered already_admitted rather than held a second time.
+
+const faux = new URL("../../../../ai/dist/providers/faux.js", import.meta.url).href;
 const options = { node: true, sessionRuntime: "in-process", waitForReady: true } as const;
 const extension = `import { writeFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from ${JSON.stringify(faux)};
@@ -93,6 +96,17 @@ it.each([false, true])(
 			if (restart) {
 				await kill(host);
 				({ host, sessionId } = await reopen());
+				for (const n of [2, 1]) {
+					const resend = await host.request({
+						type: "admit_external_message",
+						sessionId,
+						deliveryId: `delivery-${n}`,
+						text: `fifo-payload-${n}`,
+						sender: { kind: "agent", session_id: "sender" },
+						deliverAs: "followUp",
+					});
+					expect(resend).toMatchObject({ success: true, data: { kind: "already_admitted" } });
+				}
 			}
 			const state = (await host.request({ type: "get_state", sessionId })).data;
 			expect(state).toMatchObject({
@@ -117,4 +131,6 @@ it.each([false, true])(
 			for (const host of hosts.reverse()) await host.dispose();
 		}
 	},
+	// Two host restarts and a resend: four process starts on a loaded receipt host.
+	120_000,
 );
