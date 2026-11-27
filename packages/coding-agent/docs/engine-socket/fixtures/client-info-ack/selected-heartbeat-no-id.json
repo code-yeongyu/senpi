@@ -1,0 +1,13 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": true,
+	"id": "selected-heartbeat-no-id",
+	"selected": true,
+	"request": {
+		"type": "set_client_info"
+	},
+	"expectedAck": null
+}

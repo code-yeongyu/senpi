@@ -5,8 +5,11 @@ import {
 	type Model,
 	type ProviderDiagnostic,
 	type ProviderDiagnosticCategory,
+	PROVIDER_NOT_CONFIGURED_PREFIX,
 	sanitizeProviderDiagnostic,
+	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
+import { type TransportTrustFailure, transportTrustFailure } from "../engine-trust/transport-failure.ts";
 import { type FallbackModelLookup, parseFallbackSelector } from "./retry-fallback/chains.ts";
 
 /**
@@ -15,18 +18,25 @@ import { type FallbackModelLookup, parseFallbackSelector } from "./retry-fallbac
  * `model_unavailable`: an `unknown` failure the provider answered with HTTP 404, the status a model
  * endpoint returns for a model id this account cannot use (senpi#4578).
  */
-export type ProviderFailureCategory = ProviderDiagnosticCategory | "request_refused" | "model_unavailable";
+export type ProviderFailureCategory =
+	| ProviderDiagnosticCategory
+	| "request_refused"
+	| "model_unavailable"
+	| "sign_in_required";
 
 /**
  * Structured failure of a turn that ended with a provider error, attached to `agent_end`.
- * Built only from the adapter-minted `ProviderDiagnostic` and the runtime's typed served-credential
- * mark; message text is never read.
+ * Built only from the adapter-minted `ProviderDiagnostic` or sign-in cause, the runtime's typed served-credential
+ * mark, and the auth-miss sentinel auth resolution throws before any request (`PROVIDER_NOT_CONFIGURED_PREFIX`);
+ * provider message text is never read.
  * Every category, `unknown` included, carries a reason and an action.
  */
 export interface ProviderFailure {
 	readonly category: ProviderFailureCategory;
 	/** Provider id of the failing request. */
 	readonly provider: string;
+	/** Local account labels requiring a new sign-in. */
+	readonly accountNames?: readonly string[];
 	/** Model id of the failing request (senpi#4328). */
 	readonly model?: string;
 	/**
@@ -41,10 +51,16 @@ export interface ProviderFailure {
 	readonly resetsAt?: number;
 	readonly reason: string;
 	readonly action: string;
+	/**
+	 * Present when the request failed TLS chain verification while the engine runs on a fallback trust
+	 * generation: the fallback reason and its repair action id (senpi#5244).
+	 */
+	readonly trust?: TransportTrustFailure;
 }
 
 const ACTIONS: Record<Exclude<ProviderFailureCategory, "unknown">, { reason: string; action: string }> = {
 	auth: { reason: "the provider rejected the credentials", action: "re-authenticate the provider" },
+	sign_in_required: { reason: "the provider requires a new sign-in", action: "sign in again with the provider" },
 	request_refused: {
 		reason: "the provider refused this request, but the same key worked moments ago, so it may still be valid",
 		action: "send the message again or choose another model; if it keeps failing, re-authenticate",
@@ -147,14 +163,44 @@ export function providerFailureOf(
 ): ProviderFailure | undefined {
 	const last = messages.findLast((message) => message.role === "assistant");
 	if (last === undefined || last.role !== "assistant" || last.stopReason !== "error") return undefined;
-	const failure = describeProviderFailure(sanitizeProviderDiagnostic(last.providerDiagnostic), last.provider, {
-		model: last.model,
-		requestRefused: isRequestLevelRefusal(last),
-	});
+	const diagnostic = sanitizeProviderDiagnostic(last.providerDiagnostic);
+	const described: ProviderFailure =
+		last.errorCause?.type === "sign_in_required"
+			? {
+					category: "sign_in_required",
+					provider: last.provider,
+					model: last.model,
+					accountNames: last.errorCause.accountNames,
+					...ACTIONS.sign_in_required,
+				}
+			: (notConfiguredFailure(last) ??
+				describeProviderFailure(diagnostic, last.provider, {
+					model: last.model,
+					requestRefused: isRequestLevelRefusal(last),
+				}));
+	const trust = transportTrustFailure(diagnostic);
+	const failure = trust === undefined ? described : { ...described, trust };
 	if (selected === undefined || (selected.provider === last.provider && selected.model === last.model)) {
 		return failure;
 	}
 	return { ...failure, selectedProvider: selected.provider, selectedModel: selected.model };
+}
+
+/**
+ * No request was sent: auth resolution found no API key or sign-in for the provider and threw its sentinel.
+ * Without this the turn read as an `unknown` provider error with a resend step that cannot work (senpi#4329).
+ */
+function notConfiguredFailure(message: AssistantMessage): ProviderFailure | undefined {
+	const text = stripTurnRetrySuppressionPrefix(message.errorMessage ?? "");
+	if (!text.startsWith(PROVIDER_NOT_CONFIGURED_PREFIX)) return undefined;
+	const provider = text.slice(PROVIDER_NOT_CONFIGURED_PREFIX.length).trim() || message.provider;
+	return {
+		category: "auth",
+		provider: message.provider,
+		model: message.model,
+		reason: `no API key or sign-in is saved for ${provider}`,
+		action: `connect ${provider} (sign in or add an API key), or choose another model`,
+	};
 }
 
 export function formatProviderFailure(failure: ProviderFailure): string {

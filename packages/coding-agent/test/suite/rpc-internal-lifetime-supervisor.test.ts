@@ -3,8 +3,10 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { processExitEvent } from "../helpers/process-exit-event.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -46,8 +48,6 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 		const supervisor = spawn(
 			process.execPath,
 			[
-				"--import",
-				"tsx",
 				join(import.meta.dirname, "../../src/modes/rpc/host-lifecycle.ts"),
 				"--socket",
 				socket,
@@ -64,16 +64,19 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 				]),
 			],
 			{
-				env: { ...process.env, TMPDIR: tmp, SENPI_CODING_AGENT_DIR: join(root, "agent") },
+				env: { ...hostSpawnEnv(), TMPDIR: tmp, SENPI_CODING_AGENT_DIR: join(root, "agent") },
 				stdio: ["ignore", "ignore", "inherit"],
 			},
 		);
 		const supervisorExit = once(supervisor, "exit");
 		try {
 			await waitForListener(socket, 60_000);
-			const [hopName] = readdirSync(tmp).filter((name) => name.startsWith("senpi-rpc-host-internal-"));
+			// The hop lives in the endpoint's daemon directory (senpi#7452), never in the caller's temp dir.
+			const daemonDir = createHostDaemonPaths({ socket, agentDir: join(root, "agent") }).dir;
+			expect(readdirSync(tmp).filter((name) => name.startsWith("senpi-rpc-host-internal-"))).toEqual([]);
+			const [hopName] = readdirSync(daemonDir).filter((name) => name.startsWith("senpi-rpc-host-internal-"));
 			expect(hopName).toBeDefined();
-			const hop = join(tmp, hopName ?? "");
+			const hop = join(daemonDir, hopName ?? "");
 			const fifo = join(hop, "lifetime.fifo");
 			expect(statSync(hop).mode & 0o777).toBe(0o700);
 			// Linux binds through the FIFO; macOS through the reopened stdin (libuv reports no FIFO EOF there).
@@ -81,7 +84,7 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 				expect(statSync(fifo).isFIFO()).toBe(true);
 				expect(statSync(fifo).mode & 0o777).toBe(0o600);
 			} else expect(existsSync(fifo)).toBe(false);
-			// The host is the supervisor's child listening on this hop; tsx also gives the supervisor an esbuild child.
+			// The host is the supervisor's child listening on this hop.
 			const [childPid] = execFileSync(
 				"pgrep",
 				["-P", String(supervisor.pid), "-f", `unix://${join(hop, "host.sock")}`],

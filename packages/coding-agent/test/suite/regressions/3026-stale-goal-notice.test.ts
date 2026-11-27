@@ -27,8 +27,12 @@ async function fixture() {
 		agentDir: base.cwd,
 		mode: "tui",
 		tools: [],
+		issuedByModel: true,
 		executeTool: async () => {
 			throw new Error("Unexpected nested tool execution");
+		},
+		reportToolResult: async () => {
+			throw new Error("Unexpected reported tool result");
 		},
 	};
 	const ref = goalStoreRef(ctx.sessionManager, ctx.cwd);

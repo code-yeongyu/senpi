@@ -10,6 +10,12 @@ export interface CompactSlot {
 	readonly bytes: number;
 }
 
+/** Byte bound of every segment file, value batches and compaction-round node sets alike (RULING-54). */
+export const COMPACT_SEGMENT_BYTES = 65_536;
+
+/** Where one text of a flush batch landed: its segment file and its offset in it. */
+export type CompactPlacement = readonly [segment: CompactSegment, offset: number];
+
 /** One flush batch in one spool file, with the leaves still live in it. */
 export interface CompactSegment {
 	readonly path: string;
@@ -22,8 +28,9 @@ export interface CompactSegment {
 }
 
 /**
- * Segment packing of compact current-state storage (senpi#4272, RULING-47): a flush batch is one
- * spool file and each leaf is read back by offset. A segment is deleted once its last live leaf is
+ * Segment packing of compact current-state storage (senpi#4272, RULING-47): a flush batch is a run of
+ * spool files of at most `COMPACT_SEGMENT_BYTES` each (RULING-54), and each leaf is read back by offset
+ * from the one file holding it. A segment is deleted once its last live leaf is
  * released and no read of it is in flight. When its live bytes fall below half its size it is
  * rewritten once, so dead bytes on disk stay at most the live bytes of the segments holding them;
  * a failed rewrite halts spilling and keeps the old segment readable.
@@ -38,6 +45,57 @@ export abstract class CompactSegmentStorage extends CompactSpoolStorage {
 		const path = await this.writeFile(data, operation, data.byteLength);
 		if (path === undefined) return undefined;
 		return { path, bytes: data.byteLength, operation, live: new Map(), liveBytes: 0, readers: 0, rewritten: false };
+	}
+
+	/** Splits sized entries, in order, into runs of at most `COMPACT_SEGMENT_BYTES`; a larger entry runs alone. */
+	protected segmentRuns<T>(entries: Iterable<readonly [T, number]>): T[][] {
+		const runs: T[][] = [];
+		let bytes = 0;
+		for (const [entry, size] of entries) {
+			const run = runs.at(-1);
+			if (run && bytes + size <= COMPACT_SEGMENT_BYTES) {
+				run.push(entry);
+				bytes += size;
+			} else {
+				runs.push([entry]);
+				bytes = size;
+			}
+		}
+		return runs;
+	}
+
+	/**
+	 * Writes the texts as one run of bounded segment files, in order, and returns each text's placement
+	 * once EVERY file is durable; nothing is registered before then. A failed write discards the files
+	 * the run already wrote and returns undefined, so a batch becomes visible as a whole or not at all.
+	 */
+	protected async writeSegments(
+		texts: readonly string[],
+		operation: CompactStorageOperation,
+	): Promise<readonly CompactPlacement[] | undefined> {
+		const placements: CompactPlacement[] = [];
+		const written: CompactSegment[] = [];
+		let complete = false;
+		try {
+			for (const run of this.segmentRuns(texts.map((text, n) => [n, text.length * 2] as const))) {
+				const segment = await this.writeSegment(
+					run.map((n) => texts[n]),
+					operation,
+				);
+				if (!segment) return undefined;
+				written.push(segment);
+				let offset = 0;
+				for (const n of run) {
+					placements[n] = [segment, offset];
+					offset += texts[n].length * 2;
+				}
+			}
+			complete = true;
+			return placements;
+		} finally {
+			// A write that failed or threw leaves the files before it unreferenced: reclaim them now.
+			if (!complete) for (const stray of written) this.discard(stray.path, stray.bytes);
+		}
 	}
 
 	protected place(segment: CompactSegment, id: LeafId, offset: number, bytes: number): CompactSlot {

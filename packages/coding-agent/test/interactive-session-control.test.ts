@@ -56,6 +56,7 @@ describe("TUI session control endpoint", () => {
 				"entries_tail",
 				"snapshot_cursor",
 				"ui_answer_ledger",
+				"unload_graceful",
 			],
 			mode: "tui",
 			endpoint_kind: "tui",
@@ -86,7 +87,7 @@ describe("TUI session control endpoint", () => {
 			compacting: false,
 			editor_has_draft: false,
 		});
-		fixture.setDraft("draft");
+		fixture.setDraft(true);
 		expect(await controlData(fixture.socket, { type: "get_state" })).toMatchObject({ editor_has_draft: true });
 		expect(await controlData(fixture.socket, { type: "set_session_name", name: "tui-one" })).toBeUndefined();
 		expect(fixture.harness.session.sessionName).toBe("tui-one");

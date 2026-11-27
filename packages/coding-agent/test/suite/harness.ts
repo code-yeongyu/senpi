@@ -3,7 +3,7 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
  * Local test harness for the new coding-agent test suite.
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
@@ -17,9 +17,10 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
-import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
+import { makeTempDir, onTempCleanup, settleBeforeRemoval } from "../../../../scripts/vitest-temp.ts";
 import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
+import { settledFallbackLoggers } from "../../src/core/retry-fallback/log.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
 import type { SessionStartEvent } from "../../src/core/extensions/types.ts";
@@ -92,6 +93,7 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		custom: async <T>() => undefined as T,
 		pasteToEditor: () => {},
 		setEditorText: () => {},
@@ -113,6 +115,8 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 }
 
 export interface HarnessOptions {
+	/** Hosted step commit forwarded to the Agent (custody C.P3); unset for every fused test. */
+	commitStep?: AgentOptions["commitStep"];
 	models?: FauxModelDefinition[];
 	api?: string;
 	provider?: string;
@@ -262,6 +266,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	}
 
 	const agent = new Agent({
+		...(options.commitStep ? { commitStep: options.commitStep } : {}),
 		getApiKey: () => (withConfiguredAuth ? "faux-key" : undefined),
 		streamFn: streamSimple,
 		initialState: {
@@ -334,16 +339,32 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		...(options.sessionStartEvent !== undefined ? { sessionStartEvent: options.sessionStartEvent } : {}),
 	});
 
+	// The session's fallback logger removes earlier log generations asynchronously on its first start and queues the
+	// lines logged meanwhile; wait until it has flushed them so a test can read fallback.log as soon as the harness exists.
+	await settledFallbackLoggers();
+
 	const events: AgentSessionEvent[] = [];
 	session.subscribe((event) => {
 		events.push(event);
 	});
 
+	// The directory goes only after this session's tool child has exited and every fallback logger has settled
+	// (senpi#3570): dispose() starts the child's close, and tests also start sessions of their own under this
+	// directory (an agentDir like "<tempDir>/sdk-agent"), whose fallback log's first-start work still wrote
+	// "<agent>/logs/.fallback-log-v2" while the directory was removed (ENOTEMPTY).
+	settleBeforeRemoval(
+		tempDir,
+		async () => {
+			await session.whenToolChildClosed();
+			await settledFallbackLoggers();
+		},
+		() =>
+			`session ${session.sessionId}'s tool child (${JSON.stringify(session.toolChildRow())}) or a fallback logger still settling`,
+	);
 	const cleanup = () => {
 		if (!cleanups.delete(cleanup)) return;
 		session.dispose();
 		if (!sibling) fauxProvider.unregister();
-		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
 	};
 	cleanups.add(cleanup);
 	return {

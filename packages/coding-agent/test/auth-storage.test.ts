@@ -610,8 +610,8 @@ describe("poisoned managed-sentinel pool slot migration", () => {
 			refresh: sentinel,
 			expires: 4_102_444_800_000,
 			accounts: [
-				{ name: "default", access: "real-access", refresh: "real-refresh", expires: 1, source: "login" },
-				{ name: "work", access: "work-access", refresh: "work-refresh", expires: 1, source: "login" },
+				{ name: "default", source: "login", store: "claude-cli", dirId: "a".repeat(32) },
+				{ name: "work", source: "login", store: "claude-cli", dirId: "b".repeat(32) },
 			],
 		};
 		const before = JSON.stringify({ "anthropic-subscription": clean }, null, 2);

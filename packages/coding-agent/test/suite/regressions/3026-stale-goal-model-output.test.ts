@@ -18,8 +18,12 @@ describe("senpi#3026 model-facing stale stop", () => {
 				agentDir: base.cwd,
 				mode: "rpc",
 				tools: [],
+				issuedByModel: true,
 				executeTool: async () => {
 					throw new Error("Unexpected nested tool execution");
+				},
+				reportToolResult: async () => {
+					throw new Error("Unexpected reported tool result");
 				},
 			};
 			const ref = goalStoreRef(ctx.sessionManager, ctx.cwd);

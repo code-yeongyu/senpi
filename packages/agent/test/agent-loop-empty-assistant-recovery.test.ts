@@ -9,7 +9,7 @@ import {
 	Type,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
-import { agentLoop } from "../src/agent-loop.ts";
+import { agentLoop } from "../src/index.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
 
 const REAL_MALFORMED_THINKING =

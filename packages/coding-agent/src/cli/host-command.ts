@@ -21,25 +21,17 @@
  * (`host-daemon-env.ts`), never this process's whole environment.
  */
 import { writeSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { APP_NAME, getAgentDir } from "../config.ts";
-import { envValue } from "../core/brand.ts";
-import {
-	DEFAULT_HOST_LAUNCH_SPEC,
-	HostLaunchSpecError,
-	loadHostLaunchSpec,
-	type ResolvedHostLaunchSpec,
-} from "../modes/rpc/host-launch-spec.ts";
+import { APP_NAME } from "../config.ts";
+import { type HostOperation, runHostOperation } from "../engine/host.ts";
 import {
 	HOST_EXIT_ERROR,
+	HOST_EXIT_FALLBACK,
+	HOST_EXIT_OK,
+	HOST_EXIT_REFUSED,
 	HOST_EXIT_USAGE,
-	type HostRequest,
-	type HostTarget,
-	runHostRequest,
 } from "../modes/rpc/host-runner.ts";
 import { type ParsedHostArgs, parseHostArgs } from "./host-command-args.ts";
 import { emit } from "./host-emit.ts";
-import { presenterBootstrapStream } from "../modes/rpc/mcp-presenter-bootstrap.ts";
 
 export { parseHostArgs } from "./host-command-args.ts";
 
@@ -48,9 +40,10 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
   ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
   status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
   stop        [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--expected-generation <json>] [--socket <path>]
-  handoff     [--launch-spec <file>] [--socket <path>]
+  handoff     [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
               [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
               (--when idle: the running host hands over to THIS runtime at its next safe idle point)
+              (a host on a newer engine is refused older_engine unless --allow-downgrade)
   shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
   gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
   session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
@@ -70,76 +63,79 @@ export async function runHostCommand(args: readonly string[]): Promise<number> {
 		process.stderr.write(`${parsed}\n${USAGE}\n`);
 		return HOST_EXIT_USAGE;
 	}
-	try {
-		const request = await hostRequest(parsed);
-		const presenterBootstrap =
-			parsed.presenterBootstrapFd === undefined ? undefined : presenterBootstrapStream(parsed.presenterBootstrapFd);
-		const outcome = await runHostRequest(request, {
-			keyRoot: parsed.keyRoot,
-			presenterBootstrap,
-			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
-		}).finally(() => presenterBootstrap?.destroy());
-		if (parsed.subcommand === "shard-path" && !parsed.json) writeSync(1, `${String(outcome.payload.socket)}\n`);
-		else emit(outcome.payload);
-		return outcome.exitCode;
-	} catch (error: unknown) {
-		if (error instanceof HostLaunchSpecError) {
-			emit({ action: "error", reason: error.reason, detail: error.detail });
+	const result = await runHostOperation(hostOperation(parsed), {
+		...(parsed.socket !== undefined && { socket: parsed.socket }),
+		...(parsed.keyRoot !== undefined && { keyRoot: parsed.keyRoot }),
+		...(parsed.presenterBootstrapFd !== undefined && { presenterBootstrapFd: parsed.presenterBootstrapFd }),
+		...(parsed.mcpPresenterEnforcement !== undefined && { mcpPresenterEnforcement: parsed.mcpPresenterEnforcement }),
+	});
+	const payload = result.kind === "ok" ? result.value.payload : result.error.details?.payload;
+	const line = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+	if (parsed.subcommand === "shard-path" && !parsed.json && result.kind === "ok")
+		writeSync(1, `${String(line.socket)}\n`);
+	else emit(line);
+	return exitCode(result);
+}
+
+function exitCode(result: Awaited<ReturnType<typeof runHostOperation>>): number {
+	if (result.kind === "ok") return result.value.outcome === "fallback" ? HOST_EXIT_FALLBACK : HOST_EXIT_OK;
+	switch (result.error.code) {
+		case "refused":
+			return HOST_EXIT_REFUSED;
+		case "usage":
 			return HOST_EXIT_USAGE;
-		}
-		emit({ action: "error", reason: "host_error", detail: error instanceof Error ? error.message : String(error) });
-		return HOST_EXIT_ERROR;
+		case "failed":
+			return HOST_EXIT_ERROR;
 	}
 }
 
-async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
-	const agentDir = getAgentDir();
-	const target: HostTarget = { socket: resolveHostSocket(parsed.socket, agentDir), agentDir };
+function hostOperation(parsed: ParsedHostArgs): HostOperation {
 	switch (parsed.subcommand) {
 		case "ensure":
-			return { action: "ensure", target, spec: await launchSpec(parsed.specPath), policy: parsed.policy };
+			return {
+				operation: "ensure",
+				policy: parsed.policy,
+				...(parsed.specPath !== undefined && { launch_spec: parsed.specPath }),
+			};
 		case "status":
-			return { action: "status", target, includeWorkers: parsed.includeWorkers, all: parsed.all };
+			return { operation: "status", include_workers: parsed.includeWorkers, all: parsed.all };
 		case "stop":
 			return {
-				action: "stop",
-				target,
+				operation: "stop",
 				drain: parsed.drain,
 				force: parsed.force,
-				...(parsed.expectedGeneration !== undefined && { expectedGeneration: parsed.expectedGeneration }),
-				...(parsed.instanceId !== undefined && { instanceId: parsed.instanceId }),
-				...(parsed.waitMs !== undefined && { waitMs: parsed.waitMs }),
+				...(parsed.expectedGeneration !== undefined && { expected_generation: parsed.expectedGeneration }),
+				...(parsed.instanceId !== undefined && { instance: parsed.instanceId }),
+				...(parsed.waitMs !== undefined && { wait_ms: parsed.waitMs }),
 			};
 		case "handoff":
 			return {
-				action: "handoff",
-				target,
-				spec: await launchSpec(parsed.specPath),
-				...(parsed.handover !== undefined && { handover: parsed.handover }),
+				operation: "handoff",
+				...(parsed.specPath !== undefined && { launch_spec: parsed.specPath }),
+				...(parsed.allowDowngrade === true && { allow_downgrade: true }),
+				...(parsed.handover !== undefined && {
+					when: {
+						idle: {
+							operation: parsed.handover.operationId,
+							if_instance: parsed.handover.ifInstanceId,
+							if_generation: parsed.handover.ifGeneration,
+							target_build: parsed.handover.targetRuntimeBuildId,
+						},
+					},
+				}),
 			};
 		case "shard-path":
 			return {
-				action: "shard_path",
+				operation: "shard_path",
 				kind: parsed.kind ?? "p",
 				owner: parsed.owner ?? "",
-				root: resolve(parsed.root ?? join(agentDir, "rpc", "shards")),
+				...(parsed.root !== undefined && { root: parsed.root }),
 			};
 		case "gc":
-			return { action: "gc", agentDir: resolve(parsed.agentDir ?? agentDir) };
-		default:
-			return assertNever(parsed.subcommand);
+			return { operation: "gc", ...(parsed.agentDir !== undefined && { agent_dir: parsed.agentDir }) };
+		default: {
+			const exhaustive: never = parsed.subcommand;
+			return exhaustive;
+		}
 	}
-}
-
-function launchSpec(specPath: string | undefined): Promise<ResolvedHostLaunchSpec> | ResolvedHostLaunchSpec {
-	return specPath === undefined ? DEFAULT_HOST_LAUNCH_SPEC : loadHostLaunchSpec(specPath);
-}
-
-/** The endpoint this client would reach: the one it was given, the branded override, or the default. */
-export function resolveHostSocket(explicit: string | undefined, agentDir: string): string {
-	return explicit ?? envValue("RPC_SOCKET") ?? resolve(agentDir, "rpc", "rpc.sock");
-}
-
-function assertNever(value: never): never {
-	throw new Error(`unreachable host subcommand: ${JSON.stringify(value)}`);
 }

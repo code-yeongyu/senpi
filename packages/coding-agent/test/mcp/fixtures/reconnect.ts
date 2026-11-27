@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
+import { onTestFailed, onTestFinished } from "vitest";
 import type { McpServerConfig } from "../../../src/core/extensions/builtin/mcp/config-schema.ts";
+import type { ServerConnection } from "../../../src/core/extensions/builtin/mcp/connection.ts";
 
 export function readNumberFile(path: string): number {
 	return Number(readFileSync(path, "utf8").trim());
@@ -34,7 +36,30 @@ export function serverConfig(): McpServerConfig {
 	};
 }
 
-export async function waitFor(assertion: () => boolean, timeoutMs = 5000): Promise<void> {
+export function waitForReconnect(connection: ServerConnection): Promise<void> {
+	return new Promise((resolve) => {
+		const states: ServerConnection["state"][] = [];
+		let recovered = false;
+		const off = connection.onStateChange(({ state }) => {
+			states.push(state);
+			if (state !== "connected" || !states.includes("degraded")) return;
+			recovered = true;
+			off();
+			resolve();
+		});
+		// Let Vitest own the deadline, even when the real transport is slow.
+		onTestFinished(off);
+		onTestFailed(() => {
+			if (!recovered) {
+				throw new Error(
+					`MCP reconnect missing for ${connection.serverName}: expected degraded → connected; saw ${states.join(" → ") || "no transitions"}`,
+				);
+			}
+		});
+	});
+}
+
+export async function waitFor(assertion: () => boolean, timeoutMs: number): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	let lastError: Error | null = null;
 	while (Date.now() < deadline) {

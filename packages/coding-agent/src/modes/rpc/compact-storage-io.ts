@@ -9,6 +9,7 @@ export type CompactStorageOperation =
 	| "spool_create"
 	| "spill_write"
 	| "value_write"
+	| "node_write"
 	| "page_write"
 	| "leaf_read"
 	| "page_read"

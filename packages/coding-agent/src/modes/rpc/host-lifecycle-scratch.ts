@@ -36,21 +36,38 @@ function canonicalPath(path: string): string {
 	}
 }
 
-function internalHostDirRoot(name: string): string {
-	for (const root of internalHostDirRoots()) {
+function internalHostDirRoot(name: string, hostDir: string): string {
+	const candidates = [hostDir, ...internalHostDirRoots()];
+	for (const root of candidates) {
 		if (Buffer.byteLength(join(root, name, "host.sock")) <= MAX_SOCKET_PATH_BYTES) return root;
 	}
-	const tried = internalHostDirRoots().map((root) => join(root, name, "host.sock"));
+	const tried = candidates.map((root) => join(root, name, "host.sock"));
 	throw new Error(
-		`internal_socket_path_too_long: every candidate exceeds ${MAX_SOCKET_PATH_BYTES} bytes (${tried.join(", ")}); set TMPDIR to a shorter directory`,
+		`internal_socket_path_too_long: every candidate exceeds ${MAX_SOCKET_PATH_BYTES} bytes (${tried.join(", ")}); use a shorter agent directory or TMPDIR`,
+	);
+}
+
+/** Whose hop a directory is: the supervisor that serves through it, read by the reaper as its liveness record. */
+export interface InternalHopOwner {
+	readonly pid: number;
+	readonly processStartTime: string | undefined;
+}
+
+export async function writeInternalHopOwner(dir: string, owner: InternalHopOwner): Promise<void> {
+	await writeFile(
+		join(dir, ".owner"),
+		JSON.stringify({ pid: owner.pid, processStartTime: owner.processStartTime, createdAt: Date.now() }),
+		{ mode: 0o600 },
 	);
 }
 
 /**
  * The internal hop must stay short enough for sun_path (104 bytes on macOS)
  * regardless of where the public socket lives, and private against other local
- * users, so it gets its own 0700 directory under the OS temp directory, or under
- * `/tmp` when the temp directory itself is too deep (senpi#3487).
+ * users, so it gets its own 0700 directory. On POSIX that directory lives in
+ * `baseDir`, the endpoint's own daemon directory, which no temp sweep owns
+ * (senpi#7452); the OS temp directory and then `/tmp` are only fallbacks for a
+ * `baseDir` too deep for sun_path (senpi#3487).
  *
  * On win32 the directory lives under the caller-supplied rpc-host-daemon
  * directory, which ensureHost() creates but a direct --internal-rpc-host-supervisor
@@ -71,17 +88,9 @@ export async function createInternalSocketPath(
 	}
 	const name = `${INTERNAL_HOST_DIR_PREFIX}${randomUUID().slice(0, 8)}`;
 	// Non-recursive and 0700: a fresh, unguessable directory of this user's, never an existing one.
-	const dir = join(internalHostDirRoot(name), name);
+	const dir = join(internalHostDirRoot(name, baseDir), name);
 	await mkdir(dir, { recursive: false, mode: 0o700 });
-	await writeFile(
-		join(dir, ".owner"),
-		JSON.stringify({
-			pid: process.pid,
-			processStartTime: await readProcessStartTime(process.pid),
-			createdAt: Date.now(),
-		}),
-		{ mode: 0o600 },
-	);
+	await writeInternalHopOwner(dir, { pid: process.pid, processStartTime: await readProcessStartTime(process.pid) });
 	return { socket: join(dir, "host.sock"), dir, secretPath: join(dir, ".secret") };
 }
 

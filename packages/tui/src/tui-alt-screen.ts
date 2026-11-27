@@ -19,6 +19,7 @@ import {
 } from "./layout.ts";
 import { getLayoutNode } from "./layout-node.ts";
 import { decodeMouseButton, isMouseSequence, parseSgrMouseEvent, parseWheelEvent } from "./mouse-input.ts";
+import { resolveSourceSelection } from "./selection-source.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	deleteAllKittyImages,
@@ -303,14 +304,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	/** Whether the fullscreen viewport has a non-empty active text selection. */
 	hasActiveSelection(): boolean {
-		return this.getActiveSelectionText() !== undefined;
+		return this.getActiveSelectionText() !== undefined || this.selectionSourceUnavailable;
 	}
 
 	/** Copy the active fullscreen text selection, if any, using the configured selection clipboard path. */
 	async copyActiveSelectionToClipboard(): Promise<boolean> {
-		const text = this.getActiveSelectionText();
-		if (!text) return false;
-		return this.copyTextToClipboard(text);
+		return this.copySelectionToClipboard();
 	}
 
 	/** The lines of the last rendered frame, one per terminal row, as written to the terminal. */
@@ -1397,7 +1396,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return { start: Math.max(minColumn, start), end: Math.min(maxColumn, end) };
 	}
 
+	private selectionSourceUnavailable = false;
+
 	private getActiveSelectionText(): string | undefined {
+		this.selectionSourceUnavailable = false;
 		const selection = this.getSelectionBounds();
 		if (!selection) return undefined;
 		let sourceLines: readonly string[] = this.previousScreen;
@@ -1407,6 +1409,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			if (!box?.scrollContentLines) return undefined;
 			sourceLines = box.scrollContentLines;
 		}
+		const rows: Array<{ row: number; start: number; end: number }> = [];
+		for (let row = selection.start.row; row <= selection.end.row; row++) {
+			rows.push({ row, ...this.getSelectionColumns(sourceLines[row] ?? "", row, selection) });
+		}
+		const original = resolveSourceSelection(sourceLines, rows);
+		if (original && "unavailable" in original) {
+			this.selectionSourceUnavailable = true;
+			return undefined;
+		}
+		if (original && "text" in original) return original.text || undefined;
 		const lines: string[] = [];
 		for (let row = selection.start.row; row <= selection.end.row; row++) {
 			const line = sourceLines[row] ?? "";
@@ -1423,6 +1435,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	private async copySelectionToClipboard(): Promise<boolean> {
 		const text = this.getActiveSelectionText();
+		if (this.selectionSourceUnavailable) {
+			this.flash("Original source unavailable for this selection", COPY_ERROR_FLASH_DURATION_MS);
+			return false;
+		}
 		if (!text) return false;
 		return this.copyTextToClipboard(text);
 	}

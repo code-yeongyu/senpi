@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createConnection, createServer, Socket } from "node:net";
@@ -11,15 +12,18 @@ import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../../src/modes/
 
 const cleanups: Array<() => Promise<void>> = [];
 
-async function proxy(holdOpen = false) {
+async function proxy(holdOpen = false, publicSecret?: Buffer) {
 	const dir = await mkdtemp(join(tmpdir(), "admit-"));
 	const peers: Socket[] = [];
+	const internalLines: string[] = [];
 	const internalPath = join(dir, "i.sock");
 	const publicPath = join(dir, "p.sock");
 	const internal = createServer((peer) => {
 		peers.push(peer);
 		attachJsonlLineReader(peer, (line) => {
+			internalLines.push(line);
 			const command = JSON.parse(line);
+			if (command.type === "launch_proven") return;
 			if (holdOpen && command.type === "open_session") return;
 			peer.write(
 				`${JSON.stringify({ type: "response", id: command.id, command: command.type, success: true, data: command })}\n`,
@@ -34,7 +38,13 @@ async function proxy(holdOpen = false) {
 		instanceId: "proxy",
 	});
 	const clients = new ClientOccupancy(() => {});
-	const server = createPublicProxy({ internalSocket: internalPath, clients, admission, onDetach: () => {} });
+	const server = createPublicProxy({
+		internalSocket: internalPath,
+		clients,
+		admission,
+		onDetach: () => {},
+		...(publicSecret ? { publicSecret } : {}),
+	});
 	const publicPeers = new Set<Socket>();
 	server.on("connection", (peer) => publicPeers.add(peer));
 	await listen(server, publicPath);
@@ -62,6 +72,7 @@ async function proxy(holdOpen = false) {
 	};
 	return {
 		client,
+		internalLines,
 		admission,
 		take,
 		publicPeers,
@@ -81,6 +92,16 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === "win32")("supervisor admission framing", () => {
+	// senpi#5632 (CI on senpi#5651): a client that proved the public secret (the Windows path) gets its first request
+	// forwarded behind the proof record; the record must not delay reading the client past its resume.
+	it("forwards a secret-proven client's first request right behind the launch proof", async () => {
+		const secret = Buffer.alloc(32, 7);
+		const p = await proxy(false, secret);
+		p.client.write(Buffer.concat([secret, Buffer.from('{"id":"first","type":"get_protocol_info"}\n')]));
+		expect(await p.take(1)).toMatchObject([{ id: "first", command: "get_protocol_info", success: true }]);
+		expect(p.internalLines.map((line) => JSON.parse(line).type)).toEqual(["launch_proven", "get_protocol_info"]);
+	});
+
 	it("closes a drained connection after its last session parks", async () => {
 		const p = await proxy();
 		p.client.write('{"id":"open","type":"open_session"}\n');
@@ -218,5 +239,97 @@ describe.skipIf(process.platform === "win32")("supervisor admission framing", ()
 		expect(replies.map((reply) => reply.id)).toEqual(["large", "late"]);
 		expect(replies[1]).toMatchObject({ errorCode: "host_stopping" });
 		expect(replies[0].success).toBe(true);
+	});
+});
+
+// senpi#7388: a public client whose connection to the host fails used to be reset before any reply. The proxy runs in a
+// child so the test reads what the supervisor really writes to fd 2 (a detached daemon's only diagnostic channel).
+describe.skipIf(process.platform === "win32")("a failed connection to the host", () => {
+	const fixture = join(import.meta.dirname, "../fixtures/hop-failure-proxy.ts");
+
+	it.each([
+		["fails its handshake", "keyed"],
+		["finds no listener (a hop without an internal key)", "keyless"],
+	])("refuses every client with host_unavailable and logs the outage once when the connection %s", async (_, mode) => {
+		const child = spawn(process.execPath, [fixture, mode], { stdio: ["ignore", "pipe", "pipe"] });
+		let stdout = "";
+		let stderr = "";
+		child.stdout.on("data", (chunk) => (stdout += chunk));
+		child.stderr.on("data", (chunk) => (stderr += chunk));
+		const [code] = await once(child, "close");
+
+		expect(code).toBe(0);
+		const replies = stdout
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		expect(replies).toMatchObject(
+			["open-1", "open-2"].map((id) => ({
+				id,
+				command: "open_session",
+				success: false,
+				errorCode: "host_unavailable",
+				errorData: { reason: "internal_connection_failed" },
+			})),
+		);
+		const lines = stderr.split("\n").filter((line) => line.startsWith("senpi rpc host supervisor:"));
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toContain("connection to the host failed");
+	});
+});
+
+// senpi#7425: a connection refused with host_unavailable stays open to read its refusals, but it can never reach the
+// host, so it must not count as attached occupancy and hold the supervisor's idle exit. A working hop still counts.
+describe.skipIf(process.platform === "win32")("occupancy of a refused connection", () => {
+	it.each([
+		["a refused connection does not", false, 0],
+		["a connection that reached the host does", true, 1],
+	])("%s count as attached occupancy while it stays connected", async (_, hostListens, expected) => {
+		const dir = await mkdtemp(join(tmpdir(), "refused-occ-"));
+		const internalPath = join(dir, "i.sock");
+		const publicPath = join(dir, "p.sock");
+		const internal = hostListens
+			? createServer((peer) =>
+					attachJsonlLineReader(peer, (line) => {
+						const command = JSON.parse(line);
+						peer.write(
+							`${JSON.stringify({ type: "response", id: command.id, command: command.type, success: true })}\n`,
+						);
+					}),
+				)
+			: undefined;
+		if (internal) await listen(internal, internalPath);
+		const clients = new ClientOccupancy(() => {});
+		const server = createPublicProxy({
+			internalSocket: internalPath,
+			clients,
+			admission: new HostAdmission({
+				protocolVersion: 1,
+				serverVersion: "fixture",
+				capabilities: [],
+				instanceId: "occ",
+			}),
+			onDetach: () => {},
+		});
+		await listen(server, publicPath);
+		const client = createConnection(publicPath);
+		cleanups.push(async () => {
+			client.destroy();
+			clients.destroyAll();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			if (internal) await new Promise<void>((resolve) => internal.close(() => resolve()));
+			await rm(dir, { recursive: true, force: true });
+		});
+		const reply = new Promise<Record<string, unknown>>((resolve) =>
+			attachJsonlLineReader(client, (line) => resolve(JSON.parse(line))),
+		);
+		await once(client, "connect");
+		client.write(`${JSON.stringify({ id: "open-1", type: "open_session", cwd: dir })}\n`);
+
+		expect((await reply).success).toBe(hostListens);
+		expect(client.destroyed).toBe(false);
+		expect(clients.attachedCount).toBe(expected);
+		expect(clients.occupancy(undefined)).toBe(expected);
+		expect(clients.unclassifiedCount).toBe(0);
 	});
 });

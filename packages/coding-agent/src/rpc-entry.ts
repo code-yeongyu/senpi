@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./windows-power-throttling-startup.ts";
 import "./internal-role.ts";
 import { APP_NAME } from "./config.ts";
 import { scrubBrandFromEnvironment } from "./core/brand.ts";

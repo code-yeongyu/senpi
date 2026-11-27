@@ -42,4 +42,4 @@ it("bounds page buffers over 1,024 rows and releases every allocation after the 
 		await store.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

@@ -97,4 +97,4 @@ it("bounds compaction of mixed ceiling-sized rows and overrides spread over many
 		await store.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

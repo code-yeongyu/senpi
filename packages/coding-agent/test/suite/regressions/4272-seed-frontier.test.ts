@@ -81,7 +81,13 @@ describe("seeded frontier contract #4272", () => {
 			},
 		]);
 		const records: Lane[] = [];
-		const stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+		const stop = subscribeStructuredSessionRecords(
+			session.harness.session,
+			(record) => records.push(record),
+			(cause) => {
+				throw cause;
+			},
+		);
 		try {
 			await session.prompt("go");
 			expect(records.filter((record) => record.assistantMessageEvent?.type === "text_start")).toHaveLength(1);
@@ -116,7 +122,13 @@ describe("seeded frontier contract #4272", () => {
 				},
 			]);
 			const records: Lane[] = [];
-			const stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+			const stop = subscribeStructuredSessionRecords(
+				session.harness.session,
+				(record) => records.push(record),
+				(cause) => {
+					throw cause;
+				},
+			);
 			try {
 				await session.prompt("go");
 				expect(records.find((record) => record.assistantMessageEvent?.type === "text_start")).toMatchObject({

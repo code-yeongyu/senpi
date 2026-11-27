@@ -4,7 +4,9 @@ import {
 	isSessionControlDeliveryDetails,
 	type MessageRenderer,
 	SESSION_CONTROL_DELIVERY_TYPE,
+	type SessionControlRemoteOrigin,
 	type SessionControlSender,
+	sessionControlRemoteOriginOf,
 	sessionControlSenderOf,
 } from "../../../core/extensions/types.ts";
 import { sharedMarkdownTheme } from "../theme/theme.ts";
@@ -13,14 +15,17 @@ import { sharedMarkdownTheme } from "../theme/theme.ts";
  * A message another session delivered renders as its own block - never as the user's own input, so
  * a reader always sees which text came from outside this terminal. A delivery that names its sender
  * shows one label line ("Sent by another agent · <name>") over the message as it was written; one
- * that does not keeps the generic heading over the text the model read.
+ * that does not keeps the generic heading over the text the model read. A delivery an RPC connection admitted for a
+ * remote device leads with the device the engine stamped, before the sender that device's caller claimed.
  */
 export const renderRemoteDelivery: MessageRenderer = (message, _options, theme) => {
 	const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
 	const sender = sessionControlSenderOf(message.details);
-	const shown = sender === undefined ? undefined : displayTextOf(message.details);
-	if (sender !== undefined && shown !== undefined) {
-		box.addChild(new Text(theme.fg("dim", senderLabel(sender)), 0, 0));
+	const origin = sessionControlRemoteOriginOf(message.details);
+	const shown = sender === undefined && origin === undefined ? undefined : displayTextOf(message.details);
+	if (shown !== undefined) {
+		if (origin !== undefined) box.addChild(new Text(theme.fg("dim", originLabel(origin)), 0, 0));
+		if (sender !== undefined) box.addChild(new Text(theme.fg("dim", senderLabel(sender)), 0, 0));
 		box.addChild(new Spacer(1));
 		box.addChild(
 			new Markdown(shown, 0, 0, sharedMarkdownTheme(), { color: (line) => theme.fg("customMessageText", line) }),
@@ -56,6 +61,10 @@ export function senderLabel(sender: SessionControlSender): string {
 				? `Sent from ${sender.platform}`
 				: `Sent from ${sender.platform} · ${sender.author}`;
 	}
+}
+
+function originLabel(origin: SessionControlRemoteOrigin): string {
+	return `Relayed from device ${origin.deviceName ?? origin.deviceId}`;
 }
 
 export function builtInMessageRenderer(customType: string): MessageRenderer | undefined {

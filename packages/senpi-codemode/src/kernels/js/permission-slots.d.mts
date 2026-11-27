@@ -3,9 +3,24 @@ export interface CellRule {
 	readonly pattern: string;
 	readonly layer: string;
 }
+export interface CellCanonicalPath {
+	/** PATH_IDENTITY_VERSION of the kernel that computed it; the host ignores any other version. */
+	readonly v: number;
+	readonly path: string;
+	readonly foldCase: boolean;
+}
 export type CellOperation = {
-	readonly tool: "bash" | "write";
-	readonly input: { readonly command?: string; readonly path?: string };
+	readonly tool: "bash" | "read" | "write" | "ls";
+	readonly input: {
+		readonly command?: string;
+		/** The path as written by the cell, byte-for-byte. */
+		readonly path?: string;
+		/** The absolute string the operation hands to the runtime. */
+		readonly executedPath?: string;
+		readonly canonical?: CellCanonicalPath;
+		/** Error code when the kernel could not canonicalize the executed path. */
+		readonly unresolvable?: string;
+	};
 	readonly cwd?: string;
 };
 export type CellDecision = { readonly action: "pass" } | { readonly action: "deny"; readonly rule: CellRule };
@@ -23,6 +38,7 @@ export function createPermissionRequester(
 		wake(index: number, generation: number): void;
 		wait?: typeof Atomics.wait;
 		generationLimit?: number;
+		deadlineMs?: number;
 		retire?(): void;
 	},
 ): { check(request: PermissionRequest): CellDecision };

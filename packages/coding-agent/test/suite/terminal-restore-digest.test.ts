@@ -130,6 +130,7 @@ function createGeneration(cwd: string, sessionId: string, sessionDir: string): G
 		setActiveTools: (next: string[]) => {
 			activeTools = next;
 		},
+		isLoopRemote: () => false,
 	} as unknown as ExtensionAPI;
 	const ctx: ExtensionContext = {
 		cwd,

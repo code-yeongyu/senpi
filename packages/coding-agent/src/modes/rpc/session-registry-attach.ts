@@ -7,6 +7,8 @@
  * {reason: "open_in_progress", retry_after_ms} naming an attached current owner, and the in-flight
  * open keeps running untouched.
  */
+import { recordOpenerRefusal, refusesApprovals } from "../../core/opener-approvals.ts";
+import { clientNamedPreset, withClientPreset } from "../../core/permission-mode.ts";
 import type { SessionPathOwner, SessionPathReservations } from "./host-reservations.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
 import {
@@ -109,6 +111,17 @@ export async function attachToOpenSession(
 		});
 	}
 	const [handle, entry] = existing;
+	if (options?.unattached === true) {
+		// A restore that finds the session already open has nothing to add: no client, no attachment.
+		if (!entry.durableSessionId) throw new RpcSessionRegistryError("session_path_in_use");
+		return {
+			sessionId: handle,
+			durableSessionId: entry.durableSessionId,
+			sessionPath: entry.sessionPath,
+			attached: true,
+		};
+	}
+	if (refusesApprovals(profile.sessionContext)) await recordAttachRefusal(entry);
 	const wasParked = entry.retainOnDisconnect === true && entry.attachments === 0;
 	entry.attachments += 1;
 	entry.detachedAt = undefined;
@@ -119,6 +132,22 @@ export async function attachToOpenSession(
 	// no attach may revoke it for the clients that already rely on it.
 	if (options?.retainOnDisconnect) entry.retainOnDisconnect = true;
 	if (!entry.durableSessionId) throw new RpcSessionRegistryError("session_path_in_use");
+	applyAttachedProfile(entry, profile);
+	entry.lastCommandAt = now;
+	if (wasParked) {
+		entry.lifecycleMutex = entry.lifecycleMutex.then(() => entry.runtime?.emitAttachmentEvent("session_resumed"));
+		await entry.lifecycleMutex;
+	}
+	return {
+		sessionId: handle,
+		durableSessionId: entry.durableSessionId,
+		sessionPath: entry.sessionPath,
+		attached: true,
+	};
+}
+
+/** The live launch choices shared by attach-on-open and claiming an already-built session. */
+export function applyAttachedProfile(entry: RpcSessionEntry, profile: RpcSessionLaunchProfile): void {
 	// The surface, browser engine and permission preset follow the client: an attach that names one
 	// moves the live session to it; an attach without one keeps what the session has.
 	if (profile.promptSurface !== undefined && profile.promptSurface !== entry.profile.promptSurface) {
@@ -131,19 +160,29 @@ export async function attachToOpenSession(
 	}
 	// The preset is applied even when the record already names it: the record is not the live session,
 	// so a resent attach also repairs a session that drifted from it (senpi#2842).
-	if (profile.permissionPreset !== undefined) {
-		entry.profile = frozenProfile({ ...entry.profile, permissionPreset: profile.permissionPreset });
-		entry.runtime?.setPermissionPreset(profile.permissionPreset);
+	// Only a preset the client named moves the session: an embedder's host default folded into a preset-less attach is
+	// not a choice, and applying it would turn the host default into a client-named mode (remote approval-mode rule).
+	const namedPreset = clientNamedPreset(profile);
+	if (namedPreset !== undefined) {
+		entry.profile = frozenProfile(withClientPreset(entry.profile, namedPreset));
+		entry.runtime?.setPermissionPreset(namedPreset);
 	}
-	entry.lastCommandAt = now;
-	if (wasParked) {
-		entry.lifecycleMutex = entry.lifecycleMutex.then(() => entry.runtime?.emitAttachmentEvent("session_resumed"));
-		await entry.lifecycleMutex;
-	}
-	return {
-		sessionId: handle,
-		durableSessionId: entry.durableSessionId,
-		sessionPath: entry.sessionPath,
-		attached: true,
-	};
+}
+
+/**
+ * A labelled open of a session this host already runs declares nobody answers it from now on: the refusal is written
+ * and synced before the attach is answered, and the live permission system reads it at its next ask. A session
+ * running in a worker cannot be reached from here, so such an attach is refused instead of answered without it.
+ */
+async function recordAttachRefusal(entry: RpcSessionEntry): Promise<void> {
+	const manager = entry.runtime?.session.sessionManager;
+	if (manager === undefined)
+		throw new RpcSessionRegistryError(
+			"session_path_in_use",
+			"a labelled open cannot attach to a session in a worker",
+			{
+				reason: "approvals_label_unsupported",
+			},
+		);
+	await recordOpenerRefusal(manager);
 }

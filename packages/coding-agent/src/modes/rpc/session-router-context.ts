@@ -1,7 +1,11 @@
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 
 import { ConnectionRoles } from "./connection-roles.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { ADMISSION_LIMITS, CompactAdmissions } from "./compact-admissions.ts";
+import { advertisedCompactCapabilities } from "./compact-negotiation.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
+import type { InheritedHandover } from "./host-handover-reopen.ts";
 
 import type { RpcHostKernelMemory } from "./rpc-types.ts";
 
@@ -15,9 +19,22 @@ import { SessionAttachOrder } from "./session-attach-order.ts";
 import { tearDownReleased } from "./session-router-close.ts";
 import { routingIdOf } from "./session-router-errors.ts";
 import { sweepIdleSessions } from "./session-router-occupancy.ts";
+import { followRetainedRecord } from "./session-router-residency.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 import { registryStatusSource } from "./session-status-source.ts";
+import { HostParkLedger } from "./host-park-ledger.ts";
+import { closePark } from "./session-router-park.ts";
+import { PredecessorRoutes } from "./predecessor-routes.ts";
+import { hostGeneration } from "./protocol-identity.ts";
+import { exitForTelemetryContainment } from "./session-router-telemetry.ts";
 export class RouterContext {
+	readonly routes = new PredecessorRoutes(this);
+	readonly parks = new HostParkLedger((opened) => closePark(this, opened));
+	readonly admissions = compactUpdatesEnabled()
+		? new CompactAdmissions(ADMISSION_LIMITS, (socketEpoch, admissionId) =>
+				this.writer.routesAdmission(socketEpoch, admissionId),
+			)
+		: undefined;
 	readonly bindings = new Map<string, RpcSessionBinding>();
 
 	readonly stopLimitBroadcast: () => void;
@@ -36,9 +53,29 @@ export class RouterContext {
 
 	readonly registry: Pick<
 		RpcSessionRegistry,
-		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
+		| "openSession"
+		| "peek"
+		| "getForCommand"
+		| "beginClose"
+		| "close"
+		| "closeMarked"
+		| "list"
+		| "size"
+		| "warm"
+		| "closeGraceMs"
 	> &
-		Partial<Pick<RpcSessionRegistry, "holderPids" | "attachSession" | "agentDir">>;
+		Partial<
+			Pick<
+				RpcSessionRegistry,
+				| "supportsCompact"
+				| "supportsParkClaim"
+				| "claimPark"
+				| "holderPids"
+				| "attachSession"
+				| "agentDir"
+				| "reserveHandle"
+			>
+		>;
 
 	readonly writer: SessionEventWriter;
 
@@ -57,6 +94,7 @@ export class RouterContext {
 	readonly idleNow: () => number;
 
 	readonly idleEvictionMs: number;
+	readonly onTelemetryContainmentLost: (sessionId: string) => void;
 
 	readonly emptyExitMs: number;
 
@@ -78,6 +116,9 @@ export class RouterContext {
 
 	readonly handoffClosed = new Set<string>();
 
+	/** Sessions whose automatic turns this draining generation already held (senpi#3114, `session-drain-hold.ts`). */
+	readonly drainHeldSessions = new Set<string>();
+
 	readonly activeRequests = new Map<string | undefined, number>();
 
 	/** Called after any request for that session settles; a release waits here for the others to finish. */
@@ -92,6 +133,11 @@ export class RouterContext {
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
 	memoryPressure = false;
 
+	/** senpi#7020: what this host is still taking over from a predecessor; `list_sessions` reports it as `handover`. */
+	inheritedHandover: InheritedHandover | undefined = undefined;
+	/** A compact recovery token belongs to one physical acceptance lane. Negotiate legacy JSONL during overlap. */
+	awaitingPredecessorScan: boolean;
+
 	/** The release_session teardown; the router installs its own member here, so it owns the step. */
 	releaseTeardown = (sessionId: string, sessionPath: string): Promise<boolean> =>
 		tearDownReleased(this, sessionId, sessionPath);
@@ -104,9 +150,29 @@ export class RouterContext {
 	constructor(
 		registry: Pick<
 			RpcSessionRegistry,
-			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
+			| "openSession"
+			| "peek"
+			| "getForCommand"
+			| "beginClose"
+			| "close"
+			| "closeMarked"
+			| "list"
+			| "size"
+			| "warm"
+			| "closeGraceMs"
 		> &
-			Partial<Pick<RpcSessionRegistry, "holderPids" | "attachSession" | "agentDir">>,
+			Partial<
+				Pick<
+					RpcSessionRegistry,
+					| "supportsCompact"
+					| "supportsParkClaim"
+					| "claimPark"
+					| "holderPids"
+					| "attachSession"
+					| "agentDir"
+					| "reserveHandle"
+				>
+			>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
@@ -119,13 +185,23 @@ export class RouterContext {
 		);
 		this.registry = registry;
 		this.writer = writer;
+		// The writer's background routes stay local (D11 S3-5): it reads each connection's declared origin from here.
+		writer.originOf = (connection) => this.connectionRoles.originOf(connection);
+		// omo-relay-daemon#307: roles read each delegated socket's live record, the same object the writer keeps.
+		this.connectionRoles.useDelegations((connection) => writer.delegations.viewOf(connection));
 		this.defaults = defaults;
+		this.awaitingPredecessorScan = idle?.handoverParkedDir !== undefined && hostGeneration(process.env) > 0;
 		this.createBinding = createBinding;
-		this.connectionOptions = connectionOptions;
+		this.connectionOptions = {
+			...connectionOptions,
+			capabilities:
+				connectionOptions.capabilities && advertisedCompactCapabilities(connectionOptions.capabilities, false),
+		};
 		this.idleNow = idle?.now ?? Date.now;
 		this.idleEvictionMs = idle?.idleEvictionMs ?? Number.POSITIVE_INFINITY;
 		this.emptyExitMs = idle?.emptyExitMs ?? Number.POSITIVE_INFINITY;
 		this.onEmptyExit = idle?.onEmptyExit;
+		this.onTelemetryContainmentLost = idle?.onTelemetryContainmentLost ?? exitForTelemetryContainment;
 		this.onHandoffParked = idle?.onHandoffParked;
 		this.handoverParkedDir = idle?.handoverParkedDir;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;
@@ -139,6 +215,7 @@ export class RouterContext {
 				: { effectId: latest.effectId, kind: latest.kind, state: latest.state };
 		});
 		writer.afterRecord = (sessionId) => {
+			followRetainedRecord(this, sessionId);
 			const session = this.registry.peek(sessionId)?.runtime?.session;
 			if (session === undefined) return;
 			for (const status of drainSessionEffects(session)) this.writer.status.publishEffect(sessionId, status);
@@ -157,5 +234,12 @@ export class RouterContext {
 			this.sweepTimer = setInterval(() => sweepIdleSessions(this), tickMs);
 			this.sweepTimer.unref?.();
 		}
+	}
+	compactAvailable(): boolean {
+		return (
+			!this.awaitingPredecessorScan &&
+			!this.inheritedHandover?.predecessorDraining &&
+			this.registry.supportsCompact?.() === true
+		);
 	}
 }

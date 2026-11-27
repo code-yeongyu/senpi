@@ -25,6 +25,7 @@ import {
 	JsonlPeer,
 } from "../../helpers/rpc-generation-support.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-owner-review-clock.ts");
 const children: Array<{ child: ChildProcess; command: string; exited: Promise<unknown> }> = [];
@@ -89,7 +90,7 @@ function launch(args: string[], env: NodeJS.ProcessEnv) {
 async function rig(owned = true, watchMode = "normal") {
 	const qa = generationScratch("rv");
 	roots.push(qa);
-	const env = { ...process.env, ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir };
+	const env = { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir };
 	const owner = owned ? launch(["owner"], env) : undefined;
 	let identity: HostLifetimeOwner | null = null;
 	if (owner) {

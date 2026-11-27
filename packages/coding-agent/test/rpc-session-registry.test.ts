@@ -1,12 +1,13 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
 	AgentSessionRuntime,
+	createAgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	type CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
@@ -45,11 +46,11 @@ function assistantReply(): AssistantMessage {
 	};
 }
 
-function runtime(
+async function runtime(
 	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
 	controls?: { waitForIdle?: () => Promise<void> },
 ) {
-	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+	await new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	const flagValues = new Map<string, boolean | string>();
 	return {
 		session: {
@@ -65,6 +66,7 @@ function runtime(
 			// Records flags like ExtensionRunner: an attach and a runtime replacement set the permission preset here.
 			extensionRunner: {
 				hasHandlers: () => false,
+				emitBusEvent: () => {},
 				emit: async () => {},
 				setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
 				getFlagValues: () => new Map(flagValues),
@@ -170,7 +172,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				const result = runtime(options, { waitForIdle: () => idle });
+				const result = await runtime(options, { waitForIdle: () => idle });
 				const dispose = result.session.dispose;
 				result.session.dispose = () => {
 					disposed = true;
@@ -199,7 +201,7 @@ describe("RPC session registry", () => {
 			agentDir: dir,
 			closeGraceMs: 50,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.abort = () => new Promise<void>(() => {});
 				result.session.dispose = () => {
 					disposed = true;
@@ -234,7 +236,7 @@ describe("RPC session registry", () => {
 			agentDir: dir,
 			closeGraceMs: 50,
 			createRuntime: async (options) => {
-				const result = runtime(options, { waitForIdle });
+				const result = await runtime(options, { waitForIdle });
 				result.session.abort = () => new Promise<void>(() => {});
 				result.session.dispose = dispose;
 				return result;
@@ -257,7 +259,7 @@ describe("RPC session registry", () => {
 			agentDir: dir,
 			closeGraceMs: 50,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.dispose = () => {
 					disposeCount += 1;
 				};
@@ -281,7 +283,7 @@ describe("RPC session registry", () => {
 			agentDir: dir,
 			closeGraceMs: 500,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.abort = () => abortFinished;
 				result.session.dispose = () => {
 					disposeCount += 1;
@@ -349,7 +351,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.dispose = () => {
 					disposed = true;
 				};
@@ -413,7 +415,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				openedRuntime = runtime(options);
+				openedRuntime = await runtime(options);
 				return openedRuntime;
 			},
 		});
@@ -465,13 +467,121 @@ describe("RPC session registry", () => {
 		await registry.close(opened.sessionId);
 	});
 
+	/** This process's holder record for a session whose file lives in `dir`, if one is published. */
+	function ownHolderRecord(dir: string): string | undefined {
+		const holders = join(dir, "session-holders");
+		if (!existsSync(holders)) return undefined;
+		return readdirSync(holders, { recursive: true, encoding: "utf8" })
+			.map((name) => join(holders, name))
+			.find((path) => path.endsWith(`${process.pid}.json`));
+	}
+
+	test("releases the hold it took for a runtime whose construction throws", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "senpi-rpc-hold-throw-"));
+		directories.push(dir);
+		const failure = new Error("runtime construction failed");
+		let heldWhenConstructionFailed = false;
+		const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
+			const result = await runtime(options);
+			// The creator reads the session manager once to take the hold; the constructor's own read of it (to bind the
+			// permission mode) throws, so construction fails after the hold exists.
+			let managerReads = 0;
+			const session = new Proxy(result.session, {
+				get: (target, property, receiver) => {
+					if (property === "sessionManager" && ++managerReads > 1) {
+						// The hold was really taken: its record exists at the moment construction fails.
+						heldWhenConstructionFailed = ownHolderRecord(dir) !== undefined;
+						throw failure;
+					}
+					return Reflect.get(target, property, receiver);
+				},
+			});
+			return { ...result, session };
+		};
+
+		await expect(
+			createAgentSessionRuntime(createRuntime, {
+				cwd: dir,
+				agentDir: dir,
+				sessionManager: SessionManager.open(join(dir, "throwing.jsonl"), undefined, dir),
+			}),
+		).rejects.toBe(failure);
+
+		expect({ heldWhenConstructionFailed, leftBehind: ownHolderRecord(dir) }).toEqual({
+			heldWhenConstructionFailed: true,
+			leftBehind: undefined,
+		});
+	});
+
+	test("constructs a runtime around a passed-in hold without touching the holder record", async () => {
+		const { dir, registry } = await createRegistry();
+		const opened = await registry.openSession(profile(dir, join(dir, "passed-hold.jsonl")));
+		const live = registry.getForCommand(opened.sessionId, "prompt").runtime;
+		if (!live) throw new Error("expected an open runtime");
+		expect(ownHolderRecord(dir)).toBeDefined();
+		live.releaseSessionHold();
+		expect(ownHolderRecord(dir)).toBeUndefined();
+		const hold = { release: vi.fn() };
+
+		const replacement = new AgentSessionRuntime(
+			live.session,
+			live.services,
+			async () => {
+				throw new Error("not used");
+			},
+			[],
+			undefined,
+			live.launchProfile,
+			hold,
+		);
+		// A hold the constructor started would publish once the cached boot instant resolves: let that run first.
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(ownHolderRecord(dir)).toBeUndefined();
+		replacement.releaseSessionHold();
+		expect(hold.release).toHaveBeenCalledTimes(1);
+		await registry.close(opened.sessionId);
+	});
+
+	test("takes the replacement runtime's session hold before the switched runtime releases its own", async () => {
+		const { dir, registry } = await createRegistry();
+		const initialCwd = await mkdtemp(join(tmpdir(), "senpi-rpc-initial-"));
+		const replacementCwd = await mkdtemp(join(tmpdir(), "senpi-rpc-replacement-"));
+		directories.push(initialCwd, replacementCwd);
+		const opened = await registry.openSession(profile(initialCwd, join(dir, "initial.jsonl")));
+		const entry = registry.getForCommand(opened.sessionId, "switch_session");
+		const initialRuntime = entry.runtime;
+		if (!initialRuntime) throw new Error("expected an open runtime");
+		const switchRuntime = initialRuntime.switchSession.bind(initialRuntime);
+		let record: string | undefined;
+		vi.spyOn(initialRuntime, "switchSession").mockImplementation(async (sessionPath, options) => {
+			const result = await switchRuntime(sessionPath, options);
+			// The switched runtime now holds the replacement session; mark its holder record so a re-publish shows.
+			const holders = join(dirname(sessionPath), "session-holders");
+			record = readdirSync(holders, { recursive: true, encoding: "utf8" })
+				.map((name) => join(holders, name))
+				.find((path) => path.endsWith(`${process.pid}.json`));
+			if (record !== undefined) utimesSync(record, 1_000, 1_000);
+			return result;
+		});
+
+		const switchSession = entry.switchSession;
+		if (!switchSession) throw new Error("expected a multi-session switch");
+		await switchSession(join(dir, "replacement.jsonl"), { cwdOverride: replacementCwd });
+
+		// Released first, the shared record would be deleted and published again with a fresh mtime.
+		if (record === undefined) throw new Error("the switched-to session published no holder record");
+		expect(statSync(record).mtimeMs).toBe(1_000_000);
+		await registry.close(opened.sessionId);
+	});
+
 	test("keeps the runtime alive until the last attachment closes", async () => {
 		const { dir } = await createRegistry();
 		let disposed = false;
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.dispose = () => {
 					disposed = true;
 				};
@@ -499,7 +609,7 @@ describe("RPC session registry", () => {
 		const registry = new RpcSessionRegistry({
 			agentDir: dir,
 			createRuntime: async (options) => {
-				const result = runtime(options);
+				const result = await runtime(options);
 				result.session.dispose = () => {
 					disposed += 1;
 				};
@@ -556,13 +666,13 @@ describe("RPC session registry", () => {
 		const manager = SessionManager.create(dir, dir);
 		const captured: Array<RpcSessionLaunchProfile | undefined> = [];
 		// The one fake session shape of this file, so it cannot drift from what the runtime reads.
-		const fakeSession = (sessionManager: SessionManager) =>
-			runtime({ cwd: dir, agentDir: dir, sessionManager } as Parameters<CreateAgentSessionRuntimeFactory>[0])
+		const fakeSession = async (sessionManager: SessionManager) =>
+			(await runtime({ cwd: dir, agentDir: dir, sessionManager } as Parameters<CreateAgentSessionRuntimeFactory>[0]))
 				.session as never;
 		const factory: CreateAgentSessionRuntimeFactory = async (options) => {
 			captured.push(options.launchProfile as RpcSessionLaunchProfile | undefined);
 			return {
-				session: fakeSession(options.sessionManager),
+				session: await fakeSession(options.sessionManager),
 				services: { cwd: options.cwd, agentDir: dir },
 				diagnostics: [],
 			} as unknown as CreateAgentSessionRuntimeResult;

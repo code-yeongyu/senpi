@@ -91,9 +91,6 @@ for (const abort of [true, false]) {
 		});
 		const args = ["--provider", "anthropic", "--model", primary, "--print", "--no-extensions"];
 		const env = hermeticEnv(box.env);
-		for (const key of Object.keys(env)) {
-			if (key.endsWith("_PACKAGE_DIR")) delete env[key];
-		}
 		const result = await runCli([...args, "Return the scripted final marker."], {
 			env, cwd: box.cwd, timeoutMs: 60000,
 		});
