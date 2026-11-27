@@ -68,6 +68,10 @@
 			"types": "./dist/presenter-authority-slot.d.ts",
 			"import": "./dist/presenter-authority-slot.js"
 		},
+		"./engine": {
+			"types": "./dist/engine/index.d.ts",
+			"import": "./dist/engine/index.js"
+		},
 		"./tools-core": {
 			"types": "./dist/tools-core.d.ts",
 			"import": "./dist/tools-core.js"

@@ -11654,6 +11654,78 @@
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_POLL_SECONDS": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_TIMEOUT_SECONDS": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_CONCURRENCY": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#TRUST_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#LOCAL_FLAG": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#SETUP_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata derived from a literal at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#ENDPOINT_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#PRESENTER_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#HOST_JSON": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#HOST_SHARED": {
+			"class": "constant",
+			"reason": "command metadata lookup literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata.ts#ENGINE_COMMANDS": {
+			"class": "constant",
+			"reason": "exported command metadata literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#config": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#schedule": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#queries": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-host.ts#host": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-packages.ts#packages": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-packages.ts#models": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/index.ts#engine": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
 		"packages/senpi-codemode/src/kernels/js/js-source-scan.js#REGEX_PREFIX_KEYWORDS": {
 			"class": "per-copy-safe",
 			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"

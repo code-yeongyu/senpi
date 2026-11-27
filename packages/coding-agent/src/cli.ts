@@ -37,38 +37,36 @@ import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
 import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
 
 /**
- * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
- * is still unread here, and the process that loads cli-main reports on the same descriptor.
+ * The descriptors a supervised launch hands the engine survive CLI re-execution, so the process that ends up serving
+ * holds them itself rather than leaving them with this launcher: the lifetime slot (the supervisor reads its EOF as
+ * the host's end, senpi#7525), the presenter channel of a presenter-enabled launch, and the startup pipe of a
+ * coordinated start (senpi#4602), whose hand-off variable is still unread here.
  */
 function reexecStdio(): StdioOptions {
-	const base = channelStdio();
-	if (!process.env[HOST_STARTUP_EVENTS_ENV]) return base;
-	try {
-		const stat = fstatSync(STARTUP_EVENT_FD);
-		if (!stat.isSocket() && !isFifoMode(stat.mode)) return base;
-	} catch {
-		return base;
+	const argv = process.argv.slice(2);
+	const presenterAt = argv.indexOf("--mcp-presenter-fd");
+	const ownerAt = argv.indexOf("--owner-fd");
+	const carried = [
+		((ownerAt >= 0 && argv[ownerAt + 1] === "3") || process.env.SENPI_RPC_HOST_WATCH_FD === "3") && 3,
+		presenterAt >= 0 && argv[presenterAt + 1] === "4" && 4,
+		Boolean(process.env[HOST_STARTUP_EVENTS_ENV]) && STARTUP_EVENT_FD,
+	].filter((fd): fd is number => fd !== false && isChannelDescriptor(fd));
+	if (carried.length === 0) return "inherit";
+	const slots: StdioOptions = ["inherit", "inherit", "inherit"];
+	for (const fd of carried) {
+		while (slots.length < fd) slots.push("ignore");
+		slots[fd] = fd;
 	}
-	const slots: StdioOptions = typeof base === "string" ? [base, base, base] : [...base];
-	while (slots.length < STARTUP_EVENT_FD) slots.push("ignore");
-	slots[STARTUP_EVENT_FD] = STARTUP_EVENT_FD;
 	return slots;
 }
 
-/** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
-function channelStdio(): StdioOptions {
-	const argv = process.argv.slice(2);
-	const presenter = argv.indexOf("--mcp-presenter-fd");
-	if (presenter < 0 || argv[presenter + 1] !== "4") return "inherit";
+function isChannelDescriptor(fd: number): boolean {
 	try {
-		const stat = fstatSync(4);
-		if (!stat.isSocket() && !stat.isFIFO()) return "inherit";
+		const stat = fstatSync(fd);
+		return stat.isSocket() || isFifoMode(stat.mode);
 	} catch {
-		return "inherit";
+		return false;
 	}
-	const owner = argv.indexOf("--owner-fd");
-	const lifetime = (owner >= 0 && argv[owner + 1] === "3") || process.env.SENPI_RPC_HOST_WATCH_FD === "3";
-	return ["inherit", "inherit", "inherit", lifetime ? 3 : "ignore", 4];
 }
 
 // Upstream's `cli/setup.ts` helper is deliberately not used here: this launcher only decides the

@@ -63,7 +63,7 @@ export interface DiscoverProviderModelsOptions {
 	signal?: AbortSignal;
 }
 
-export class ModelsDiscoveryError extends Error {}
+class ModelsDiscoveryError extends Error {}
 
 type JsonRecord = Record<string, unknown>;
 interface ListedModel {

@@ -22,7 +22,7 @@ import {
 	execHookDelivery,
 	sessionResumeDelivery,
 } from "./schedule-delivery.ts";
-import { type RunDueResult, runDueJobs } from "./schedule-runner.ts";
+import { type RunDueResult, type RunnerEvent, runDueJobs } from "./schedule-runner.ts";
 
 export interface RunOptions {
 	readonly watch: boolean;
@@ -32,9 +32,12 @@ export interface RunOptions {
 	readonly concurrency: number;
 }
 
-export function writeLine(value: unknown): void {
-	process.stdout.write(`${JSON.stringify(value)}\n`);
-}
+/** One line of a runner's log: a delivery event of a pass, or the runner's own lifecycle. */
+export type ScheduleRunEvent =
+	| RunnerEvent
+	| { readonly event: "lease_error"; readonly error: string }
+	| { readonly event: "watching"; readonly pid: number; readonly dir: string; readonly pollSeconds: number }
+	| { readonly event: "stopped"; readonly pid: number };
 
 interface DeliveryPlan {
 	readonly deliver: Delivery;
@@ -58,7 +61,7 @@ function resolveDelivery(options: RunOptions): DeliveryPlan {
  * Reports a pass; a job deferred for the same reason, or a job file invalid for the same reason, is
  * reported once per runner, not every pass.
  */
-function reporter(): (result: RunDueResult) => boolean {
+function reporter(emit: (event: ScheduleRunEvent) => void): (result: RunDueResult) => boolean {
 	const deferred = new Map<string, string>();
 	const invalid = new Map<string, string>();
 	return (result) => {
@@ -78,7 +81,7 @@ function reporter(): (result: RunDueResult) => boolean {
 			} else if (event.event === "error") {
 				ok = false;
 			}
-			writeLine(event);
+			emit(event);
 		}
 		for (const file of invalid.keys()) if (!stillInvalid.has(file)) invalid.delete(file);
 		return ok;
@@ -97,13 +100,22 @@ async function guardedPass(pass: () => Promise<RunDueResult>): Promise<RunDueRes
 	}
 }
 
-export async function runPasses(dir: string, options: RunOptions): Promise<number> {
+/**
+ * Runs the passes: once, or until `signal` aborts with `watch`. Answers whether every delivery of a
+ * single pass succeeded; a watching runner answers true when it stops.
+ */
+export async function runPasses(
+	dir: string,
+	options: RunOptions,
+	emit: (event: ScheduleRunEvent) => void,
+	signal?: AbortSignal,
+): Promise<boolean> {
 	const plan = resolveDelivery(options);
 	const owner = ownRunnerIdentity();
 	const startedAt = Date.now();
 	const lease = () =>
 		writeRunnerLease(dir, { startedAt, watch: options.watch, exec: options.exec ?? null }, Date.now());
-	const report = reporter();
+	const report = reporter(emit);
 	const pass = () =>
 		runDueJobs({
 			dir,
@@ -126,7 +138,7 @@ export async function runPasses(dir: string, options: RunOptions): Promise<numbe
 			(error: unknown) => {
 				// Reported once per failure streak: until it recovers, tools see no available runner.
 				if (!leaseFailing)
-					writeLine({ event: "lease_error", error: error instanceof Error ? error.message : String(error) });
+					emit({ event: "lease_error", error: error instanceof Error ? error.message : String(error) });
 				leaseFailing = true;
 			},
 		);
@@ -139,15 +151,15 @@ export async function runPasses(dir: string, options: RunOptions): Promise<numbe
 		wake?.();
 	};
 	try {
-		if (!options.watch) return report(await guardedPass(pass)) ? 0 : 1;
+		if (!options.watch) return report(await guardedPass(pass));
 
-		process.on("SIGTERM", stop);
-		process.on("SIGINT", stop);
+		if (signal?.aborted) stop();
+		signal?.addEventListener("abort", stop);
 		// A job created by another process wakes the runner at once instead of at the next poll.
 		const pendingDir = join(dir, "pending");
 		mkdirSync(pendingDir, { recursive: true, mode: 0o700 });
 		watcher = watch(pendingDir, () => wake?.());
-		writeLine({ event: "watching", pid: process.pid, dir, pollSeconds: options.pollSeconds });
+		emit({ event: "watching", pid: process.pid, dir, pollSeconds: options.pollSeconds });
 		while (!stopping) {
 			let rescan = false;
 			const woken = new Promise<void>((resolve) => {
@@ -167,13 +179,12 @@ export async function runPasses(dir: string, options: RunOptions): Promise<numbe
 			await Promise.race([woken, new Promise<void>((resolve) => (timer = setTimeout(resolve, waitMs)))]);
 			clearTimeout(timer);
 		}
-		writeLine({ event: "stopped", pid: process.pid });
-		return 0;
+		emit({ event: "stopped", pid: process.pid });
+		return true;
 	} finally {
 		clearInterval(heartbeat);
 		watcher?.close();
-		process.off("SIGTERM", stop);
-		process.off("SIGINT", stop);
+		signal?.removeEventListener("abort", stop);
 		await removeRunnerLease(dir);
 	}
 }
