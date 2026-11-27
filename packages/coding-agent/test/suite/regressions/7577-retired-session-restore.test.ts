@@ -104,11 +104,16 @@ it("keeps retirement through ordinary and failed opens; only an explicit success
 		expect(await router.handle(request)).toBeUndefined();
 		const [reopened] = registry.list();
 		if (!reopened) throw new Error("a plainly closed session did not reopen from its file");
+		// Marking a live session does not stop it; its resident row is where a controller sees the mark.
+		const liveMark = await retireSession({ agentDir, sessionPath, reason: "takeover" });
+		expect(await router.handle({ type: "list_sessions" })).toMatchObject({
+			data: { sessions: [{ sessionId: reopened.sessionId, retirement: liveMark }] },
+		});
 		expect(
 			await router.handle({ type: "close_session", sessionId: reopened.sessionId, retire: true }),
 		).toBeUndefined();
-		expect(await readSessionRetirement(agentDir, id)).toMatchObject({ reason: "requested" });
-		expect(await router.handle(request)).toMatchObject({ errorCode: "session_retired" });
+		expect(await readSessionRetirement(agentDir, id)).toEqual(liveMark);
+		expect(await router.handle(request)).toMatchObject({ errorCode: "session_retired", errorData: liveMark });
 		expect(await router.handle({ type: "close_session", sessionId: "no-such-session", retire: true })).toMatchObject({
 			success: false,
 			error: "unknown_session",
