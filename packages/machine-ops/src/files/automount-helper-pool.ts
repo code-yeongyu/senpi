@@ -27,15 +27,14 @@ export function createAutomountHelperPool(
 	const unansweredForMs = options.unansweredForMs ?? AUTOMOUNT_UNANSWERED_FOR_MS;
 	const now = options.now ?? Date.now;
 	const inFlight = new Map<string, Promise<AutomountRealpath>>();
+	const queued = new Map<string, Promise<unknown>>();
 	const unansweredUntil = new Map<string, number>();
 	let alive = 0;
 
-	return (path, key, resolve) => {
+	const start = (path: string, key: string, resolve: AutomountRealpathOptions): Promise<AutomountRealpath> => {
 		const until = unansweredUntil.get(key);
 		if (until !== undefined && now() < until)
 			return Promise.resolve({ kind: "unanswered", reason: "recently_unanswered" });
-		const shared = inFlight.get(path);
-		if (shared) return shared;
 		if (alive >= limit) return Promise.resolve({ kind: "unanswered", reason: "helper_limit" });
 		alive += 1;
 		let released = false;
@@ -49,13 +48,26 @@ export function createAutomountHelperPool(
 			child.once("error", release);
 			resolve.onSpawn?.(child);
 		};
-		const answer = run(path, { ...resolve, onSpawn }).then((settled) => {
+		return run(path, { ...resolve, onSpawn }).then((settled) => {
 			if (settled.kind === "unanswered") unansweredUntil.set(key, now() + unansweredForMs);
 			else unansweredUntil.delete(key);
 			return settled;
 		});
+	};
+
+	return (path, key, resolve) => {
+		const shared = inFlight.get(path);
+		if (shared) return shared;
+		// Paths under one automount wait for each other: one that did not answer then answers the next from the window,
+		// so an unanswered automount never holds more than one helper.
+		const answer = (queued.get(key) ?? Promise.resolve()).then(() => start(path, key, resolve));
+		const tail = answer.catch(() => undefined);
 		inFlight.set(path, answer);
-		void answer.finally(() => inFlight.delete(path));
+		queued.set(key, tail);
+		void tail.finally(() => {
+			inFlight.delete(path);
+			if (queued.get(key) === tail) queued.delete(key);
+		});
 		return answer;
 	};
 }

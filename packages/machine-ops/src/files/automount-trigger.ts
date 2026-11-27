@@ -147,8 +147,11 @@ interface ActiveTriggers {
 	/** The view the latest finished read returned: what the synchronous check answers from. */
 	settled: MountView | undefined;
 	readonly fallback: MountView | undefined;
-	/** Whether the synchronous check refuses anything: only where a lookup of an unanswered trigger parks the thread. */
-	readonly refusesSync: boolean;
+	/**
+	 * Whether a lookup under an automount that does not answer blocks in the kernel (macOS): only there does the
+	 * synchronous check refuse, and only there are resolver helpers bounded, since one stuck there may outlive its kill.
+	 */
+	readonly lookupsBlockInKernel: boolean;
 }
 
 /** What {@link answerAutomountTriggersFrom} may replace besides the view and the resolver. */
@@ -176,7 +179,7 @@ function activeFrom(
 		helpers: createAutomountHelperPool(realpathOutOfProcess, bounds.helpers),
 		settled: undefined,
 		fallback: bounds.fallback ?? defaultTriggerView(platform),
-		refusesSync: platform === "darwin",
+		lookupsBlockInKernel: platform === "darwin",
 	};
 	return state;
 }
@@ -209,6 +212,7 @@ export function answerAutomountTriggersFrom(
 /** Where a path under an automount trigger really leads, resolved outside this process ({@link realpathOutOfProcess}). */
 export function realpathUnderAutomount(path: string): Promise<AutomountRealpath> {
 	const state = active;
+	if (!state.lookupsBlockInKernel) return realpathOutOfProcess(path, state.resolve);
 	const view = state.settled ?? state.fallback;
 	const trigger = view === undefined ? undefined : unmountedAutomount(path, view);
 	// One automount answers for its mount point plus the first name below it (an auto_home user, a /net host).
@@ -245,7 +249,7 @@ export function automountTriggerPath(path: string): Promise<string | undefined> 
  */
 export function automountTriggerPathSync(path: string): string | undefined {
 	const state = active;
-	if (!state.refusesSync) return undefined;
+	if (!state.lookupsBlockInKernel) return undefined;
 	// The lookup re-reads the view only when its last read is stale, and the root is never under a trigger.
 	state.lookup(sep).catch(() => undefined);
 	const view = state.settled ?? state.fallback;

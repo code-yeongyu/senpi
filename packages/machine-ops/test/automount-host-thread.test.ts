@@ -103,13 +103,17 @@ describe("automount resolver helpers are bounded (senpi#4565)", () => {
 		// Given a helper that answers at once
 		const spawned: ChildProcess[] = [];
 		restores.push(
-			answerAutomountTriggersFrom(async () => homeView, {
-				command: (path) => ({
-					command: process.execPath,
-					args: ["-e", `process.stdout.write(${JSON.stringify(JSON.stringify({ path }))})`],
-				}),
-				onSpawn: (child) => spawned.push(child),
-			}),
+			answerAutomountTriggersFrom(
+				async () => homeView,
+				{
+					command: (path) => ({
+						command: process.execPath,
+						args: ["-e", `process.stdout.write(${JSON.stringify(JSON.stringify({ path }))})`],
+					}),
+					onSpawn: (child) => spawned.push(child),
+				},
+				{ platform: "darwin" },
+			),
 		);
 		await automountTriggerPath("/");
 
@@ -134,7 +138,7 @@ describe("automount resolver helpers are bounded (senpi#4565)", () => {
 			answerAutomountTriggersFrom(
 				async () => homeView,
 				{ deadlineMs: 60_000, command: stuckHelper, onSpawn: (child) => spawned.push(child) },
-				{ helpers: { limit: 1 } },
+				{ helpers: { limit: 1 }, platform: "darwin" },
 			),
 		);
 		await automountTriggerPath("/");
@@ -160,7 +164,7 @@ describe("automount resolver helpers are bounded (senpi#4565)", () => {
 			answerAutomountTriggersFrom(
 				async () => homeView,
 				{ deadlineMs: 300, command: stuckHelper, onSpawn: (child) => exits.push(once(child, "exit")) },
-				{ helpers: { limit: 1, unansweredForMs: 1_000, now: () => clock } },
+				{ helpers: { limit: 1, unansweredForMs: 1_000, now: () => clock }, platform: "darwin" },
 			),
 		);
 		await automountTriggerPath("/");
@@ -181,5 +185,54 @@ describe("automount resolver helpers are bounded (senpi#4565)", () => {
 		expect(await realpathUnderAutomount("/automount-home/alice/x")).toEqual({ kind: "unanswered" });
 		expect(exits).toHaveLength(2);
 		await exits[1];
+	});
+
+	it("queues paths under one automount, so an unanswered automount holds one helper (review L1)", async () => {
+		// Given a helper that never answers, a deadline the virtual window outlasts and no limit pressure
+		let clock = 0;
+		const exits: Array<Promise<unknown[]>> = [];
+		restores.push(
+			answerAutomountTriggersFrom(
+				async () => homeView,
+				{ deadlineMs: 300, command: stuckHelper, onSpawn: (child) => exits.push(once(child, "exit")) },
+				{ helpers: { limit: 4, unansweredForMs: 1_000, now: () => clock }, platform: "darwin" },
+			),
+		);
+		await automountTriggerPath("/");
+
+		// When two different paths under the same automount are asked together
+		const answers = await Promise.all([
+			realpathUnderAutomount("/automount-home/alice/x"),
+			realpathUnderAutomount("/automount-home/alice/y"),
+		]);
+
+		// Then one helper ran; the second path was answered from the window without a spawn
+		expect(answers).toEqual([{ kind: "unanswered" }, { kind: "unanswered", reason: "recently_unanswered" }]);
+		expect(exits).toHaveLength(1);
+		await exits[0];
+	});
+
+	it("bounds nothing on Linux: every lookup spawns its helper, as before #4565 (review M1)", async () => {
+		// Given a Linux host with a limit of one and a helper that never answers
+		const exits: Array<Promise<unknown[]>> = [];
+		restores.push(
+			answerAutomountTriggersFrom(
+				async () => homeView,
+				{ deadlineMs: 300, command: stuckHelper, onSpawn: (child) => exits.push(once(child, "exit")) },
+				{ helpers: { limit: 1 }, platform: "linux" },
+			),
+		);
+		await automountTriggerPath("/");
+
+		// When two automounts and then a retry of the first are asked
+		await Promise.all([
+			realpathUnderAutomount("/automount-home/alice/x"),
+			realpathUnderAutomount("/automount-home/bob/y"),
+		]);
+		await realpathUnderAutomount("/automount-home/alice/x");
+
+		// Then each spawned its own helper: no limit and no unanswered window
+		expect(exits).toHaveLength(3);
+		await Promise.all(exits);
 	});
 });
