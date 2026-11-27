@@ -59,7 +59,10 @@ function release(claim: OwnClaim): Promise<void> {
 	return (async () => {
 		if ((await readLeaseText(claim.path)) !== claim.raw) return;
 		await unlinkIfPresent(claim.path);
+		// The session's holders directory, then the shared `session-holders` beside the session file: a released claim
+		// leaves nothing behind in a store another app owns (desktop#8097).
 		await removeEmptyDir(dirname(claim.path));
+		await removeEmptyDir(dirname(dirname(claim.path)));
 	})();
 }
 

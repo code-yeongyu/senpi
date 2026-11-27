@@ -138,6 +138,7 @@ export async function holdSessionFile(
 		holderRecordRefCounts.delete(record);
 		unlinkIfPresentSync(record);
 		removeDirIfEmpty(dir);
+		removeDirIfEmpty(dirname(dir));
 	};
 	const mover = await activeMover(dir);
 	if (mover !== undefined) {
