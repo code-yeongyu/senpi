@@ -2,6 +2,7 @@ import { serializeJsonLine } from "./jsonl.ts";
 import { type FrozenFrames, FrozenFramesCursor, type LegacyViewCursor } from "./legacy-view-cursor.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { carriesMedia, omitNormalInlineMedia } from "./media-placeholders.ts";
+import { compactDelta, demoteToDeltaOnly } from "./session-event-writer-compaction.ts";
 
 /**
  * A replayable snapshot line.
@@ -13,13 +14,21 @@ import { carriesMedia, omitNormalInlineMedia } from "./media-placeholders.ts";
  * `mayCarryMedia` is the type gate taken at acceptance: a record whose type cannot carry
  * media (every `message_update` partial) replays its `line` with no parse at all; only
  * media-bearing records parse their frozen line, once.
+ * `deltaOnlyLine` is the delta-only form of a compact `*_delta` update (senpi#4239): once a newer record of the same
+ * message arrives, that form replaces the record, so the store holds every delta but only the newest cumulative partial.
  */
 type SnapshotRecord = {
 	readonly line: string;
 	placeholderLine?: string;
 	readonly hasMessage: boolean;
 	readonly mayCarryMedia: boolean;
+	readonly deltaOnlyLine?: string;
 };
+
+/** A superseded delta keeps its delta and position; its cumulative fields are null, so it carries no media either. */
+function supersededRecord(deltaOnlyLine: string): SnapshotRecord {
+	return { line: deltaOnlyLine, placeholderLine: deltaOnlyLine, hasMessage: false, mayCarryMedia: false };
+}
 
 /** The placeholder variant of a remembered record, derived and memoized on first use. */
 function snapshotPlaceholderLine(record: SnapshotRecord): string {
@@ -64,6 +73,10 @@ export class LegacyReplayStore {
 			placeholderLine,
 			hasMessage: value.message != null,
 			mayCarryMedia: carriesMedia(value),
+			deltaOnlyLine:
+				value.message != null && compactDelta(value) !== undefined
+					? serializeJsonLine(demoteToDeltaOnly(value))
+					: undefined,
 		};
 		if (value.type === "session_lifecycle") {
 			this.lifecycleSnapshots.set(sessionId, record);
@@ -88,10 +101,24 @@ export class LegacyReplayStore {
 		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
 		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
 			this.sessionSnapshots.set(sessionId, [record]);
-		} else if (this.sessionSnapshots.has(sessionId)) {
-			this.sessionSnapshots.get(sessionId)?.push(record);
+		} else {
+			const records = this.sessionSnapshots.get(sessionId);
+			if (records) this.supersedeNewest(sessionId, records).push(record);
 		}
 		if (value.type === "message_end") this.sessionSnapshots.delete(sessionId);
+	}
+
+	/**
+	 * Demotes the newest record to its delta-only form when it is a compact delta, returning the array to append to.
+	 * A frozen cursor reads the array and length it froze, so while any cursor is open the store writes a copy.
+	 */
+	private supersedeNewest(sessionId: string, records: SnapshotRecord[]): SnapshotRecord[] {
+		const newest = records.at(-1);
+		if (newest?.deltaOnlyLine === undefined) return records;
+		const owned = this.cursors > 0 ? [...records] : records;
+		owned[owned.length - 1] = supersededRecord(newest.deltaOnlyLine);
+		if (owned !== records) this.sessionSnapshots.set(sessionId, owned);
+		return owned;
 	}
 
 	forget(sessionId: string): void {
