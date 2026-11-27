@@ -16,12 +16,14 @@ const waits = { children: 0, background: [], human: [] };
 it("emits activity changes without durable appends while custody writes fail", () => {
 	const records: LifecycleRecord[] = [];
 	const events: SessionLifecycleEvent[] = [];
-	const ledger = new LifecycleLedger({
-		sessionId: "custody",
-		entries: [],
-		append: (record) => records.push(record),
-		emit: (event) => events.push(event),
-	});
+	const ledger = new LifecycleLedger(
+		{
+			sessionId: "custody",
+			append: (record) => records.push(record),
+			emit: (event) => events.push(event),
+		},
+		[],
+	);
 	ledger.releaseRestoreBarrier();
 	const update = (projection?: LifecycleActivity) =>
 		ledger.update({ state: "running", waits, holds: [], activity: projection });

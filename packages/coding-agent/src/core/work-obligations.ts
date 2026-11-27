@@ -42,7 +42,6 @@ export class CustodyViolation extends Error {
 }
 
 export interface CustodyStore {
-	readonly entries: readonly SessionEntry[];
 	append(record: WorkCustodyRecord): void;
 	changed(): void;
 }
@@ -61,9 +60,10 @@ export class SessionWorkObligations implements WorkObligations {
 	private readonly sending = new Set<string>();
 	private readonly publishedSources = new Set<string>();
 	private readonly store: CustodyStore;
-	constructor(store: CustodyStore) {
+	/** `entries` is read here only: the restoration history is not kept for the session's life (senpi#7603). */
+	constructor(store: CustodyStore, entries: readonly SessionEntry[]) {
 		this.store = store;
-		for (const entry of store.entries) {
+		for (const entry of entries) {
 			if (entry.type !== "custom" || entry.customType !== "work-custody") continue;
 			const record = readWorkCustody(entry.data);
 			if (record) this.keep(record);
