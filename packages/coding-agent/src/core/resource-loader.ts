@@ -1133,8 +1133,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 	/**
 	 * The one place internal builtins enter a final extension set (senpi#1146): whichever group selected the builtins
 	 * that require them (settings, an explicit `builtin:<name>` path, before or after project trust), they load once,
-	 * each at its registry position: ahead of the first loaded builtin the registry lists after it, so behind the
-	 * guards and policy and ahead of every builtin that may re-publish liveness in its session_start.
+	 * each right after the leading run of builtins the registry lists before it: behind the guards and policy when
+	 * those lead the set, and ahead of every other extension (a later builtin, a bundled, inline or path extension),
+	 * any of which may re-publish liveness in its session_start. An internal builtin handles no tool call, so one
+	 * placed ahead of a guard (an inline extension leads the plain branch) takes no veto from it.
 	 */
 	private async placeRequiredInternalBuiltins(result: LoadExtensionsResult): Promise<void> {
 		const builtinIdOf = (path: string): string | undefined =>
@@ -1176,8 +1178,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const placed = result.extensions.filter((extension) => !isInternal(extension));
 		for (const internal of required) {
 			const own = registryIndex(builtinIdOf(internal.path));
-			const next = placed.findIndex((extension) => registryIndex(builtinIdOf(extension.path)) > own);
-			placed.splice(next === -1 ? placed.length : next, 0, internal);
+			const listedEarlier = (extension: Extension): boolean => {
+				const index = registryIndex(builtinIdOf(extension.path));
+				return index !== -1 && index < own;
+			};
+			const end = placed.findIndex((extension) => !listedEarlier(extension));
+			placed.splice(end === -1 ? placed.length : end, 0, internal);
 		}
 		result.extensions = placed;
 	}

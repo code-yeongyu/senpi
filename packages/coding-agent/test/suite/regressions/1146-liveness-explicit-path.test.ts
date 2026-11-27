@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TERMINAL_MONITOR_STATE_EVENT } from "../../../src/core/extensions/builtin/monitor-state-event.ts";
-import { cleanupLoaderSessions, loaderSession } from "../liveness-loader-harness.ts";
+import { cleanupLoaderSessions, loadedOrder, loaderSession } from "../liveness-loader-harness.ts";
 
 // senpi#1146 review: a consumer selected only by an explicit `builtin:<name>` path still gets the session's one
 // watcher, in both final-assembly branches (plain reload and the project-trust bootstrap), bound ahead of every
@@ -48,6 +48,65 @@ describe.each<Consumer>(["herdr", "todowrite"])(
 				expectWorking(session, consumer, true);
 				await session.emit("agent_settled");
 				expectWorking(session, consumer, false);
+			},
+		);
+
+		it.each([false, true])(
+			"binds the watcher ahead of a startup publisher outside the registry when no later builtin is selected (trust bootstrap: %s)",
+			async (trust) => {
+				const session = await loaderSession({
+					enabledBuiltinExtensions: ["loop-guard"],
+					explicitPaths: [`builtin:${consumer}`],
+					trust,
+					startupMonitorOwner: true,
+				});
+				await session.emit("session_start");
+
+				expect(session.watchers()).toBe(1);
+				const loaded = session.loaded();
+				const watcher = loaded.indexOf("<builtin:session-liveness>");
+				expect(loaded.indexOf("<builtin:loop-guard>")).toBeLessThan(watcher);
+				expect(watcher).toBeLessThan(loaded.findIndex((path) => path.endsWith("owner.ts")));
+				// The owner's monitor, published in its own session_start, is heard: the session reads working.
+				expectWorking(session, consumer, true);
+			},
+		);
+
+		it.each([false, true])(
+			"binds the watcher ahead of an inline startup publisher when no later builtin is selected (trust bootstrap: %s)",
+			async (trust) => {
+				const session = await loaderSession({
+					enabledBuiltinExtensions: ["loop-guard"],
+					explicitPaths: [`builtin:${consumer}`],
+					trust,
+					startupMonitorOwner: "inline",
+				});
+				await session.emit("session_start");
+
+				expect(session.watchers()).toBe(1);
+				const loaded = session.loaded();
+				expect(loaded.indexOf("<builtin:session-liveness>")).toBeLessThan(
+					loaded.findIndex((path) => path.startsWith("<inline:")),
+				);
+				expectWorking(session, consumer, true);
+			},
+		);
+
+		it.each([false, true])(
+			"loads the watcher ahead of the bundled codemode extension when no later builtin is selected (trust bootstrap: %s)",
+			async (trust) => {
+				const loaded = await loadedOrder({
+					enabledBuiltinExtensions: ["loop-guard", "codemode"],
+					explicitPaths: [`builtin:${consumer}`],
+					trust,
+					bundledCodemode: true,
+				});
+
+				const watcher = loaded.indexOf("<builtin:session-liveness>");
+				const codemode = loaded.findIndex((path) => path.includes("senpi-codemode"));
+				expect(codemode).toBeGreaterThanOrEqual(0);
+				expect(loaded.indexOf("<builtin:loop-guard>")).toBeLessThan(watcher);
+				expect(watcher).toBeLessThan(codemode);
 			},
 		);
 

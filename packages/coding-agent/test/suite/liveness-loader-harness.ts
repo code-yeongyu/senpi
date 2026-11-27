@@ -10,7 +10,7 @@ import {
 } from "../../src/core/extensions/builtin/session-liveness/connect.ts";
 import { TODO_STATE_ENTRY_TYPE, type TodoStateEntry } from "../../src/core/extensions/builtin/todotools/state.ts";
 import { noOpUIContext } from "../../src/core/extensions/runner.ts";
-import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionFactory, ExtensionUIContext } from "../../src/core/extensions/types.ts";
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import type { Theme } from "../../src/modes/interactive/theme/theme.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -25,8 +25,13 @@ export interface LoaderSessionOptions {
 	explicitPaths?: string[];
 	/** Load through the project-trust bootstrap (`reload({ resolveProjectTrust })`) instead of a plain reload. */
 	trust?: boolean;
-	/** A user extension that, like terminal on bind, re-publishes a live bounded monitor in its own session_start. */
-	startupMonitorOwner?: boolean;
+	/**
+	 * A user extension that, like terminal on bind, re-publishes a live bounded monitor in its own session_start:
+	 * a file in the agent's extensions directory (`true`) or an inline factory (`"inline"`).
+	 */
+	startupMonitorOwner?: boolean | "inline";
+	/** Keep the bundled codemode extension selectable (the harness disables it otherwise). */
+	bundledCodemode?: boolean;
 }
 
 const POLL_MS = 4000;
@@ -46,26 +51,52 @@ const STARTUP_MONITOR_OWNER = `export default function (pi) {
 }
 `;
 
-/** A real `DefaultResourceLoader` selection bound to a real session, with the todo list seeded and a TUI context. */
-export async function loaderSession(options: LoaderSessionOptions) {
-	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-	const setInterval = vi.spyOn(globalThis, "setInterval");
+const inlineStartupMonitorOwner: ExtensionFactory = (pi) => {
+	pi.on("session_start", () => {
+		pi.events.emit("terminal_monitor_state", {
+			activeCount: 1,
+			monitors: [
+				{ id: "m1", description: "watch", paused: false, startedAtMs: 0, persistent: false, deadlineMs: 60000 },
+			],
+		});
+	});
+};
+
+async function reloadedLoader(options: LoaderSessionOptions) {
 	const root = mkdtempSync(join(tmpdir(), "liveness-loader-"));
 	const agentDir = join(root, "agent");
 	const cwd = join(root, "project");
 	mkdirSync(join(agentDir, "extensions"), { recursive: true });
 	mkdirSync(cwd, { recursive: true });
-	if (options.startupMonitorOwner) writeFileSync(join(agentDir, "extensions", "owner.ts"), STARTUP_MONITOR_OWNER);
-	const { explicitPaths, trust, startupMonitorOwner: _owner, ...settings } = options;
-	const disabled = [...(settings.disabledBuiltinExtensions ?? []), "codemode"];
+	if (options.startupMonitorOwner === true) {
+		writeFileSync(join(agentDir, "extensions", "owner.ts"), STARTUP_MONITOR_OWNER);
+	}
+	const { explicitPaths, trust, startupMonitorOwner, bundledCodemode, ...settings } = options;
+	const disabled = [...(settings.disabledBuiltinExtensions ?? []), ...(bundledCodemode ? [] : ["codemode"])];
 	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ ...settings, disabledBuiltinExtensions: disabled }));
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
 		noSkills: true,
 		...(explicitPaths ? { additionalExtensionPaths: explicitPaths } : {}),
+		...(startupMonitorOwner === "inline" ? { extensionFactories: [inlineStartupMonitorOwner] } : {}),
 	});
 	await (trust ? loader.reload({ resolveProjectTrust: async () => true }) : loader.reload());
+	return { loader, root, cwd };
+}
+
+/** The final extension set's resolved paths for a selection, with no session bound: a bundled extension loads but never starts. */
+export async function loadedOrder(options: LoaderSessionOptions): Promise<string[]> {
+	const { loader, root } = await reloadedLoader(options);
+	cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+	return loader.getExtensions().extensions.map((extension) => extension.resolvedPath);
+}
+
+/** A real `DefaultResourceLoader` selection bound to a real session, with the todo list seeded and a TUI context. */
+export async function loaderSession(options: LoaderSessionOptions) {
+	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+	const setInterval = vi.spyOn(globalThis, "setInterval");
+	const { loader, root, cwd } = await reloadedLoader(options);
 	const bus = loader.getExtensions().eventBus;
 	if (!bus) throw new Error("the loader returned no event bus");
 	const subscribe = vi.spyOn(bus, "on");
