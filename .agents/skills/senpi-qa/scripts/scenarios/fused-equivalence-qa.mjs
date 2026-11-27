@@ -17,7 +17,7 @@
 // without a gondolin image store) unless `--leave-unrecorded <ids>` names it: a partial re-record is said out loud
 // (senpi#5189).
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
 import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-goldens.mjs";
@@ -26,6 +26,7 @@ import { baselineManifest, goldenDir, observe } from "../../scenarios/fused-equi
 import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
 import { readWitness, witnessOk } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
 import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
+import { goldenLeaks, recordHostProblems } from "../lib/equivalence-record-guard.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
 import {
 	finishRecord,
@@ -140,6 +141,8 @@ async function main() {
 	// Read before any golden is written: the manifest names the tree the goldens were recorded from, so a record run's own
 	// output must not mark that tree dirty.
 	const manifest = baselineManifest({ repo: repoRoot(), childRuntime: childRuntime().label, command });
+	const hostProblems = options.mode === "record" ? recordHostProblems({ temp: tmpdir(), home: homedir() }) : [];
+	if (hostProblems.length) throw new Error(`refusing to record on this host:\n${hostProblems.join("\n")}`);
 	const problems = validateDeferredList(
 		deferredGoldens,
 		cases.map((c) => c.id),
@@ -189,14 +192,17 @@ async function main() {
 			result.witnessOk = runs.every((r) => witnessOk(r.witness));
 			if (options.mode === "record") {
 				// A golden is written only from runs that agreed with each other: a nondeterministic case is a FAIL, never a golden.
-				if (result.repeatDiffs.length === 0) {
+				// A golden that carries host-private text (a project-rules block, a real home path) is never written.
+				const serialized = `${JSON.stringify({ id: testCase.id, title: testCase.title, observations: first }, null, 1)}\n`;
+				const leaks = goldenLeaks(serialized);
+				if (leaks.length)
+					error = `golden refused, it carries host-private text: ${leaks.map((l) => `${l.marker} x${l.count}`).join(", ")}`;
+				else if (result.repeatDiffs.length === 0) {
 					mkdirSync(dir, { recursive: true });
-					writeFileSync(
-						goldenPath,
-						`${JSON.stringify({ id: testCase.id, title: testCase.title, observations: first }, null, 1)}\n`,
-					);
+					writeFileSync(goldenPath, serialized);
 					result.written = true;
 				}
+				result.error = error;
 				result.diffs = [];
 			} else {
 				const golden = existsSync(goldenPath)
