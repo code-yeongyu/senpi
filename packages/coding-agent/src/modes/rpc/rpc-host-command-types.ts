@@ -87,6 +87,11 @@ type RpcCommandBody =
 			 */
 			auto_title?: boolean;
 			/**
+			 * Whether only this run's designated answerer resolves its prompts (senpi#7572); absent, the host's default. The
+			 * reply of an open that creates a run carries `answerKey` (once) and `answerer`. Requires `prompt_answerer`.
+			 */
+			designatedAnswerer?: boolean;
+			/**
 			 * The durable session id to CREATE this session with, so a caller that already has a
 			 * stable record id for the conversation keeps ONE identity instead of maintaining a
 			 * mapping. Requires the host capability `durable_session_id`.

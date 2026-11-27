@@ -1,6 +1,7 @@
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { connectionLeft } from "./session-router-relocation.ts";
+import { forgetAnswererConnection } from "./prompt-answerer-gate.ts";
 /** Disconnect semantics shared by socket loss and release_attachment. True means settlement owns the final release. */
 export async function releaseDisconnectAttachment(host: RouterContext, sessionId: string): Promise<boolean> {
 	// Headless completion contract: a turn survives its client's death and
@@ -97,6 +98,7 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 		host.pendingCapabilities.delete(connectionId);
 		host.writer.delegations.forget(connectionId);
 		host.connectionRoles.forget(connectionId);
+		forgetAnswererConnection(host, connectionId);
 	}
 	const opens = host.opensByConnection.get(connectionId);
 	const owned = host.sessionsByConnection.get(connectionId);
@@ -178,6 +180,7 @@ export function releaseOwnerAttachment(host: RouterContext, owner: string, sessi
 /** Drops per-connection records for a handle the host closed on its own. */
 export function forgetSessionOwnership(host: RouterContext, sessionId: string): void {
 	host.attachOrder.forgetSession(sessionId);
+	host.answerers.forgetSession(sessionId);
 	for (const [connection, owned] of host.sessionsByConnection) {
 		owned.delete(sessionId);
 		if (owned.size === 0) host.sessionsByConnection.delete(connection);

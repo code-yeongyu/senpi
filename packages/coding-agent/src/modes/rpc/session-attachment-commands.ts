@@ -1,5 +1,6 @@
 import { takeOver } from "./attach-takeover.ts";
 import { compactOpen } from "./compact-open-admission.ts";
+import { attachAnswerer } from "./prompt-answerer-gate.ts";
 import { EXTENSION_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import { clearRetainedRecord } from "./session-router-residency.ts";
@@ -113,9 +114,15 @@ export function attachSession(
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
+	const answerer = (): boolean => attachAnswerer(host, owner, command.sessionId, command.answerKey);
 	if (command.takeover === true)
 		return takeOver(host, command, owner, () => attachWithState(host, owner, command.sessionId)).then(
-			async (reply) => (reply.success ? ((await confirmAttachTelemetry(host, owner, command)) ?? reply) : reply),
+			async (reply) => {
+				if (!reply.success) return reply;
+				const unconfirmed = await confirmAttachTelemetry(host, owner, command);
+				if (unconfirmed !== undefined) return unconfirmed;
+				return reply.command === "attach_session" ? { ...reply, data: { ...reply.data, answerer: answerer() } } : reply;
+			},
 		);
 	if (command.admissionId !== undefined && host.admissions) {
 		let admitted = false;
@@ -124,6 +131,7 @@ export function attachSession(
 			attach(host, owner, command.sessionId);
 			const unconfirmed = await confirmAttachTelemetry(host, owner, command);
 			if (unconfirmed !== undefined) throw new RpcSessionRegistryError("telemetry_update_unconfirmed");
+			answerer();
 			try {
 				await accept({ sessionId: command.sessionId, durableSessionId: command.durableSessionId, attached: true });
 			} catch (cause) {
@@ -152,7 +160,7 @@ export function attachSession(
 				type: "response",
 				command: command.type,
 				success: true,
-				data: { sessionId: command.sessionId, attached: true },
+				data: { sessionId: command.sessionId, attached: true, answerer: answerer() },
 			},
 	);
 }

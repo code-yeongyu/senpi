@@ -186,6 +186,9 @@ export const REVIEWED_FIELDS = {
 	extension_ui_response: {
 		fields: [
 			"answerId",
+			// `answerKey` (senpi#7572) is the run's answer key: the router checks it and strips it before dispatch, so it only
+			// narrows who may answer; no path or process, class unchanged.
+			"answerKey",
 			"answers",
 			"cancelled",
 			"comment",
@@ -197,7 +200,7 @@ export const REVIEWED_FIELDS = {
 			"value",
 		],
 	},
-	extension_ui_progress: { fields: ["answers", "comment", "id", "sessionId", "type"] },
+	extension_ui_progress: { fields: ["answerKey", "answers", "comment", "id", "sessionId", "type"] },
 	new_session: { version: 1, fields: ["admissionId", "id", "parentSession", "sessionId", "type"] },
 	open_session: {
 		version: 2,
@@ -208,6 +211,9 @@ export const REVIEWED_FIELDS = {
 			"browserEngine",
 			"context",
 			"cwd",
+			// `designatedAnswerer` (senpi#7572) only chooses whether the run this open creates takes answers from its opener alone:
+			// no path, credential or process, class unchanged.
+			"designatedAnswerer",
 			"durableSessionId",
 			"env",
 			"expectedHostInstance",
@@ -261,6 +267,8 @@ export const REVIEWED_FIELDS = {
 	attach_session: {
 		fields: [
 			"admissionId",
+			// `answerKey` (senpi#7572): presenting the run's key makes the caller its answerer; class unchanged.
+			"answerKey",
 			"durableSessionId",
 			"expectedHostInstance",
 			"holder",

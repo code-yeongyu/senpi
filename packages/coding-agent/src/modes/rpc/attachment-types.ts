@@ -20,6 +20,8 @@ export type RpcAttachmentCommand =
 			 * an attach without it answers `unanswered`. Requires the host capability `telemetry_consent`.
 			 */
 			readonly telemetry?: TelemetryDeclaration;
+			/** The run's answer key from its `open_session` reply: the caller becomes the run's answerer (senpi#7572). */
+			readonly answerKey?: string;
 	  }
 	| { readonly id?: string; readonly type: "release_attachment"; readonly sessionId: string }
 	| {
@@ -43,6 +45,8 @@ export type RpcAttachmentResponse =
 				readonly holder?: string;
 				readonly generation?: number;
 				readonly released?: number;
+				/** Whether this connection answers the run's prompts now (senpi#7572). */
+				readonly answerer?: boolean;
 			};
 	  }
 	| {

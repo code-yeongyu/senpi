@@ -1,0 +1,100 @@
+/**
+ * The router's side of senpi#7572 (`prompt-answerer.ts`): who becomes a run's answerer when it opens or attaches, what
+ * the replies say about it, and the check every answer passes before it is dispatched to an in-process session or a
+ * worker isolate.
+ */
+import type { OpenRpcSession } from "./session-registry.ts";
+import { DESIGNATED_ANSWERER_BY_DEFAULT, RPC_ERROR_PROMPT_ANSWERER_REQUIRED } from "./prompt-answerer.ts";
+import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
+import type { RouterContext } from "./session-router-context.ts";
+import { error } from "./session-router-errors.ts";
+
+/** A minted key on its way from the opener's attach to its reply; nothing else reads it and it is never serialized. */
+const mintedKeys = new WeakMap<OpenRpcSession, string>();
+
+function attached(host: RouterContext, connection: string | undefined, sessionId: string): boolean {
+	return connection === undefined || host.sessionsByConnection.get(connection)?.has(sessionId) === true;
+}
+
+
+/**
+ * A new run's opener becomes its answerer, under the default rule; called where the opener's connection attaches to a
+ * run it created, on every open path (a compact admission included), so no path leaves a run without the rule.
+ */
+export function designateOpener(
+	host: RouterContext,
+	opened: OpenRpcSession,
+	owner: string | undefined,
+	designated = DESIGNATED_ANSWERER_BY_DEFAULT,
+): void {
+	if (opened.attached) return;
+	const key = host.answerers.open(opened.sessionId, owner, designated);
+	if (key !== undefined) mintedKeys.set(opened, key);
+}
+
+/**
+ * The answerer fields of an open or claim reply. A reopen the host makes on its own (no reply) leaves the run with no
+ * answerer; a run whose opener has no connection identity (stdio) is designated here, where that open replies.
+ */
+export function openReplyAnswerer(
+	host: RouterContext,
+	opened: OpenRpcSession,
+	reply: boolean,
+	designated: boolean | undefined,
+): { readonly answerer: boolean; readonly answerKey?: string } {
+	const owner = host.writer.currentConnection();
+	if (!reply) {
+		host.answerers.openUnanswered(opened.sessionId);
+		return { answerer: false };
+	}
+	if (!opened.attached) {
+		const wanted = designated ?? DESIGNATED_ANSWERER_BY_DEFAULT;
+		if (!wanted) mintedKeys.delete(opened);
+		if (!wanted || !mintedKeys.has(opened)) designateOpener(host, opened, owner, wanted);
+	}
+	const answerKey = mintedKeys.get(opened);
+	mintedKeys.delete(opened);
+	return {
+		answerer: host.answerers.isAnswerer(opened.sessionId, owner, attached(host, owner, opened.sessionId)),
+		...(answerKey === undefined ? {} : { answerKey }),
+	};
+}
+
+/** `attach_session`: a caller presenting the run's key becomes its answerer; the reply says whether it is one. */
+export function attachAnswerer(host: RouterContext, owner: string, sessionId: string, key: unknown): boolean {
+	return host.answerers.present(sessionId, owner, key, attached(host, owner, sessionId));
+}
+
+/**
+ * Refuses an answer to a run's dialog or question from anyone but its answerer, before dispatch, so the session (or its
+ * worker) never sees it and the prompt stays pending. A secret input keeps its own raiser route, so it is not checked
+ * here. Answers reach the router as records `RpcCommand` does not list, so their fields are read, not narrowed.
+ */
+export function answererGate(host: RouterContext, command: RpcCommand): RpcResponse | undefined {
+	const type: unknown = Reflect.get(command, "type");
+	if (type !== "extension_ui_response" && type !== "extension_ui_progress") return undefined;
+	if (type === "extension_ui_response" && Reflect.get(command, "secret") === true) return undefined;
+	const sessionId: unknown = Reflect.get(command, "sessionId");
+	if (typeof sessionId !== "string") return undefined;
+	const connection = host.writer.currentConnection();
+	const key: unknown = Reflect.get(command, "answerKey");
+	if (host.answerers.admits(sessionId, connection, attached(host, connection, sessionId), key)) return undefined;
+	const id: unknown = Reflect.get(command, "id");
+	return error(typeof id === "string" ? id : undefined, type, RPC_ERROR_PROMPT_ANSWERER_REQUIRED, {
+		reason: "only this run's designated answerer answers its prompts",
+		action: "answer from the client that opened the run, or attach_session with its answerKey",
+	});
+}
+
+/** The key has been checked: nothing after the gate (a session, a worker, a log) receives it. */
+export function withoutAnswerKey<C extends RpcCommand>(command: C): C {
+	if (!("answerKey" in command)) return command;
+	const copy = { ...command };
+	Reflect.deleteProperty(copy, "answerKey");
+	return copy;
+}
+
+/** The socket is gone: it answers no run any more. */
+export function forgetAnswererConnection(host: RouterContext, connection: string): void {
+	host.answerers.forgetConnection(connection);
+}
