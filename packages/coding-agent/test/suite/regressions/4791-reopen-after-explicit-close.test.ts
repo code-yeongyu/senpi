@@ -1,6 +1,6 @@
 // senpi#4791: a successor's handover-parked reopen watch never reopens a session whose park an explicit close_session
 // cleared after the watch read the record; a park nobody closed is still reopened.
-import { mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,6 +63,39 @@ it("does not reopen a park an explicit close cleared after the watch read the re
 
 	expect(opened).toEqual([]);
 	expect(await readHandoverParkedSessions(daemonDir)).toEqual([]);
+});
+
+it("does not reopen from a stale read when the path was closed and parked again by someone else", async () => {
+	const { agentDir, socket, daemonDir, sessionPath } = await parkedRig();
+	const parks = join(daemonDir, "handover-parked");
+	const opened: string[] = [];
+	let passes = 0;
+	let reparked = false;
+
+	await reopenHandoverParkedSessions(
+		async (entry) => {
+			opened.push(entry.sessionPath);
+		},
+		agentDir,
+		socket,
+		{
+			hostInstance: "successor",
+			shouldReopen: () => passes++ === 0,
+			// Between the read and the open: a close clears the park and this host's own idle sweep parks the path again.
+			// The fresh park is not the one the watch read, and it is this host's own (the watch skips its own parks).
+			onProgress: (state) => {
+				if (reparked || state === undefined || state.pending === 0) return;
+				reparked = true;
+				for (const name of readdirSync(parks)) {
+					const file = join(parks, name);
+					const read = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+					writeFileSync(file, `${JSON.stringify({ ...read, sessionPath, parkedBy: "successor" }, null, 2)}\n`);
+				}
+			},
+		},
+	);
+
+	expect(opened).toEqual([]);
 });
 
 it("still reopens a park nobody closed", async () => {

@@ -198,9 +198,11 @@ async function reopenOne(
 		return;
 	}
 	// An explicit close_session clears the park (before it finalizes) without telling this watch: a park gone since the
-	// pass read the record was closed, never reopened from that stale read (senpi#4791).
+	// pass read the record was closed, never reopened from that stale read (senpi#4791). A park written again for the
+	// same path since (this host's own idle sweep, a writer still running) is a different park: it is not reopened
+	// from what this pass read either.
 	const current = await readHandoverParkedSessions(daemonDir);
-	if (!current.some((park) => park.sessionPath === entry.sessionPath)) return;
+	if (!current.some((park) => isSamePark(park, entry))) return;
 	try {
 		await open(entry);
 		// The host started draining while this reopen was in flight: the session landed in a registry
@@ -238,4 +240,14 @@ async function reopenOne(
 		}
 		process.stderr.write(`senpi rpc successor reopen parked session ${entry.sessionPath} failed: ${String(cause)}\n`);
 	}
+}
+
+/** The park this pass read, still in place: same path, same writer and holder, same durable session. */
+function isSamePark(park: HandoverParkedEntry, read: HandoverParkedEntry): boolean {
+	return (
+		park.sessionPath === read.sessionPath &&
+		park.parkedBy === read.parkedBy &&
+		park.durableSessionId === read.durableSessionId &&
+		JSON.stringify(park.residentWriter ?? null) === JSON.stringify(read.residentWriter ?? null)
+	);
 }
