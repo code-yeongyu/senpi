@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import configReloadExtension from "../../../src/core/extensions/builtin/config-reload/index.ts";
+import type { ConfigReloadLogger } from "../../../src/core/extensions/builtin/config-reload/log.ts";
 import type { WatchEventListener } from "../../../src/core/extensions/builtin/config-reload/watch-engine.ts";
 import type { SessionStartEvent } from "../../../src/core/extensions/types.ts";
 import { GENERATED_SHIM_BANNER } from "../../../src/core/generated-shim-banner.ts";
 import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
+// The default bound on one session's hold of the reload queue (config-reload `RELOAD_SLOT_TIMEOUT_MS`).
+const RELOAD_SLOT_BOUND_MS = 60_000;
 const roots: string[] = [];
 const sessions: Harness[] = [];
 // Every reload a test leaves open; afterEach settles them so the process-wide queue is empty for the next test.
@@ -55,7 +58,7 @@ it("keeps the shim pointing at the other installation", async () => {
 });
 
 /** Sessions sharing one extensions directory. Each reload stays open until the test settles it. */
-async function watchers(starts: ReadonlyArray<SessionStartEvent | undefined>) {
+async function watchers(starts: ReadonlyArray<SessionStartEvent | undefined>, logger?: ConfigReloadLogger) {
 	vi.useFakeTimers();
 	const { root, extensionDir, shim } = fixture();
 	writeFileSync(shim, GENERATED_SHIM_BANNER + 'export { default } from "file:///old/diff.js";\n');
@@ -73,6 +76,7 @@ async function watchers(starts: ReadonlyArray<SessionStartEvent | undefined>) {
 					configReloadExtension(pi, {
 						agentDir: root,
 						clock: { setTimeout, clearTimeout },
+						...(logger ? { logger } : {}),
 						subscribe: (path, listener) => {
 							if (path === extensionDir) listeners.add(listener);
 							return () => {
@@ -133,4 +137,28 @@ it("delivers a user edit once to every session, attended or not, with one reload
 	await settleOpenReloads();
 	expect(group.calls).toEqual([0, 1, 2]);
 	expect(group.peak()).toBe(1);
+});
+
+// #7599 review: one reload that never settles must not stop watcher reloads for every other session.
+it("releases the queue slot after the bound while a reload that never settles keeps running", async () => {
+	const warnings: string[] = [];
+	const status = { written: false, disabled: true };
+	const logger: ConfigReloadLogger = {
+		debug: () => status,
+		info: () => status,
+		warn: (event) => {
+			warnings.push(event);
+			return status;
+		},
+		error: () => status,
+	};
+	const group = await watchers([undefined, undefined], logger);
+	await group.rewrite("export default () => {};\n");
+	expect(group.calls).toEqual([0]);
+	await vi.advanceTimersByTimeAsync(RELOAD_SLOT_BOUND_MS - 1);
+	expect(group.calls).toEqual([0]);
+	await vi.advanceTimersByTimeAsync(1);
+	expect(group.calls).toEqual([0, 1]);
+	expect(group.peak()).toBe(2);
+	expect(warnings).toEqual(["reload_slot_released"]);
 });

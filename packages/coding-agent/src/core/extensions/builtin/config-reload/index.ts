@@ -1,7 +1,6 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import { resolvePath } from "../../../../utils/paths.ts";
 import { ModelConfig } from "../../../model-config.ts";
@@ -26,6 +25,7 @@ import {
 	matchesConfigWatchFilter,
 } from "./protocol.ts";
 import { ReloadVetoDeferral } from "./reload-deferral.ts";
+import { queueReload, RELOAD_SLOT_TIMEOUT_MS } from "./reload-queue.ts";
 import {
 	excludeRoutineOnlySettingsChanges,
 	isSettingsPath,
@@ -132,32 +132,6 @@ export class ConfigReloadHandoffRegistry<T> {
 }
 
 const reloadHandoffs = new ConfigReloadHandoffRegistry<ReloadHandoff>();
-
-// Joining an occupied queue from session_start would deadlock: the running reload awaits that
-// handler. Queue the work in its originating async scope and let the lifecycle handler return.
-interface ReloadScheduler {
-	schedule(work: () => Promise<void>): Promise<void> | undefined;
-}
-
-const processReloadScheduler = realmRegistry(
-	"@code-yeongyu/senpi/config-reload-scheduler/v1",
-	(): ReloadScheduler => {
-		let tail: Promise<void> | undefined;
-		return {
-			schedule(work) {
-				const previous = tail;
-				const next = (previous ?? Promise.resolve()).then(work);
-				const release = () => {
-					if (tail === settled) tail = undefined;
-				};
-				const settled = next.then(release, release);
-				tail = settled;
-				return previous ? undefined : next;
-			},
-		};
-	},
-	(value): value is ReloadScheduler => hasFunctions(value, ["schedule"]),
-);
 
 export interface ConfigReloadExtensionOptions {
 	readonly agentDir?: string;
@@ -401,15 +375,19 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	const flushPending = async (): Promise<void> => {
 		if (reloadScheduled || reloadInFlight || pending.size === 0) return;
 		reloadScheduled = true;
-		await processReloadScheduler.schedule(async () => {
-			try {
-				await reloadPending();
-			} catch (error) {
-				logger.error("watcher_error", { path: "reload", message: errorMessage(error) });
-			} finally {
-				reloadScheduled = false;
-			}
-		});
+		await queueReload(
+			async () => {
+				try {
+					await reloadPending();
+				} catch (error) {
+					logger.error("watcher_error", { path: "reload", message: errorMessage(error) });
+				} finally {
+					reloadScheduled = false;
+				}
+			},
+			options.clock ?? defaultClock,
+			() => logger.warn("reload_slot_released", { afterMs: RELOAD_SLOT_TIMEOUT_MS }),
+		);
 	};
 
 	const reloadPending = async (): Promise<void> => {

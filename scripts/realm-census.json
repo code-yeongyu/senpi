@@ -4035,10 +4035,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts#processReloadScheduler": {
-			"class": "realm-registry",
-			"reason": "config-reload-scheduler/v1: every copy serving sessions on the host event loop must share the same reload queue"
-		},
 		"packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts#reloadHandoffs": {
 			"class": "per-copy-safe",
 			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
@@ -4070,6 +4066,10 @@
 		"packages/coding-agent/src/core/extensions/builtin/config-reload/protocol.ts#CONFIG_WATCH_UNREGISTER": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/config-reload/reload-queue.ts#processReloadScheduler": {
+			"class": "realm-registry",
+			"reason": "config-reload-scheduler/v1: every copy serving sessions on the host event loop must share the same reload queue"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts#ROUTINE_SETTINGS_KEYS": {
 			"class": "constant",
