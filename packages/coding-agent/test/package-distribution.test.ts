@@ -23,6 +23,15 @@ describe("package distribution entrypoints", () => {
 		expect(packageJson.exports["./rpc-entry"].import).toBe("./dist/rpc-entry.js");
 	});
 
+	// An embedder that rewrites argv or env before importing the CLI (omo's compiled entry) imports this first, so the
+	// OSC 7577 hand-off re-execs the launch it was given rather than the rewritten one (senpi#7493).
+	test("publishes the OSC 7577 hand-off as its own side-effect entry", () => {
+		expect(packageJson.exports["./program-resume-startup"]).toEqual({
+			types: "./dist/program-resume-startup.d.ts",
+			import: "./dist/program-resume-startup.js",
+		});
+	});
+
 	// Naming the executables one by one is how `bin.senpi` drifted: upstream moved `pi` onto the
 	// bundle and the fork's own command kept the module graph the bundle exists to replace, which
 	// costs a launch roughly five seconds of pre-main evaluation. Assert the rule instead of the

@@ -44,6 +44,10 @@
 			"types": "./dist/private-fds.d.ts",
 			"import": "./dist/private-fds.js"
 		},
+		"./program-resume-startup": {
+			"types": "./dist/program-resume-startup.d.ts",
+			"import": "./dist/program-resume-startup.js"
+		},
 		"./mcp-env-grants": {
 			"types": "./dist/core/extensions/builtin/mcp/env-grants-store.d.ts",
 			"import": "./dist/core/extensions/builtin/mcp/env-grants-store.js"
