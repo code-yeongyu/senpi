@@ -1,4 +1,5 @@
 import { redactAcrossBoundary } from "./share-entropy.ts";
+import { redactFlagArguments } from "./share-redaction-flags.ts";
 import { count, redactShareText, type ShareRedactionContext, type ShareRedactionTally } from "./share-redaction.ts";
 import { isSensitiveKeyName } from "./share-sensitive-key.ts";
 
@@ -59,7 +60,7 @@ function redactNode(value: unknown, context: ShareRedactionContext, tally: Share
 	if (typeof value === "string") return redactShareText(value, context, tally);
 	if (Array.isArray(value))
 		return joinAdjacentText(
-			value.map((item) => redactNode(item, context, tally)),
+			redactFlagArguments(value, () => count(tally, "credential")).map((item) => redactNode(item, context, tally)),
 			tally,
 		);
 	if (value === null || typeof value !== "object") return value;

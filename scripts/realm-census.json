@@ -7211,6 +7211,18 @@
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
+		"packages/coding-agent/src/core/share/share-redaction-flags.ts#FLAG_VALUE": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/share/share-redaction-flags.ts#MYSQL_PASSWORD": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/share/share-redaction-flags.ts#PROSE_SECRET": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/coding-agent/src/core/share/share-redaction-value.ts#SCHEMA_KEYWORDS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
