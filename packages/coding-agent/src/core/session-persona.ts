@@ -45,8 +45,27 @@ export function sessionPersonaError(value: unknown): string | undefined {
 	return undefined;
 }
 
+// A padded name would match no tool, so a deny entry like " write" would deny nothing: refused, never trimmed.
 function isToolName(value: unknown): value is string {
-	return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_TOOL_NAME_LENGTH;
+	return (
+		typeof value === "string" && value.length > 0 && value.trim() === value && value.length <= MAX_TOOL_NAME_LENGTH
+	);
+}
+
+/**
+ * A persona allowlist on a host that restricts its built-in tools by default (`--no-builtin-tools`, settings `defaultTools`)
+ * without a `--tools` of its own: those defaults apply at registration, which the narrowing does not see, so naming a tool
+ * there could enable a built-in the host keeps off. Refused instead of widened (omo#13057 review L2).
+ */
+export function personaToolsUnsupported(
+	persona: SessionPersona | undefined,
+	host: { readonly tools?: readonly string[]; readonly noBuiltinTools?: boolean; readonly defaultTools?: unknown },
+): boolean {
+	return (
+		persona?.tools !== undefined &&
+		host.tools === undefined &&
+		(host.noBuiltinTools === true || host.defaultTools !== undefined)
+	);
 }
 
 /** The tool flags a runtime is built from (`Args` fields). */
