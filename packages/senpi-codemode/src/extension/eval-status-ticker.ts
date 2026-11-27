@@ -41,12 +41,15 @@ export class EvalStatusTicker {
 	/**
 	 * Point the ticker at the current detached-cell set, render once immediately,
 	 * and start the interval while cells are live (or stop it when none remain).
+	 * With `live` false (the `statusTicker` setting off) only the cell-set changes
+	 * render: the elapsed label never advances between them, so no event depends on
+	 * how many wall-clock seconds a cell ran.
 	 */
-	sync(entries: readonly EvalDetachedCellStatusEntry[]): void {
+	sync(entries: readonly EvalDetachedCellStatusEntry[], live = true): void {
 		this.entries = entries;
 		this.hasRendered = false;
 		if (!this.tick()) return;
-		if (entries.length === 0) {
+		if (entries.length === 0 || !live) {
 			this.stopInterval();
 			return;
 		}

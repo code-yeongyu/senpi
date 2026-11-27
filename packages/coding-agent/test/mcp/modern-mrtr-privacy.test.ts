@@ -4,7 +4,7 @@ import {
 	initialHerdrState,
 	reduceHerdrState,
 	selectHerdrReport,
-} from "../../src/core/extensions/builtin/herdr/herdr-state.ts";
+} from "../../src/core/extensions/builtin/session-liveness/state.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { getMcpMrtrPresentation } from "../../src/core/mcp-mrtr-presentations.ts";
 import { cleanupHerdrReporterFixtures, herdrReporterFixture } from "../suite/herdr-reporter-harness.ts";
