@@ -1,4 +1,5 @@
 import { stripBom } from "../utils/text.ts";
+import { jsonSyntaxErrorOffset, settingsSyntaxErrorAt } from "./settings-json-syntax-error.ts";
 
 /** Parse JSON or JSONC without changing comment-like text inside strings. */
 export function parseSettingsJson(content: string): Record<string, unknown> {
@@ -33,6 +34,7 @@ export function parseSettingsJson(content: string): Record<string, unknown> {
 			continue;
 		}
 		if (char === "/" && next === "*") {
+			const commentStart = index;
 			withoutComments.push(" ", " ");
 			index += 2;
 			let closed = false;
@@ -45,7 +47,7 @@ export function parseSettingsJson(content: string): Record<string, unknown> {
 				}
 				withoutComments.push(content[index] === "\n" || content[index] === "\r" ? content[index] : " ");
 			}
-			if (!closed) throw new SyntaxError("Unterminated block comment in settings");
+			if (!closed) throw settingsSyntaxErrorAt(content, commentStart, "Unterminated block comment in settings");
 			continue;
 		}
 		withoutComments.push(char);
@@ -72,7 +74,14 @@ export function parseSettingsJson(content: string): Record<string, unknown> {
 		if (normalized[nextIndex] === "}" || normalized[nextIndex] === "]") normalized[index] = " ";
 	}
 
-	const parsed: unknown = JSON.parse(normalized.join(""));
+	const text = normalized.join("");
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch (error) {
+		if (!(error instanceof SyntaxError)) throw error;
+		throw settingsSyntaxErrorAt(text, jsonSyntaxErrorOffset(text) ?? text.length, error.message);
+	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		throw new TypeError("Settings must contain a JSON object");
 	}
