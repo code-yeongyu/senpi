@@ -69,6 +69,7 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { ignoredExecutableProjectSettings, savedProjectTrusted } from "./project-executable-settings.ts";
 import { parseSettingsJson } from "./settings-json.ts";
 import { withoutOverride } from "./settings-overrides.ts";
 import { removeRetiredSettingsKeys, writeRawScopedSettings } from "./settings-retired-keys.ts";
@@ -835,7 +836,7 @@ export class SettingsManager {
 		globalLoadError: Error | null = null,
 		projectLoadError: Error | null = null,
 		initialErrors: SettingsError[] = [],
-		projectTrusted = true,
+		projectTrusted = false,
 		initialSources: readonly SettingsSourceSelection[] = [],
 		settingsPaths: SettingsPaths = {},
 	) {
@@ -858,12 +859,26 @@ export class SettingsManager {
 		options: SettingsManagerCreateOptions = {},
 	): SettingsManager {
 		const storage = new FileSettingsStorage(cwd, agentDir);
-		return SettingsManager.fromStorage(storage, options);
+		// senpi#6362: a reader that passes no trust decision gets the one the person saved for this folder, never "trusted".
+		const projectTrusted = options.projectTrusted ?? savedProjectTrusted(cwd, agentDir);
+		const manager = SettingsManager.fromStorage(storage, { ...options, projectTrusted });
+		if (!projectTrusted) {
+			const path = getSettingsPath(cwd, agentDir, "project");
+			for (const key of ignoredExecutableProjectSettings(path))
+				manager.errors.push(
+					toSettingsError(
+						"project",
+						new Error(`project setting ${key} ignored: the project is not trusted`),
+						path,
+					),
+				);
+		}
+		return manager;
 	}
 
 	/** Create a SettingsManager from an arbitrary storage backend */
 	static fromStorage(storage: SettingsStorage, options: SettingsManagerCreateOptions = {}): SettingsManager {
-		const projectTrusted = options.projectTrusted ?? true;
+		const projectTrusted = options.projectTrusted ?? false;
 		const initialSources: SettingsSourceSelection[] = [];
 		const settingsPaths: SettingsPaths = {};
 		const globalSource = storage.selectSource?.("global");
@@ -907,10 +922,11 @@ export class SettingsManager {
 		const storage = new InMemorySettingsStorage();
 		const initialSettings = SettingsManager.migrateSettings(structuredClone(settings) as Record<string, unknown>);
 		storage.withLock("global", () => JSON.stringify(initialSettings, null, 2));
-		return SettingsManager.fromStorage(storage, options);
+		// Supplied by the calling code, never read from a repository, so its project scope is the caller's to trust.
+		return SettingsManager.fromStorage(storage, { projectTrusted: true, ...options });
 	}
 
-	private static loadFromStorage(storage: SettingsStorage, scope: SettingsScope, projectTrusted = true): Settings {
+	private static loadFromStorage(storage: SettingsStorage, scope: SettingsScope, projectTrusted = false): Settings {
 		if (scope === "project" && !projectTrusted) {
 			return {};
 		}
@@ -935,7 +951,7 @@ export class SettingsManager {
 	private static tryLoadFromStorage(
 		storage: SettingsStorage,
 		scope: SettingsScope,
-		projectTrusted = true,
+		projectTrusted = false,
 	): { settings: Settings; error: Error | null } {
 		try {
 			return {

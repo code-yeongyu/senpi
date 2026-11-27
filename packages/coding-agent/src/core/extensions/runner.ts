@@ -685,7 +685,7 @@ export class ExtensionRunner {
 	private registerRunBackgroundJobFn: ExtensionContextActions["registerRunBackgroundJob"];
 	private questionInput: ExtensionContextActions["questionInput"];
 	private personAnswerPending = false;
-	private isProjectTrustedFn: () => boolean = () => true;
+	private isProjectTrustedFn: () => boolean = () => false;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
 	private abortFn: ExtensionContextActions["abort"] = () => {};
