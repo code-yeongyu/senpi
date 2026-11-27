@@ -11070,6 +11070,10 @@
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
+		"packages/senpi-codemode/src/tool/held-cell-waits.ts#heldWaits": {
+			"class": "per-copy-safe",
+			"reason": "what a cell waits on before its kernel runs it, by cell id: written by run-eval-cell and read by the live row renderer of the same codemode module graph; a split copy only misses it and shows the kernel wording until the next update (display only, never in an event)"
+		},
 		"packages/senpi-codemode/src/tool/eval-request.ts#NON_INTERACTIVE_MODES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
