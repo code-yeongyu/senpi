@@ -50,6 +50,7 @@ import { judgeStaleEngine, type StaleEngineKeep, type StaleEngineOptions } from 
 import { stopHost } from "./host-stop.ts";
 import { gcRpcPublicKeys } from "./rpc-public-key.ts";
 import { BIND_SCRATCH_SOCKET, isBindScratchName } from "./socket-ownership.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 
 export type HostGcKeptReason =
 	| EndpointInUse
@@ -96,7 +97,12 @@ export interface HostGcOptions {
 /** 2 s, the budget a concurrent ensure's critical section gets before gc reports `locked`. */
 const GC_LOCK_WAIT_MS = 2_000;
 
-export async function gcHostEndpoints(agentDir: string, options: HostGcOptions = {}): Promise<HostGcResult> {
+/** Its probes prove each endpoint's host from the agent dir's key root, as ensureHost does (omo#15197). */
+export function gcHostEndpoints(agentDir: string, options: HostGcOptions = {}): Promise<HostGcResult> {
+	return withRpcKeyRoot(rpcKeyRoot({}, agentDir), () => gcHostEndpointsInKeyRoot(agentDir, options));
+}
+
+async function gcHostEndpointsInKeyRoot(agentDir: string, options: HostGcOptions = {}): Promise<HostGcResult> {
 	if (process.platform !== "win32") await gcRpcPublicKeys(agentDir);
 	const removed: HostGcEntry<SocketSilence>[] = [];
 	const stopped: (HostGcEntry<"stale_old_engine"> & { readonly pid: number })[] = [];
