@@ -10,6 +10,7 @@
  */
 
 import type { HoldKind } from "../engine-turn-hold.ts";
+import type { EngineTurnCap } from "../engine-turn-limit.ts";
 import type { RelocationRequest, RelocationRequestResult, RelocationTargetsResult } from "../session-relocation.ts";
 
 export type {
@@ -92,7 +93,9 @@ export interface AdmitExternalMessageInput {
  * - `held_draft`       input the user submitted has not reached the runtime yet: nothing was enqueued; retry on the
  *                      next edge. A draft still in the composer never holds a delivery (senpi#7043)
  * - `held`             idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run
- *                      hold; `holds` names them): kept as a held notice, it starts once released (senpi#6490)
+ *                      hold; `holds` names them): kept as a held notice, it starts once released (senpi#6490). Or
+ *                      stopped by the engine-turn cap (`engine_turn_cap` names it): recorded without a turn, it is
+ *                      answered by the turn that a person's message or Resume starts (senpi#7138)
  * - `already_admitted` this runtime already holds or already wrote this `delivery_id`
  */
 export type ExternalAdmissionKind =
@@ -109,6 +112,8 @@ export interface ExternalAdmissionResult {
 	readonly turn_epoch: number;
 	/** `held` only: the kinds of the holds that keep the delivery. */
 	readonly holds?: readonly HoldKind[];
+	/** `held` only: the engine-turn cap that stopped the delivery's turn. */
+	readonly engine_turn_cap?: EngineTurnCap;
 }
 
 /** Why admission is held: `draft` is input the user submitted that the runtime has not taken yet. */

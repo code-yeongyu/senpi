@@ -53,6 +53,7 @@ describe("codemode feature settings", () => {
 			taskTools: { task: "task", output: "task_output" },
 			outputSink: { headBytes: 20_480, maxColumns: 768 },
 			statusEvents: true,
+			statusTicker: true,
 			memory: defaultCodemodeSettings.memory,
 		};
 

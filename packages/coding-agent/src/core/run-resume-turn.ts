@@ -1,12 +1,12 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { CustomMessage } from "./messages.ts";
-import { stopResumeDirective } from "./stop-resume-directive.ts";
+import { type ResumeCause, stopResumeDirective } from "./stop-resume-directive.ts";
 
 type Message = Pick<CustomMessage, "customType" | "content" | "display" | "details">;
 type Part = Extract<CustomMessage["content"], readonly unknown[]>[number];
 
 export interface RunResumePorts {
-	readonly resumeCause?: "stop" | "interrupted";
+	readonly resumeCause?: ResumeCause;
 	readonly heldInputs: () => readonly {
 		readonly inputId: string;
 		readonly text: string;

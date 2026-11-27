@@ -85,6 +85,7 @@ describe("MCP instructions are last and outside the cached stable prefix (senpi#
 			turn,
 			{ prompt: preview?.systemPrompt ?? "", stablePrefix: preview?.systemPromptStablePrefix },
 		]) {
+			expect(prompt.indexOf('<mcp_instructions server="fx">'), "MCP instructions missing").toBeGreaterThan(-1);
 			expect(stablePrefix?.endsWith(LATER_STABLE_BLOCK)).toBe(true);
 			expect(prompt.slice(0, stablePrefix?.length)).toBe(stablePrefix);
 			const tail = prompt.slice(stablePrefix?.length ?? 0);
@@ -117,8 +118,10 @@ describe("MCP instructions are the last system-prompt block (senpi#4448)", () =>
 		// Then: the third-party run-last block follows the plain one, and the MCP instructions still close both prompts.
 		for (const systemPrompt of [turnPrompt, preview?.systemPrompt ?? ""]) {
 			const mcpAt = systemPrompt.indexOf('<mcp_instructions server="fx">');
-			expect(systemPrompt.indexOf(LATER_BLOCK)).toBeLessThan(systemPrompt.indexOf(RUN_LAST_BLOCK));
+			expect(mcpAt, "MCP instructions missing").toBeGreaterThan(-1);
+			expect(systemPrompt.indexOf(LATER_BLOCK)).toBeGreaterThan(-1);
 			expect(systemPrompt.indexOf(RUN_LAST_BLOCK)).toBeGreaterThan(-1);
+			expect(systemPrompt.indexOf(LATER_BLOCK)).toBeLessThan(systemPrompt.indexOf(RUN_LAST_BLOCK));
 			expect(systemPrompt.indexOf(RUN_LAST_BLOCK)).toBeLessThan(mcpAt);
 			expect(systemPrompt.endsWith("</mcp_instructions>")).toBe(true);
 		}
@@ -139,8 +142,10 @@ describe("MCP instructions are the last system-prompt block (senpi#4448)", () =>
 		await harness.session.prompt("capture prompt");
 
 		// Then: the later extension's block comes first and the MCP instructions close the prompt.
+		const mcpAt = systemPrompt.indexOf('<mcp_instructions server="fx">');
+		expect(mcpAt, "MCP instructions missing").toBeGreaterThan(-1);
 		expect(systemPrompt.indexOf(LATER_BLOCK)).toBeGreaterThan(-1);
-		expect(systemPrompt.indexOf(LATER_BLOCK)).toBeLessThan(systemPrompt.indexOf('<mcp_instructions server="fx">'));
+		expect(systemPrompt.indexOf(LATER_BLOCK)).toBeLessThan(mcpAt);
 		expect(systemPrompt.endsWith("</mcp_instructions>")).toBe(true);
 	});
 
@@ -157,19 +162,36 @@ describe("MCP instructions are the last system-prompt block (senpi#4448)", () =>
 
 		// Then: MCP instructions are the tail there too.
 		const systemPrompt = result?.systemPrompt ?? "";
+		expect(systemPrompt.indexOf('<mcp_instructions server="fx">'), "MCP instructions missing").toBeGreaterThan(-1);
 		expect(systemPrompt.startsWith(`BASE\n\n${LATER_BLOCK}`)).toBe(true);
 		expect(systemPrompt.endsWith("</mcp_instructions>")).toBe(true);
 	});
+
+	it("reports a timed-out fx connect as the failure instead of a missing-block ordering failure (senpi#7512)", async () => {
+		// Given/When: the fixture server starts slower than its connect timeout, as on a saturated runner.
+		// Then: the harness names the connect failure rather than handing a server-less session to the order checks.
+		await expect(
+			startHarness([laterExtension], { extraArgs: ["--slow-start", "1500"], connectTimeoutMs: 300 }),
+		).rejects.toThrow(/timed out during connect/);
+	});
 });
 
-async function startHarness(laterExtensions: readonly ExtensionFactory[] = [laterExtension]): Promise<Harness> {
+interface FixtureServer {
+	readonly extraArgs?: readonly string[];
+	readonly connectTimeoutMs?: number;
+}
+
+async function startHarness(
+	laterExtensions: readonly ExtensionFactory[] = [laterExtension],
+	server: FixtureServer = {},
+): Promise<Harness> {
 	const root = makeRoot("mcp-instructions-last", cleanupTasks);
 	process.env[ENV_AGENT_DIR] = root.agentDir;
 	mkdirSync(root.agentDir, { recursive: true });
 	setConfig(root, {
 		fx: {
-			...stdioServer(["--tools", "1", "--instructions", "server instructions"]),
-			connectTimeoutMs: 10_000,
+			...stdioServer(["--tools", "1", "--instructions", "server instructions", ...(server.extraArgs ?? [])]),
+			connectTimeoutMs: server.connectTimeoutMs ?? 10_000,
 		},
 	});
 	const harness = await createHarness({
@@ -180,6 +202,10 @@ async function startHarness(laterExtensions: readonly ExtensionFactory[] = [late
 	// Observe the exact deferred-connect completion, including a cold SDK import.
 	// A timeout is not readiness: composing then would test a still-connecting server.
 	expect(await getMcpService().whenAttachSettled(20_000)).toBe("settled");
+	// A failed or timed-out connect also settles the attach (senpi#7512), and a server that is not connected has no
+	// instructions to publish. Readiness is fx connected; otherwise the failure names the connect error.
+	const fx = getMcpService().getConnection("fx");
+	expect(fx?.state, `fx connect: ${fx?.lastError?.message ?? "no error recorded"}`).toBe("connected");
 	// One settled turn publishes the server's instructions to the service for the turns after it.
 	harness.setResponses([fauxAssistantMessage("warm")]);
 	await harness.session.prompt("warm");
