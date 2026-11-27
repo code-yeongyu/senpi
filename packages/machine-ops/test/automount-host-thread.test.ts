@@ -189,7 +189,7 @@ describe("automount resolver helpers are bounded (senpi#4565)", () => {
 
 	it("queues paths under one automount, so an unanswered automount holds one helper (review L1)", async () => {
 		// Given a helper that never answers, a deadline the virtual window outlasts and no limit pressure
-		let clock = 0;
+		const clock = 0;
 		const exits: Array<Promise<unknown[]>> = [];
 		restores.push(
 			answerAutomountTriggersFrom(
