@@ -27,8 +27,8 @@ function queuedRow(queuedBehind: readonly string[] = []): AgentToolResult<EvalTo
 	};
 }
 
-function renderRow(invalidate: () => void, queuedBehind: readonly string[] = []) {
-	return renderEvalResult(queuedRow(queuedBehind), { expanded: false, isPartial: true }, plainTheme(), {
+function renderRow(invalidate: () => void, queuedBehind: readonly string[] = [], isPartial = true) {
+	return renderEvalResult(queuedRow(queuedBehind), { expanded: false, isPartial }, plainTheme(), {
 		...resultContext({ invalidate }),
 		toolCallId: CELL,
 	});
@@ -60,5 +60,29 @@ describe("the live row of a cell the workspace scan holds (senpi#7535)", () => {
 		vi.advanceTimersByTime(1_000);
 		expect(firstInLine).toHaveBeenCalled();
 		expect(component.render(200).map(stripAnsi).join("\n")).toContain(SCAN);
+	});
+	it("does not repaint a final row: a cell detached while first in line keeps those details in its detach answer", () => {
+		vi.useFakeTimers();
+		const finalRow = vi.fn();
+		renderRow(finalRow, [], false);
+		vi.advanceTimersByTime(1_000);
+		expect(finalRow).not.toHaveBeenCalled();
+	});
+	it("stops repainting a held row once its result becomes final", () => {
+		vi.useFakeTimers();
+		holdCellWait(CELL, "workspace");
+		const invalidate = vi.fn();
+		const partial = renderRow(invalidate);
+		vi.advanceTimersByTime(500);
+		expect(invalidate).toHaveBeenCalled();
+		expect(partial.render(200).map(stripAnsi).join("\n")).toContain(SCAN);
+
+		renderEvalResult(queuedRow(), { expanded: false, isPartial: false }, plainTheme(), {
+			...resultContext({ invalidate, lastComponent: partial }),
+			toolCallId: CELL,
+		});
+		invalidate.mockClear();
+		vi.advanceTimersByTime(2_000);
+		expect(invalidate).not.toHaveBeenCalled();
 	});
 });

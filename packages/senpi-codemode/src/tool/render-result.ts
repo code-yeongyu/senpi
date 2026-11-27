@@ -104,7 +104,7 @@ export function renderEvalResult(
 	const expanded = options.expanded || context.expanded;
 	const imageProtocol = context.imageProtocol ?? null;
 	component.syncLiveTicker(
-		hasLiveCell(details) || isFirstInLine(details),
+		hasLiveCell(details) || (options.isPartial && isFirstInLine(details)),
 		context.invalidate,
 		expanded ? "expanded" : "collapsed",
 	);
