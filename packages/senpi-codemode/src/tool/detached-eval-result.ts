@@ -5,6 +5,7 @@ import type {
 	EvalDetachedCellState,
 } from "./detached-cell-manager.ts";
 import { interruptionStateNote } from "./interrupt-note.ts";
+import { type QueuedWait, queuedWaitPhrase } from "./queued-wait.ts";
 import type {
 	EvalCellResult,
 	EvalControlInput,
@@ -46,6 +47,7 @@ export function listEvalCells(cellManager: EvalDetachedCellManager): EvalListedC
 			state: snapshot.state,
 			startedAtMs: snapshot.startedAtMs,
 			...(snapshot.queuedBehind === undefined ? {} : { queuedBehind: [...snapshot.queuedBehind] }),
+			...(snapshot.waitingFor === undefined ? {} : { waitingFor: snapshot.waitingFor }),
 			...(summary ? { summary } : {}),
 		};
 	});
@@ -63,7 +65,10 @@ function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolRe
 				" ",
 			);
 			const elapsed = Math.floor(snapshot.result.details.durationMs / 1000);
-			const queued = cell.queuedBehind === undefined ? "" : ` ${queuedPhrase(cell.queuedBehind, cell.language)}`;
+			const queued =
+				cell.queuedBehind === undefined
+					? ""
+					: ` ${queuedPhrase(cell.queuedBehind, cell.language, cell.waitingFor)}`;
 			return `${cell.cellId} ${cell.language} ${cell.state} ${elapsed}s${queued} - ${preview}`;
 		})
 		.join("\n");
@@ -84,7 +89,9 @@ export function resultAfterDetach(
 		queuedBehind === undefined
 			? `Eval cell ${snapshot.cellId} detached and is running in the ${input.language} kernel (${otherLiveCells} other live cells). Completion arrives as a notification; do not re-run it. eval({ action: "peek" | "stop", cell_id }) or eval({ action: "list" }).`
 			: queuedBehind.length === 0
-				? `Eval cell ${snapshot.cellId} is detached and waiting for the ${input.language} kernel to be ready; it runs first once the kernel is ready and completes as one notification. peek/stop/list with eval({ action, cell_id })`
+				? snapshot.waitingFor === "workspace"
+					? `Eval cell ${snapshot.cellId} is detached and ${queuedWaitPhrase(input.language, snapshot.waitingFor)}; it runs first after that and completes as one notification. peek/stop/list with eval({ action, cell_id })`
+					: `Eval cell ${snapshot.cellId} is detached and waiting for the ${input.language} kernel to be ready; it runs first once the kernel is ready and completes as one notification. peek/stop/list with eval({ action, cell_id })`
 				: `Eval cell ${snapshot.cellId} is queued behind ${queuedBehind.join(", ")} in the ${input.language} kernel and detached; it runs after ${queuedBehind.join(", ")} and completes as one notification. peek/stop/list with eval({ action, cell_id })`;
 	return {
 		content: [
@@ -121,6 +128,7 @@ export function resultForDetachedState(
 	state: EvalDetachedCellState,
 	durationMs: number,
 	queuedBehind?: readonly string[],
+	waitingFor?: QueuedWait,
 ): AgentToolResult<EvalToolDetails> {
 	const details = result.details;
 	const cells = details.cells ?? [];
@@ -129,12 +137,13 @@ export function resultForDetachedState(
 			? []
 			: cells.map((cell, index) => {
 					if (index !== 0) return { ...cell };
-					const { queuedBehind: _previousQueue, ...current } = cell;
+					const { queuedBehind: _previousQueue, waitingFor: _previousWait, ...current } = cell;
 					return {
 						...current,
 						durationMs: terminalDuration(cell, state, durationMs),
 						status: state === "detached" && queuedBehind !== undefined ? "queued" : cellStatus(state),
 						...(queuedBehind === undefined ? {} : { queuedBehind }),
+						...(waitingFor === undefined ? {} : { waitingFor }),
 					};
 				});
 	return {
@@ -169,9 +178,9 @@ export function resultForDetachedState(
 	};
 }
 
-function queuedPhrase(queuedBehind: readonly string[], language: string): string {
+function queuedPhrase(queuedBehind: readonly string[], language: string, waitingFor: QueuedWait | undefined): string {
 	return queuedBehind.length === 0
-		? `waiting for the ${language} kernel to be ready`
+		? queuedWaitPhrase(language, waitingFor)
 		: `queued behind ${queuedBehind.join(", ")}`;
 }
 

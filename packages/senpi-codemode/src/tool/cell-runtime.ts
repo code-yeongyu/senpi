@@ -6,6 +6,7 @@ import { DEFAULT_MAX_BYTES, TailLineRing } from "../output/streaming-output.ts";
 import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
 import { type CellToolUpdateSink, NestedToolOutput } from "./nested-tool-output.ts";
+import { type QueuedWait, queuedWaitPhrase } from "./queued-wait.ts";
 import type {
 	EvalKernelState,
 	EvalMemoryDetails,
@@ -29,6 +30,7 @@ export interface CellState {
 	readonly startedAt: number;
 	runStartedAt?: number | undefined;
 	queuedBehind?: readonly string[] | undefined;
+	waitingFor?: QueuedWait | undefined;
 	readonly signal: AbortSignal;
 	readonly onUpdate: AgentToolUpdateCallback<EvalToolDetails> | undefined;
 	readonly toolCalls: ToolCall[];
@@ -236,6 +238,7 @@ export class CellResultBuilder implements CellToolUpdateSink {
 						? {}
 						: { startedAt: this.#state.runStartedAt ?? this.#state.startedAt }),
 					...(this.#state.queuedBehind === undefined ? {} : { queuedBehind: this.#state.queuedBehind }),
+					...(this.#state.waitingFor === undefined ? {} : { waitingFor: this.#state.waitingFor }),
 					...(statusEvents === undefined ? {} : { statusEvents }),
 					...(output?.hasMarkdown ? { hasMarkdown: true } : {}),
 				},
@@ -252,7 +255,7 @@ export class CellResultBuilder implements CellToolUpdateSink {
 	#liveUpdateText(): string {
 		if (this.#state.status === "queued" && this.#state.queuedBehind !== undefined) {
 			return this.#state.queuedBehind.length === 0
-				? `waiting for the ${this.#state.input.language} kernel to be ready`
+				? queuedWaitPhrase(this.#state.input.language, this.#state.waitingFor)
 				: `queued behind ${this.#state.queuedBehind.join(", ")} in the ${this.#state.input.language} kernel`;
 		}
 		const summary = this.#state.input.summary === undefined ? "" : ` ${this.#state.input.summary}`;

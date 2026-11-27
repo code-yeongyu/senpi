@@ -7,6 +7,7 @@ import type {
 import { type TSchema, type TUnsafe, Type } from "typebox";
 import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
+import type { QueuedWait } from "./queued-wait.ts";
 import {
 	DEFAULT_FOREGROUND_WINDOW_SECONDS,
 	DEFAULT_HARD_LIMIT_SECONDS,
@@ -315,6 +316,7 @@ export type EvalCellResult = {
 	readonly runtime?: EvalRuntimeInfo;
 	readonly status: "pending" | "queued" | "running" | "detached" | "complete" | "error" | "cancelled";
 	readonly queuedBehind?: readonly string[];
+	readonly waitingFor?: QueuedWait;
 	readonly exitCode?: number;
 	readonly durationMs?: number;
 	/** Epoch ms when the cell started; lets renderers tick elapsed time between update events. */
@@ -329,6 +331,7 @@ export interface EvalListedCell {
 	readonly state: "queued" | "running" | "detached" | "completed" | "failed" | "cancelled";
 	readonly startedAtMs: number;
 	readonly queuedBehind?: readonly string[];
+	readonly waitingFor?: QueuedWait;
 	readonly summary?: string;
 }
 

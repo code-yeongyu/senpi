@@ -301,7 +301,17 @@ async function executeCell(
 			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
 			const jsEnvironments = invocation.input.language === "js" ? options.jsEnvironments : undefined;
 			const packageRoot = jsEnvironments === undefined ? undefined : () => jsEnvironments.packageRoot;
-			if (written !== undefined) await execution.wait(written.ready);
+			if (written !== undefined) {
+				state.waitingFor = "workspace";
+				cell.waitingFor = "workspace";
+				state.onUpdate?.(activeHandler.liveResult());
+				try {
+					await execution.wait(written.ready);
+				} finally {
+					state.waitingFor = undefined;
+					cell.waitingFor = undefined;
+				}
+			}
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
