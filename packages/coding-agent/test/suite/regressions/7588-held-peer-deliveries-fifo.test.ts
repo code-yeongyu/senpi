@@ -41,7 +41,7 @@ async function kill(host: Awaited<ReturnType<typeof startWorkerHost>>) {
 }
 
 it.each([false, true])(
-	"presents held peer deliveries to the provider in admission order exactly once (restart after admission: %s)",
+	"presents held peer deliveries to the provider in admission order exactly once (session reopened after admission: %s)",
 	async (restart) => {
 		const hosts: Awaited<ReturnType<typeof startWorkerHost>>[] = [];
 		async function start() {
@@ -94,8 +94,17 @@ it.each([false, true])(
 				expect(result).toMatchObject({ success: true, data: { kind } });
 			}
 			if (restart) {
-				await kill(host);
-				({ host, sessionId } = await reopen());
+				// A fresh session runtime starts with an empty admission ledger, as a replaced host process does; only the
+				// session file answers for what was admitted before.
+				expect((await host.request({ type: "close_session", sessionId })).success).toBe(true);
+				const reopened = await host.request({
+					type: "open_session",
+					cwd: first.cwd,
+					sessionPath: file,
+					attended: false,
+				});
+				expect(reopened.success).toBe(true);
+				sessionId = reopened.data?.sessionId;
 				for (const n of [2, 1]) {
 					const resend = await host.request({
 						type: "admit_external_message",
