@@ -1,7 +1,7 @@
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { connectionLeft } from "./session-router-relocation.ts";
-import { forgetAnswererConnection } from "./prompt-answerer-gate.ts";
+import { forgetAnswererConnection, syncAnswererPresence } from "./prompt-answerer-gate.ts";
 /** Disconnect semantics shared by socket loss and release_attachment. True means settlement owns the final release. */
 export async function releaseDisconnectAttachment(host: RouterContext, sessionId: string): Promise<boolean> {
 	// Headless completion contract: a turn survives its client's death and
@@ -103,6 +103,7 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 	const opens = host.opensByConnection.get(connectionId);
 	const owned = host.sessionsByConnection.get(connectionId);
 	host.sessionsByConnection.delete(connectionId);
+	for (const sessionId of owned?.keys() ?? []) syncAnswererPresence(host, sessionId);
 	if (host.draining) {
 		// Drain owns teardown now, even when a client reacts to the announcement early.
 		// Its attachment-draining claim releases these counts once work settles.
@@ -175,6 +176,7 @@ export function releaseOwnerAttachment(host: RouterContext, owner: string, sessi
 		connectionLeft(host, sessionId, owner);
 	} else owned.set(sessionId, count - 1);
 	if (owned.size === 0) host.sessionsByConnection.delete(owner);
+	syncAnswererPresence(host, sessionId);
 }
 
 /** Drops per-connection records for a handle the host closed on its own. */

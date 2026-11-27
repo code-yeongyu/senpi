@@ -111,6 +111,11 @@ export class PromptAnswerers {
 		return this.isAnswerer(sessionId, connection, attached) || this.matches(run, key);
 	}
 
+	/** Whether this run asked for a designated answerer; a run that did not is never told about answerers. */
+	tracks(sessionId: string): boolean {
+		return this.runs.has(sessionId);
+	}
+
 	/** Whether the run requires a designated answerer and one of `attachedConnections` is it. */
 	answererAttached(sessionId: string, attachedConnections: Iterable<string | undefined>): boolean {
 		const run = this.runs.get(sessionId);

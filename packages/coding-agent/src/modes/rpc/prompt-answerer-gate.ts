@@ -57,6 +57,7 @@ export function openReplyAnswerer(
 	if (!reply) {
 		if (designated === true) host.answerers.openAfterHandover(opened.sessionId);
 		else host.answerers.forgetSession(opened.sessionId);
+		syncAnswererPresence(host, opened.sessionId);
 		return answererFields(host, opened.sessionId, designated !== true);
 	}
 	if (!opened.attached) {
@@ -65,12 +66,14 @@ export function openReplyAnswerer(
 	}
 	const answerKey = host.answerers.takeMinted(opened.sessionId);
 	const answerer = host.answerers.isAnswerer(opened.sessionId, owner, attached(host, owner, opened.sessionId));
+	syncAnswererPresence(host, opened.sessionId);
 	return { ...answererFields(host, opened.sessionId, answerer), ...(answerKey === undefined ? {} : { answerKey }) };
 }
 
 /** `attach_session`: a caller presenting the run's key becomes its answerer; the reply says whether it is one. */
 export function attachAnswerer(host: RouterContext, owner: string, sessionId: string, key: unknown): AnswererFields {
 	const answerer = host.answerers.present(sessionId, owner, key, attached(host, owner, sessionId));
+	syncAnswererPresence(host, sessionId);
 	return answererFields(host, sessionId, answerer);
 }
 
@@ -117,4 +120,16 @@ export function withoutAnswerKey<C extends RpcCommand>(command: C): C {
 /** The socket is gone: it answers no run any more. */
 export function forgetAnswererConnection(host: RouterContext, connection: string): void {
 	host.answerers.forgetConnection(connection);
+}
+
+/**
+ * Tells a run that asked for the rule whether one of its answerers is attached now, so its session refuses new asks
+ * while none is and settles raised prompts after a grace (`answerer-presence.ts`). A run without the rule hears nothing.
+ */
+export function syncAnswererPresence(host: RouterContext, sessionId: string): void {
+	if (!host.answerers.tracks(sessionId)) return;
+	const attachedConnections = [...host.sessionsByConnection]
+		.filter(([, owned]) => owned.has(sessionId))
+		.map(([connection]) => connection);
+	host.bindings.get(sessionId)?.setAnswererPresence?.(host.answerers.answererAttached(sessionId, attachedConnections));
 }
