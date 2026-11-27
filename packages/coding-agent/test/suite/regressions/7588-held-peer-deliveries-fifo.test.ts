@@ -131,6 +131,4 @@ it.each([false, true])(
 			for (const host of hosts.reverse()) await host.dispose();
 		}
 	},
-	// Two host restarts and a resend: four process starts on a loaded receipt host.
-	120_000,
 );
