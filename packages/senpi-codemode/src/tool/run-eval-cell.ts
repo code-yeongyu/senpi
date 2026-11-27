@@ -23,6 +23,7 @@ import type { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import { EvalBackgroundCapacityError, resultAfterDetach, resultForDetachedState } from "./detached-eval-result.ts";
 import { buildEvalExecutionEventPayload, type EvalExecutionSettleOutcome } from "./eval-execution-event.ts";
 import { EvalKernelResetRefusedError } from "./eval-kernel-reset-refused-error.ts";
+import { holdCellWait, releaseCellWait } from "./held-cell-waits.ts";
 import { evalTimeoutBehavior } from "./eval-request.ts";
 import { jsCellParseMessage } from "./js-cell-parse-message.ts";
 import type { CreateEvalToolOptions, EvalCellInvocation } from "./eval-tool-options.ts";
@@ -304,11 +305,13 @@ async function executeCell(
 			if (written !== undefined) {
 				state.waitingFor = "workspace";
 				cell.waitingFor = "workspace";
+				holdCellWait(invocation.cellId, "workspace");
 				try {
 					await execution.wait(written.ready);
 				} finally {
 					state.waitingFor = undefined;
 					cell.waitingFor = undefined;
+					releaseCellWait(invocation.cellId);
 				}
 			}
 			const result = await execution.wait(

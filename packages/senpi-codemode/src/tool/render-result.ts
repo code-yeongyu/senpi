@@ -17,6 +17,7 @@ import {
 } from "./render-blocks.ts";
 import { summaryBlock } from "./render-cell.ts";
 import { nestedToolCallBlock, renderDetailedLines, renderJsonOutputs, toolCallRows } from "./render-detail.ts";
+import { heldCellWait, isFirstInLine, withHeldWait } from "./held-cell-waits.ts";
 import { hasLiveCell } from "./render-live.ts";
 import { formatThroughputBadge, renderStatusEvents } from "./render-status.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
@@ -102,13 +103,17 @@ export function renderEvalResult(
 	}
 	const expanded = options.expanded || context.expanded;
 	const imageProtocol = context.imageProtocol ?? null;
-	component.syncLiveTicker(hasLiveCell(details), context.invalidate, expanded ? "expanded" : "collapsed");
+	component.syncLiveTicker(
+		hasLiveCell(details) || isFirstInLine(details),
+		context.invalidate,
+		expanded ? "expanded" : "collapsed",
+	);
 	if (details?.cells !== undefined && details.cells.length > 0) {
 		const blocks: RenderBlock[] = [
 			{
 				kind: "dynamic",
 				render: (width) =>
-					renderDetailedLines(details, result, {
+					renderDetailedLines(withHeldWait(details, heldCellWait(context.toolCallId)), result, {
 						environment: {
 							expanded,
 							theme,
