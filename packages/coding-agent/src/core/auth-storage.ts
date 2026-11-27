@@ -12,6 +12,7 @@ import type {
 	Credential,
 	CredentialInfo,
 	CredentialStore,
+	LoginOptions,
 	OAuthAuth,
 	OAuthCredential,
 	OAuthLoginCallbacks,
@@ -30,16 +31,21 @@ import {
 	upsertSlot,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { realmRegistry } from "@earendil-works/pi-realm-registry";
 import { readFile } from "fs/promises";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { createHash } from "node:crypto";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
+import {
+	backfillAccountLinks,
+	relinkAfterStaleWrite,
+} from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
 import {
 	resolveReadOnlyCredential,
 	resolveStoredCredential,
@@ -68,6 +74,7 @@ import {
 	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
+	LocalCredentialStoreBusyError,
 } from "./lockfile-policy.ts";
 
 type AuthStorageData = Record<string, Credential>;
@@ -108,6 +115,19 @@ export type AuthNotice = {
  * Nothing is changed: which credential pays stays the user's choice, so the notice names the
  * unused login, where it still is, and the action that switches to it.
  */
+/** The identity of a failed load, so one failure both a sync and an async read hit is recorded once (senpi#5594). */
+function loadFailureKey(error: unknown): string | undefined {
+	if (error instanceof CredentialStoreBusyError) return "busy";
+	const loadError = describeAuthStoreLoadFailure(error);
+	return loadError === undefined ? undefined : `${loadError.kind}:${loadError.reason}`;
+}
+
+/** A store whose Claude CLI account records the next async load settles (senpi#5594). */
+function hasClaudeCliAccounts(data: AuthStorageData): boolean {
+	const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
+	return subscription?.accounts?.some((slot) => slot.store === "claude-cli") === true;
+}
+
 function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
 	const notices: AuthNotice[] = [];
 	for (const [provider, credential] of Object.entries(data)) {
@@ -193,6 +213,13 @@ type AuthFileReadState = {
 
 let sharedAuthFileReadState: { authPath: string; readState: AuthFileReadState } | undefined;
 
+// The lock library uses resolved paths without following symlinks (realpath: false).
+const localAsyncAuthLocks = realmRegistry(
+	"@code-yeongyu/senpi/local-async-auth-locks/v1",
+	() => new Map<string, symbol>(),
+	(value): value is Map<string, symbol> => value instanceof Map,
+);
+
 /**
  * Outcome of a synchronous store read. `busy` means the lock stayed held past the sync
  * budget, so the in-memory credentials are a fallback rather than the store's contents;
@@ -264,6 +291,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
 				if (!isLockError(error)) throw error;
+				if (localAsyncAuthLocks.has(resolve(path))) throw new LocalCredentialStoreBusyError(path, error);
 				const waitedMs = Date.now() - startedAt;
 				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
 					throw new CredentialStoreBusyError(path, waitedMs, error);
@@ -408,6 +436,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		let release: (() => Promise<void>) | undefined;
 		let lockCompromised = false;
 		let lockCompromisedError: Error | undefined;
+		const lockPath = resolve(this.authPath);
+		const owner = Symbol();
+		const forgetOwner = () => {
+			if (localAsyncAuthLocks.get(lockPath) === owner) localAsyncAuthLocks.delete(lockPath);
+		};
 		const throwIfCompromised = () => {
 			if (lockCompromised) {
 				throw lockCompromisedError ?? new Error("Auth storage lock was compromised");
@@ -418,9 +451,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			release = await this.acquireLockAsync(options?.signal, (error) => {
 				lockCompromised = true;
 				lockCompromisedError = error;
+				forgetOwner();
 			});
 
 			throwIfCompromised();
+			localAsyncAuthLocks.set(lockPath, owner);
 			options?.signal?.throwIfAborted();
 			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
 			const { result, next } = await fn(current);
@@ -437,6 +472,8 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 					await release();
 				} catch {
 					// Ignore unlock errors when lock is compromised.
+				} finally {
+					forgetOwner();
 				}
 			}
 		}
@@ -571,6 +608,7 @@ export class AuthStorage implements CredentialStore {
 	private dataLoaded = false;
 	private dataFromBusyRead = false;
 	private loadError: AuthStoreLoadError | undefined;
+	private recordedLoadFailure: string | undefined;
 
 	private constructor(storage: AuthStorageBackend, authPath?: string) {
 		this.storage = storage;
@@ -669,6 +707,32 @@ export class AuthStorage implements CredentialStore {
 		};
 	}
 
+	/**
+	 * The Claude CLI account dir records (senpi#5594), read and written asynchronously inside the held store lock of an
+	 * async load: accounts a stale writer dropped take their recorded dirs back, and every signed-in account without a
+	 * record gets one. Returns `data` itself when no slot changed, so the load writes nothing.
+	 */
+	private async settleAccountLinks(data: AuthStorageData): Promise<AuthStorageData> {
+		const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
+		if (!this.authPath || subscription?.accounts === undefined) return data;
+		const agentDir = dirname(this.authPath);
+		const accounts = await relinkAfterStaleWrite(agentDir, subscription.accounts);
+		const unrecorded = await backfillAccountLinks(agentDir, accounts);
+		const unrecordedReason = `Claude account dir records could not be written for: ${unrecorded.join(", ")}`;
+		if (unrecorded.length > 0 && !this.reportedMigrationSkips.has(unrecordedReason)) {
+			this.reportedMigrationSkips.add(unrecordedReason);
+			this.recordError(
+				new Error(
+					`${unrecordedReason}. If another OmO session running an older version rewrites auth.json, these accounts may need to sign in again; check that their account dirs under anthropic-subscription-claude are writable.`,
+				),
+			);
+		}
+		if (accounts === subscription.accounts) return data;
+		const next: AuthStorageData = { ...data, [ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: { ...subscription, accounts } };
+		this.notices = [...unusedLoginNotices(next), ...signInRequiredNotices(next)];
+		return next;
+	}
+
 	private recordError(error: unknown): void {
 		this.errors.push(error instanceof Error ? error : new Error(String(error)));
 	}
@@ -732,14 +796,18 @@ export class AuthStorage implements CredentialStore {
 				// A written repair or migration invalidates the revision read before
 				// it; leaving it unset makes the next reader re-read instead of
 				// trusting a stale stamp.
+				// Claude CLI account records are settled by the next async load (senpi#5594): leave the revision unset for it.
 				revision =
-					parsed.repaired || parsed.migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+					parsed.repaired || parsed.migrated || !this.authPath || hasClaudeCliAccounts(parsed.data)
+						? undefined
+						: getFileContentRevision(this.authPath);
 				if (parsed.migrated) this.backupAuthFile(current);
 				return parsed.repaired || parsed.migrated
 					? { result: undefined, next: JSON.stringify(parsed.data, null, 2) }
 					: { result: undefined };
 			});
 			this.updateReadState(data, revision);
+			this.recordedLoadFailure = undefined;
 			return "loaded";
 		} catch (rawError) {
 			const error = failureAfterRead(rawError, load);
@@ -792,7 +860,16 @@ export class AuthStorage implements CredentialStore {
 		if (loadError) this.loadError = loadError;
 		if (repeated) return false;
 		this.recordError(error);
+		this.recordedLoadFailure = loadFailureKey(error);
 		return true;
+	}
+
+	/** An async read's failure, unless the same failure is already recorded since the store last loaded. */
+	private recordAsyncLoadFailure(error: unknown): void {
+		const key = loadFailureKey(error);
+		if (key !== undefined && key === this.recordedLoadFailure) return;
+		this.recordedLoadFailure = key;
+		this.recordError(error);
 	}
 
 	/**
@@ -885,6 +962,17 @@ export class AuthStorage implements CredentialStore {
 	 * points shows it once (senpi#3486). With `persistSeen`, the notices are also recorded as seen, so
 	 * the next launch stays quiet until the problem changes; a run nobody reads (RPC) leaves them pending.
 	 */
+	/**
+	 * Finishes what only an async load can do before the notices are read: the first load is synchronous, and the
+	 * Claude CLI account records it cannot touch are settled by the next async read (senpi#5594), which may re-link an
+	 * account the synchronous load still lists as signed out. A read that fails is recorded as on every other read.
+	 */
+	async settleLoad(): Promise<void> {
+		// A store that never loaded has nothing to settle, and waiting out a held lock would stall startup.
+		if (this.loadError !== undefined || this.dataFromBusyRead) return;
+		await this.readLatestData();
+	}
+
 	takePendingNotices(options: { persistSeen: boolean }): ReadonlyArray<AuthNotice> {
 		const taken = this.pendingNotices().filter((notice) => !this.takenNotices.has(notice.id));
 		for (const notice of taken) this.takenNotices.add(notice.id);
@@ -1015,7 +1103,9 @@ export class AuthStorage implements CredentialStore {
 
 	private async reloadFromStorageAsync(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		try {
-			return await this.reloadLockedAsync(options);
+			const data = await this.reloadLockedAsync(options);
+			this.recordedLoadFailure = undefined;
+			return data;
 		} catch (error) {
 			if (!options?.signal?.aborted) this.loadError = describeAuthStoreLoadFailure(error) ?? this.loadError;
 			throw error;
@@ -1028,14 +1118,16 @@ export class AuthStorage implements CredentialStore {
 			return await this.storage.withLockAsync(async (content) => {
 				const parsed = this.parseStorageContent(content);
 				load.parsed = true;
-				load.writeBack = parsed.repaired || parsed.migrated;
+				const data = await this.settleAccountLinks(parsed.data);
+				const migrated = parsed.migrated || data !== parsed.data;
+				load.writeBack = parsed.repaired || migrated;
 				const revision =
-					parsed.repaired || parsed.migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
-				this.updateReadState(parsed.data, revision);
-				if (parsed.migrated) this.backupAuthFile(content);
-				return parsed.repaired || parsed.migrated
-					? { result: parsed.data, next: JSON.stringify(parsed.data, null, 2) }
-					: { result: parsed.data };
+					parsed.repaired || migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+				this.updateReadState(data, revision);
+				if (migrated) this.backupAuthFile(content);
+				return parsed.repaired || migrated
+					? { result: data, next: JSON.stringify(data, null, 2) }
+					: { result: data };
 			}, options);
 		} catch (error) {
 			throw failureAfterRead(error, load);
@@ -1049,7 +1141,7 @@ export class AuthStorage implements CredentialStore {
 				return await this.reloadFromStorageAsync(options);
 			} catch (error) {
 				options?.signal?.throwIfAborted();
-				this.recordError(error);
+				this.recordAsyncLoadFailure(error);
 				this.noteBusyFallback(error);
 				return this.readState.data;
 			}
@@ -1070,7 +1162,7 @@ export class AuthStorage implements CredentialStore {
 					if (this.readState.reload === reload) this.readState.reload = undefined;
 				},
 				(error: unknown) => {
-					if (!controller.signal.aborted) this.recordError(error);
+					if (!controller.signal.aborted) this.recordAsyncLoadFailure(error);
 					if (this.readState.reload === reload) this.readState.reload = undefined;
 				},
 			);
@@ -1152,6 +1244,21 @@ export class AuthStorage implements CredentialStore {
 			return { result: undefined, next: JSON.stringify(currentData, null, 2) };
 		}, options);
 		this.updateReadState(latestData);
+	}
+
+	async deleteLogin(provider: string, loginId: string, options?: AuthOperationOptions): Promise<boolean> {
+		options?.signal?.throwIfAborted();
+		let latestData = this.readState.data;
+		const deleted = await this.storage.withLockAsync(async (content) => {
+			const currentData = this.parseStorageData(content);
+			latestData = currentData;
+			if (currentData[provider]?.loginId !== loginId) return { result: false };
+			delete currentData[provider];
+			return { result: true, next: JSON.stringify(currentData, null, 2) };
+		}, options);
+		if (deleted) this.runtimeOverrides.delete(provider);
+		this.updateReadState(latestData);
+		return deleted;
 	}
 
 	/** List credential metadata without resolving configured key values. */
@@ -1243,7 +1350,8 @@ export class AuthStorage implements CredentialStore {
 		);
 	}
 
-	async login(providerId: string, callbacks: OAuthLoginCallbacks): Promise<void> {
+	/** `options` reach the provider's login as they do through the runtime login (device id, app name). */
+	async login(providerId: string, callbacks: OAuthLoginCallbacks, options?: LoginOptions): Promise<void> {
 		const oauth = this.oauthAuth(providerId);
 		if (!oauth) throw new Error(`Unknown OAuth provider: ${providerId}`);
 		const signal = callbacks.signal ?? new AbortController().signal;
@@ -1253,7 +1361,7 @@ export class AuthStorage implements CredentialStore {
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
 		const before = this.get(providerId);
-		const credential = await oauth.login(interaction);
+		const credential = await oauth.login(interaction, options);
 		this.set(providerId, credential);
 		if (this.authPath === undefined) return;
 		// Lazy like ModelRuntime.loadCredentialPool: the pool store pulls zod, which must stay out of the

@@ -30,6 +30,8 @@ export interface RpcSessionBinding {
 	cancelPendingExtensionUiRequests?(): void;
 	/** A connection of the shared host left this session (`close_session`, a dropped or detached connection). */
 	connectionDetached?(connectionId: string): void;
+	/** Sends the session's current extension state to one receiver (a connection that just attached). */
+	replayExtensionEvents?(receiver: (record: object) => void): void;
 	/** `prompt` calls this binding started that have not settled, preflight included. */
 	pendingPrompts?(): readonly Promise<unknown>[];
 	dispose(): Promise<void>;
@@ -213,6 +215,10 @@ export async function createRpcSessionBinding(
 			rpcOwnersByConnection.get(connectionId)?.retire();
 			rpcOwnersByConnection.delete(connectionId);
 			runWithProviderScope(entry.scope, () => handler.connectionDetached(connectionId));
+		},
+		replayExtensionEvents: (receiver) => {
+			if (entry.scope.state !== "closed")
+				runWithProviderScope(entry.scope, () => handler.replayExtensionEvents(receiver));
 		},
 		dispose: () => {
 			toolSpans.closeAll();

@@ -16,6 +16,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
+import type { TelemetryConsent } from "../../core/telemetry-consent.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
@@ -516,6 +517,25 @@ export class RpcClient {
 			);
 		}
 		this.getData(await this.send({ type: "set_session_context", sessionId, patch }, false));
+	}
+
+	/**
+	 * Change this connection's live telemetry answer for an attached session (`set_telemetry_consent`, senpi#7446):
+	 * the host collects and delivers the session's telemetry only while it permits it AND every caller granted.
+	 * Requires the host capability `telemetry_consent`; rejects with {@link RpcCommandError} (`session_not_attached`).
+	 */
+	async setTelemetryConsent(consent: TelemetryConsent, sessionId = this.sessionId): Promise<void> {
+		if (!sessionId) {
+			throw new RpcCommandError(
+				`${RPC_ERROR_SESSION_NOT_ATTACHED}: set_telemetry_consent needs a session`,
+				RPC_ERROR_SESSION_NOT_ATTACHED,
+				{
+					reason: "this client has no attached session",
+					action: "attach with openSession first, or pass a sessionId",
+				},
+			);
+		}
+		this.getData(await this.send({ type: "set_telemetry_consent", sessionId, consent }, false));
 	}
 
 	async closeSession(sessionId = this.sessionId): Promise<void> {

@@ -1,3 +1,94 @@
+## 2026-11-22 - OpenAI-family SSE reports transport activity (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/api/openai-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts` report body chunks through a shared fetch wrapper before the SDK parses them.
+- `packages/ai/src/api/openai-codex-responses.ts` reports body chunks from its SSE reader before decoding. WebSocket paths are unchanged.
+
+### Why
+
+- SSE keep-alive comments never become assistant events. Reporting the bytes lets the agent loop re-arm its existing start and idle bounds while waiting for content.
+
+### Why an extension could not handle it
+
+- The SDK fetch boundary and the Codex SSE reader are internal to the adapters.
+
+### Expected merge conflict zones
+
+- LOW: the SDK client fetch options and the Codex `parseSSE` read loop.
+
+## 2026-11-22 - Preserve Mistral HTTP status in provider diagnostics (senpi#3251)
+
+### What changed
+
+- `packages/ai/src/api/mistral-conversations.ts`: attaches the response status to the HTTP error with the shared diagnostic carrier and copies it to the terminal assistant message without changing the displayed error.
+
+### Why
+
+- The response status distinguishes an actual 408 from a 400 whose body quotes one.
+
+### Why an extension could not handle it
+
+- The adapter sees the HTTP response before turning the failure into an assistant message.
+
+### Expected merge conflict zones
+
+- LOW: the non-OK response and stream catch in `packages/ai/src/api/mistral-conversations.ts`.
+
+## 2026-11-04 - Kimi K3.1 Pro never receives disabled thinking (senpi#5720)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts` omits disabled thinking for K3.1 Pro, including gateway rows without catalog metadata. The catalog models send only `output_config.effort: low` at their floor, whether the caller requests off or the agent has already clamped it to low.
+
+### Why
+
+- Kimi Code answers `thinking: {type: "disabled"}` on K3.1 Pro with `400 K3.1 Pro does not support disabled thinking mode`; no `thinking` plus effort `low` is accepted (code-yeongyu/oh-my-openagent#12316).
+
+### Why an extension could not handle it
+
+- The thinking block is built inside the Anthropic request builder.
+
+### Expected merge conflict zones
+
+- LOW: the marker list.
+
+## 2026-11-23 - sk-ant-oat API keys are sent as plain x-api-key instead of being refused (senpi#7391)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `CLAUDE_OAUTH_TOKEN_MARKER`, `ClaudeOAuthTokenRefusedError`, `isClaudeOAuthTokenRefusedError` and `assertNotClaudeOAuthToken` are deleted, along with the assert calls in `stream()` and `streamSimple()`. An `sk-ant-oat` value given as an API key now takes the same path as any other key: the SDK client is built with `apiKey`, so the token goes out as `x-api-key` to the model's `baseUrl`.
+
+### Why
+
+- The refusal from senpi#5131 also blocked custom `anthropic-messages` providers whose `baseUrl` is a self-hosted Anthropic-compatible proxy that takes such a token as its key; the owner reversed the refusal part of that ruling. The Claude Code impersonation path removed by senpi#5131 (Bearer auth for oat keys, `claude-code-20250219` / `oauth-2025-04-20` betas, `claude-cli` user agent, `x-app`, the Claude Code system block, tool-name mapping) stays removed.
+
+### Why an extension could not handle it
+
+- The refusal ran inside the provider's `stream()` / `streamSimple()` before any request was built; no extension hook runs before it or can skip it.
+
+### Expected merge conflict zones
+
+- LOW: the auth assertions at the top of `stream()`'s client setup and of `streamSimple()`. Upstream still carries the OAuth stealth branch; keep every `isOAuthToken` parameter and Claude Code mapping deleted when syncing.
+
+## 2026-11-22 - The image downgrade names a describing tool when the caller has one (senpi#7260)
+
+### What changed
+
+- `packages/ai/src/api/transform-messages.ts`: `downgradeUnsupportedImages` is exported and takes a third argument, `{ imageDescriptionTool?: string }` (`ImageDowngradeOptions`, also exported). With a tool name, the two placeholders that replace images for a model without image input read `(tool image omitted: this model cannot see images; call <tool> with the image's file path for a description)` and `(image omitted: this model cannot see images; <tool> describes an image given its file path)`. `transformMessages` still calls it with no options, so the six provider adapters and every caller that passes nothing produce the two existing placeholders byte for byte. The video placeholders do not change.
+
+### Why
+
+- senpi#7233. A text-only model that read a screenshot got only `(tool image omitted: model does not support images)`. The session offered `look_at`, which describes an image from its file path, and nothing told the model. The tool name has to come from the session, and this file must not know about session tools, so the name is a parameter. The look-at extension runs the same function before the request is built, which leaves no image for the provider's own pass to replace. Threading the name through `StreamOptions` instead would have changed every provider adapter and still missed the adapters that never call `transformMessages`.
+
+### Why an extension could not handle it
+
+- The session side is an extension: look-at calls this function from its `context_with_system` handler. What an extension cannot reach is the wording and the replacement rules (one placeholder for a run of images, video replaced before images), which were private to this file. A copy in the extension would be a second version to keep in step with upstream.
+
+### Expected merge conflict zones
+
+- LOW: the signature and first lines of `downgradeUnsupportedImages`, and the two `replaceImagesWithPlaceholder` call sites inside it. No adapter and no other export changed. If upstream restructures the image downgrade, keep an exported function that takes the tool name and re-point `packages/coding-agent/src/core/extensions/builtin/look-at/image-placeholder.ts` at it.
+
 ## 2026-11-18 - GPT-6.2 Astra and Sol are documented Ultrafast models (senpi#6948, senpi#6942)
 
 ### What changed

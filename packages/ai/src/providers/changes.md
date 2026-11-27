@@ -1,3 +1,39 @@
+## 2026-11-22 - Reject blank Vertex login fields (senpi#5145)
+
+### What changed
+
+- `packages/ai/src/providers/google-vertex.ts` rejects a blank project ID or location during ADC and service-account login.
+
+### Why
+
+- Login previously returned a credential containing the blank answer. Existing credentials still use the environment fallback at resolution time.
+
+### Why an extension could not handle it
+
+- The built-in Vertex provider collects these answers and returns the credential for storage.
+
+### Expected merge conflict zones
+
+- The project and location prompts in the Vertex provider.
+
+## 2026-11-22 - Distinguish Kimi K3.1 Pro from its off-capable siblings (#5720)
+
+### What changed
+
+- Both K3.1 Pro rows declare that disabled thinking is unsupported (`supportsDisabledThinking: false`). K3 and K3-256k keep their level maps, which offer low, high and max and veto `off`, so a carried-over `off` is sent at `low` for them too.
+
+### Why
+
+- Only K3.1 Pro's rejection of disabled thinking is measured (a 400 on every attempt). K3's picker (low, high, max, pinned by the catalog test) stays as verified; no measurement shows K3 accepting a disabled turn, so the catalog does not offer it.
+
+### Why an extension could not handle it
+
+- The built-in level map drives the agent's send-time clamp and catalog consumers.
+
+### Expected merge conflict zones
+
+- The K3 and K3.1 Pro rows in `packages/ai/src/providers/kimi-coding.models.ts`.
+
 ## 2026-10-30 - Selected SIWC account lifecycle (part of #5003)
 
 ### What changed

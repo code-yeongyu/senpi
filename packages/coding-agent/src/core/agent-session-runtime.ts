@@ -1,3 +1,4 @@
+import { openingCallersVerdict, type TelemetryCallersVerdict, type TelemetryConsent } from "./telemetry-consent.ts";
 import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
@@ -15,6 +16,7 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { recordOpenerRefusal, refusesApprovals, replacementLaunchProfile } from "./opener-approvals.ts";
 import {
 	applyClientPermissionMode,
 	clientNamedPreset,
@@ -81,6 +83,19 @@ export interface AgentSessionLaunchProfile {
 	 * subprocesses see on top of the process environment. Never the host's own, never another session's.
 	 */
 	sessionEnv?: Readonly<Record<string, string>>;
+	/**
+	 * The telemetry answer of the caller that opened this session over the wire (`open_session.telemetry`,
+	 * senpi#7446); absent for a classic launch, whose own settings answer for it.
+	 */
+	telemetryConsent?: TelemetryConsent;
+}
+
+/**
+ * Hands a session its callers' verdict. Optional on the session surface: an embedder's or a suite's stand-in session
+ * implements only what it needs, and a session without the hook produces no caller-attributed telemetry to gate.
+ */
+function applyTelemetryCallers(session: AgentSession, verdict: TelemetryCallersVerdict): void {
+	if (typeof session.setTelemetryCallers === "function") session.setTelemetryCallers(verdict);
 }
 
 /** The fallback policy one session runs with, chosen by its opener (e.g. a task child's own chain). */
@@ -163,6 +178,7 @@ export class AgentSessionRuntime {
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
 	private _launchProfile?: Readonly<AgentSessionLaunchProfile>;
+	private _telemetryCallers: TelemetryCallersVerdict;
 	// Advertises the open session file to other processes so none moves it out from under this one.
 	private _sessionHold?: SessionHold;
 	private _removedOnReplacement?: {
@@ -186,6 +202,8 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
+		this._telemetryCallers = openingCallersVerdict(launchProfile?.telemetryConsent);
+		applyTelemetryCallers(_session, this._telemetryCallers);
 		markHostDefaultPresetFlag(_session, launchProfile);
 		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
 		// Taken by the async creator (the holder record needs the async boot instant); the constructor never touches it.
@@ -201,6 +219,8 @@ export class AgentSessionRuntime {
 	/** A speculative host session becomes durable only when a caller claims its already-built runtime. */
 	async persistSession(): Promise<void> {
 		await this.session.sessionManager.enablePersistence();
+		// A labelled session built before it had a file holds its refusal in memory; the claim waits until it is on disk.
+		if (refusesApprovals(this._launchProfile?.sessionContext)) await recordOpenerRefusal(this.session.sessionManager);
 		this._sessionHold ??= await holdActiveSession(
 			this.session.sessionManager,
 			false,
@@ -355,6 +375,12 @@ export class AgentSessionRuntime {
 		applyRetryFallbackProfile(this._session.settingsManager, retryFallback);
 	}
 
+	/** The callers' half of the telemetry decision, as the host recomputes it (senpi#7446); replacements keep it. */
+	setTelemetryCallers(verdict: TelemetryCallersVerdict): void {
+		this._telemetryCallers = verdict;
+		applyTelemetryCallers(this._session, verdict);
+	}
+
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
 		this.rebindSession = rebindSession;
 	}
@@ -491,6 +517,8 @@ export class AgentSessionRuntime {
 	}
 
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
+		// Every apply installs a replacement: from here the runtime's profile no longer carries the opener's label.
+		this._launchProfile = replacementLaunchProfile(this._launchProfile);
 		this._sessionHold =
 			hold ?? (await holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint));
 		// The replacement was built from the profile read before its runtime was created; an attach
@@ -515,6 +543,7 @@ export class AgentSessionRuntime {
 		applyClientPermissionMode(this._session, clientNamedPreset(profile), { announce: false });
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
 		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
+		applyTelemetryCallers(this._session, this._telemetryCallers);
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;
@@ -565,7 +594,7 @@ export class AgentSessionRuntime {
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
 					projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
-					launchProfile: this._launchProfile,
+					launchProfile: replacementLaunchProfile(this._launchProfile),
 				}),
 				hold,
 			);
@@ -605,7 +634,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		if (options?.setup) {
@@ -660,7 +689,7 @@ export class AgentSessionRuntime {
 						agentDir: this.services.agentDir,
 						sessionManager,
 						sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-						launchProfile: this._launchProfile,
+						launchProfile: replacementLaunchProfile(this._launchProfile),
 					}),
 				);
 				await this.finishSessionReplacement(options?.withSession);
@@ -682,7 +711,7 @@ export class AgentSessionRuntime {
 					agentDir: this.services.agentDir,
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-					launchProfile: this._launchProfile,
+					launchProfile: replacementLaunchProfile(this._launchProfile),
 				}),
 			);
 			await this.finishSessionReplacement(options?.withSession);
@@ -704,7 +733,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		await this.finishSessionReplacement(options?.withSession);
@@ -758,7 +787,7 @@ export class AgentSessionRuntime {
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
-				launchProfile: this._launchProfile,
+				launchProfile: replacementLaunchProfile(this._launchProfile),
 			}),
 		);
 		await this.finishSessionReplacement();

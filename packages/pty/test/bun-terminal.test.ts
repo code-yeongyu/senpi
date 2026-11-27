@@ -16,9 +16,11 @@ function fakeRuntime() {
 	const writes: string[] = [];
 	const resizes: string[] = [];
 	const kills: string[] = [];
+	const spawnEnvs: Array<Record<string, string> | undefined> = [];
 	const runtime: BunRuntime = {
 		spawn(_command, options) {
 			dataHandler = options.terminal.data;
+			spawnEnvs.push(options.env);
 			return {
 				// Above Linux pid_max: `TerminalSession.start()` writes this pid's oom_score_adj.
 				pid: 2 ** 22 + 42,
@@ -40,7 +42,15 @@ function fakeRuntime() {
 			};
 		},
 	};
-	return { runtime, dataHandler: () => dataHandler, resolveExit: () => resolveExit, writes, resizes, kills };
+	return {
+		runtime,
+		dataHandler: () => dataHandler,
+		resolveExit: () => resolveExit,
+		writes,
+		resizes,
+		kills,
+		spawnEnvs,
+	};
 }
 
 describe("Bun terminal gate", () => {
@@ -78,6 +88,14 @@ describe("Bun terminal session adapter", () => {
 		fake.resolveExit()?.(0);
 		await session.waitExit();
 		expect(session.backend).toBe("bun");
+	});
+
+	// senpi#7493: Bun.spawn without `env` passes the startup environment, so a variable the host removed (the OSC 7577
+	// token) would still reach the shell.
+	it("passes the current process.env when the caller gives no env", () => {
+		const fake = fakeRuntime();
+		createBunTerminalSession({ command: "bash", args: [], cols: 80, rows: 24 }, () => {}, fake.runtime);
+		expect(fake.spawnEnvs).toEqual([{ ...process.env }]);
 	});
 
 	it("forwards data, writes, resize, kill, and exit", async () => {

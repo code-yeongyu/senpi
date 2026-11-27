@@ -1,9 +1,17 @@
 import { parse } from "@babel/parser";
 
-/** Only consulted after the kernel fails to compile. Locate the error in submitted, not rewritten, code. */
-export function jsCellParseMessage(code: string, message: string): string {
+/**
+ * Only consulted after the kernel fails to compile. Locate the error in submitted, not rewritten, code. A TypeScript
+ * cell keeps every token's position when its types are erased, so a TypeScript parse locates its real error.
+ */
+export function jsCellParseMessage(code: string, message: string, typescript = false): string {
 	try {
-		parse(code, { sourceType: "unambiguous", allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true });
+		parse(code, {
+			sourceType: "unambiguous",
+			allowReturnOutsideFunction: true,
+			allowAwaitOutsideFunction: true,
+			...(typescript ? { plugins: ["typescript" as const] } : {}),
+		});
 	} catch (error) {
 		if (!(error instanceof SyntaxError) || !("loc" in error)) return message;
 		const loc = error.loc;

@@ -7,6 +7,7 @@
  * from its session file, so `list_sessions` (and the relay that mirrors it) lists the session again
  * without anyone re-opening it by hand.
  */
+import { refusesApprovals, replacementLaunchProfile } from "../../core/opener-approvals.ts";
 import { clearHandoverParkedSession, recordHandoverParkedSession } from "./host-handover-parked.ts";
 import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
 import { currentResidentWriter } from "./host-handover-resident-writer.ts";
@@ -45,13 +46,29 @@ export async function recordRetainedSession(
 				contextOverlay: retained.contextOverlay,
 				...(durableSessionId !== undefined ? { durableSessionId } : {}),
 			},
-			retained.profile,
+			recoveryProfile(retained),
 			Object.keys(host.defaults.hostContext ?? {}),
 		),
 		parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
 		...(resident ? { residentWriter: await currentResidentWriter() } : {}),
 		...(live ? { live: true as const } : {}),
 	});
+}
+
+/**
+ * The profile a restart reopens the session from. The opener's approvals label belongs to the session it opened: once
+ * the live runtime has replaced it (`new_session`, `switch_session`, `fork`, `clone`) the runtime's profile drops the
+ * label, and so does the record, or a restart would label the replacement and make it refuse. A worker entry is
+ * read from its snapshot, whose session id differs from the one the entry opened once the worker replaced it.
+ */
+function recoveryProfile(retained: RpcSessionEntry): RpcSessionEntry["profile"] {
+	const replaced =
+		retained.runtime !== undefined
+			? !refusesApprovals(retained.runtime.launchProfile?.sessionContext)
+			: // A worker's host-side entry keeps the id it opened; its snapshot names the session it runs now.
+				retained.worker?.snapshot !== undefined &&
+				retained.worker.snapshot.state.sessionId !== retained.durableSessionId;
+	return replaced ? (replacementLaunchProfile(retained.profile) ?? retained.profile) : retained.profile;
 }
 
 /** The session path a live entry writes now; a replacement moves it before the registry's metadata catches up. */

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 interface CodingAgentPackageJson {
@@ -21,6 +21,42 @@ describe("package distribution entrypoints", () => {
 		expect(packageJson.exports["."].import).toBe("./dist/index.js");
 		expect(packageJson.exports["./client"].import).toBe("./dist/client/index.js");
 		expect(packageJson.exports["./rpc-entry"].import).toBe("./dist/rpc-entry.js");
+	});
+
+	// An embedding program that rewrites argv or env before importing the CLI imports this first, so the
+	// OSC 7577 hand-off re-execs the launch it was given rather than the rewritten one (senpi#7493).
+	test("publishes the OSC 7577 hand-off as its own side-effect entry", () => {
+		expect(packageJson.exports["./program-resume-startup"]?.import).toBe("./dist/program-resume-startup.js");
+	});
+
+	// A manifest path that names nothing the build emits ships a broken entry: each export must come from a source file
+	// the build compiles (tsconfig.build.json: rootDir ./src, outDir ./dist, test and experimental paths excluded), with
+	// its types beside it, inside what `files` ships. A renamed or moved source fails here, not at an embedder's import.
+	test("every export is built from a compiled source file and ships with its types", () => {
+		// The paths the build leaves out, as tsconfig.build.json names them (directory entries under src/ only; its
+		// node_modules, dist and *.test.ts entries never name an export's source).
+		const buildConfig = JSON.parse(readFileSync(new URL("../tsconfig.build.json", import.meta.url), "utf8")) as {
+			exclude: string[];
+		};
+		const excluded = buildConfig.exclude.filter((path) => path.startsWith("src/")).map((path) => `${path}/`);
+		expect(excluded.length).toBeGreaterThan(0);
+		for (const [name, entry] of Object.entries(packageJson.exports)) {
+			const module = /^\.\/dist\/(.+)\.js$/.exec(entry.import ?? "")?.[1];
+			expect({ name, built: module !== undefined }).toEqual({ name, built: true });
+			const source = `src/${module}.ts`;
+			expect({ name, source, exists: existsSync(new URL(`../${source}`, import.meta.url)) }).toEqual({
+				name,
+				source,
+				exists: true,
+			});
+			expect({ name, excluded: excluded.some((prefix) => source.startsWith(prefix)) }).toEqual({
+				name,
+				excluded: false,
+			});
+			if (entry.types !== undefined)
+				expect({ name, types: entry.types }).toEqual({ name, types: `./dist/${module}.d.ts` });
+		}
+		expect(packageJson.files).toContain("dist");
 	});
 
 	// Naming the executables one by one is how `bin.senpi` drifted: upstream moved `pi` onto the

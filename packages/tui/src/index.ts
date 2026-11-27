@@ -220,6 +220,7 @@ export {
 	type ProgramStatusKind,
 	type ProgramStatusState,
 } from "./program-status.ts";
+export { encodeProgramResume, isProgramResumeToken, type ProgramResumeReport } from "./program-resume.ts";
 export {
 	type Component,
 	CompositeRevision,

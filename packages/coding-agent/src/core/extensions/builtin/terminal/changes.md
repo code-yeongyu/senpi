@@ -1,3 +1,18 @@
+## 2026-11-22 - Replay live terminal state on RPC subscription (senpi#4669)
+
+### What changed
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts` binds replay to the session lifecycle.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts` uses the live bundle to report monitor and wake-source snapshots.
+
+### Why
+- Late listeners missed the initial publication, and terminal wake-source changes stayed on the internal bus.
+
+### Why an extension could not handle it
+- The terminal builtin owns the monitor registry and background session state.
+
+### Expected merge conflict zones
+- Terminal state publication and bundle binding.
+
 ## 2026-11-12 - The process boot instant comes from the kernel's boot record (senpi#3152)
 
 ### What changed

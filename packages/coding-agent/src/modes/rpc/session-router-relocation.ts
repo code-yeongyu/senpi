@@ -1,5 +1,6 @@
 import { SESSION_RELOCATION_CAPABILITY } from "./custom-capability.ts";
 import type { RouterContext } from "./session-router-context.ts";
+import { telemetryCallerLeft } from "./session-router-telemetry.ts";
 
 /**
  * The connection that offers to continue this session on another computer: the earliest-attached one that
@@ -18,5 +19,6 @@ export function relocationConnection(host: RouterContext, sessionId: string): st
 /** `connection` no longer attaches to `sessionId`: its attach order and what it offered the session end. */
 export function connectionLeft(host: RouterContext, sessionId: string, connection: string): void {
 	host.attachOrder.detached(sessionId, connection);
+	telemetryCallerLeft(host, sessionId, connection);
 	host.bindings.get(sessionId)?.connectionDetached?.(connection);
 }

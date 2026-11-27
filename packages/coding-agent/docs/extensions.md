@@ -350,6 +350,7 @@ user sends prompt ────────────────────�
   │   │   LLM responds, may call tools:            │       │
   │   │     ├─► tool_execution_start               │       │
   │   │     ├─► tool_call (can block)              │       │
+  │   │     ├─► tool_call_ready (final arguments)  │       │
   │   │     ├─► tool_execution_update              │       │
   │   │     ├─► tool_result (can modify)           │       │
   │   │     └─► tool_execution_end                 │       │
@@ -1237,6 +1238,16 @@ pi.on("tool_call", (event) => {
 });
 ```
 
+#### tool_call_ready
+
+Fired once for each call about to run, before the tool executes: after its whole `tool_call` chain let it run, or at once when no `tool_call` handler is registered. `event.input` is a deep copy of the arguments the tool runs with, after the `tool_call` handlers' changes, so an observer sees a path a handler redirected. Observe only: what a handler returns or changes is ignored. Not fired for a blocked call. The call waits for these handlers; Stop (the turn's abort) ends that wait and the call does not run. On a split session it fires where the call runs, not where a forwarded `tool_call` handler is served. The event type is exported as `ToolCallReadyEvent`.
+
+```typescript
+pi.on("tool_call_ready", (event) => {
+  if (event.toolName === "write") reserve(event.toolCallId, event.input.path);
+});
+```
+
 #### tool_result
 
 Fired after tool execution finishes and before `tool_execution_end` plus the final tool result message events are emitted. **Can modify result.**
@@ -1447,6 +1458,10 @@ const note = ctx.sessionManager.reduceHistory(latestNote);
 Optional read-only getter for the absolute path to the current session's authoritative goal-store file. The host resolves it from the session manager and `ctx.cwd`; reading it performs no file creation. Persisted sessions honor session-directory overrides, while in-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Do not derive it from `getSessionFile()`.
 
 Shell tools and eval kernels expose this value as `PI_GOAL_STORE_FILE` and `ctx.cwd` as `PI_SESSION_CWD`. Hand-built contexts and older hosts may omit the getter, in which case `PI_GOAL_STORE_FILE` is unset.
+
+### ctx.telemetryPermitted
+
+Optional read-only getter: whether telemetry attributed to this session may be collected or delivered right now. It is `true` only while the host's own setting permits telemetry AND every caller of the session granted it (see `telemetry_consent` in `docs/rpc.md`). A classic launch has no caller but the host, so the host's setting alone decides. The value changes while the session runs, so read it when an event is collected and again before delivering anything buffered; drop what it no longer permits. A runner with no session answers `false`; hand-built contexts and older hosts may omit the getter, which a reader treats as `false`.
 
 ### ctx.onUserActivity()
 
@@ -3489,6 +3504,8 @@ Add these fields to `pi.registerTool(...)`:
 **Important:** You cannot register a tool named `tool_search` yourself; it is a reserved name.
 
 A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
+
+A tool that already did the work itself can still run the `tool_result` handlers for it with `ctx.reportToolResult({ toolName, input, content, details?, isError? })`. No tool runs and no `tool_call` handler is asked; the event carries `parentToolCallId` and an id of the form `<calling id>/reported-<n>`. It resolves to `{ toolCallId, result, failures }`: `result` is what the handlers changed (undefined when none changed anything), and `failures` lists the handlers that threw, timed out or were interrupted, which never rejects the call. Code mode uses it for the files an `eval` cell wrote without calling `write` or `edit`.
 
 `ctx.issuedByModel` says whether the model issued the running call, either through the agent loop or through a provider's exec channel (Cursor), so its result joins the transcript. On a hand (brain/hand split), a call the brain's agent loop dispatched counts too. It is `false` for a call made through `ctx.executeTool()` or `pi.executeTool()`.
 
