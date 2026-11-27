@@ -11790,10 +11790,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/session-start-claim.ts#exitCleanupInstalled": {
-			"class": "per-copy-safe",
-			"reason": "install-once guard or handle for a hook this copy installs; holds no A1-A3 asset"
-		},
 		"packages/coding-agent/src/core/session-start-claim.ts#ownClaims": {
 			"class": "per-copy-safe",
 			"reason": "the session start claims this copy took and their refresh timers; the claim files themselves coordinate processes"

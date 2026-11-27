@@ -55,12 +55,13 @@ it.each(["SIGTERM", "SIGKILL"] as const)("a start killed with %s while loading l
 	expect(await start().next()).toMatchObject({ step: "admitted" });
 });
 
-it("a start whose loading fails drops its claim when it exits", async () => {
+it("a start whose loading fails holds nothing once it has exited", async () => {
 	const first = start(true);
 	expect(await first.next()).toMatchObject({ step: "admitted" });
 	first.go();
 	expect(await first.exited).toBe(1);
 
+	expect(await holderPids()).toEqual([]);
 	await expect(stat(claimFile())).rejects.toMatchObject({ code: "ENOENT" });
 	expect(await start().next()).toMatchObject({ step: "admitted" });
 });

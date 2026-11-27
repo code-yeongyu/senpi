@@ -14,7 +14,7 @@ import {
 import { type HolderGeneration, liveHolders, type SessionHolderProbes } from "./session-holder-records.ts";
 import { activeMover, underMoveLock } from "./session-move-lock.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
-import { dropStartClaim, startClaimant, takeStartClaim } from "./session-start-claim.ts";
+import { carryStartClaim, dropStartClaim, startClaimant, takeStartClaim } from "./session-start-claim.ts";
 import { advanceSessionFence } from "./session-write-fence.ts";
 
 export {
@@ -209,8 +209,31 @@ export async function withSessionMoveLock<T>(
 	sessionFile: string,
 	sessionId: string,
 	move: () => T | Promise<T>,
-	options: { readonly waitMs?: number } = {},
+	options: {
+		readonly waitMs?: number;
+		/** Where the move puts the session file; a start claim this process holds moves there with it. */
+		readonly destination?: string;
+	} = {},
 ): Promise<T> {
 	const dir = holdersDir(sessionFile, sessionId);
-	return underMoveLock(sessionFile, dir, await identityRecord(), move, options.waitMs ?? DEFAULT_MOVE_LOCK_WAIT_MS);
+	const identity = await identityRecord();
+	const waitMs = options.waitMs ?? DEFAULT_MOVE_LOCK_WAIT_MS;
+	if (options.destination === undefined) return underMoveLock(sessionFile, dir, identity, move, waitMs);
+	// A start that admitted the session and now moves it (a rebind) holds its start claim at the destination before the
+	// file arrives there, so a start on the new path finds it (senpi#5988).
+	const destination = options.destination;
+	const carried = await carryStartClaim(
+		sessionId,
+		holdersDir(destination, sessionId),
+		await identityRecord(process.cwd()),
+	);
+	if (carried === false) throw new SessionHeldError(destination, await liveSessionHolders(destination, sessionId));
+	try {
+		const moved = await underMoveLock(sessionFile, dir, identity, move, waitMs);
+		await carried?.commit();
+		return moved;
+	} catch (error) {
+		await carried?.abort();
+		throw error;
+	}
 }
