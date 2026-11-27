@@ -12,6 +12,7 @@ import { guardLogPath } from "../../../src/core/extensions/builtin/moved-path-gu
 
 const root = mkdtempSync(join(tmpdir(), "senpi-6335-"));
 const fixture = new URL("./fixtures/6335-worker-resolve-and-log.ts", import.meta.url);
+const sourceResolver = new URL("../../../src/experimental/source-resolver.ts", import.meta.url).href;
 
 afterAll(() => {
 	rmSync(root, { recursive: true, force: true });
@@ -24,7 +25,7 @@ describe("a worker realm's writers redact what that realm resolved (senpi#6335)"
 		const agentDir = join(root, "worker");
 		const worker = new Worker(fixture, {
 			workerData: { agentDir, name: "SENPI_6335_SYNTHETIC", value },
-			execArgv: [],
+			execArgv: ["--import", sourceResolver],
 		});
 		const [message] = await once(worker, "message", { signal: AbortSignal.timeout(25_000) });
 		await worker.terminate();

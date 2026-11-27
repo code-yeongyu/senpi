@@ -10,6 +10,7 @@ import {
 	guardLogPath,
 	logGuardEvent,
 } from "../../../src/core/extensions/builtin/moved-path-guard/guard-log.ts";
+import { createFallbackLogger } from "../../../src/core/retry-fallback/log.ts";
 import { createSessionLogger } from "../../../src/core/session-log.ts";
 
 // senpi#6337: a value a config reference resolved to reaches a log writer's free-text fields (an error, a reason, a
@@ -105,6 +106,23 @@ describe("log writers redact registered resolved values (senpi#6337)", () => {
 		expectRedacted(written(join(dir, "logs", "compaction.log")));
 		expectRedacted(sink.join("\n"));
 		expectRedacted(mirror.mock.calls.flat().join(" "));
+	});
+
+	it("fallback.log: a registered value and an authorization header token in one line", async () => {
+		const dir = join(root, "fallback");
+		const headerToken = ["hdr", "tok", "5".repeat(8)].join("-");
+		const logger = createFallbackLogger(dir);
+
+		logger.warn("candidate_failed", {
+			error: `401 for ${RESOLVED}; sent Authorization: Bearer ${headerToken}`,
+			reason: `${LONG_PREFIX}${RESOLVED}`,
+		});
+		await logger.settled();
+
+		const file = written(join(dir, "logs", "fallback.log"));
+		expectRedacted(file);
+		expect(file).not.toContain(headerToken);
+		expect(file).toContain("Authorization: Bearer [redacted]");
 	});
 
 	it("keeps ordinary text unchanged in every writer", async () => {

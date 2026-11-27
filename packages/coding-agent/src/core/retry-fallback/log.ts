@@ -3,7 +3,7 @@ import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { rotateLogIfNeeded } from "../log-file-rotation.ts";
-import { redactSecrets, redactSensitiveTokenValues } from "../sensitive-output.ts";
+import { redactLogText, redactSecrets, redactSensitiveTokenValues } from "../sensitive-output.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_STRING_LENGTH = 200;
@@ -12,8 +12,6 @@ const BLOCKED_KEY =
 	/^(?:__proto__|constructor|prototype|headers?|env(?:ironment)?|authorization|credential(?:s)?|password|secret|token|api_?key|client_?secret)$/i;
 const ALLOWED_DATA_KEY =
 	/^(?:selector|candidate|currentSelector|originalSelector|from|to|model|provider|chainKey|reason|skipReason|classification|thinkingLevel|durationMs|retryAfterMs|error|errorMessage|warning|trigger)$/;
-const SENSITIVE_TEXT =
-	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 
 export interface FallbackLogger {
 	debug(event: string, data?: Record<string, unknown>): void;
@@ -270,6 +268,6 @@ function safeEntries(value: object): Array<[string, unknown]> {
 }
 
 function safeText(value: string): string {
-	const redacted = redactSecrets(value.replace(SENSITIVE_TEXT, "$1[redacted]"), "[redacted]");
+	const redacted = redactSecrets(redactLogText(value), "[redacted]");
 	return redacted.length <= MAX_STRING_LENGTH ? redacted : `${redacted.slice(0, MAX_STRING_LENGTH - 3)}...`;
 }

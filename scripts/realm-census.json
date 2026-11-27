@@ -6911,10 +6911,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/retry-fallback/log.ts#SENSITIVE_TEXT": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
-		},
 		"packages/coding-agent/src/core/retry-fallback/log.ts#retirements": {
 			"class": "realm-registry",
 			"reason": "fallback-log-retirements/v1: two copies starting on one agent dir share one first-start removal per log path, so the later one cannot delete lines the earlier one wrote (senpi#6351)"
