@@ -1,11 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { isExtensionSource } from "../../extension-source.ts";
 
 const SUBDIRECTORY_ENTRY_NAMES = ["index.ts", "index.js", "package.json"] as const;
-
-function isExtensionSource(name: string): boolean {
-	return name.endsWith(".ts") || name.endsWith(".js");
-}
 
 function isWithinPackage(relativePath: string): boolean {
 	return relativePath !== "" && !relativePath.startsWith("..") && !relativePath.startsWith(sep);

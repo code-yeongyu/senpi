@@ -158,6 +158,11 @@ Extensions are auto-discovered from trusted locations. Project-local `.senpi/ext
 | `.senpi/extensions/*.ts` | Project-local |
 | `.senpi/extensions/*/index.ts` | Project-local (subdirectory) |
 
+Direct files may use `.ts`, `.js`, `.mts`, or `.mjs`. Automatic discovery skips other
+direct files, including `.cjs` and `.cts`, and reports their paths. Subdirectory entry
+points are unchanged: use `index.ts`, `index.js`, or declare `pi.extensions` in the
+package manifest.
+
 Additional paths via `settings.json`:
 
 ```json

@@ -33,6 +33,7 @@ import { execCommand } from "../exec.ts";
 import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
 import type { CustomMessage } from "../messages.ts";
 import { readPiManifest } from "../pi-manifest.ts";
+import { isExtensionSource, unsupportedExtensionWarning } from "./extension-source.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { redactForUpload, type UploadRedactionOptions } from "../share/upload-redaction.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
@@ -1275,10 +1276,6 @@ export async function loadExtensionsCached(
 	return loadExtensionsInternal(paths, cwd, eventBus, runtime);
 }
 
-function isExtensionFile(name: string): boolean {
-	return name.endsWith(".ts") || name.endsWith(".js");
-}
-
 /**
  * Resolve extension entry points from a directory.
  *
@@ -1324,13 +1321,13 @@ function resolveExtensionEntries(dir: string): string[] | null {
  * Discover extensions in a directory.
  *
  * Discovery rules:
- * 1. Direct files: `extensions/*.ts` or `*.js` → load
+ * 1. Direct `.ts`, `.js`, `.mts`, or `.mjs` files → load
  * 2. Subdirectory with index: `extensions/* /index.ts` or `index.js` → load
  * 3. Subdirectory with package.json: `extensions/* /package.json` with "pi" field → load what it declares
  *
  * No recursion beyond one level. Complex packages must use package.json manifest.
  */
-function discoverExtensionsInDir(dir: string): string[] {
+function discoverExtensionsInDir(dir: string, skipped: Set<string>): string[] {
 	if (!fs.existsSync(dir)) {
 		return [];
 	}
@@ -1345,11 +1342,11 @@ function discoverExtensionsInDir(dir: string): string[] {
 		for (const entry of entries) {
 			const entryPath = path.join(dir, entry.name);
 
-			// 1. Direct files: *.ts or *.js
-			if ((entry.isFile() || entry.isSymbolicLink()) && isExtensionFile(entry.name)) {
+			if ((entry.isFile() || entry.isSymbolicLink()) && isExtensionSource(entry.name)) {
 				discovered.push(entryPath);
 				continue;
 			}
+			if (entry.isFile()) skipped.add(entryPath);
 
 			// 2 & 3. Subdirectories
 			if (entry.isDirectory() || entry.isSymbolicLink()) {
@@ -1378,6 +1375,7 @@ export async function discoverAndLoadExtensions(
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedAgentDir = resolvePath(agentDir);
 	const allPaths: string[] = [];
+	const skipped = new Set<string>();
 	const seen = new Set<string>();
 
 	const addPaths = (paths: string[]) => {
@@ -1392,11 +1390,11 @@ export async function discoverAndLoadExtensions(
 
 	// 1. Project-local extensions: cwd/${CONFIG_DIR_NAME}/extensions/
 	const localExtDir = path.join(resolvedCwd, CONFIG_DIR_NAME, "extensions");
-	addPaths(discoverExtensionsInDir(localExtDir));
+	addPaths(discoverExtensionsInDir(localExtDir, skipped));
 
 	// 2. Global extensions: agentDir/extensions/
 	const globalExtDir = path.join(resolvedAgentDir, "extensions");
-	addPaths(discoverExtensionsInDir(globalExtDir));
+	addPaths(discoverExtensionsInDir(globalExtDir, skipped));
 
 	// 3. Explicitly configured paths
 	for (const p of configuredPaths) {
@@ -1409,12 +1407,15 @@ export async function discoverAndLoadExtensions(
 				continue;
 			}
 			// No explicit entries - discover individual files in directory
-			addPaths(discoverExtensionsInDir(resolved));
+			addPaths(discoverExtensionsInDir(resolved, skipped));
 			continue;
 		}
 
 		addPaths([resolved]);
 	}
 
-	return loadExtensions(allPaths, resolvedCwd, eventBus);
+	const result = await loadExtensions(allPaths, resolvedCwd, eventBus);
+	if (skipped.size)
+		result.warnings = [...(result.warnings ?? []), ...Array.from(skipped, unsupportedExtensionWarning)];
+	return result;
 }

@@ -587,6 +587,18 @@ Content`,
 			expect(result.skills.some((r) => r.path.includes("venv") && r.enabled)).toBe(false);
 		});
 
+		it("discovers direct ESM files in the user's extensions directory (#4049)", async () => {
+			const dir = join(agentDir, "extensions");
+			mkdirSync(dir, { recursive: true });
+			const names = ["alpha.mjs", "beta.mts"];
+			for (const name of names) writeFileSync(join(dir, name), "export default function() {}");
+			writeFileSync(join(dir, "legacy.cts"), "");
+			const result = await packageManager.resolve();
+			expect(result.unsupportedExtensionFiles).toContain(join(dir, "legacy.cts"));
+			for (const name of names)
+				expect(result.extensions.some((r) => r.path === join(dir, name) && r.enabled)).toBe(true);
+		});
+
 		it("should not apply parent .gitignore to .pi auto-discovery", async () => {
 			writeFileSync(join(tempDir, ".gitignore"), ".pi\n");
 

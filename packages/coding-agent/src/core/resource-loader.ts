@@ -59,6 +59,7 @@ import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from 
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-memo.ts";
+import { unsupportedExtensionWarning } from "./extensions/extension-source.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { SkillProvenance } from "./skill-access.ts";
 import type { Skill } from "./skills.ts";
@@ -812,6 +813,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		);
 
 		const packageWarnings = collectExtensionPackageWarnings(dedupedExtensionPaths, metadataByPath);
+		if (!this.noExtensions)
+			packageWarnings.push(...(resolvedPaths.unsupportedExtensionFiles ?? []).map(unsupportedExtensionWarning));
 		const extensionsResult = await this.loadFinalExtensionSet(dedupedExtensionPaths, preTrustExtensions);
 		mergeExtensionWarnings(extensionsResult, packageWarnings);
 		mergeExtensionWarnings(extensionsResult, this.deniedSeedWarnings);
@@ -995,6 +998,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 			]),
 		);
 		const packageWarnings = collectExtensionPackageWarnings(extensionPaths, metadataByPath);
+		if (!this.noExtensions)
+			packageWarnings.push(...(resolvedPaths.unsupportedExtensionFiles ?? []).map(unsupportedExtensionWarning));
 		const extensionsResult = await loadExtensions(
 			extensionPaths,
 			this.cwd,
