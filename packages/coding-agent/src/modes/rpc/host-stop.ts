@@ -25,7 +25,9 @@ import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
 import { startupEnvelope } from "./host-startup-policy.ts";
 import { electPointer } from "./host-pointer-election.ts";
-import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal, probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import type { RpcEndpointAuthErrorCode } from "./rpc-auth-proof.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { type DrainHostResult, drainHost } from "./host-stop-drain.ts";
 import { compareStopGeneration, type HostStopGeneration } from "./host-stop-generation.ts";
@@ -55,7 +57,14 @@ export type StopHostResult =
 	| { readonly action: "stopped"; readonly pid: number }
 	| {
 			readonly action: "refuse";
-			readonly reason: "unknown_owner" | "drain_unsupported" | "sessions_live" | "stale_generation";
+			readonly reason:
+				| "unknown_owner"
+				| "drain_unsupported"
+				| "sessions_live"
+				| "stale_generation"
+				/** The host answered but could not be proven: it is never signalled (omo#15197). */
+				| RpcEndpointAuthErrorCode;
+			readonly detail?: string;
 	  };
 
 /**
@@ -63,7 +72,12 @@ export type StopHostResult =
  * host from taking new work - while a hard stop requires either an empty host or `force`, so an
  * operator never silently kills another client's sessions.
  */
-export async function stopHost(options: StopHostOptions): Promise<StopHostResult> {
+export function stopHost(options: StopHostOptions): Promise<StopHostResult> {
+	// Its probes prove the target's host from the root that host publishes under, as ensureHost does (omo#15197).
+	return withRpcKeyRoot(rpcKeyRoot({}, options.agentDir), () => stopHostInKeyRoot(options));
+}
+
+async function stopHostInKeyRoot(options: StopHostOptions): Promise<StopHostResult> {
 	// A binding names the generation a HARD stop may signal; a drain targets its own instance and must not hold the lock.
 	if (options.expectedGeneration !== undefined && options.drain === true)
 		throw new TypeError("stopHost: expectedGeneration binds a hard stop and cannot be combined with drain");
@@ -101,10 +115,14 @@ async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult>
 	const owner =
 		expected === undefined ? await provenOwner(await readHostRegistration(paths), options.socket) : undefined;
 	if (expected === undefined && !owner) return { action: "refuse", reason: "unknown_owner" };
-	const host = await probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000);
+	const host = await probeOrIdentityRefusal(() => probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000));
+	if (isIdentityRefusal(host)) return { action: "refuse", reason: host.refused, detail: host.detail };
 	// A hard stop ends whatever the host is doing, including work that belongs to other clients:
 	// it is allowed only against a host that reports nothing open, or by an explicit override.
-	const sessions = await probeSessionCount(options.socket, options.timeoutMs ?? 10_000);
+	const sessions = await probeOrIdentityRefusal(() =>
+		probeSessionCount(options.socket, options.timeoutMs ?? 10_000),
+	);
+	if (isIdentityRefusal(sessions)) return { action: "refuse", reason: sessions.refused, detail: sessions.detail };
 	if (options.force !== true && host !== undefined && sessions !== undefined && sessions > 0) {
 		return { action: "refuse", reason: "sessions_live" };
 	}

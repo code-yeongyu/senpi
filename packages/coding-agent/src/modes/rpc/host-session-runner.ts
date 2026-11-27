@@ -20,6 +20,7 @@ import {
 	RpcCommandError,
 	type RpcTransportGoneError,
 } from "./rpc-client.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 import { RpcRequestTimeoutError } from "./rpc-request-deadline.ts";
 import type { RpcSessionClosedEvent } from "./rpc-types.ts";
 
@@ -45,7 +46,15 @@ export type HostSessionRequest = { target: HostTarget } & (
 	| ({ action: "wait"; ref: SessionRef } & HostSessionWait)
 );
 
-export async function runHostSessionRequest(request: HostSessionRequest): Promise<HostOutcome> {
+/**
+ * Every dial of this request (its ensure, probes and client) proves the target's host from the root that host publishes
+ * under: an enclosing key root or SENPI_RPC_KEY_ROOT when one is set, else the target's agent dir (omo#15197).
+ */
+export function runHostSessionRequest(request: HostSessionRequest): Promise<HostOutcome> {
+	return withRpcKeyRoot(rpcKeyRoot({}, request.target.agentDir), () => runHostSessionRequestInKeyRoot(request));
+}
+
+async function runHostSessionRequestInKeyRoot(request: HostSessionRequest): Promise<HostOutcome> {
 	const deadline = Date.now() + STOP_WAIT_BUDGET_MS;
 	for (;;) {
 		try {
