@@ -29,8 +29,17 @@ const draining = z.strictObject({ reason: z.literal("host_draining") });
 // The attachment commands' own session_not_attached carries errorData { reason } only, never the gate's action.
 const notAttached = (reason: "no_connection" | "not_attached") => z.strictObject({ reason: z.literal(reason) });
 
+/** senpi#7572: whether this connection answers the run's prompts, and why nobody can after a handover. */
+const answererFields = {
+	answerer: z.boolean().optional(),
+	answererUnavailable: z.literal("host_handover").optional(),
+};
+
 export const attachmentWireResponse = z.union([
-	success("attach_session", z.strictObject({ sessionId: z.string(), attached: z.literal(true) })),
+	success(
+		"attach_session",
+		z.strictObject({ sessionId: z.string(), attached: z.literal(true), ...answererFields }),
+	),
 	// A takeover on a headless engine (senpi#5732): the holder now, its generation, and how many clients were let go.
 	success(
 		"attach_session",
@@ -40,6 +49,7 @@ export const attachmentWireResponse = z.union([
 			holder: z.string().min(1),
 			generation: z.number().int().positive(),
 			released: z.number().int().nonnegative(),
+			...answererFields,
 		}),
 	),
 	refusal("attach_session", ["takeover_unsupported", "takeover_failed"]).extend({
