@@ -39,6 +39,7 @@ import {
 } from "../../src/core/extensions/builtin/schedule/store.ts";
 import { MAX_FAILED_RECORDS_PER_JOB, nextRecurringDueAt } from "../../src/core/extensions/builtin/schedule/types.ts";
 import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
+import { ownProcessKey } from "../../src/core/extensions/builtin/terminal/process-key.ts";
 import { holdSessionFile } from "../../src/core/session-holders.ts";
 
 const T0 = Date.parse("2026-09-27T12:00:00Z");
@@ -525,6 +526,74 @@ describe("schedule runner", () => {
 			expect(whileRunning).toEqual({ acquired: false, heldByPid: delivery.pid });
 			expect(afterExit.acquired).toBe(true);
 			if (afterExit.acquired) await afterExit.release();
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"keeps a dead runner's lock while its live delivery runs, even when the lock's boot instant predates a clock step",
+		async () => {
+			const dir = await tempScheduleDir();
+			const exited = (child: ReturnType<typeof spawn>) =>
+				new Promise<void>((resolve) => child.once("exit", () => resolve()));
+			const gone = spawn("/usr/bin/true");
+			await exited(gone);
+			const delivery = spawn("/bin/sleep", ["60"], { detached: true, stdio: "ignore" });
+			const deliveryExited = exited(delivery);
+			const startedAt = 1_700_000_000_000;
+			const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+			// A wall-clock step moved the boot instant 10 minutes after the lock was written; the delivery leader is the
+			// same live process, so its start time (and nothing else) decides.
+			await writeAtomic(
+				lockFile,
+				JSON.stringify({
+					pid: gone.pid,
+					bootAtMs: (await processBootAtMs()) - 600_000,
+					processStartedAtMs: 1,
+					deliveryPid: delivery.pid,
+					deliveryStartedAtMs: startedAt,
+				}),
+			);
+			const probes = { readProcessStartMs: async () => startedAt };
+
+			const whileRunning = await acquireSessionDeliveryLock(dir, "session-a", probes);
+			process.kill(-(delivery.pid ?? 0), "SIGKILL");
+			await deliveryExited;
+
+			expect(whileRunning).toEqual({ acquired: false, heldByPid: delivery.pid });
+		},
+	);
+
+	it.runIf(process.platform === "linux" || process.platform === "darwin")(
+		"keeps a dead runner's lock while its dead leader's descendants deliver, across a clock step",
+		async () => {
+			const dir = await tempScheduleDir();
+			const exited = (child: ReturnType<typeof spawn>) =>
+				new Promise<void>((resolve) => child.once("exit", () => resolve()));
+			const gone = spawn("/usr/bin/true");
+			await exited(gone);
+			// The leader starts a descendant in its own process group and exits: the group lives on without it.
+			const leader = spawn("/bin/sh", ["-c", "/bin/sleep 60 & exit 0"], { detached: true, stdio: "ignore" });
+			await exited(leader);
+			const ownKey = await ownProcessKey();
+			if (ownKey === undefined) throw new Error("expected a process key on this platform");
+			const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+			// The boot instant predates a clock step; the runner's key still names this boot.
+			await writeAtomic(
+				lockFile,
+				JSON.stringify({
+					pid: gone.pid,
+					bootAtMs: (await processBootAtMs()) - 600_000,
+					processStartedAtMs: 1,
+					processKey: ownKey,
+					deliveryPid: leader.pid,
+					deliveryStartedAtMs: 1_700_000_000_000,
+				}),
+			);
+
+			const whileDelivering = await acquireSessionDeliveryLock(dir, "session-a");
+			process.kill(-(leader.pid ?? 0), "SIGKILL");
+
+			expect(whileDelivering).toEqual({ acquired: false, heldByPid: leader.pid });
 		},
 	);
 

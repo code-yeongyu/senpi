@@ -141,7 +141,19 @@ describe("X3 writer claims (characterization)", () => {
 			change: (m) => m.starts.set(100, 5_000_000 + TOLERANCE_MS),
 			takeover: false,
 		},
-		{ name: "new boot (beyond the tolerance)", change: (m) => (m.boot += TOLERANCE_MS + 1), takeover: true },
+		{
+			name: "new boot (beyond the tolerance), holder start time unreadable",
+			change: (m) => {
+				m.boot += TOLERANCE_MS + 1;
+				m.starts.delete(100);
+			},
+			takeover: true,
+		},
+		{
+			name: "wall-clock step beyond the tolerance, same live holder (start time matches)",
+			change: (m) => (m.boot += TOLERANCE_MS + 1),
+			takeover: false,
+		},
 		{ name: "boot shift within the tolerance", change: (m) => (m.boot += TOLERANCE_MS), takeover: false },
 		{
 			name: "owner on another host, even when dead and on another boot",
