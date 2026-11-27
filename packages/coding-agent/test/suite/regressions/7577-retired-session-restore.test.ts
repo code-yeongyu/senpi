@@ -100,7 +100,19 @@ it("keeps retirement through ordinary and failed opens; only an explicit success
 		if (!successor) throw new Error("same-session handback did not reopen");
 		expect(successor.durableSessionId).toBe(id);
 		expect(await router.handle({ type: "close_session", sessionId: successor.sessionId })).toBeUndefined();
+		expect(await readSessionRetirement(agentDir, id)).toBeUndefined();
+		expect(await router.handle(request)).toBeUndefined();
+		const [reopened] = registry.list();
+		if (!reopened) throw new Error("a plainly closed session did not reopen from its file");
+		expect(
+			await router.handle({ type: "close_session", sessionId: reopened.sessionId, retire: true }),
+		).toBeUndefined();
 		expect(await readSessionRetirement(agentDir, id)).toMatchObject({ reason: "requested" });
+		expect(await router.handle(request)).toMatchObject({ errorCode: "session_retired" });
+		expect(await router.handle({ type: "close_session", sessionId: "no-such-session", retire: true })).toMatchObject({
+			success: false,
+			error: "unknown_session",
+		});
 		const store = join(agentDir, "retired-sessions");
 		await rm(store, { recursive: true });
 		await writeFile(store, "not a directory");

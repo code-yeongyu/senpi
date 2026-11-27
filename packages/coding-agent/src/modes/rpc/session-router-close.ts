@@ -104,7 +104,8 @@ export async function close(
 			const agentDir = host.registry.agentDir ?? host.defaults.agentDir;
 			const id =
 				entry?.runtime?.session.sessionId ?? entry?.worker?.snapshot?.state.sessionId ?? entry?.durableSessionId;
-			if (agentDir && id && (entry?.runtime?.session.sessionFile ?? entry?.sessionPath)) {
+			// Only an explicit `retire: true` retires: a plain close still reopens from its file with a plain open.
+			if (command.retire === true && agentDir && id && (entry?.runtime?.session.sessionFile ?? entry?.sessionPath)) {
 				try {
 					const lock = await lockRetirement(agentDir, id);
 					try {

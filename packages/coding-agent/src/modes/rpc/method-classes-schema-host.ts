@@ -82,7 +82,7 @@ export const HOST_RECORD_SCHEMAS = {
 	open_session: command("open_session", { ...openProperties, reopenRetired: Opt(Type.Literal(true)) }),
 	claim_session: command("claim_session", { ...openProperties, cwd: PathStr }),
 	park_session: command("park_session", { cwd: PathStr, kind: Opt(SessionKind), context: Opt(SessionContext) }),
-	close_session: command("close_session", { sessionId: Id }),
+	close_session: command("close_session", { sessionId: Id, retire: OptBool }),
 	move_session: Type.Union([
 		move({ op: Type.Literal("prepare"), moveId: Id, cwd: OptPath, repository: Opt(RepositoryIdentity) }),
 		move({ op: Type.Literal("cancel"), moveId: Id }),

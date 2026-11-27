@@ -26,6 +26,17 @@ function absent(cause: unknown): boolean {
 	return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 }
 
+/** A malformed requested id names no marker; the registry refuses it with its own typed code. */
+function validId(id: string | undefined): string | undefined {
+	if (id === undefined) return undefined;
+	try {
+		assertValidSessionId(id);
+		return id;
+	} catch {
+		return undefined;
+	}
+}
+
 function locations(agentDir: string, id: string) {
 	assertValidSessionId(id);
 	const store = join(agentDir, "retired-sessions");
@@ -86,6 +97,8 @@ export async function lockRetirement(agentDir: string, id: string) {
 		const held = await lockWithLossHandling(marker, {
 			realpath: false,
 			retries: { retries: 10, minTimeout: 10, maxTimeout: 250 },
+			// Every marker write and removal asserts the lock first, so a lost lock refuses the write; this only names it.
+			onLost: () => process.stderr.write(`senpi retirement lock lost before release: ${marker}\n`),
 		});
 		const persist = async (retirement: SessionRetirement) => {
 			held.assertHeld();
@@ -142,7 +155,7 @@ export async function admitRetirement(
 	if (!agentDir) return undefined;
 	const id =
 		(target.sessionPath && (await sessionIdFromFile(resolveMovedPath(target.sessionPath)))) ??
-		target.durableSessionId;
+		validId(target.durableSessionId);
 	if (!id) {
 		// A fresh open has no identity to check yet, but may not claim a working store when the store itself is broken.
 		const store = join(agentDir, "retired-sessions");

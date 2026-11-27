@@ -3109,8 +3109,11 @@ confirmed the policy the change produces. Refusals: `invalid_telemetry_consent` 
 
 #### Session retirement (`session_retirement`)
 
-A final requested `close_session` retires a disk-backed session. A detach, idle park, host stop,
-or `release_session` does not. In particular, release with `reason: "takeover"` can hand the
+Retirement is always explicit. `close_session` with `retire: true` retires a disk-backed session when
+that close is its final one; a plain `close_session` does not, and the closed session still reopens
+from its file with a plain `open_session`. A detach, idle park, host stop, or `release_session` never
+retires. A host without `session_retirement` ignores the unknown `retire` field and closes without
+retiring, so probe the capability before relying on it. In particular, release with `reason: "takeover"` can hand the
 **same transcript** back to a terminal. A controller replacing it with a different session calls
 `retireSession({ agentDir, sessionPath, reason: "takeover" })` from `@code-yeongyu/senpi`.
 The same API accepts `"requested"` for a file-only close. It needs no running host, is idempotent,
@@ -3125,7 +3128,8 @@ Probe `get_protocol_info.capabilities` first: without `session_retirement`, a co
 promise engine-enforced retirement.
 
 `find_session.found.retirement` reports the marker without opening the file. Resident
-`list_sessions` rows and `get_state` also report `retirement: { retiredAt, reason }` when present.
+`list_sessions` rows also report `retirement: { retiredAt, reason }` when a live session is marked.
+`get_state` does not carry it: it answers from memory in the tick it is asked.
 Retirement does not add a file-only session to the resident list.
 
 The store is `<agentDir>/retired-sessions/<durable-id>.json`, keyed by the transcript header.

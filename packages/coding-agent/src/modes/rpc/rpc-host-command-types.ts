@@ -157,7 +157,17 @@ type RpcCommandBody =
 			 */
 			telemetry?: TelemetryDeclaration;
 	  }
-	| { id?: string; type: "close_session"; sessionId: string }
+	| {
+			id?: string;
+			type: "close_session";
+			sessionId: string;
+			/**
+			 * Also retire the session when this close is its final one: no restore and no plain `open_session` reopens it
+			 * until an `open_session` with `reopenRetired: true`. Default false: a closed session reopens from its file.
+			 * A session with no transcript file has nothing to retire and closes as usual. Requires `session_retirement`.
+			 */
+			retire?: boolean;
+	  }
 	| RpcMoveSessionCommand
 	| {
 			id?: string;
