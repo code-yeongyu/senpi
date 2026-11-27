@@ -2,11 +2,11 @@
 import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
-import type * as runtimeModule from "../../../src/core/agent-session-runtime.ts";
+import * as runtimeModule from "../../../src/core/agent-session-runtime.ts";
 import { restoreStdout } from "../../../src/core/output-guard.ts";
-import type * as timingsModule from "../../../src/core/timings.ts";
+import * as timingsModule from "../../../src/core/timings.ts";
 import { main } from "../../../src/main.ts";
 import { HOST_EXIT_USAGE } from "../../../src/modes/rpc/host-outcome.ts";
 
@@ -32,40 +32,16 @@ const state = vi.hoisted(() => ({
 	]),
 }));
 
-// Only main() records these checkpoints, so reaching one after an exit means main() kept starting up.
-vi.mock("../../../src/core/timings.ts", async (importOriginal) => {
-	const actual = await importOriginal<typeof timingsModule>();
-	return {
-		...actual,
-		time(label: string, namespace?: timingsModule.TimingLabel): void {
-			if (state.exits.length > 0 && state.mainCheckpoints.has(label)) {
-				throw new Error(
-					`main() kept starting up after process.exit(${String(state.exits[0])}): reached "${label}"`,
-				);
-			}
-			actual.time(label, namespace);
-		},
-	};
-});
+// Both modules keep their real implementations; each test observes the startup checkpoints and the runtimes main() creates.
+vi.mock("../../../src/core/timings.ts", { spy: true });
+vi.mock("../../../src/core/agent-session-runtime.ts", { spy: true });
 
-vi.mock("../../../src/core/agent-session-runtime.ts", async (importOriginal) => {
-	const actual = await importOriginal<typeof runtimeModule>();
-	return {
-		...actual,
-		async createAgentSessionRuntime(...args: Parameters<typeof actual.createAgentSessionRuntime>) {
-			const runtime = await actual.createAgentSessionRuntime(...args);
-			// main() may dispose the runtime itself; the cleanup below must not dispose it a second time.
-			const dispose = runtime.dispose.bind(runtime);
-			let disposed = false;
-			runtime.dispose = async () => {
-				if (disposed) return;
-				disposed = true;
-				await dispose();
-			};
-			state.runtimes.push(runtime);
-			return runtime;
-		},
-	};
+let actualTimings: typeof timingsModule;
+let actualRuntime: typeof runtimeModule;
+
+beforeAll(async () => {
+	actualTimings = await vi.importActual<typeof timingsModule>("../../../src/core/timings.ts");
+	actualRuntime = await vi.importActual<typeof runtimeModule>("../../../src/core/agent-session-runtime.ts");
 });
 
 const fixture = resolve(__dirname, "../../fixtures/before-compaction.jsonl");
@@ -84,6 +60,26 @@ beforeEach(() => {
 	originalExitCode = process.exitCode;
 	process.chdir(join(root, "project"));
 	state.exits.length = 0;
+	// Only main() records these checkpoints, so reaching one after an exit means main() kept starting up.
+	vi.mocked(timingsModule.time).mockImplementation((label, namespace) => {
+		if (state.exits.length > 0 && state.mainCheckpoints.has(label)) {
+			throw new Error(`main() kept starting up after process.exit(${String(state.exits[0])}): reached "${label}"`);
+		}
+		actualTimings.time(label, namespace);
+	});
+	vi.mocked(runtimeModule.createAgentSessionRuntime).mockImplementation(async (...args) => {
+		const runtime = await actualRuntime.createAgentSessionRuntime(...args);
+		// main() may dispose the runtime itself; the cleanup below must not dispose it a second time.
+		const dispose = runtime.dispose.bind(runtime);
+		let disposed = false;
+		runtime.dispose = async () => {
+			if (disposed) return;
+			disposed = true;
+			await dispose();
+		};
+		state.runtimes.push(runtime);
+		return runtime;
+	});
 	vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
 		state.exits.push(code);
 		return undefined as never;
@@ -120,14 +116,10 @@ describe("main() early-exit branches (#2955)", () => {
 		{ branch: "--list-tips", args: () => ["--list-tips"], code: 0 },
 		{ branch: "--list-models", args: () => ["--list-models"], code: 0 },
 		{ branch: "--help with --print", args: () => ["--print", "--help"], code: 0 },
-	])(
-		"$branch exits once and runs nothing after its exit",
-		async ({ args, code }) => {
-			await expect(main(args())).resolves.toBeUndefined();
-			expect(state.exits).toEqual([code]);
-		},
-		120_000,
-	);
+	])("$branch exits once and runs nothing after its exit", async ({ args, code }) => {
+		await expect(main(args())).resolves.toBeUndefined();
+		expect(state.exits).toEqual([code]);
+	});
 });
 
 describe("main() early-exit branches hand the process back when process.exit returns (#2955)", () => {
@@ -135,50 +127,38 @@ describe("main() early-exit branches hand the process back when process.exit ret
 		{ branch: "--list-tips with --print", args: ["--print", "--list-tips"] },
 		{ branch: "--list-models with --print", args: ["--print", "--list-models"] },
 		{ branch: "--help with --print", args: ["--print", "--help"] },
-	])(
-		"$branch restores stdout before returning",
-		async ({ args }) => {
-			const write = process.stdout.write;
-			await main(args);
-			expect(state.exits).toEqual([0]);
-			expect(process.stdout.write).toBe(write);
-		},
-		120_000,
-	);
+	])("$branch restores stdout before returning", async ({ args }) => {
+		const write = process.stdout.write;
+		await main(args);
+		expect(state.exits).toEqual([0]);
+		expect(process.stdout.write).toBe(write);
+	});
 
 	it.each([
 		{ branch: "--list-tips in json mode", args: ["--mode", "json", "--list-tips"] },
 		{ branch: "--help in json mode", args: ["--mode", "json", "--help"] },
-	])(
-		"$branch restores console.log before returning",
-		async ({ args }) => {
-			const log = console.log;
-			await main(args);
-			expect(state.exits).toEqual([0]);
-			expect(console.log).toBe(log);
-		},
-		120_000,
-	);
+	])("$branch restores console.log before returning", async ({ args }) => {
+		const log = console.log;
+		await main(args);
+		expect(state.exits).toEqual([0]);
+		expect(console.log).toBe(log);
+	});
 
 	it.each([
 		{ branch: "--help with --print", args: ["--print", "--help"] },
 		{ branch: "--help in json mode", args: ["--mode", "json", "--help"] },
-	])(
-		"$branch shuts its session runtime down before returning",
-		async ({ args }) => {
-			const shutdowns: string[] = [];
-			await main(args, {
-				extensionFactories: [
-					(pi) => {
-						pi.on("session_shutdown", (event) => {
-							shutdowns.push(event.reason);
-						});
-					},
-				],
-			});
-			expect(state.exits).toEqual([0]);
-			expect(shutdowns).toEqual(["quit"]);
-		},
-		120_000,
-	);
+	])("$branch shuts its session runtime down before returning", async ({ args }) => {
+		const shutdowns: string[] = [];
+		await main(args, {
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_shutdown", (event) => {
+						shutdowns.push(event.reason);
+					});
+				},
+			],
+		});
+		expect(state.exits).toEqual([0]);
+		expect(shutdowns).toEqual(["quit"]);
+	});
 });
