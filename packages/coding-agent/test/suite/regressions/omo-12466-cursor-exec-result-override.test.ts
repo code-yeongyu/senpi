@@ -2,7 +2,10 @@ import { type AgentEvent, type AgentTool, openMemoryBatchStore } from "@earendil
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { type CursorExecBridgeSession, createSessionCursorExecBridge } from "../../../src/core/cursor-exec-bridge-session.ts";
+import {
+	type CursorExecBridgeSession,
+	createSessionCursorExecBridge,
+} from "../../../src/core/cursor-exec-bridge-session.ts";
 
 // omo#12466: an extension's tool_result handler may replace a result (the memory guard does, when a second memory
 // identity appears while a recursive listing or search runs). Synthetic names only: no real identity is read.
@@ -28,11 +31,10 @@ function rig() {
 		preflightToolCall: async () => undefined,
 		releaseExecBridgeToolCall: () => undefined,
 		// Where the session runs its tool_result chain. The chain's answer is modelled as the replacement the memory
-		// guard returns; the declared return type is void, so the cast is what a caller with an answer would need.
+		// guard returns.
 		emitExecBridgeToolResult: async () => {
 			order.push("tool_result");
-			const replacement = { content: [{ type: "text", text: DENY }], isError: true, details: {} };
-			return replacement as unknown as undefined;
+			return { content: [{ type: "text", text: DENY }], isError: true, details: {} };
 		},
 	};
 	const runSignal = new AbortController().signal;
