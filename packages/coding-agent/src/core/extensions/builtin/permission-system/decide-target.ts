@@ -1,3 +1,4 @@
+import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isPresetRule } from "./config.ts";
@@ -128,6 +129,8 @@ function canonicalForCompare(value: string): string | undefined {
 	const missing: string[] = [];
 	for (;;) {
 		try {
+			// realpath opens the path: under an unmounted automount it would park the host thread (senpi#4565).
+			refuseUnmountedAutomountPath(existing);
 			return fold(path.join(fs.realpathSync.native(existing), ...missing));
 		} catch {
 			const parent = path.dirname(existing);

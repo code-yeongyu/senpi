@@ -1,3 +1,5 @@
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
+import { RpcSessionRegistryError } from "./session-registry-types.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -13,7 +15,8 @@ export function canonicalSessionPath(path: string): string {
 	const absolutePath = resolve(path);
 	const missing: string[] = [];
 	let existing = absolutePath;
-	while (!existsSync(existing)) {
+	// A component under an unmounted automount names nothing on this machine; probing it would park the host thread.
+	while (automountTriggerPathSync(existing) !== undefined || !existsSync(existing)) {
 		const parent = dirname(existing);
 		if (parent === existing) return absolutePath;
 		missing.unshift(basename(existing));
@@ -30,5 +33,21 @@ export function canonicalSessionPath(path: string): string {
 
 /** The directory a session writes its transcript into is gone: it can never persist again. */
 export function sessionDirectoryRemoved(sessionFile: string): boolean {
-	return !existsSync(dirname(sessionFile));
+	const directory = dirname(sessionFile);
+	return automountTriggerPathSync(directory) !== undefined || !existsSync(directory);
+}
+
+/**
+ * Refuse a session whose cwd or file lies under an unmounted automount trigger (senpi#4565): a path of another
+ * machine (a Linux `/home/<user>/...` handed to a macOS host) names nothing here, and every synchronous probe of it
+ * would park the host thread.
+ */
+export function assertSessionPathsOnThisMachine(profile: {
+	readonly cwd: string;
+	readonly sessionPath?: string;
+}): void {
+	for (const path of [profile.cwd, profile.sessionPath]) {
+		if (path !== undefined && automountTriggerPathSync(path) !== undefined)
+			throw new RpcSessionRegistryError("invalid_path", undefined, { reason: "automount_not_mounted", path });
+	}
 }

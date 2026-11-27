@@ -1,11 +1,12 @@
 import { lstatSync, readlinkSync } from "node:fs";
 import { isAbsolute, join, resolve as nodeResolvePath, parse, sep } from "node:path";
+import { refuseUnmountedAutomountPath, UNMOUNTED_AUTOMOUNT } from "./automount-trigger.ts";
 
 /** Symlink hops allowed while resolving one path; realpath(3) reports ELOOP past this. */
 const MAX_SYMLINK_HOPS = 40;
 
 /** Error codes that mean "this component does not exist", which resolution tolerates. */
-const MISSING_PATH_CODES = new Set(["ENOENT", "ENOTDIR"]);
+const MISSING_PATH_CODES = new Set(["ENOENT", "ENOTDIR", UNMOUNTED_AUTOMOUNT]);
 
 function splitParts(pathSegment: string): string[] {
 	return pathSegment.split(sep).filter((part) => part.length > 0);
@@ -46,6 +47,8 @@ function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
 		const candidate = join(root, ...resolved, part);
 		let link: string;
 		try {
+			// An unmounted automount trigger would park this thread in lstat (senpi#4565): it ends the walk like any error.
+			refuseUnmountedAutomountPath(candidate);
 			if (!lstatSync(candidate).isSymbolicLink()) {
 				resolved.push(part);
 				continue;

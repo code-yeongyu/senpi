@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import { refuseUnmountedAutomountPath, UNMOUNTED_AUTOMOUNT } from "@code-yeongyu/senpi-machine-ops";
 import { dirname, resolve } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import { resolveToCwd } from "../../../tools/path-utils.ts";
@@ -125,9 +126,12 @@ const unknownToolTarget: TargetResolver = (rawPath, cwd) => [rawPath, resolveToC
 /** Match grep's pathStat: only ENOENT permits selector fallback; other I/O errors block the call. */
 function grepPathStat(path: string) {
 	try {
+		refuseUnmountedAutomountPath(path);
 		return statSync(path);
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		const code = (error as NodeJS.ErrnoException).code;
+		// A path under an unmounted automount names nothing on this machine, like a missing one (senpi#4565).
+		if (code === "ENOENT" || code === UNMOUNTED_AUTOMOUNT) return undefined;
 		throw error;
 	}
 }

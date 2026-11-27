@@ -1,4 +1,5 @@
 import { isAbsolute } from "node:path";
+import { assertSessionPathsOnThisMachine } from "./session-path-key.ts";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import { createRegistryWarm, type HostWarm, waitForWarms } from "./host-warm.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
@@ -243,6 +244,7 @@ export class RpcSessionRegistry {
 		if (!isAbsolute(profile.cwd) || (profile.sessionPath !== undefined && !isAbsolute(profile.sessionPath))) {
 			throw new RpcSessionRegistryError("invalid_path");
 		}
+		assertSessionPathsOnThisMachine(profile);
 		if (profile.durableSessionId !== undefined) {
 			try {
 				assertValidSessionId(profile.durableSessionId);

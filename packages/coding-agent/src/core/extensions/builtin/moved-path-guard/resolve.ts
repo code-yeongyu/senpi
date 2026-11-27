@@ -1,4 +1,5 @@
 import { accessSync, existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { type MovedPath, readJsonFileSync } from "./breadcrumb-trust.ts";
@@ -6,6 +7,12 @@ import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
 import { failedReply, movedPathWalk, type ResolverStep } from "./walk.ts";
 
 export { type MovedPath, movedPathReason } from "./breadcrumb-trust.ts";
+
+/** The path a step would probe lies under an unmounted automount trigger. */
+export function offThisMachine(step: ResolverStep): boolean {
+	const probed = step.op === "json" ? step.file : step.op === "home" ? undefined : step.path;
+	return probed !== undefined && automountTriggerPathSync(probed) !== undefined;
+}
 
 /** Realpath of the deepest existing ancestor plus the missing tail, so every spelling of a path compares equal. */
 function canonicalPath(path: string): string {
@@ -35,6 +42,8 @@ function pathExistsSync(path: string): boolean | undefined {
 }
 
 function answer(step: ResolverStep): unknown {
+	// A path under an unmounted automount names nothing on this machine; any probe of it would park this thread (senpi#4565).
+	if (offThisMachine(step)) return failedReply(step);
 	try {
 		if (step.op === "canonical") return canonicalPath(step.path);
 		if (step.op === "json") return readJsonFileSync(step.file);

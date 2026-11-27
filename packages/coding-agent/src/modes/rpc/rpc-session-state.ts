@@ -3,6 +3,7 @@
  * the TUI control endpoint all answer through this one function, so no surface can drift from another.
  */
 import { existsSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
@@ -78,7 +79,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		cwd,
 		projectTrusted,
 		...(session.sessionFile &&
-		!existsSync(session.sessionFile) &&
+		(automountTriggerPathSync(session.sessionFile) !== undefined || !existsSync(session.sessionFile)) &&
 		session.sessionManager
 			.getEntries()
 			.some(

@@ -1,5 +1,6 @@
 import { readdir, readlink } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { type AutomountHelperPoolOptions, createAutomountHelperPool } from "./automount-helper-pool.ts";
 import { type AutomountRealpath, type AutomountRealpathOptions, realpathOutOfProcess } from "./automount-realpath.ts";
 import { type MountEntry, readMountTable } from "./mount-table.ts";
 
@@ -44,6 +45,14 @@ function throughAlias(path: readonly string[], view: MountView): readonly string
  * only while every entry at that deepest point is autofs; the answer is spelled with the mount point's own case.
  */
 export function unmountedAutomountPath(path: string, view: MountView): string | undefined {
+	const trigger = unmountedAutomount(path, view);
+	return trigger === undefined ? undefined : join(trigger.mountPoint, ...trigger.below);
+}
+
+function unmountedAutomount(
+	path: string,
+	view: MountView,
+): { readonly mountPoint: string; readonly below: readonly string[] } | undefined {
 	const mapped = throughAlias(segmentsOf(resolve(path)), view);
 	let owners: MountEntry[] = [];
 	let ownerDepth = -1;
@@ -56,7 +65,7 @@ export function unmountedAutomountPath(path: string, view: MountView): string | 
 	}
 	const [owner] = owners;
 	if (owner === undefined || owners.some((entry) => entry.type !== "autofs")) return undefined;
-	return join(owner.mountPoint, ...mapped.slice(ownerDepth));
+	return { mountPoint: owner.mountPoint, below: mapped.slice(ownerDepth) };
 }
 
 async function rootAliases(roots: readonly string[], caseInsensitive: boolean): Promise<Map<string, string>> {
@@ -114,22 +123,87 @@ export function createAutomountTriggerLookup(readView: () => Promise<MountView>)
 	};
 }
 
-let active: { readonly lookup: AutomountTriggerLookup; readonly resolve: AutomountRealpathOptions } = {
-	lookup: createAutomountTriggerLookup(readMountView),
-	resolve: {},
+/**
+ * The macOS automounter's default map (`/etc/auto_master`: `/home` through its root alias, `/net`, `/Network/Servers`),
+ * answered by {@link automountTriggerPathSync} until the first mount-table read of the process lands.
+ */
+const DARWIN_DEFAULT_VIEW: MountView = {
+	mounts: [
+		{ mountPoint: "/", type: "apfs" },
+		{ mountPoint: "/System/Volumes/Data/home", type: "autofs" },
+		{ mountPoint: "/net", type: "autofs" },
+		{ mountPoint: "/System/Volumes/Data/net", type: "autofs" },
+		{ mountPoint: "/Network/Servers", type: "autofs" },
+		{ mountPoint: "/System/Volumes/Data/Network/Servers", type: "autofs" },
+	],
+	aliases: new Map([["/home", "/System/Volumes/Data/home"]]),
+	caseInsensitive: true,
 };
+
+interface ActiveTriggers {
+	readonly lookup: AutomountTriggerLookup;
+	readonly resolve: AutomountRealpathOptions;
+	readonly helpers: ReturnType<typeof createAutomountHelperPool>;
+	/** The view the latest finished read returned: what the synchronous check answers from. */
+	settled: MountView | undefined;
+	readonly fallback: MountView | undefined;
+	/**
+	 * Whether a lookup under an automount that does not answer blocks in the kernel (macOS): only there does the
+	 * synchronous check refuse, and only there are resolver helpers bounded, since one stuck there may outlive its kill.
+	 */
+	readonly lookupsBlockInKernel: boolean;
+}
+
+/** What {@link answerAutomountTriggersFrom} may replace besides the view and the resolver. */
+export interface AutomountTriggerBounds {
+	readonly helpers?: AutomountHelperPoolOptions;
+	/** The view the synchronous check answers from before the first read; defaults to the platform's default map. */
+	readonly fallback?: MountView;
+	/** The platform whose synchronous-check policy applies; defaults to this process's. */
+	readonly platform?: NodeJS.Platform;
+}
+
+function activeFrom(
+	readView: () => Promise<MountView>,
+	resolve: AutomountRealpathOptions,
+	bounds: AutomountTriggerBounds,
+): ActiveTriggers {
+	const platform = bounds.platform ?? process.platform;
+	const state: ActiveTriggers = {
+		lookup: createAutomountTriggerLookup(async () => {
+			const view = await readView();
+			state.settled = view;
+			return view;
+		}),
+		resolve,
+		helpers: createAutomountHelperPool(realpathOutOfProcess, bounds.helpers),
+		settled: undefined,
+		fallback: bounds.fallback ?? defaultTriggerView(platform),
+		lookupsBlockInKernel: platform === "darwin",
+	};
+	return state;
+}
+
+/** The view {@link automountTriggerPathSync} answers from before the first read: the automounter's default map on macOS. */
+export function defaultTriggerView(platform: NodeJS.Platform = process.platform): MountView | undefined {
+	return platform === "darwin" ? DARWIN_DEFAULT_VIEW : undefined;
+}
+
+let active = activeFrom(readMountView, {}, {});
 
 /**
  * Make {@link automountTriggerPath} answer from `readView` instead of the live mount table, and
- * {@link realpathUnderAutomount} resolve with `resolve`, until the returned function restores both. Tests use it to
- * stand a temporary directory in for a trigger; the live table cannot be written.
+ * {@link realpathUnderAutomount} resolve with `resolve` under `bounds` (helper limits, the synchronous check's
+ * fallback view and platform), until the returned function restores the previous state. Tests use it to stand a temporary directory in for a trigger;
+ * the live table cannot be written.
  */
 export function answerAutomountTriggersFrom(
 	readView: () => Promise<MountView>,
 	resolve: AutomountRealpathOptions = {},
+	bounds: AutomountTriggerBounds = {},
 ): () => void {
 	const previous = active;
-	active = { lookup: createAutomountTriggerLookup(readView), resolve };
+	active = activeFrom(readView, resolve, bounds);
 	return () => {
 		active = previous;
 	};
@@ -137,7 +211,13 @@ export function answerAutomountTriggersFrom(
 
 /** Where a path under an automount trigger really leads, resolved outside this process ({@link realpathOutOfProcess}). */
 export function realpathUnderAutomount(path: string): Promise<AutomountRealpath> {
-	return realpathOutOfProcess(path, active.resolve);
+	const state = active;
+	if (!state.lookupsBlockInKernel) return realpathOutOfProcess(path, state.resolve);
+	const view = state.settled ?? state.fallback;
+	const trigger = view === undefined ? undefined : unmountedAutomount(path, view);
+	// One automount answers for its mount point plus the first name below it (an auto_home user, a /net host).
+	const key = trigger === undefined ? resolve(path) : join(trigger.mountPoint, ...trigger.below.slice(0, 1));
+	return state.helpers(path, key, state.resolve);
 }
 
 /**
@@ -151,4 +231,45 @@ export function realpathUnderAutomount(path: string): Promise<AutomountRealpath>
  */
 export function automountTriggerPath(path: string): Promise<string | undefined> {
 	return active.lookup(path);
+}
+
+/**
+ * {@link automountTriggerPath} for a caller that cannot wait: the host thread's synchronous path probes (senpi#4565).
+ * A synchronous `lstat`/`stat`/`readdir`/`realpath` of a path under a trigger whose automounter does not answer never
+ * returns and parks the whole process, so such a path must be answered "not on this machine" before any of them runs.
+ *
+ * Only macOS refuses: there a lookup under an automount whose automounter does not answer blocks in the kernel, and
+ * `/home` is such a trigger by default. On Linux a lookup under an autofs mount point mounts it (an indirect `/home`,
+ * `/net`, a systemd automount after its idle unmount), so a path there stays an ordinary path and nothing is refused.
+ *
+ * It answers from the view the latest finished read returned, and never waits or looks at the path itself. Before the
+ * first read has finished it answers from the automounter's default map. A view older than the lookup's maximum age
+ * starts a background re-read (macOS reads the table with `mount` in a child process), so a trigger that mounted since
+ * stops being refused once that read lands.
+ */
+export function automountTriggerPathSync(path: string): string | undefined {
+	const state = active;
+	if (!state.lookupsBlockInKernel) return undefined;
+	// The lookup re-reads the view only when its last read is stale, and the root is never under a trigger.
+	state.lookup(sep).catch(() => undefined);
+	const view = state.settled ?? state.fallback;
+	return view === undefined ? undefined : unmountedAutomountPath(path, view);
+}
+
+/** The error code a synchronous probe refused by {@link refuseUnmountedAutomountPath} fails with. */
+export const UNMOUNTED_AUTOMOUNT = "EAUTOMOUNT";
+
+/**
+ * Throw, as a filesystem call would, when `path` is under an unmounted automount trigger ({@link automountTriggerPathSync}):
+ * the path names nothing on this machine, and the synchronous probe the caller was about to run could never return.
+ */
+export function refuseUnmountedAutomountPath(path: string): void {
+	if (automountTriggerPathSync(path) === undefined) return;
+	throw Object.assign(
+		new Error(`${UNMOUNTED_AUTOMOUNT}: ${path} is under an automount that is not mounted on this machine`),
+		{
+			code: UNMOUNTED_AUTOMOUNT,
+			path,
+		},
+	);
 }

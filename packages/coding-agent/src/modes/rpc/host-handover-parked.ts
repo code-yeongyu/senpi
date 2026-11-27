@@ -14,6 +14,7 @@
  * session file is gone is dropped, never retried.
  */
 import { createHash } from "node:crypto";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { isTelemetryConsent, type TelemetryConsent } from "../../core/telemetry-consent.ts";
 import { existsSync, renameSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -197,6 +198,6 @@ export function clearInheritedParkedSession(
 }
 
 export function dropHandoverParkedSessionIfFileGone(daemonDir: string, sessionPath: string): Promise<void> {
-	if (existsSync(sessionPath)) return Promise.resolve();
+	if (automountTriggerPathSync(sessionPath) === undefined && existsSync(sessionPath)) return Promise.resolve();
 	return clearHandoverParkedSession(daemonDir, sessionPath);
 }

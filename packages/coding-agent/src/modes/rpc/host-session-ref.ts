@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
@@ -78,7 +79,7 @@ function looksLikePath(ref: string): boolean {
 
 async function parkedByPath(ref: string): Promise<ResolvedSessionRef> {
 	const path = canonicalSessionPath(ref);
-	if (!existsSync(path)) return { kind: "unknown" };
+	if (automountTriggerPathSync(path) !== undefined || !existsSync(path)) return { kind: "unknown" };
 	const info = (await SessionManager.listAll(dirname(path))).find((session) => samePath(session.path, path));
 	return info ? parked(info) : { kind: "unknown" };
 }

@@ -1,4 +1,5 @@
 import { type Dirent, existsSync, statSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { getSessionsDir } from "../config.ts";
@@ -26,7 +27,12 @@ type VanishedKind = "here" | "moved";
 function vanishedClassifier(cwd: string, current: RepositoryIdentity | undefined) {
 	const ownCwd = sessionCwdMatcher(cwd);
 	const kind = (session: SessionInfo): VanishedKind | undefined => {
-		if (!session.cwd || resolvePath(session.cwd) === cwd || existsSync(session.cwd)) return undefined;
+		if (
+			!session.cwd ||
+			resolvePath(session.cwd) === cwd ||
+			(automountTriggerPathSync(session.cwd) === undefined && existsSync(session.cwd))
+		)
+			return undefined;
 		if (ownCwd(session.cwd)) return "here";
 		if (current === undefined) return undefined;
 		return compareRepositoryIdentities(session.repositoryIdentity, current) === "same" ? "moved" : undefined;
@@ -81,7 +87,12 @@ async function sessionsAtVanishedPaths(cwd: string, keep: (recorded: string) => 
 		const dir = join(root, entry.name);
 		if (normalizePath(dir) === own) continue;
 		const recorded = await recordedCwd(dir);
-		if (recorded === undefined || existsSync(recorded) || !keep(recorded)) continue;
+		if (
+			recorded === undefined ||
+			(automountTriggerPathSync(recorded) === undefined && existsSync(recorded)) ||
+			!keep(recorded)
+		)
+			continue;
 		sessions.push(...(await listSessionsFromDir(dir)));
 	}
 	return sessions;

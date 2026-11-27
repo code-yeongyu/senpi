@@ -7,7 +7,7 @@ const AUTOMOUNT_RESOLUTION_DEADLINE_MS = 5000;
 export type AutomountRealpath =
 	| { readonly kind: "resolved"; readonly path: string }
 	| { readonly kind: "failed"; readonly code: string }
-	| { readonly kind: "unanswered" };
+	| { readonly kind: "unanswered"; readonly reason?: "recently_unanswered" | "helper_limit" };
 
 export interface AutomountRealpathOptions {
 	readonly deadlineMs?: number;

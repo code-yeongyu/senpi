@@ -1,4 +1,5 @@
 import { accessSync, constants } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { access } from "node:fs/promises";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import {
@@ -10,6 +11,8 @@ import {
 } from "./file-tool-host.ts";
 
 function fileExists(filePath: string): boolean {
+	// A probe of a path under an unmounted automount would park the host thread (senpi#4565).
+	if (automountTriggerPathSync(filePath) !== undefined) return false;
 	try {
 		accessSync(filePath, constants.F_OK);
 		return true;

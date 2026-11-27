@@ -1,4 +1,5 @@
 import { type BigIntStats, lstatSync, readdirSync, statSync } from "node:fs";
+import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
 import { basename, dirname, isAbsolute, join, parse, sep } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import { Wildcard } from "./wildcard.ts";
@@ -21,8 +22,10 @@ function swapCase(name: string): string {
 function mayHaveOtherCase(parent: string, part: string, identity: BigIntStats): boolean {
 	const swapped = swapCase(part);
 	if (swapped === part) return false;
+	const sibling = `${parent}${parent.endsWith(sep) ? "" : sep}${swapped}`;
 	try {
-		const other = lstatSync(`${parent}${parent.endsWith(sep) ? "" : sep}${swapped}`, { bigint: true });
+		refuseUnmountedAutomountPath(sibling);
+		const other = lstatSync(sibling, { bigint: true });
 		return other.dev === identity.dev && other.ino === identity.ino;
 	} catch {
 		return false;
@@ -47,6 +50,7 @@ export function canonicalPathCase(
 	for (let index = 0; index < parts.length; index++) {
 		const part = parts[index];
 		try {
+			refuseUnmountedAutomountPath(`${parent}${parent.endsWith(sep) ? "" : sep}${part}`);
 			const identity = lstatSync(`${parent}${parent.endsWith(sep) ? "" : sep}${part}`, { bigint: true });
 			const entries = mayHaveOtherCase(parent, part, identity) ? listDirectory(parent) : [part];
 			if (!entries.includes(part)) {
@@ -77,6 +81,8 @@ export function sameLexicalPath(left: string, right: string): boolean {
 	try {
 		for (let index = 0; index < leftParts.length; index++) {
 			if (leftParts[index] === rightParts[index]) continue;
+			refuseUnmountedAutomountPath(leftRoot + leftParts.slice(0, index + 1).join(sep));
+			refuseUnmountedAutomountPath(rightRoot + rightParts.slice(0, index + 1).join(sep));
 			const a = lstatSync(leftRoot + leftParts.slice(0, index + 1).join(sep), { bigint: true });
 			const b = lstatSync(rightRoot + rightParts.slice(0, index + 1).join(sep), { bigint: true });
 			if (a.dev !== b.dev || a.ino !== b.ino) return false;
@@ -106,6 +112,7 @@ export function createExternalPathMatcher(
 		let result = identities.get(value);
 		if (result === undefined) {
 			try {
+				refuseUnmountedAutomountPath(value);
 				result = statSync(value, { bigint: true });
 			} catch (error) {
 				result = error as Error;
