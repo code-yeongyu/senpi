@@ -8,6 +8,7 @@ import {
 	stringEnd,
 	type Undecided,
 } from "./identity-text.ts";
+import { ScopeState } from "./identity-scope.ts";
 import { undecidedTail } from "./identity-tail.ts";
 
 const closers = (text: string): number => {
@@ -15,7 +16,6 @@ const closers = (text: string): number => {
 	for (let i = text.indexOf("}"); i >= 0; i = text.indexOf("}", i + 1)) n++;
 	return n;
 };
-import { ScopeState } from "./identity-scope.ts";
 
 const HISTORY = 65536;
 const HOLD = 65536;
@@ -126,9 +126,10 @@ export class IdentityOutputStream {
 		if ("token" in discard) return buf.match(discard.token)?.[0].length ?? 0;
 		for (let i = 0; i < buf.length; i++) {
 			const c = buf[i];
+			if (c === "\n" || c === "\r") return i;
 			if (discard.escaped) discard.escaped = false;
 			else if (c === "\\") discard.escaped = true;
-			else if (c === discard.quote || c === "\n" || c === "\r") return i;
+			else if (c === discard.quote) return i;
 		}
 		return buf.length;
 	}

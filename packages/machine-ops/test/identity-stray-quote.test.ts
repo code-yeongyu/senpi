@@ -49,6 +49,49 @@ describe("a stray quote does not hide a later human record", () => {
 		}
 	});
 
+	it("masks a human record whose own line an earlier escape shifted", () => {
+		const text = `{"a":"b\\{"note":"a \\" b","kind":"human","v":1,"secretKey":"${secret}"}\n`;
+		const whole = redactIdentityText(text);
+		expect(whole.includes(secret.slice(0, 16))).toBe(false);
+		for (const piece of [1, 9, 64]) expect(streamed(text, piece) === whole).toBe(true);
+	});
+
+	it("masks a human value that never closes past the hold bound", () => {
+		const s = new IdentityOutputStream();
+		let out = s.push('{"kind":"human","v":1,"secretKey":"');
+		for (let i = 0; i < 64; i++) out += s.push("x".repeat(4096));
+		expect((out + s.finish()).includes("x")).toBe(false);
+	});
+
+	// Review M4 and the reviewer's same-line and multi-line rows: no escape crosses a line break,
+	// a secret value in no known object is masked, and a string ended by a line break leaves a
+	// doubt mark that masks secret values until an object opens and closes cleanly at depth zero.
+	it.each([
+		["a backslash at a line end, then a pretty record", `path "a\\\n${pretty}`],
+		["a backslash at a CRLF line end, then a pretty record", `path "a\\\r\n${pretty.replaceAll("\n", "\r\n")}`],
+		["a backslash at a line end, then a compact record", `echo "C:\\dir\\\n${record}`],
+		[
+			"an open string ending in a backslash, on the record's line",
+			`{"a":"b\\${record.replace('"v":1,', '"v":1,"note":"a\\"b",')}`,
+		],
+		["an unterminated quote on the record's line", `say "hi ${record}`],
+		["a quote before the brace, then a pretty record", `result=" ${pretty}`],
+		["a quote at the start of the kind line", pretty.replace('  "kind"', '"  "kind"')],
+		["a quote at the start of the v line", pretty.replace('  "v"', '"  "v"')],
+	])("masks %s", (_name, text) => {
+		const whole = redactIdentityText(text);
+		expect(whole.includes(secret.slice(0, 16))).toBe(false);
+		for (const piece of [1, 7, 64, 4096]) expect(streamed(text, piece) === whole).toBe(true);
+	});
+
+	it("keeps a version-0 human record and a record after a clean object visible", () => {
+		const v0 = `{"kind":"human","v":0,"secretKey":"public-label"}\n`;
+		for (const text of [v0, `"\n{"done":true}\n{"kind":"robot","v":1,"secretKey":"public-label"}\n`]) {
+			expect(redactIdentityText(text)).toBe(text);
+			expect(streamed(text, 5)).toBe(text);
+		}
+	});
+
 	it("keeps paired quotes, escaped quotes and non-human records as they are", () => {
 		const robot = `{"kind":"robot","v":1,"secretKey":"public-label"}\n`;
 		for (const text of [`"a" "b"\n${robot}`, `{"s":"x \\" y"}\n${robot}`, `it's\n${robot}`]) {

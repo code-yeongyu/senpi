@@ -28,7 +28,10 @@ interface ObjectScope {
 	human: boolean;
 	version: boolean;
 	candidates: Span[];
+	/** Opened at depth zero after the last doubt mark: closing it clears the mark. */
+	clean: boolean;
 }
+const isBreak = (c: string) => c === "\n" || c === "\r";
 
 export const NAME = "(?:signing|sealing)(?:_private_key|privatekey)?";
 export const MAX_GAP = 64;
@@ -77,8 +80,10 @@ export function normalize(text: string): { view: string; at?: Int32Array } {
  * one stray quote cannot keep the rest of a log inside a string. */
 export function stringEnd(text: string, start: number): number {
 	for (let i = start + 1; i < text.length; i++) {
-		if (text[i] === "\\") i++;
-		else if (text[i] === text[start] || text[i] === "\n" || text[i] === "\r") return i;
+		const c = text[i];
+		if (c === text[start] || c === "\n" || c === "\r") return i;
+		// No escape crosses a raw line break: a backslash at a line end ends the string there.
+		if (c === "\\" && text[i + 1] !== "\n" && text[i + 1] !== "\r") i++;
 	}
 	return text.length;
 }
@@ -87,6 +92,8 @@ export function stringEnd(text: string, start: number): number {
 const spelled = (key: string) => [...key].map((c) => `(?:${c}|\\\\u00${c.charCodeAt(0).toString(16)})`).join("");
 const KEY_NAME = `(?<!\\\\)(["'])(?:${spelled("secretKey")}|${spelled("sealedKey")})\\1\\s*`;
 const KEY_TEXT = new RegExp(`${KEY_NAME}:\\s*(["'])`, "gi");
+const HUMAN_BEFORE = /["']kind["']\s*:\s*["']human["']/;
+const VERSION_BEFORE = /["']v["']\s*:\s*1(?![\d.eE])/;
 const KEY_TEXT_END = new RegExp(`${KEY_NAME}(:\\s*)?$`, "i");
 
 /** Fail-safe: where the text spells a secret key but the parser was not at a key there, its
@@ -149,14 +156,22 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 	const found: Span[] = [];
 	const stack: ObjectScope[] = [];
 	const starts = new Set<number>();
+	// Fail-safe doubt mark: a string ended by a line break means the parser lost its place, so
+	// every secret value is masked until an object opens and closes cleanly at depth zero.
+	let doubt = false;
+	const lose = () => {
+		doubt = true;
+		for (const scope of stack) scope.clean = false;
+	};
 	const finish = () => {
 		const scope = stack.pop();
 		if (scope?.human && scope.version) found.push(...scope.candidates);
+		if (doubt && scope?.clean && !stack.length) doubt = false;
 	};
 	for (let i = 0; i < text.length; i++) {
 		const c = text[i];
 		if (c === "{") {
-			stack.push({ human: false, version: false, candidates: [] });
+			stack.push({ human: false, version: false, candidates: [], clean: doubt && !stack.length });
 			continue;
 		}
 		if (c === "}") {
@@ -168,6 +183,7 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 		if (c === "'" && i > 0 && /[\w]/.test(text.charAt(i - 1))) continue;
 		starts.add(i);
 		const end = stringEnd(text, i);
+		if (isBreak(text.charAt(end))) lose();
 		const field = decodeString(text.slice(i + 1, end), c);
 		found.push(...nestedSpans(text, i + 1, end, depth, end === text.length ? undecided : undefined));
 		i = end;
@@ -182,10 +198,16 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 		if (text[v] === '"' || text[v] === "'") {
 			starts.add(v);
 			const close = stringEnd(text, v);
+			if (isBreak(text.charAt(close))) lose();
 			const span = { start: v + 1, end: close, replacement: IDENTITY_MASK };
 			if (scope && field === "kind") scope.human = decodeString(text.slice(v + 1, close), text[v]) === "human";
 			if (field === "secretKey" || field === "sealedKey") {
 				scope?.candidates.push(span);
+				// Fail-safe: no known object, a doubt mark, or a line that already named a human record
+				// (an escape earlier on the line can shift the parse out of it): mask regardless.
+				const line = text.slice(text.lastIndexOf("\n", i) + 1, i);
+				if (!scope || doubt || (HUMAN_BEFORE.test(line) && VERSION_BEFORE.test(line)))
+					found.push({ ...span, until: text[v] });
 			}
 			found.push(...nestedSpans(text, v + 1, close, depth, close === text.length ? undecided : undefined));
 			i = close;

@@ -6,6 +6,7 @@ const KEPT_RAW = 64;
 interface Scope {
 	human: boolean;
 	version: boolean;
+	clean: boolean;
 }
 
 /** Lexical state of released output, advanced character by character with the same rules the
@@ -24,6 +25,7 @@ export class ScopeState {
 	private afterColon: string | undefined;
 	private versionDigit = false;
 	private previous = "";
+	private doubt = false;
 
 	feed(text: string): void {
 		for (const c of text) this.step(c);
@@ -31,9 +33,10 @@ export class ScopeState {
 
 	private step(c: string): void {
 		if (this.quote) {
+			if (c === "\n" || c === "\r") return this.closeString(c);
 			if (this.escaped) this.escaped = false;
 			else if (c === "\\") this.escaped = true;
-			else if (c === this.quote || c === "\n" || c === "\r") return this.closeString(c);
+			else if (c === this.quote) return this.closeString(c);
 			if (this.raw.length < KEPT_RAW) this.raw += c;
 			else this.overflow = true;
 			return;
@@ -62,9 +65,11 @@ export class ScopeState {
 			}
 			this.pendingKey = undefined;
 		}
-		if (c === "{") this.stack.push({ human: false, version: false });
-		else if (c === "}") this.stack.pop();
-		else if ((c === '"' || c === "'") && !(c === "'" && /\w/.test(this.previous))) return this.openString(c);
+		if (c === "{") this.stack.push({ human: false, version: false, clean: this.doubt && !this.stack.length });
+		else if (c === "}") {
+			const scope = this.stack.pop();
+			if (this.doubt && scope?.clean && !this.stack.length) this.doubt = false;
+		} else if ((c === '"' || c === "'") && !(c === "'" && /\w/.test(this.previous))) return this.openString(c);
 		this.previous = c;
 	}
 
@@ -81,6 +86,10 @@ export class ScopeState {
 		if (this.field === undefined) this.pendingKey = value ?? "_";
 		else if (this.field === "kind" && top) top.human = value === "human";
 		this.previous = closer;
+		if (closer !== this.quote) {
+			this.doubt = true;
+			for (const scope of this.stack) scope.clean = false;
+		}
 		this.quote = "";
 		this.field = undefined;
 	}
@@ -89,10 +98,13 @@ export class ScopeState {
 	 * written: a window that closes fewer braces than that cannot reach the outer ones. */
 	render(depth: number): string {
 		const name = (key: string) => (KEPT_NAMES.has(key) ? key : "_");
-		let out = this.stack
-			.slice(-depth)
-			.map((s) => `{${s.version ? '"v":1,' : ""}${s.human ? '"kind":"human",' : ""}`)
-			.join("");
+		const open = this.stack.slice(-depth);
+		// A doubt mark is written as a string ended by a line break, before an object that opened
+		// after it at depth zero (its close clears the mark) and after every other object.
+		const markFirst = this.doubt && open.length === this.stack.length && !!open[0]?.clean;
+		let out = markFirst ? '"\n' : "";
+		out += open.map((s) => `{${s.version ? '"v":1,' : ""}${s.human ? '"kind":"human",' : ""}`).join("");
+		if (this.doubt && !markFirst) out += '"\n';
 		if (this.quote) {
 			const kept = this.overflow ? "" : this.raw;
 			if (this.field === undefined) out += this.quote + kept;
