@@ -23,6 +23,8 @@ import {
 	resetSessionRegistryBoundary,
 } from "../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
+import { getAgentDir } from "../src/config.ts";
 
 const model: Model<Api> = {
 	id: "claude-test",
@@ -94,6 +96,7 @@ describe("claude-sdk-oauth request environment", () => {
 				join(cwd, ".senpi", "settings.json"),
 				JSON.stringify({ anthropicSubscriptionProvider: { compactionOwner: "sdk", tokenInjection: "ambient" } }),
 			);
+			await new ProjectTrustStore(getAgentDir()).set(cwd, true);
 			const captured: Options[] = [];
 			overrideAuthLaneBoundary({
 				createStore: () => new InMemoryCredentialStore(),

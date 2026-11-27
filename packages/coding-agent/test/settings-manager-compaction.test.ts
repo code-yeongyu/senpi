@@ -90,7 +90,7 @@ describe("compaction model overrides", () => {
 				compaction: { reserveTokens: 1024, modelOverrides: { [modelKey]: { keepRecentTokens: 2000 } } },
 			}),
 		);
-		const manager = SettingsManager.fromStorage(storage);
+		const manager = SettingsManager.fromStorage(storage, { projectTrusted: true });
 		expect(tokenSettings(manager, model)).toEqual({
 			enabled: true,
 			reserveTokens: 400000,
@@ -114,7 +114,7 @@ describe("compaction model overrides", () => {
 				compaction: { modelOverrides: { [modelKey]: { enabled: false, reserveTokens: 400000 } } },
 			}),
 		);
-		const manager = SettingsManager.fromStorage(storage);
+		const manager = SettingsManager.fromStorage(storage, { projectTrusted: true });
 		expect(manager.getCompactionSettings(model).enabled).toBe(true);
 		manager.setCompactionEnabled(false);
 		await manager.flush();
@@ -132,7 +132,7 @@ describe("compaction model overrides", () => {
 						compaction: { modelOverrides: { [modelKey]: { [field]: value } } },
 					}),
 				);
-				const manager = SettingsManager.fromStorage(storage);
+				const manager = SettingsManager.fromStorage(storage, { projectTrusted: true });
 				expect(() => manager.getCompactionSettings(model)).toThrow(
 					`Invalid compaction.modelOverrides["${modelKey}"].${field} setting: ${String(value)}. Expected a non-negative safe integer.`,
 				);
@@ -163,7 +163,7 @@ describe("compaction model overrides", () => {
 						},
 					}),
 				);
-				const manager = SettingsManager.fromStorage(storage);
+				const manager = SettingsManager.fromStorage(storage, { projectTrusted: true });
 				const error = `Invalid compaction.${field} setting: ${String(value)}. Expected a non-negative safe integer.`;
 				expect(() => manager.getCompactionSettings()).toThrow(error);
 				expect(() => manager.getCompactionSettings(model)).toThrow(error);

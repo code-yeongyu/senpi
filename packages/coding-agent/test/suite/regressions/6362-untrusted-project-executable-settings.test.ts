@@ -32,14 +32,20 @@ interface Rig {
 }
 
 /** A project whose settings file names `program`, a fake executable that only records that it ran. */
-function rig(projectSettings: (program: string) => Record<string, unknown>, agentDir = mkdtempSync(join(tmpdir(), "s6362-agent-"))): Rig {
+function rig(
+	projectSettings: (program: string) => Record<string, unknown>,
+	agentDir = mkdtempSync(join(tmpdir(), "s6362-agent-")),
+): Rig {
 	const root = mkdtempSync(join(tmpdir(), "s6362-"));
 	scratch.push(root, agentDir);
 	const project = join(root, "project");
 	mkdirSync(join(project, ".senpi"), { recursive: true });
 	const marker = join(root, "MARKER");
 	const program = join(root, "program");
-	writeFileSync(program, `#!/bin/sh\necho "$*" >> '${marker}'\nif [ "$1" = "models" ]; then echo "auto - Auto"; fi\nif [ "$1" = "-c" ]; then exec /bin/sh "$@"; fi\nexit 0\n`);
+	writeFileSync(
+		program,
+		`#!/bin/sh\necho "$*" >> '${marker}'\nif [ "$1" = "models" ]; then echo "auto - Auto"; fi\nif [ "$1" = "-c" ]; then exec /bin/sh "$@"; fi\nexit 0\n`,
+	);
 	chmodSync(program, 0o755);
 	writeFileSync(join(project, ".senpi", "settings.json"), JSON.stringify(projectSettings(program)));
 	return { project, agentDir, marker, program, trust: () => new ProjectTrustStore(agentDir).set(project, true) };
@@ -90,7 +96,9 @@ describe("settings that name an executable (senpi#6362)", () => {
 				agentDir: r.agentDir,
 				settingsManager: SettingsManager.create(r.project, r.agentDir),
 			});
-			const runCommand = vi.spyOn(manager as never, "runCommand").mockResolvedValue(undefined as never);
+			const runCommand = vi
+				.spyOn(manager as unknown as { runCommand: (...args: unknown[]) => Promise<void> }, "runCommand")
+				.mockResolvedValue(undefined);
 			await manager.install("npm:@scope/pkg");
 			return (runCommand.mock.calls[0] as unknown[] | undefined)?.[0];
 		};
@@ -107,16 +115,25 @@ describe("settings that name an executable (senpi#6362)", () => {
 			}),
 			getAgentDir(),
 		);
-		expect(loadCursorCliOauthProviderSettingsFromDisk(r.project)).toMatchObject({ enabled: false, executablePath: undefined });
+		expect(loadCursorCliOauthProviderSettingsFromDisk(r.project)).toMatchObject({
+			enabled: false,
+			executablePath: undefined,
+		});
 		expect(loadAnthropicSubscriptionProviderSettingsFromDisk(r.project).enabled).not.toBe(true);
 
 		await r.trust();
-		expect(loadCursorCliOauthProviderSettingsFromDisk(r.project)).toMatchObject({ enabled: true, executablePath: r.program });
+		expect(loadCursorCliOauthProviderSettingsFromDisk(r.project)).toMatchObject({
+			enabled: true,
+			executablePath: r.program,
+		});
 		expect(loadAnthropicSubscriptionProviderSettingsFromDisk(r.project).enabled).toBe(true);
 	});
 
 	it("CLI provider settings: a trusted project's provider still runs its executable at startup", async () => {
-		const r = rig((program) => ({ cursorCliOauthProvider: { enabled: true, executablePath: program } }), getAgentDir());
+		const r = rig(
+			(program) => ({ cursorCliOauthProvider: { enabled: true, executablePath: program } }),
+			getAgentDir(),
+		);
 		await r.trust();
 		const store = new InMemoryCredentialStore();
 		await store.modify("cursor", async () => ({
