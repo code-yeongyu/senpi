@@ -1,10 +1,12 @@
-/** `custom` entry types the engine writes as its journal of lifecycle state. */
-const LIFECYCLE_BOOKKEEPING_TYPES: ReadonlySet<string> = new Set([
+/** Engine lifecycle bookkeeping (senpi#3864): durable before any conversation, disposable without one. */
+export const LIFECYCLE_ENTRY_TYPES: ReadonlySet<string> = new Set([
 	"session-lifecycle",
 	"work-custody",
 	"child-lifecycle",
-	"interrupted-run",
 ]);
+
+/** Every `custom` entry type the engine writes as its journal of lifecycle state: those, and the record of a run a restart cut. */
+const LIFECYCLE_BOOKKEEPING_TYPES: ReadonlySet<string> = new Set([...LIFECYCLE_ENTRY_TYPES, "interrupted-run"]);
 
 /**
  * Whether `entry` is lifecycle bookkeeping. Restoration folds these entries from the whole history through

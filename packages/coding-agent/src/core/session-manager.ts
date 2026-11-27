@@ -33,7 +33,7 @@ import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { InputSource } from "./extensions/types.ts";
-import { isLifecycleBookkeeping } from "./lifecycle-bookkeeping.ts";
+import { isLifecycleBookkeeping, LIFECYCLE_ENTRY_TYPES } from "./lifecycle-bookkeeping.ts";
 import { SessionFileCallKeys } from "./session-file-call-keys.ts";
 import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
@@ -1184,9 +1184,6 @@ const SETUP_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
 	"configuration_update",
 	"label",
 ]);
-
-/** Engine lifecycle bookkeeping (senpi#3864): durable before any conversation, disposable without one. */
-const LIFECYCLE_ENTRY_TYPES: ReadonlySet<string> = new Set(["session-lifecycle", "work-custody", "child-lifecycle"]);
 
 /** A `custom` entry is disposable when its writer marked it as startup bookkeeping (senpi#3263) or it is lifecycle bookkeeping. */
 function isDisposableEntry(entry: FileEntry): boolean {
