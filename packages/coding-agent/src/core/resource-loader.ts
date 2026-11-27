@@ -327,12 +327,13 @@ function deadGeneratedShimTarget(content: string): string | undefined {
 	return target !== undefined && !existsSync(target) ? target : undefined;
 }
 
-function pointsToLiveBuiltin(target: string, id: GlobalDefaultExtensionId): boolean {
+function namesBuiltin(target: string, id: GlobalDefaultExtensionId): boolean {
 	const builtin = join("core", "extensions", "builtin", id);
-	return (
-		(target.endsWith(`${sep}${builtin}.js`) || target.endsWith(`${sep}${builtin}.ts`)) &&
-		statSync(target, { throwIfNoEntry: false })?.isFile() === true
-	);
+	return target.endsWith(`${sep}${builtin}.js`) || target.endsWith(`${sep}${builtin}.ts`);
+}
+
+function pointsToLiveBuiltin(target: string, id: GlobalDefaultExtensionId): boolean {
+	return namesBuiltin(target, id) && statSync(target, { throwIfNoEntry: false })?.isFile() === true;
 }
 
 function removeDeadGeneratedShim(shimPath: string): void {
@@ -370,9 +371,11 @@ function resolveGeneratedGlobalDefaultExtensionFactory(
 		return undefined;
 	}
 
+	// A generated shim only marks the default as installed. Its code is always this process's own builtin, whichever
+	// installation the shim names, so no process imports another installation's builtin and its module graph.
 	try {
-		const expectedShim = buildGlobalDefaultExtensionShim(getGlobalDefaultExtensionModulePath(extensionId));
-		return readFileSync(extensionPath, "utf-8") === expectedShim
+		const target = generatedShimTarget(readFileSync(extensionPath, "utf-8"));
+		return target !== undefined && namesBuiltin(target, extensionId)
 			? globalDefaultExtensionFactories[extensionId]
 			: undefined;
 	} catch {
