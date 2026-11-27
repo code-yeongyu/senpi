@@ -18,6 +18,8 @@ import {
 	relayStartupLine,
 	STARTUP_EVENT_FD,
 	STARTUP_PROGRESS_INTERVAL_MS,
+	STARTUP_PROGRESS_MIN_CPU_MS,
+	type StartupProducerRole,
 	type StartupHandOff,
 	type StartupMilestone,
 	startupEventLine,
@@ -153,28 +155,56 @@ export function startupHandOff(): StartupHandOff | undefined {
 }
 
 export function reportStartupMilestone(milestone: StartupMilestone): void {
-	if (state && reporter)
-		reporter.report(startupEventLine(state.handOff.binding, state.handOff.role, ++state.seq, milestone), milestone);
+	if (!state || !reporter) return;
+	reporter.report(startupEventLine(state.handOff.binding, state.handOff.role, ++state.seq, milestone), milestone);
+	progress?.milestone(milestone);
+}
+
+/** The last milestone each producer reports: its startup work is over, so its progress reports end there. */
+const LAST_STARTUP_MILESTONE: Readonly<Record<StartupProducerRole, StartupMilestone>> = {
+	supervisor: "public_published",
+	host: "host_runtime",
+};
+
+function processCpuMs(): number {
+	const { user, system } = process.cpuUsage();
+	return (user + system) / 1000;
 }
 
 /**
- * Reports `progress` every `STARTUP_PROGRESS_INTERVAL_MS` from this process's own event loop until `budgetMs`
- * has passed: a loop that is wedged reports nothing, so the launcher's stall bound decides it. Neither timer
- * keeps the process alive. Returns the stop.
+ * The producer's progress reports, for a launcher whose hand-off says it reads them (undefined otherwise). Every
+ * `STARTUP_PROGRESS_INTERVAL_MS` it reports `progress` when this process spent at least `STARTUP_PROGRESS_MIN_CPU_MS`
+ * of CPU since the last tick: a slow start that is working spends it, while a loop that is wedged never ticks and one
+ * parked on an await that never resolves spends almost none, so the launcher fails either at its plain deadlines.
+ * Reports end at the producer's last milestone or at the attempt's decision budget; neither timer keeps the process alive.
  */
-export function reportStartupProgress(report: () => void, budgetMs: number): () => void {
-	const ticker = setInterval(report, STARTUP_PROGRESS_INTERVAL_MS);
+export function startStartupProgress(
+	handOff: StartupHandOff,
+	report: () => void,
+	cpuMs: () => number = processCpuMs,
+): { milestone(milestone: StartupMilestone): void } | undefined {
+	if (handOff.progress !== true) return undefined;
+	let spent = cpuMs();
+	const ticker = setInterval(() => {
+		const now = cpuMs();
+		if (now - spent >= STARTUP_PROGRESS_MIN_CPU_MS) report();
+		spent = now;
+	}, STARTUP_PROGRESS_INTERVAL_MS);
 	const stop = (): void => {
 		clearInterval(ticker);
 		clearTimeout(expiry);
 	};
-	const expiry = setTimeout(stop, budgetMs);
+	const expiry = setTimeout(stop, handOff.budgetMs);
 	ticker.unref();
 	expiry.unref();
-	return stop;
+	return {
+		milestone(milestone) {
+			if (milestone === LAST_STARTUP_MILESTONE[handOff.role]) stop();
+		},
+	};
 }
 
-if (state) reportStartupProgress(() => reportStartupMilestone("progress"), state.handOff.budgetMs);
+const progress = state ? startStartupProgress(state.handOff, () => reportStartupMilestone("progress")) : undefined;
 
 /** The environment value for the host child a coordinated supervisor spawns, or undefined when uncoordinated. */
 export function hostChildStartupHandOff(fillers: readonly number[]): string | undefined {

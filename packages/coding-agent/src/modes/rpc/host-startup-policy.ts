@@ -5,9 +5,10 @@
  * Each phase gets a finite allowance from the moment it is entered; every deadline is clipped to
  * `STARTUP_DECISION_BUDGET_MS` after spawn. Only the completion of the current phase grants the next
  * phase its allowance; a replayed milestone adds no time. A progress report from the producer that owns
- * the current phase moves its deadline to `STARTUP_PROGRESS_STALL_MS` after the report when that is later,
- * so a slow phase that keeps reporting is never cut at its allowance, and one that stops reporting fails one
- * stall bound after its last report. The clock is sampled at every ingress, so an event that arrives at or
+ * the current phase moves its deadline to `STARTUP_PROGRESS_STALL_MS` after the report when that is later, up to
+ * twice the phase's allowance from its entry: a slow phase that keeps reporting is not cut at its allowance, one
+ * that stops reporting fails one stall bound after its last report, and none outlives the cap. The clock is
+ * sampled at every ingress, so an event that arrives at or
  * after the deadline loses to it.
  */
 import { SIGKILL_GRACE_MS } from "./host-ensure-stop.ts";
@@ -80,7 +81,10 @@ export interface StartupClock {
 export type StartupTimeout = {
 	readonly kind: "timeout";
 	readonly phase: StartupPhase;
-	/** `stall`: the phase had reported progress, and then went `STARTUP_PROGRESS_STALL_MS` without another report. */
+	/**
+	 * `stall`: progress had moved the phase deadline, and then the phase went `STARTUP_PROGRESS_STALL_MS` without
+	 * another report. `phase` covers both an unextended allowance and the twice-the-allowance extension cap.
+	 */
 	readonly limit: "phase" | "stall" | "overall";
 	readonly phaseBudgetMs: number;
 	readonly elapsedMs: number;
@@ -101,7 +105,8 @@ export interface StartupController {
 	declareOpaqueHost(): "accepted" | "rejected";
 	/**
 	 * The owner of the current phase reports progress (its caller checks ownership): the phase deadline becomes
-	 * `STARTUP_PROGRESS_STALL_MS` from now when that is later, still clipped to the decision budget.
+	 * `STARTUP_PROGRESS_STALL_MS` from now when that is later, never past twice the phase's allowance from its entry,
+	 * and still clipped to the decision budget.
 	 */
 	progress(): "accepted" | "rejected";
 	fail(cause: Error): void;
@@ -130,7 +135,10 @@ export function startStartupController(options: {
 	let index = 0;
 	let phaseLimit = 0;
 	let deadline = 0;
-	let progressed = false;
+	/** Progress never moves a phase past this: twice its allowance from entry. */
+	let extensionCap = 0;
+	/** Progress has moved this phase's deadline, so a timeout before the cap means the reports stopped. */
+	let extended = false;
 	let timer: unknown;
 	let terminal: StartupOutcome | undefined;
 	const listeners = new Set<() => void>();
@@ -152,14 +160,15 @@ export function startStartupController(options: {
 		settle({
 			kind: "timeout",
 			phase,
-			limit: phaseLimit >= ceiling ? "overall" : progressed ? "stall" : "phase",
+			limit: phaseLimit >= ceiling ? "overall" : extended && phaseLimit < extensionCap ? "stall" : "phase",
 			phaseBudgetMs: allowance(phase),
 			elapsedMs: deadline - t0,
 		});
 	};
 	const enter = (at: number): void => {
 		phaseLimit = at + allowance(current());
-		progressed = false;
+		extensionCap = at + 2 * allowance(current());
+		extended = false;
 		schedule();
 		notify();
 	};
@@ -213,10 +222,11 @@ export function startStartupController(options: {
 		progress() {
 			const now = clock.now();
 			if (expiredAt(now)) return "rejected";
-			progressed = true;
-			if (now + STARTUP_PROGRESS_STALL_MS > phaseLimit) {
+			const limit = Math.min(now + STARTUP_PROGRESS_STALL_MS, extensionCap);
+			if (limit > phaseLimit) {
 				clock.cancel(timer);
-				phaseLimit = now + STARTUP_PROGRESS_STALL_MS;
+				phaseLimit = limit;
+				extended = true;
 				schedule();
 			}
 			return "accepted";
