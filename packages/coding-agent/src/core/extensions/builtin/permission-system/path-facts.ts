@@ -1,5 +1,5 @@
 import type { BigIntStats } from "node:fs";
-import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
+import { promises as fs } from "node:fs";
 import { type OpenFreeWalkIo, realpathWithoutOpenWith } from "../../../../utils/paths.ts";
 import {
 	automountTriggerPathSync,
@@ -118,14 +118,14 @@ export type FactFetcher = (kind: FactKind, path: string) => Promise<unknown>;
 
 const fetchFromFilesystem: FactFetcher = (kind, path) =>
 	kind === "lstat"
-		? lstat(path, { bigint: true })
+		? fs.lstat(path, { bigint: true })
 		: kind === "stat"
-			? stat(path, { bigint: true })
+			? fs.stat(path, { bigint: true })
 			: kind === "readlink"
-				? readlink(path)
+				? fs.readlink(path)
 				: kind === "readdir"
-					? readdir(path)
-					: realpath(path);
+					? fs.readdir(path)
+					: fs.realpath(path);
 
 async function boundedFact(io: Promise<unknown>, deadlineMs: number): Promise<Fact> {
 	try {

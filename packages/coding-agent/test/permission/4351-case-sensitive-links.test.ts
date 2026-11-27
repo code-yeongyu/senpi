@@ -51,20 +51,15 @@ vi.mock("node:fs", async (importOriginal) => {
 				.map((entry) => basename(entry));
 		},
 	};
-	return { ...actual, ...mocked, default: { ...actual, ...mocked } };
-});
-
-// The permission decision fetches its path facts asynchronously (senpi#4565): they answer from the same model.
-vi.mock("node:fs/promises", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	const fs = await import("node:fs");
-	const modeled = {
-		lstat: async (path: string, options?: { bigint?: boolean }) => fs.lstatSync(path, options),
-		stat: async (path: string, options?: { bigint?: boolean }) => fs.statSync(path, options),
-		readlink: async (path: string) => fs.readlinkSync(path),
-		readdir: async (path: string) => fs.readdirSync(path),
+	// The permission decision fetches its path facts asynchronously (senpi#4565): they answer from the same model.
+	const promises = {
+		...actual.promises,
+		lstat: async (path: string, options?: { bigint?: boolean }) => mocked.lstatSync(path, options),
+		stat: async (path: string, options?: { bigint?: boolean }) => mocked.statSync(path, options),
+		readlink: async (path: string) => mocked.readlinkSync(path),
+		readdir: async (path: string) => mocked.readdirSync(path),
 	};
-	return { ...actual, ...modeled, default: { ...actual, ...modeled } };
+	return { ...actual, ...mocked, promises, default: { ...actual, ...mocked, promises } };
 });
 
 import { lstatSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";

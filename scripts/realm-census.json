@@ -4327,6 +4327,14 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/permission-system/dispatch-policy.ts#preparedFacts": {
+			"class": "per-copy-safe",
+			"reason": "path facts a dispatch prepared, keyed by its input object; written by an authorizer's prepare and read by the same authorizer's policy and fence, always within one engine copy"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/permission-system/path-facts.ts#active": {
+			"class": "per-copy-safe",
+			"reason": "the facts of the synchronous permission section running now; set and restored within one synchronous call of one copy, never read across copies or across an await"
+		},
 		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#BOOTSTRAP_SCRIPT": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
