@@ -32,7 +32,8 @@ import {
 	identityPayload,
 	refusal,
 } from "./host-outcome.ts";
-import { isIdentityRefusal, probeOrIdentityRefusal, probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
+import { probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal } from "./host-identity-refusal.ts";
 import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
 import { startupEnvelope } from "./host-startup-policy.ts";
 import { RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./runtime-build-id.ts";

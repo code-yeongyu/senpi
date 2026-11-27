@@ -43,7 +43,8 @@ import { foreignAgentDirRefusal, localForeignAgentDirRefusal } from "./host-hand
 import { handoffUnregisteredHost } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { electPointer } from "./host-pointer-election.ts";
-import { isIdentityRefusal, probeOrIdentityRefusal, probeProtocolInfo } from "./host-probe.ts";
+import { probeProtocolInfo } from "./host-probe.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal } from "./host-identity-refusal.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
 import { startupEnvelope } from "./host-startup-policy.ts";
@@ -179,7 +180,8 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 	const local = await localForeignAgentDirRefusal(options.socket, options.agentDir);
 	if (local) return local;
 	const host = await probeOrIdentityRefusal(() => probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS));
-	if (isIdentityRefusal(host)) return { action: "refuse", reason: host.refused, upgradeable: false, detail: host.detail };
+	if (isIdentityRefusal(host))
+		return { action: "refuse", reason: host.refused, upgradeable: false, detail: host.detail };
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };

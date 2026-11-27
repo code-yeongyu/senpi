@@ -13,29 +13,8 @@ import { type HostProtocolInfo, parseHostProtocolInfo } from "./host-decision.ts
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
 import { connectAndAsk, isRecord, PROBE_REQUEST_ID, readAnswer, requestOnSocket } from "./host-socket-request.ts";
 import type { RpcKeyOptions } from "./rpc-auth-client.ts";
-import { RpcEndpointAuthError, type RpcEndpointAuthErrorCode } from "./rpc-auth-proof.ts";
 
 export { requestOnSocket };
-
-/** A host that answered but could not be proven: the refusal an API that answers typed refusals returns (omo#15197). */
-export interface HostIdentityRefusal {
-	readonly refused: RpcEndpointAuthErrorCode;
-	readonly detail: string;
-}
-
-/** Runs a probe and returns its identity refusal as a value; every other failure still throws. */
-export async function probeOrIdentityRefusal<T>(probe: () => Promise<T>): Promise<T | HostIdentityRefusal> {
-	try {
-		return await probe();
-	} catch (error) {
-		if (error instanceof RpcEndpointAuthError) return { refused: error.code, detail: error.message };
-		throw error;
-	}
-}
-
-export function isIdentityRefusal(value: unknown): value is HostIdentityRefusal {
-	return typeof value === "object" && value !== null && "refused" in value && "detail" in value;
-}
 
 /** Default probe budget: long enough for a host under load, short enough to keep an ensure moving. */
 export const DEFAULT_PROBE_TIMEOUT_MS = 10_000;

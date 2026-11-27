@@ -34,7 +34,8 @@ import {
 } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { provenLegacyOwner } from "./host-legacy.ts";
-import { isIdentityRefusal, probeOrIdentityRefusal, probeProtocolInfo } from "./host-probe.ts";
+import { probeProtocolInfo } from "./host-probe.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal } from "./host-identity-refusal.ts";
 import { readDrainWatch, writeDrainRequest } from "./host-stop-intent.ts";
 import type { RpcEndpointAuthErrorCode } from "./rpc-auth-proof.ts";
 
