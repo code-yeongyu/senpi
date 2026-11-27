@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "vitest";
 import { localGlob } from "../src/files/glob.ts";
 import { localGrep } from "../src/files/grep.ts";
-import { privacyProtectedDirs } from "../src/files/privacy-protected.ts";
+import { privacyProtectedDirs, walkGuard } from "../src/files/privacy-protected.ts";
 
 // omo#15240: a search from the home directory read ~/Music, ~/Downloads, ~/Library and volume roots, and macOS raised a
 // privacy prompt for each on the searching process's behalf. A walk never enters a protected folder it did not start in.
@@ -51,6 +51,24 @@ describe("privacyProtectedDirs", () => {
 			assert.ok(darwin.paths.includes(dir), dir);
 		}
 		assert.deepEqual(privacyProtectedDirs("linux", "/home/u").paths, []);
+	});
+});
+
+// On macOS the data volume is also mounted at /System/Volumes/Data, so /System/Volumes/Data/Users/<me>/Desktop is the
+// same TCC-protected folder as ~/Desktop. A walk started at or under /System/Volumes must still skip it.
+describe("a search from the data volume's /System/Volumes spelling on macOS", () => {
+	const home = "/Users/someone";
+	for (const root of ["/System/Volumes", "/System/Volumes/Data", "/System/Volumes/Data/Users"]) {
+		it(`started at ${root} skips the home folders spelled through the data volume`, () => {
+			const guard = walkGuard(root, privacyProtectedDirs("darwin", home));
+			for (const folder of ["Desktop", "Documents", "Downloads", "Library", "Music", "Pictures", "Movies"])
+				assert.equal(guard.skips(join("/System/Volumes/Data", home, folder)), true, folder);
+			assert.ok(guard.excluded.length >= 7);
+		});
+	}
+	it("a walk started inside a data-volume spelled protected folder is an explicit ask and reads it", () => {
+		const guard = walkGuard(join("/System/Volumes/Data", home, "Music"), privacyProtectedDirs("darwin", home));
+		assert.deepEqual(guard.excluded, []);
 	});
 });
 

@@ -19,6 +19,11 @@ const DARWIN_PROTECTED_FOLDERS = [
 	"/Volumes",
 ];
 
+// The data volume is also mounted at /System/Volumes/Data, and firmlinks make /System/Volumes/Data/Users/<me>/Desktop
+// the same folder as ~/Desktop. realpath does not map one spelling onto the other, so each protected folder outside
+// /System/Volumes is also named through the data volume; a walk started at or under /System/Volumes then still skips it.
+const DARWIN_DATA_VOLUME = "/System/Volumes/Data";
+
 /** Folders a walk never enters unless it started at or inside one; compared the way the platform's volume does. */
 export interface ProtectedDirs {
 	readonly paths: readonly string[];
@@ -30,12 +35,13 @@ export function privacyProtectedDirs(
 	home: string = homedir(),
 ): ProtectedDirs {
 	if (platform !== "darwin") return { paths: [], caseInsensitive: false };
-	return {
-		paths: DARWIN_PROTECTED_FOLDERS.map((folder) =>
-			folder.startsWith("~/") ? path.join(home, folder.slice(2)) : folder,
-		),
-		caseInsensitive: true,
-	};
+	const named = DARWIN_PROTECTED_FOLDERS.map((folder) =>
+		folder.startsWith("~/") ? path.join(home, folder.slice(2)) : folder,
+	);
+	const dataVolume = named
+		.filter((folder) => !folder.startsWith("/System/Volumes"))
+		.map((folder) => path.join(DARWIN_DATA_VOLUME, folder));
+	return { paths: [...named, ...dataVolume], caseInsensitive: true };
 }
 
 /** The protected folders strictly below one walk's start: `excluded` as fd globs relative to it, `skips` per directory. */
