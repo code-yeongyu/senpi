@@ -26,6 +26,7 @@ import {
 	type SessionControlRemoteOrigin,
 } from "./extensions/session-control-types.ts";
 import type { HoldKind } from "./engine-turn-hold.ts";
+import type { EngineTurnCap } from "./engine-turn-limit.ts";
 import type { CustomMessage } from "./messages.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
@@ -37,6 +38,8 @@ export interface ExternalAdmissionPort {
 	readonly isBusy: () => boolean;
 	/** The holds a delivery cannot release, so a start is kept as a held notice instead (senpi#6490); empty when none. */
 	readonly heldBy: () => readonly HoldKind[];
+	/** The engine-turn cap that would stop a delivery's turn now, so a start is answered `held` (senpi#7138). */
+	readonly cappedBy: () => EngineTurnCap | undefined;
 	/** Synchronously enqueues into the runtime's own queue for `lane`. */
 	readonly enqueue: (message: SessionControlDeliveryMessage, lane: ExternalDeliverAs) => void;
 	/** Starts a turn carrying `message`; settles when that run is over, whether or not it wrote the entry. */
@@ -59,7 +62,8 @@ export interface DeliveryStamp {
 	readonly turnMark?: InputTurnMark;
 }
 
-type PendingLane = ExternalDeliverAs | "start" | (() => boolean);
+/** `capped`: a start answered held with the engine-turn cap; it opens no run, so it is neither busy nor joined. */
+type PendingLane = ExternalDeliverAs | "start" | "capped" | (() => boolean);
 
 export class ExternalAdmission {
 	private turnEpochValue = 0;
@@ -184,15 +188,19 @@ export class ExternalAdmission {
 		const message = deliveryMessage(input, stamp);
 		if (!this.isBusy() && input.whenIdle !== "queue") {
 			const holds = this.port.heldBy();
-			this.pending.set(id, "start");
+			const cap = holds.length > 0 ? undefined : this.port.cappedBy();
+			this.pending.set(id, cap === undefined ? "start" : "capped");
 			this.startIssuedAt = turn_epoch;
 			// A start that settles without writing the entry left it queued for later (the runtime's
 			// admission-retention path): from then on it is held like any queued delivery.
 			void this.port.start(message).finally(() => {
-				if (this.pending.get(id) === "start") this.pending.set(id, "followUp");
+				const lane = this.pending.get(id);
+				if (lane === "start" || lane === "capped") this.pending.set(id, "followUp");
 			});
 			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
 			if (holds.length > 0) return { kind: "held", holds: [...holds], turn_epoch };
+			// A capped start is recorded without a turn: the sender is told which cap stopped it (senpi#7138).
+			if (cap !== undefined) return { kind: "held", engine_turn_cap: cap, turn_epoch };
 			// The start is not awaited: its run raises the epoch when it begins, so the answer names that run (senpi#7478).
 			return { kind: "started", turn_epoch: turn_epoch + 1 };
 		}
@@ -247,6 +255,11 @@ export class ExternalAdmission {
 		this.failed.set(id, error);
 	}
 
+	/** Whether admission answered this delivery held with the engine-turn cap, so its start must open no run (senpi#7138). */
+	answeredCapped(message: AgentMessage): boolean {
+		return this.pending.get(deliveryIdOf(message) ?? "") === "capped";
+	}
+
 	/**
 	 * A run settled: its refused messages leave the model context at the next run's start, so the failed
 	 * deliveries may be admitted again - unless the file's last write was refused too.
@@ -259,7 +272,7 @@ export class ExternalAdmission {
 	dropQueued(): void {
 		this.releaseRestored();
 		for (const [id, lane] of this.pending) {
-			if (lane !== "start" && typeof lane !== "function") this.pending.delete(id);
+			if (lane !== "start" && lane !== "capped" && typeof lane !== "function") this.pending.delete(id);
 		}
 	}
 
