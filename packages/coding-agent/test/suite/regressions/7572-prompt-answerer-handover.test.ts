@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { parkedEntryFromProfile } from "../../../src/modes/rpc/host-handover-parked-open.ts";
 import type { DelegatedHost } from "../rpc-delegated-host-support.ts";
-import { FrameLog, PROBE_TEXT, permissionHost } from "../rpc-delegated-permission-support.ts";
+import { FrameLog, PROBE_TEXT, permissionHost, probeTurns } from "../rpc-delegated-permission-support.ts";
 import type { Peer, WireRecord } from "../rpc-delegated-peer.ts";
 
 let host: DelegatedHost | undefined;
@@ -76,6 +76,8 @@ describe("#7572 a designated-answerer run across a host handover", () => {
 			).toMatchObject({ success: false, errorCode: "prompt_answerer_required", errorData: { reason: "host_handover" } });
 
 		expect(await client.send({ type: "close_session", sessionId: run.sessionId })).toMatchObject({ success: true });
+		// The close ended the first turn inside its call, so its scripted reply was never taken: start the script again.
+		host!.faux.setResponses(probeTurns(4));
 		const reopened = await client.send({
 			type: "open_session",
 			sessionPath: run.first.state.sessionFile,
