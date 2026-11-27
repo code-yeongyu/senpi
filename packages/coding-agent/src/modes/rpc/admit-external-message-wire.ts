@@ -34,6 +34,8 @@ export interface RpcAdmitExternalMessageCommand {
 }
 
 export interface RpcAdmitExternalMessageReply {
+	readonly queuePosition?: number | null;
+	readonly hold?: import("./session-row-hold.ts").SessionRowHold;
 	kind: ExternalAdmissionKind;
 	/** The session's turn when the delivery was admitted, in `get_state.currentTurnId`'s form. */
 	turnId: string;

@@ -108,6 +108,8 @@ export type ExternalAdmissionKind =
 	| "already_admitted";
 
 export interface ExternalAdmissionResult {
+	readonly queue_position?: number | null;
+	readonly hold?: import("../../modes/rpc/session-row-hold.ts").SessionRowHold;
 	readonly kind: ExternalAdmissionKind;
 	readonly turn_epoch: number;
 	/** `held` only: the kinds of the holds that keep the delivery. */

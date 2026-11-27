@@ -4,11 +4,18 @@
  * `clientMessageId` is answered with an admission receipt that a retry gets again, marked `replayed`.
  */
 import { randomUUID } from "node:crypto";
-import type { ExternalDeliverAs } from "../../core/extensions/session-control-types.ts";
+import type { ExternalAdmissionResult, ExternalDeliverAs } from "../../core/extensions/session-control-types.ts";
 import { refusal } from "../rpc/session-status-commands.ts";
 import type { TerminalInputReceipt } from "./session-control-attach.ts";
 import type { RpcCommandContext } from "./session-control-rpc-commands.ts";
 import type { ControlCommand } from "./session-control-server.ts";
+
+function terminalPosition(result: Pick<ExternalAdmissionResult, "queue_position" | "hold">) {
+	return {
+		...(result.queue_position !== undefined && { queuePosition: result.queue_position }),
+		...(result.hold && { hold: result.hold }),
+	};
+}
 
 export function idOf(command: ControlCommand): string | undefined {
 	return typeof command.id === "string" ? command.id : undefined;
@@ -81,6 +88,7 @@ export function admitInput(
 			clientMessageId,
 			replayed: true,
 			duplicate: true,
+			...(clientMessageId !== undefined && terminalPosition(admission.position(clientMessageId))),
 			admission: prior.admission,
 		});
 	}
@@ -96,6 +104,7 @@ export function admitInput(
 	const identity = clientMessageId === undefined ? {} : { clientMessageId };
 	const admitted = (disposition: TerminalInputReceipt["disposition"]): object => {
 		const holds = {
+			...terminalPosition(result),
 			...(result.holds === undefined ? {} : { holds: [...result.holds] }),
 			...(result.engine_turn_cap === undefined ? {} : { engineTurnCap: result.engine_turn_cap }),
 		};

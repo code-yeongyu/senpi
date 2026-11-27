@@ -85,7 +85,7 @@ export function admitExternalMessage(
 		return { ok: false, refusal: { message: admission.closed, errorCode: RPC_ERROR_SESSION_CLOSING } };
 	const answer = (kind: RpcAdmitExternalMessageReply["kind"], epoch: number): AdmitExternalMessageAnswer => ({
 		ok: true,
-		data: { kind, turnId: String(epoch) },
+		data: { kind, turnId: String(epoch), ...(kind === "already_admitted" && { queuePosition: null }) },
 	});
 	const id = ledgerId(command.deliveryId, origin);
 	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id))
@@ -128,6 +128,8 @@ export function admitExternalMessage(
 		data: {
 			kind: result.kind,
 			turnId: String(result.turn_epoch),
+			...(result.queue_position !== undefined && { queuePosition: result.queue_position }),
+			...(result.hold && { hold: result.hold }),
 			...(result.holds === undefined ? {} : { holds: [...result.holds] }),
 			...(result.engine_turn_cap === undefined ? {} : { engineTurnCap: result.engine_turn_cap }),
 		},

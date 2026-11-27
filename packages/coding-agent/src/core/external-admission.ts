@@ -35,6 +35,7 @@ import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
 export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
 
 export interface ExternalAdmissionPort {
+	readonly projectedHold?: (depth: number) => ExternalAdmissionResult["hold"];
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
 	readonly isBusy: () => boolean;
 	/** The holds a delivery cannot release, so a start is kept as a held notice instead (senpi#6490); empty when none. */
@@ -174,7 +175,7 @@ export class ExternalAdmission {
 		const id = input.delivery_id;
 		this.releaseRestored();
 		if (this.pending.has(id) || this.emitted.has(id) || this.failed.has(id)) {
-			return { kind: "already_admitted", turn_epoch };
+			return { kind: "already_admitted", turn_epoch, ...this.position(id) };
 		}
 		if (!this.gate().can_admit) return { kind: "held_draft", turn_epoch };
 		// While a delivery start has not begun its run, the turn it opens is already the one its admission was answered
@@ -199,9 +200,9 @@ export class ExternalAdmission {
 				if (lane === "start" || lane === "capped") this.pending.set(id, "followUp");
 			});
 			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
-			if (holds.length > 0) return { kind: "held", holds: [...holds], turn_epoch };
+			if (holds.length > 0) return { kind: "held", holds: [...holds], turn_epoch, ...this.position(id) };
 			// A capped start is recorded without a turn: the sender is told which cap stopped it (senpi#7138).
-			if (cap !== undefined) return { kind: "held", engine_turn_cap: cap, turn_epoch };
+			if (cap !== undefined) return { kind: "held", engine_turn_cap: cap, turn_epoch, ...this.position(id) };
 			// The start is not awaited: its run raises the epoch when it begins, so the answer names that run (senpi#7478).
 			return { kind: "started", turn_epoch: turn_epoch + 1 };
 		}
@@ -223,7 +224,23 @@ export class ExternalAdmission {
 		const mode = this.isBusy() ? "followUp" : input.deliverAs;
 		this.pending.set(id, mode);
 		this.port.enqueue(message, mode);
-		return { kind: "queued", turn_epoch };
+		return { kind: "queued", turn_epoch, ...this.position(id) };
+	}
+
+	/** Snapshot only the selected id and count, never other senders' identities. */
+	position(id: string): { queue_position: number | null; hold?: ExternalAdmissionResult["hold"] } {
+		this.releaseRestored();
+		let queue_position: number | null = null;
+		let index = 0;
+		for (const key of this.pending.keys()) {
+			index++;
+			if (key === id) {
+				queue_position = index;
+				break;
+			}
+		}
+		const hold = queue_position === null ? undefined : this.port.projectedHold?.(this.pending.size);
+		return { queue_position, ...(hold && { hold }) };
 	}
 
 	list(): AdmittedDeliveries {

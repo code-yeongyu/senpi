@@ -137,6 +137,7 @@ export function multiSessionHostCapabilities(options: {
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
 			"session_row_hold",
+			"external_admission_position",
 			RESUME_SESSION_CAPABILITY,
 			ATTENDED_CAPABILITY,
 			// `get_state`/`get_entries` marked `observe` never attach, and history reads page backward too (senpi#4267).

@@ -103,6 +103,7 @@ import {
 	toolChildModuleRoots,
 } from "../modes/rpc/tool-child/session-child.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
+import { sessionRowHold } from "../modes/rpc/session-row-hold.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { getUserShellEnv } from "../utils/shell.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -1668,6 +1669,7 @@ export class AgentSession {
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
 		heldBy: () => this._peerDeliveryHolds(),
+		projectedHold: (depth) => sessionRowHold(this.holds, () => depth),
 		cappedBy: () => this._peerDeliveryCap(),
 		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
 		start: (message) =>
