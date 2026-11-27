@@ -81,7 +81,7 @@ const PROMPTING_SCHEMAS = {
 	continue_from_leaf: session("continue_from_leaf", {}),
 	resume_session: session("resume_session", {
 		expectedSeq: OptNum,
-		mode: Opt(literals("continue", "release")),
+		mode: Opt(literals("continue", "release", "interrupted")),
 		message: OptStr,
 		effectId: OptId,
 		unlessStopped: OptBool,

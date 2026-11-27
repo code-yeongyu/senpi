@@ -1,7 +1,7 @@
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it } from "vitest";
-import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/types.ts";
+import { type ExtensionAPI, SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/types.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
@@ -203,10 +203,14 @@ it("a monitor wake on a session reopened mid-run is held for the person", async 
 });
 
 /** The interrupted session reopened behind a real RPC connection, the transport the thread tools' host uses. */
-async function interruptedOverRpc() {
-	const { base, file } = await killedSessionFile(toolCallPending);
+async function interruptedOverRpc(extension?: (api: ExtensionAPI) => void, seed?: (saved: SessionManager) => void) {
+	const { base, file } = await killedSessionFile((saved) => {
+		seed?.(saved);
+		toolCallPending(saved);
+	});
 	const fixture = await createIdentityHarness({
 		siblingOf: base,
+		...(extension === undefined ? {} : { extensionFactories: [extension] }),
 		sessionManager: SessionManager.open(file),
 		sessionStartEvent: { type: "session_start", reason: "resume", attended: false },
 	});
@@ -242,3 +246,142 @@ it("a remote resume_session with unlessStopped never releases a person's Stop", 
 	expect(fixture.session.holds.map((hold) => hold.kind)).toContain("session_hold");
 	expect(fixture.session.holds.some((hold) => hold.key !== "interrupted-run")).toBe(true);
 });
+
+it.each(["person", "parent"] as const)(
+	"a %s Stop during interrupted resume admission retains all work",
+	async (owner) => {
+		const { fixture } = await interruptedOverRpc();
+		const { session } = fixture;
+		fixture.harness.setResponses([fauxAssistantMessage("unexpected turn")]);
+		await monitorWake(fixture.harness);
+		session.holdInput({ inputId: "pending", revision: 0, text: "use staging" });
+		const resume = session.beginResume({
+			expectedSeq: session.pauseView.pauseSeq,
+			unlessStopped: true,
+			effectId: "r",
+		});
+		// A held input makes preparation asynchronous. Place the Stop before the prepared turn reaches the model.
+		if (owner === "person") await session.stop();
+		else await session.pauseForRun({ parentSessionId: "p", parentPauseSeq: 1, runRef: { kind: "task", id: "t" } });
+		const { answer, settled } = await resume;
+		await settled;
+		expect({
+			resumed: answer.resumed,
+			reason: answer.reason,
+			started: answer.turnStarted,
+			modelCalls: fixture.harness.faux.state.callCount,
+			inputs: session.pausedHeldInputCount,
+			notices: session.pausedNoticeCount,
+			stopHeld: session.automaticInputHoldLive(),
+		}).toEqual({
+			resumed: false,
+			reason: "stopped",
+			started: false,
+			modelCalls: 0,
+			inputs: 1,
+			notices: 1,
+			stopHeld: true,
+		});
+	},
+);
+
+it("replays a successful guarded effect without running a second turn", async () => {
+	const { fixture, rpc } = await interruptedOverRpc();
+	expect(await rpc.send({ type: "get_protocol_info" })).toMatchObject({
+		data: { capabilities: expect.arrayContaining(["resume_session_guarded_admission_v1"]) },
+	});
+	expect(await rpc.send({ type: "get_state" })).toMatchObject({ data: { pause: { guardedResumeAdmission: 1 } } });
+	fixture.harness.setResponses([fauxAssistantMessage("recovered")]);
+	const input = { inputId: "same-input", revision: 0, text: "unique held instruction" };
+	expect(fixture.session.holdInput(input)).toMatchObject({ kind: "held", duplicate: false });
+	expect(fixture.session.holdInput(input)).toMatchObject({ kind: "held", duplicate: true });
+	await monitorWake(fixture.harness);
+	const request = {
+		type: "resume_session",
+		mode: "interrupted",
+		expectedSeq: fixture.session.pauseView.pauseSeq,
+		unlessStopped: true,
+		effectId: "r",
+	};
+	expect(await rpc.send({ ...request, unlessStopped: false })).toMatchObject({ success: false });
+	expect(await rpc.send({ ...request, expectedSeq: undefined })).toMatchObject({ success: false });
+	expect(await rpc.send(request)).toMatchObject({ data: { resumed: true, turnStarted: true } });
+	await fixture.session.resumeSettled();
+	expect(await rpc.send(request)).toMatchObject({ data: { resumed: true, replayed: true } });
+	expect(fixture.harness.faux.state.callCount).toBe(1);
+	expect(fixture.session.holdInput(input)).toMatchObject({ kind: "already_delivered" });
+	expect(fixture.session.pausedNoticeCount).toBe(0);
+	const transcript = JSON.stringify(fixture.session.messages);
+	expect(transcript.match(/unique held instruction/g)).toHaveLength(1);
+	expect(transcript.match(/build finished/g)).toHaveLength(1);
+});
+
+it("a peer leaves a prepared extension command and the interrupted turn for human resume", async () => {
+	let commands = 0;
+	const { fixture, rpc } = await interruptedOverRpc(
+		(api) =>
+			api.registerCommand("side-effect", {
+				description: "record",
+				handler: async () => {
+					commands++;
+				},
+			}),
+		(saved) =>
+			saved.appendCustomEntry("held-input", {
+				inputId: "command",
+				revision: 0,
+				text: "/side-effect",
+				prepare: true,
+			}),
+	);
+	const resume = await rpc.send({
+		type: "resume_session",
+		mode: "interrupted",
+		expectedSeq: fixture.session.pauseView.pauseSeq,
+		unlessStopped: true,
+	});
+	expect(resume).toMatchObject({ data: { resumed: false, reason: "held_command" } });
+	expect(commands).toBe(0);
+	expect(fixture.harness.faux.state.callCount).toBe(0);
+	expect(fixture.session.holds.some((hold) => hold.key === "interrupted-run")).toBe(true);
+	expect(fixture.session.pausedHeldInputCount).toBe(1);
+});
+
+it.each(["person", "parent"] as const)(
+	"a %s Stop at the final admission hook retains the wake and input",
+	async (owner) => {
+		const atAdmission = Promise.withResolvers<void>();
+		const proceed = Promise.withResolvers<void>();
+		const { fixture, rpc } = await interruptedOverRpc((api) => {
+			api.on("before_agent_start", async () => {
+				atAdmission.resolve();
+				await proceed.promise;
+			});
+		});
+		fixture.harness.setResponses([fauxAssistantMessage("unexpected")]);
+		await monitorWake(fixture.harness);
+		fixture.session.holdInput({ inputId: "late", revision: 0, text: "still pending" });
+		const resume = rpc.send({
+			type: "resume_session",
+			unlessStopped: true,
+			expectedSeq: fixture.session.pauseView.pauseSeq,
+		});
+		await atAdmission.promise;
+		const stop =
+			owner === "person"
+				? fixture.session.stop()
+				: fixture.session.pauseForRun({
+						parentSessionId: "p",
+						parentPauseSeq: 2,
+						runRef: { kind: "task", id: "t" },
+					});
+		proceed.resolve();
+		await stop;
+		expect(await resume).toMatchObject({ data: { resumed: false, reason: "stopped", turnStarted: false } });
+		await fixture.session.resumeSettled();
+		expect(fixture.harness.faux.state.callCount).toBe(0);
+		expect(fixture.session.automaticInputHoldLive()).toBe(true);
+		expect(fixture.session.pausedNoticeCount).toBe(1);
+		expect(fixture.session.pausedHeldInputCount).toBe(1);
+	},
+);

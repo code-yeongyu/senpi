@@ -31,6 +31,8 @@ export const CONTINUE_FROM_LEAF_CAPABILITY = "continue_from_leaf";
 export const SESSION_HELD_CAPABILITY = "session_held";
 /** Host supports explicit held-wake release; its command reply acknowledges admission. */
 export const RESUME_SESSION_CAPABILITY = "resume_session";
+/** Peer resume checks the observed pause and Stop/parent holds through final turn admission (senpi#7104). */
+export const GUARDED_RESUME_CAPABILITY = "resume_session_guarded_admission_v1";
 /** Host honors open_session.attended:false instead of silently starting unattended work. */
 export const ATTENDED_CAPABILITY = "attended";
 /**

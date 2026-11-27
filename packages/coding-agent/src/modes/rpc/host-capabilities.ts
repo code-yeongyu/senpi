@@ -35,6 +35,7 @@ import {
 	PROVIDER_ACCOUNT_TEST_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RESUME_SESSION_CAPABILITY,
+	GUARDED_RESUME_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
@@ -135,6 +136,7 @@ export function multiSessionHostCapabilities(options: {
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
 			RESUME_SESSION_CAPABILITY,
+			GUARDED_RESUME_CAPABILITY,
 			ATTENDED_CAPABILITY,
 			// `get_state`/`get_entries` marked `observe` never attach, and history reads page backward too (senpi#4267).
 			OBSERVE_READS_CAPABILITY,
