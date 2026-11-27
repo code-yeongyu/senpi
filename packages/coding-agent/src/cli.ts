@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
+// Then, before anything else: under Bun the OSC 7577 token leaves the startup environment by an in-place exec, which
+// runs the cwd guard above again (senpi#7493).
+import "./program-resume-startup.ts";
 // Release a coordinated start's filler pipes while the private table is still in the environment (senpi#4602).
 import "./private-fd-startup-release.ts";
 // Then: capture the private descriptor table before anything can spawn (senpi#4749).
