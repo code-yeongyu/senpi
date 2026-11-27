@@ -31,6 +31,7 @@ import { reapSpawnedHosts } from "../../helpers/spawned-host-reaper.ts";
 
 const fixture = join(import.meta.dirname, "..", "..", "fixtures", "rpc-host-fixture.mjs");
 const CAPABILITIES = "multi_session,extension_events,session_context,session_kind";
+const EARLIER_KEPT_LOG = "senpi rpc host supervisor: a line an earlier fresh start kept";
 const OLD_GENERATION_LOG = "senpi rpc host supervisor: connection to the host failed: connect ENOENT (old generation)";
 
 const roots: string[] = [];
@@ -53,20 +54,25 @@ describe.skipIf(process.platform === "win32")("ensure judges a registered primar
 		["self", "reset"],
 		["self", "unavailable"],
 	] as const)(
-		"replaces a live process whose socket accepts but cannot serve (writer %s, front %s)",
+		"replaces a live process whose socket stays unable to serve across the confirmation (writer %s, front %s)",
 		async (writer, front) => {
 			const qa = await scratch(`${writer}-${front}`);
 			const host = await startFront(qa, front);
 			await register(qa, host, writer);
 			const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
+			await writeFile(paths.previousStderrLog, `${EARLIER_KEPT_LOG}\n`, { mode: 0o600 });
 			await writeFile(paths.stderrLog, `${OLD_GENERATION_LOG}\n`, { mode: 0o600 });
 			const exited = once(host.child, "exit");
+			const clock = virtualClock();
 
-			const result = await ensureHost({
+			const ensured = ensureHost({
 				agentDir: qa.agentDir,
 				socket: qa.socket,
-				_test: { ...fixtureLaunch(qa), servingProbeExpiry: virtualClock().expire },
+				_test: { ...fixtureLaunch(qa), servingProbeClock: clock },
 			});
+			await clock.until("wait");
+			clock.releaseWait();
+			const result = await ensured;
 			result.release();
 
 			await exited;
@@ -74,7 +80,36 @@ describe.skipIf(process.platform === "win32")("ensure judges a registered primar
 			expect(result.pid).not.toBe(host.pid);
 			expect(await readHostRegistration(paths)).toMatchObject({ record: { pid: result.pid } });
 			expect(await answers(qa.socket)).toBe(true);
-			expect(await readFile(join(paths.dir, "stderr.prev.log"), "utf8")).toContain(OLD_GENERATION_LOG);
+			const kept = await readFile(paths.previousStderrLog, "utf8");
+			expect(kept).toContain(EARLIER_KEPT_LOG);
+			expect(kept).toContain(OLD_GENERATION_LOG);
+		},
+	);
+
+	it.each([
+		["gone", "foreign_writer"],
+		["self", "host_busy"],
+	] as const)(
+		"keeps a host whose socket serves again before the confirmation probe (writer %s refuses %s)",
+		async (writer, reason) => {
+			const qa = await scratch(`recovers-${writer}`);
+			const host = await startFront(qa, "unavailable");
+			await register(qa, host, writer);
+			const clock = virtualClock();
+
+			const outcome = ensureHost({
+				agentDir: qa.agentDir,
+				socket: qa.socket,
+				_test: { ...fixtureLaunch(qa), servingProbeClock: clock },
+			}).catch((error: unknown) => error);
+			await clock.until("wait");
+			await host.serve();
+			clock.releaseWait();
+
+			const failure = await outcome;
+			expect(failure).toBeInstanceOf(HostEnsureRefusedError);
+			expect((failure as HostEnsureRefusedError).reason).toBe(reason);
+			expect(processIsLive(host.pid)).toBe(true);
 		},
 	);
 
@@ -82,13 +117,17 @@ describe.skipIf(process.platform === "win32")("ensure judges a registered primar
 		const qa = await scratch("live-writer");
 		const host = await startFront(qa, "unavailable");
 		await register(qa, host, "live");
+		const clock = virtualClock();
 
-		const failure = await ensureHost({
+		const outcome = ensureHost({
 			agentDir: qa.agentDir,
 			socket: qa.socket,
-			_test: { ...fixtureLaunch(qa), servingProbeExpiry: virtualClock().expire },
+			_test: { ...fixtureLaunch(qa), servingProbeClock: clock },
 		}).catch((error: unknown) => error);
+		await clock.until("wait");
+		clock.releaseWait();
 
+		const failure = await outcome;
 		expect(failure).toBeInstanceOf(HostEnsureRefusedError);
 		expect((failure as HostEnsureRefusedError).reason).toBe("foreign_writer");
 		expect(processIsLive(host.pid)).toBe(true);
@@ -103,17 +142,15 @@ describe.skipIf(process.platform === "win32")("ensure judges a registered primar
 		const outcome = ensureHost({
 			agentDir: qa.agentDir,
 			socket: qa.socket,
-			_test: { ...fixtureLaunch(qa), servingProbeExpiry: clock.expire },
+			_test: { ...fixtureLaunch(qa), servingProbeClock: clock },
 		}).then(
 			() => "resolved",
 			(error: unknown) => error,
 		);
-		const deadlineMs = await clock.requested();
-		expect(deadlineMs).toBeGreaterThan(0);
+		await clock.until("deadline");
 		// Before the deadline the probe has no verdict: nothing was decided, nothing signalled.
-		const early = await Promise.race([outcome, Promise.resolve("pending")]);
-		expect(early).toBe("pending");
-		clock.advance();
+		expect(await Promise.race([outcome, Promise.resolve("pending")])).toBe("pending");
+		clock.expireDeadlines();
 
 		const failure = await outcome;
 		expect(failure).toBeInstanceOf(HostEnsureRefusedError);
@@ -138,23 +175,29 @@ function fixtureLaunch(qa: Qa) {
 
 /**
  * A stand-in supervisor: alive (it blocks reading a pipe the test holds), listening on the public socket, and either
- * closing every connection unanswered, answering only `host_unavailable`, or holding it silent.
+ * closing every connection unanswered, answering only `host_unavailable`, or holding it silent. `serve()` switches it
+ * to answering `get_protocol_info` like a host whose hop came back, and settles once it says so.
  */
-async function startFront(qa: Qa, front: Front): Promise<{ child: ChildProcess; pid: number }> {
+async function startFront(qa: Qa, front: Front) {
 	const script = [
 		'const net = require("node:net");',
-		"const mode = process.env.FRONT_MODE;",
+		"let mode = process.env.FRONT_MODE;",
 		"net.createServer((client) => {",
 		'  client.on("error", () => {});',
 		'  if (mode === "reset") return client.destroy();',
 		'  if (mode === "held") return;',
 		'  client.once("data", (chunk) => {',
 		'    const id = JSON.parse(String(chunk).split("\\n")[0]).id;',
-		'    client.end(JSON.stringify({ id, type: "response", command: "get_protocol_info", success: false,',
-		'      error: "host_unavailable: connect ENOENT", errorCode: "host_unavailable" }) + "\\n");',
+		'    const answer = mode === "serve"',
+		'      ? { id, type: "response", command: "get_protocol_info", success: true, data: {} }',
+		'      : { id, type: "response", command: "get_protocol_info", success: false,',
+		'          error: "host_unavailable: connect ENOENT", errorCode: "host_unavailable" };',
+		'    client.end(JSON.stringify(answer) + "\\n");',
 		"  });",
 		'}).listen(process.env.FRONT_SOCKET, () => process.stdout.write("listening\\n"));',
-		"process.stdin.resume();",
+		'process.stdin.on("data", (chunk) => {',
+		'  if (String(chunk).includes("serve")) { mode = "serve"; process.stdout.write("serving\\n"); }',
+		"});",
 	].join("\n");
 	const child = spawn(process.execPath, ["-e", script], {
 		stdio: ["pipe", "pipe", "inherit"],
@@ -166,7 +209,12 @@ async function startFront(qa: Qa, front: Front): Promise<{ child: ChildProcess; 
 		child.once("exit", (code) => reject(new Error(`front exited before listening (code ${code})`)));
 	});
 	if (child.pid === undefined) throw new Error("front did not spawn");
-	return { child, pid: child.pid };
+	const serve = async (): Promise<void> => {
+		const said = once(child.stdout ?? child, "data");
+		child.stdin?.write("serve\n");
+		await said;
+	};
+	return { child, pid: child.pid, serve };
 }
 
 /** The registration a previous `host ensure` left: the generation record names the host and the process that wrote it. */
@@ -211,21 +259,48 @@ async function writerStamp(writer: Writer): Promise<{ pid: number; startTime: st
 	return { pid, startTime };
 }
 
-/** The probe deadline as a test-driven clock: `requested` settles when the probe arms it, `advance` expires it. */
+/**
+ * The probe's time as a test-driven clock. A deadline is live from the moment a probe arms it until it settles; the
+ * confirmation wait is live until released. `until` settles once one of that kind is live.
+ */
 function virtualClock() {
-	const armed: Array<{ ms: number; expire: () => void }> = [];
-	let notify: ((ms: number) => void) | undefined;
+	const deadlines = new Set<() => void>();
+	const waits: Array<() => void> = [];
+	let onArm: (() => void) | undefined;
+	const armed = (): void => {
+		const check = onArm;
+		onArm = undefined;
+		check?.();
+	};
 	return {
-		expire: (ms: number, signal: AbortSignal): Promise<void> =>
+		expire: (_ms: number, signal: AbortSignal): Promise<void> =>
 			new Promise<void>((resolve) => {
 				if (signal.aborted) return;
-				armed.push({ ms, expire: resolve });
-				notify?.(ms);
+				deadlines.add(resolve);
+				signal.addEventListener("abort", () => deadlines.delete(resolve), { once: true });
+				armed();
 			}),
-		requested: (): Promise<number> =>
-			armed[0] !== undefined ? Promise.resolve(armed[0].ms) : new Promise<number>((resolve) => (notify = resolve)),
-		advance: (): void => {
-			for (const entry of armed.splice(0)) entry.expire();
+		wait: (_ms: number): Promise<void> =>
+			new Promise<void>((resolve) => {
+				waits.push(resolve);
+				armed();
+			}),
+		until: (kind: "deadline" | "wait"): Promise<void> =>
+			new Promise<void>((resolve) => {
+				const check = (): void => {
+					if ((kind === "wait" ? waits.length : deadlines.size) > 0) resolve();
+					else onArm = check;
+				};
+				check();
+			}),
+		expireDeadlines: (): void => {
+			for (const expire of [...deadlines]) {
+				deadlines.delete(expire);
+				expire();
+			}
+		},
+		releaseWait: (): void => {
+			for (const release of waits.splice(0)) release();
 		},
 	};
 }

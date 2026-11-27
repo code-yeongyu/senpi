@@ -14,7 +14,7 @@ import { resolvePidFileOwnership } from "./host-ensure-stop.ts";
 import type { HostHolder } from "./host-holder.ts";
 import { hostChildAlive, hostLoopStalled, stallRefusalWindowMs } from "./host-stalled-evidence.ts";
 import { loopLagErrorMs } from "./loop-lag-threshold.ts";
-import { socketEntryListenerState } from "./socket-ownership.ts";
+import { socketEntryListenerState, statSocketIdentity } from "./socket-ownership.ts";
 
 /**
  * IS-5: a generation nothing can reach whose loop is measurably stalled is still serving its sessions, so
@@ -41,7 +41,9 @@ export async function refuseIfStalled(
  * I1 for a record another process wrote: while something still accepts at the public path, the generation
  * it names may own the endpoint, so the ensure refuses `foreign_writer` - and the refusal names that
  * generation, so every client can say WHO is in the way instead of only that something is
- * (omo-desktop-app#3561). An endpoint nothing accepts at (`absent`) is left to the caller's stranded start (#1936).
+ * (omo-desktop-app#3561). An endpoint nothing accepts at (`absent`) is left to the caller's stranded start (#1936),
+ * but only where the public entry can be lost at all: a named pipe and an abstract socket have no entry, and an entry
+ * this process cannot stat cannot be ruled out, so all three keep refusing.
  */
 export async function refuseIfForeignHeld(
 	paths: HostDaemonPaths,
@@ -50,9 +52,17 @@ export async function refuseIfForeignHeld(
 	protocol: HostProtocolInfo | undefined,
 	serving: EndpointServing,
 ): Promise<void> {
-	if (serving === "absent") return;
+	if (serving === "absent" && (await publicEntryCanBeLost(socket))) return;
 	const holder = await readHostHolder(paths, registered);
 	throw new HostEnsureRefusedError(socket, "foreign_writer", protocol, undefined, holder);
+}
+
+async function publicEntryCanBeLost(socket: string): Promise<boolean> {
+	if (process.platform === "win32" || socket.startsWith("\0")) return false;
+	return statSocketIdentity(socket).then(
+		() => true,
+		() => false,
+	);
 }
 
 /** The registration's own account of the generation: its record also stores the build and launch profile. */

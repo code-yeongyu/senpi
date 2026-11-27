@@ -1,5 +1,5 @@
 /** The options and result of `ensureHost`, kept apart so the ensure's helpers can name them without a cycle. */
-import type { ProbeExpiry } from "./host-endpoint-serving.ts";
+import type { ServingProbeClock } from "./host-endpoint-serving.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import type { Duplex } from "node:stream";
 
@@ -58,8 +58,8 @@ export interface EnsureHostOptions {
 		readonly beforeReadinessTeardown?: () => Promise<void>;
 		/** Overrides the process-identity probe so a test can force its failure. */
 		readonly readProcessStartTime?: (pid: number) => Promise<string | undefined>;
-		/** Drives the serving probe's deadline (senpi#4769), so a test decides when a silent socket counts as held. */
-		readonly servingProbeExpiry?: ProbeExpiry;
+		/** Drives the serving probe's deadline and confirmation wait (senpi#4769), so a test decides when each ends. */
+		readonly servingProbeClock?: ServingProbeClock;
 	};
 }
 

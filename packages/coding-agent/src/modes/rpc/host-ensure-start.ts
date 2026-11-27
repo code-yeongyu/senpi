@@ -2,7 +2,8 @@
 import { spawn } from "node:child_process";
 import { spawnWithPrivateFds } from "../../private-fd-spawn.ts";
 import { randomUUID } from "node:crypto";
-import { open, readFile, rename } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
+import { keepPreviousDaemonLog } from "./host-daemon-log.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
@@ -76,12 +77,9 @@ export async function startHost(
 		instanceId,
 	});
 	await writeHostOwner(generationPaths(paths, instanceId).dir, lifetimeOwner);
-	// A stranded generation is still writing its diagnostics here; only a fresh endpoint starts over, and the log it
-	// starts over from is moved aside, never truncated: it is the replaced generation's only record of why (#4769).
-	if (generation === 0)
-		await rename(paths.stderrLog, paths.previousStderrLog).catch((cause: unknown) => {
-			if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
-		});
+	// A stranded generation is still writing its diagnostics here; only a fresh endpoint starts over, after keeping the
+	// log it starts over from (#4769).
+	if (generation === 0) await keepPreviousDaemonLog(paths);
 	const stderr = await open(paths.stderrLog, generation === 0 ? "w" : "a", 0o600);
 	let pidFile: DaemonPidFile | undefined;
 	let child: ReturnType<typeof spawn> | undefined;

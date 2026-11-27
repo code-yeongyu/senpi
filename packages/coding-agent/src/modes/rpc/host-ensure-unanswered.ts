@@ -29,7 +29,7 @@ export async function settleUnansweredGeneration(input: {
 	const { paths, socket, registered, protocol } = input;
 	const testOptions = input.options._test;
 	const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
-	const serving = await probeEndpointServing(socket, testOptions?.servingProbeExpiry);
+	const serving = await probeEndpointServing(socket, testOptions?.servingProbeClock);
 	// I1: only the process that WROTE this record may end its generation. When that writer is provably gone and the
 	// socket accepts but can never serve, nobody else can: its listener keeps the path, so no fresh generation can
 	// bind beside it either, and every client stays locked out until someone stops it by hand (senpi#4769).
