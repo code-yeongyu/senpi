@@ -33,6 +33,7 @@ import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { InputSource } from "./extensions/types.ts";
+import { isLifecycleBookkeeping } from "./lifecycle-bookkeeping.ts";
 import { SessionFileCallKeys } from "./session-file-call-keys.ts";
 import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
@@ -2576,7 +2577,9 @@ export class SessionManager {
 		}
 		this.verbatimFromCount = this.fullEntryCount - (compactionIndex + 1 - firstVerbatimIndex);
 		const retained = [
-			...this.fileEntries.slice(0, firstKeptIndex).filter((entry) => entry.type !== "message"),
+			...this.fileEntries
+				.slice(0, firstKeptIndex)
+				.filter((entry) => entry.type !== "message" && !isLifecycleBookkeeping(entry)),
 			...this.fileEntries.slice(firstKeptIndex, compactionIndex + 1).filter((entry) => branchIds.has(entry.id)),
 		];
 		let parentId: string | null = null;
