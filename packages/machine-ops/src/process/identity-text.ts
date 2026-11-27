@@ -29,9 +29,10 @@ interface ObjectScope {
 }
 
 const NAME = "(?:signing|sealing)(?:_private_key|privatekey)?";
+const MAX_GAP = 64;
 const TOKEN = /tvk1:[a-z\d_=-]+|AGE-SECRET-KEY-1[a-z\d]+/gi;
 // A JSON/Python key, YAML `name: value`, `name=value`, `export NAME="value"` or `name<TAB>value`.
-const SEPARATOR = `["']?(?:\\s{0,64}[:=]|[ ]{0,64}\\t)\\s{0,64}["']?`;
+const SEPARATOR = `["']?(?:\\s{0,${MAX_GAP}}[:=]|[ ]{0,${MAX_GAP}}\\t)\\s{0,${MAX_GAP}}["']?`;
 const PRIVATE_VALUE = new RegExp(`(?<!\\w)${NAME}(${SEPARATOR})([a-z\\d+/_=-]+|\\[[\\d,\\s]{0,4096}\\])`, "gi");
 const NESTED_DEPTH = 8;
 
@@ -228,7 +229,7 @@ const NAMES = [
 	"sealingprivatekey",
 ];
 const PRIVATE_TAIL = new RegExp(
-	`(?<!\\w)${NAME}(["']?\\s{0,64}[:=\\t]?\\s{0,64}["']?)([a-z\\d+/_=-]{1,128}|\\[[\\d,\\s]{0,1024})?$`,
+	`(?<!\\w)${NAME}(["']?\\s{0,${MAX_GAP}}[:=\\t]?\\s{0,${MAX_GAP}}["']?)([a-z\\d+/_=-]{1,128}|\\[[\\d,\\s]{0,1024})?$`,
 	"i",
 );
 const TOKEN_TAIL = /(?:tvk1:[a-z\d_=-]|age-secret-key-1[a-z\d])[a-z\d_=-]*$/i;
@@ -236,7 +237,29 @@ const TOKEN_TAIL = /(?:tvk1:[a-z\d_=-]|age-secret-key-1[a-z\d])[a-z\d_=-]*$/i;
 /** Where the undecided tail of `text` starts: a partial escape, a token prefix, a private
  * name with its separator and an unterminated value, or a partial human-record key. `value`
  * is the start of an unterminated private value, which an ending stream masks. */
-export function undecidedTail(text: string, floor: number): { start: number; value?: number } {
+const HUMAN_KEYS = ["secretKey", "sealedKey"];
+
+/** Start of a human-record key still awaiting its value: a quoted key prefix, or the whole key
+ * followed by any whitespace, an optional colon and any whitespace. No gap length releases it. */
+function humanKeyTail(text: string, floor: number): number | undefined {
+	let p = text.length;
+	while (p > floor && /\s/.test(text.charAt(p - 1))) p--;
+	const colon = text.charAt(p - 1) === ":";
+	if (colon) {
+		p--;
+		while (p > floor && /\s/.test(text.charAt(p - 1))) p--;
+	}
+	const from = Math.max(floor, p - 128);
+	const { view, at } = normalize(text.slice(from, p));
+	const raw = (v: number) => from + (at ? at[v] : v);
+	const whole = /["'](secretKey|sealedKey)["']$/.exec(view);
+	if (whole) return raw(whole.index);
+	if (colon || p < text.length) return undefined;
+	const partial = /["']([A-Za-z]{0,9})$/.exec(view);
+	return partial && HUMAN_KEYS.some((k) => k.startsWith(partial[1])) ? raw(partial.index) : undefined;
+}
+
+export function undecidedTail(text: string, floor: number): { start: number; value?: number; keep?: boolean } {
 	let from = Math.max(floor, text.length - TAIL);
 	while (from > floor && text.charCodeAt(from - 1) === 92) from--;
 	const tail = text.slice(from);
@@ -246,8 +269,12 @@ export function undecidedTail(text: string, floor: number): { start: number; val
 	let value: number | undefined;
 	const escape = /\\+(?:u[\da-f]{0,4})?$/i.exec(tail);
 	if (escape) start = from + escape.index;
+	const humanKey = humanKeyTail(text, floor);
+	if (humanKey !== undefined) start = Math.min(start, humanKey);
+	// An idle pause may release a public name prefix, never a key or an escape still being decided.
+	const keep = humanKey !== undefined || !!escape;
 	// A token already past its prefix is masked now; the stream discards the rest of its body.
-	if (!escape && TOKEN_TAIL.test(view)) return { start };
+	if (!escape && TOKEN_TAIL.test(view)) return { start, keep };
 	const lower = view.slice(-24).toLowerCase();
 	for (let i = 0; i < lower.length; i++) {
 		const rest = lower.slice(i);
@@ -263,7 +290,5 @@ export function undecidedTail(text: string, floor: number): { start: number; val
 		start = Math.min(start, raw(field.index));
 		if (/[:=\t]/.test(field[1] ?? "") && field[2]) value = raw(view.length - field[2].length);
 	}
-	const key = /["']([a-z]{0,9})(?:["']\s*(?::\s*)?)?$/i.exec(view);
-	if (key && ["secretKey", "sealedKey"].some((k) => k.startsWith(key[1]))) start = Math.min(start, raw(key.index));
-	return { start, value };
+	return { start, value, keep };
 }

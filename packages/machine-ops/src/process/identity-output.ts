@@ -73,7 +73,8 @@ export class IdentityOutputStream {
 		const undecided: Undecided = { open: [], orphan: [] };
 		const found = context || mayHoldIdentity(buf) ? identitySpans(all, undecided) : [];
 		const tail = undecidedTail(all, 0);
-		let hold = end || (idle && tail.value === undefined) ? all.length : Math.max(base, tail.start);
+		// An idle pause releases a public name or token prefix, never a human-record key awaiting its value.
+		let hold = end || (idle && tail.value === undefined && !tail.keep) ? all.length : Math.max(base, tail.start);
 		const open = undecided.open.filter((s) => s.start >= base);
 		const firstOpen = Math.min(...open.map((s) => s.start));
 		this.humanHeld = !end && open.length > 0 && all.length - firstOpen <= HOLD;
