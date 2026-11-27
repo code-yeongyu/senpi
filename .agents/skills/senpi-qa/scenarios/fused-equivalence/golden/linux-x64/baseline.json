@@ -1,6 +1,6 @@
 {
  "repo": {
-  "head": "5f0067810f878831270425578596815928ec496f",
+  "head": "bd9ade751dc2fd2204c8218dbb1403ae565c7850",
   "dirty": false
  },
  "platform": "linux-x64",
@@ -15,7 +15,7 @@
   "cases": "sha256:5f8edeb3f6887d573aa950e3a8971028accf7148494eb24c6cee0be7ac46d3fa",
   "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --placement fused --cases E08 --leave-unrecorded E01,E02,E03,E04,E05,E06,E07,E09,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E26,E27,E29,E30 --evidence e08-rec3-1",
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --placement fused --cases E20 --leave-unrecorded E01,E02,E03,E04,E05,E06,E07,E08,E09,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E26,E27,E29,E30 --evidence e20-rec",
  "hostPin": {
   "cpuModel": "EQ-Synthetic CPU",
   "cores": 997,
