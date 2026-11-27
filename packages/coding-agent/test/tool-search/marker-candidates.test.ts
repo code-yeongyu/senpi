@@ -70,12 +70,12 @@ describe("activation marker candidates (senpi#3518)", () => {
 		}
 	});
 
-	it("restores the same tools as the synchronous scan while yielding between entries", async () => {
+	// The session's fold keeps only candidate entries (senpi#7600); parsing them is what yields.
+	it("restores the same tools as the synchronous scan while yielding between candidate entries", async () => {
 		const history = SessionManager.inMemory("/workspace");
 		for (let index = 0; index < 500; index++) {
-			history.appendMessage({ role: "user", content: `message ${index}`, timestamp: index });
+			history.appendMessage({ role: "user", content: `message ${index} ${v2Marker}`, timestamp: index });
 		}
-		history.appendMessage({ role: "user", content: [{ type: "text", text: v2Marker }], timestamp: 500 });
 		const expected = weatherService();
 		expect(expected.service.maybeRehydrateFromHistory(history.getEntries())).toEqual(["weather_forecast"]);
 

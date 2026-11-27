@@ -1,35 +1,34 @@
-import type { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import type { HistoryReducer } from "../../../session-history-reduce.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
-import { type ParsedActivationMarker, parseActivationMarkers } from "./engine/marker.ts";
+import type { ParsedActivationMarker } from "./engine/marker.ts";
+import { mayHoldActivationMarker } from "./engine/marker-candidates.ts";
 
-/** Each read folds new entries and immediately drains them in slices. Only distinct promotion identities survive. */
-class ActivationHistory {
-	readonly markers = new Map<string, ParsedActivationMarker>();
-	readonly unread: SessionEntry[] = [];
-
-	async scan(slicer: EventLoopSlicer): Promise<void> {
-		while (this.unread.length > 0) {
-			// Replay checks membership against today's catalog and sorts the result, independent of entry order.
-			for (const marker of parseActivationMarkers([this.unread.pop()])) {
-				if (marker.version === 1) {
-					for (const name of marker.names) this.markers.set(`legacy:${name}`, { version: 1, names: [name] });
-				} else {
-					for (const activation of marker.activations) {
-						const key = JSON.stringify([activation.name, activation.registrationId]);
-						this.markers.set(key, { version: 2, activations: [activation] });
-					}
-				}
-			}
-			if (slicer.due) await slicer.yield();
-		}
-	}
-}
-
-export const activationHistory: HistoryReducer<ActivationHistory> = {
-	initial: () => new ActivationHistory(),
-	add: (state, entry) => {
-		state.unread.push(entry);
-		return state;
+/**
+ * The entries of a session's history that may hold an activation marker, in append order (senpi#7600). The state is
+ * append-only and holds only the rare candidates, so the session keeps it across extension generations and a later
+ * replay folds just the entries appended since; each reader keeps its own position in it.
+ */
+export const activationCandidates: HistoryReducer<SessionEntry[]> = {
+	initial: () => [],
+	add: (candidates, entry) => {
+		if (mayHoldActivationMarker(entry)) candidates.push(entry);
+		return candidates;
 	},
 };
+
+/** Adds a marker under its promotion identity, so the same promotion read twice is held once. */
+export function holdActivationMarker(
+	markers: Map<string, ParsedActivationMarker>,
+	marker: ParsedActivationMarker,
+): void {
+	if (marker.version === 1) {
+		for (const name of marker.names) markers.set(`legacy:${name}`, { version: 1, names: [name] });
+		return;
+	}
+	for (const activation of marker.activations) {
+		markers.set(JSON.stringify([activation.name, activation.registrationId]), {
+			version: 2,
+			activations: [activation],
+		});
+	}
+}

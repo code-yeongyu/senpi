@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { EventLoopSlicer } from "../../../event-loop-slicer.ts";
+import type { SessionEntry } from "../../../session-manager.ts";
 import { extensionLoadKey } from "../../extension-load-key.ts";
 import type { ExtensionAPI, ExtensionContext, ToolInfo } from "../../types.ts";
 import {
@@ -11,7 +12,7 @@ import {
 	tokenizeToolText,
 } from "./engine/bm25.ts";
 import type { ToolSearchDocument, ToolSearchSource } from "./engine/document.ts";
-import { activationHistory } from "./activation-history.ts";
+import { activationCandidates, holdActivationMarker } from "./activation-history.ts";
 import { parseActivationMarkers, type ParsedActivationMarker, restoreActivationMarkers } from "./engine/marker.ts";
 import { extensionDocument } from "./extension-document.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
@@ -52,6 +53,11 @@ export class ToolSearchService {
 	#registryGeneration = 0;
 	#historyScannedGeneration = -1;
 	#pendingReplay?: { generation: number; done: Promise<string[]> };
+	/** This service's position in each session's candidate list, and the markers read up to it (senpi#7600). */
+	readonly #replayed = new WeakMap<
+		readonly SessionEntry[],
+		{ read: number; markers: Map<string, ParsedActivationMarker> }
+	>();
 	#registerToolSearch: (() => void) | undefined;
 	#removedToolHints: () => Readonly<Record<string, string>> = () => ({});
 	#disposed: { sessionId: string; reason: string } | undefined;
@@ -239,14 +245,26 @@ export class ToolSearchService {
 	}
 
 	async #scanSessionHistory(history: SessionHistory, slicer: EventLoopSlicer, generation: number): Promise<string[]> {
-		// A reader without the session's fold (a test double) builds a one-off index from its entries.
-		const index =
-			history.reduceHistory?.(activationHistory) ??
-			history.getEntries().reduce(activationHistory.add, activationHistory.initial());
+		// A reader without the session's fold (a test double) builds a one-off candidate list from its entries.
+		const candidates =
+			history.reduceHistory?.(activationCandidates) ??
+			history.getEntries().reduce(activationCandidates.add, activationCandidates.initial());
 		this.#historyScannedGeneration = generation;
-		await index.scan(slicer);
+		let replayed = this.#replayed.get(candidates);
+		if (replayed === undefined) {
+			replayed = { read: 0, markers: new Map() };
+			this.#replayed.set(candidates, replayed);
+		}
+		// The session's list is read-only to its readers; the position advances only past a candidate whose markers were
+		// read, so a parse that throws leaves it for the next replay.
+		while (replayed.read < candidates.length) {
+			for (const marker of parseActivationMarkers([candidates[replayed.read]]))
+				holdActivationMarker(replayed.markers, marker);
+			replayed.read++;
+			if (slicer.due) await slicer.yield();
+		}
 		if (this.isDisposed || generation !== this.#registryGeneration) return [];
-		return this.#rehydrate(index.markers.values(), this.getCatalog());
+		return this.#rehydrate(replayed.markers.values(), this.getCatalog());
 	}
 
 	#rehydrate(markers: Iterable<ParsedActivationMarker>, catalog: ToolSearchDocument[]): string[] {

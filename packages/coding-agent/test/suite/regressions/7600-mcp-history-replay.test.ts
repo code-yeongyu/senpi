@@ -13,14 +13,20 @@ import {
 import { writeCompactedTranscript } from "../../benchmarks/3519-compacted-transcript.ts";
 import { cleanupRoots, fakePi, makeRoot, setConfig, stdioServer } from "../../mcp/fixtures/service-lifecycle.ts";
 
-// #7600: acquiring getEntries() alone rereads and pins the transcript after idle, even if replay has no work.
-it("leaves released history on disk when MCP attaches with no searchable tools", async () => {
+// #7600: acquiring getEntries() alone rereads and pins the transcript after idle, even if replay has no work. Any
+// whole-history read, a held view or a fold's one-off read, goes through the entry loader.
+it("reads nothing of a released history when MCP attaches with no searchable tools", async () => {
 	const cleanups: Array<() => Promise<void>> = [];
 	const root = makeRoot("7600-replay", cleanups);
 	setConfig(root, {});
 	const manager = SessionManager.open(writeCompactedTranscript(root.cwd, 1), root.cwd);
 	resetMcpServiceForTests();
 	const service = getMcpService();
+	let reads = 0;
+	const restore = setSessionEntryLoaderForTesting((...args) => {
+		reads++;
+		return loadEntriesFromFile(...args);
+	});
 	try {
 		manager.dropMaterializedCaches();
 		await service.attachSession(
@@ -29,8 +35,10 @@ it("leaves released history on disk when MCP attaches with no searchable tools",
 			fakePi(),
 			{ agentDir: root.agentDir },
 		);
+		expect(reads).toBe(0);
 		expect(manager.holdsMaterializedHistory()).toBe(false);
 	} finally {
+		restore();
 		await service.dispose("quit");
 		resetMcpServiceForTests();
 		manager.dispose();
