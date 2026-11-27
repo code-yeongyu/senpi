@@ -5,7 +5,7 @@ import type {
 	EvalDetachedCellState,
 } from "./detached-cell-manager.ts";
 import { interruptionStateNote } from "./interrupt-note.ts";
-import { type QueuedWait, queuedWaitPhrase } from "./queued-wait.ts";
+import { type QueuedWait, queuedWaitDetachClause, queuedWaitPhrase } from "./queued-wait.ts";
 import type {
 	EvalCellResult,
 	EvalControlInput,
@@ -89,9 +89,7 @@ export function resultAfterDetach(
 		queuedBehind === undefined
 			? `Eval cell ${snapshot.cellId} detached and is running in the ${input.language} kernel (${otherLiveCells} other live cells). Completion arrives as a notification; do not re-run it. eval({ action: "peek" | "stop", cell_id }) or eval({ action: "list" }).`
 			: queuedBehind.length === 0
-				? snapshot.waitingFor === "workspace"
-					? `Eval cell ${snapshot.cellId} is detached and ${queuedWaitPhrase(input.language, snapshot.waitingFor)}; it runs first after that and completes as one notification. peek/stop/list with eval({ action, cell_id })`
-					: `Eval cell ${snapshot.cellId} is detached and waiting for the ${input.language} kernel to be ready; it runs first once the kernel is ready and completes as one notification. peek/stop/list with eval({ action, cell_id })`
+				? `Eval cell ${snapshot.cellId} is detached and ${queuedWaitDetachClause(input.language, snapshot.waitingFor)} and completes as one notification. peek/stop/list with eval({ action, cell_id })`
 				: `Eval cell ${snapshot.cellId} is queued behind ${queuedBehind.join(", ")} in the ${input.language} kernel and detached; it runs after ${queuedBehind.join(", ")} and completes as one notification. peek/stop/list with eval({ action, cell_id })`;
 	return {
 		content: [
