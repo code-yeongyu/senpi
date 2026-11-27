@@ -1070,7 +1070,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const extensionsResult = await this.loadExtensionPaths(extensionPaths);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
-			await this.prependRequiredInternalBuiltins(extensionsResult);
+			await this.placeRequiredInternalBuiltins(extensionsResult);
 			const replacementWarnings: Array<{ path: string; warning: string }> = [];
 			extensionsResult.extensions = omitReplacedExtensions(extensionsResult.extensions, replacementWarnings);
 			mergeExtensionWarnings(extensionsResult, replacementWarnings);
@@ -1118,7 +1118,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			runtime: preTrustExtensions.runtime,
 			eventBus: preTrustExtensions.eventBus ?? remainingExtensions.eventBus ?? this.eventBus,
 		};
-		await this.prependRequiredInternalBuiltins(assembled);
+		await this.placeRequiredInternalBuiltins(assembled);
 		const replacementWarnings: Array<{ path: string; warning: string }> = [];
 		const extensionsResult: LoadExtensionsResult = {
 			...assembled,
@@ -1132,10 +1132,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	/**
 	 * The one place internal builtins enter a final extension set (senpi#1146): whichever group selected the builtins
-	 * that require them (settings, an explicit `builtin:<name>` path, before or after project trust), they load once
-	 * and lead the set in registry order, ahead of every builtin that may re-publish liveness in its session_start.
+	 * that require them (settings, an explicit `builtin:<name>` path, before or after project trust), they load once,
+	 * each at its registry position: ahead of the first loaded builtin the registry lists after it, so behind the
+	 * guards and policy and ahead of every builtin that may re-publish liveness in its session_start.
 	 */
-	private async prependRequiredInternalBuiltins(result: LoadExtensionsResult): Promise<void> {
+	private async placeRequiredInternalBuiltins(result: LoadExtensionsResult): Promise<void> {
 		const builtinIdOf = (path: string): string | undefined =>
 			path.startsWith("<builtin:") && path.endsWith(">")
 				? path.slice("<builtin:".length, -1)
@@ -1147,16 +1148,16 @@ export class DefaultResourceLoader implements ResourceLoader {
 		if (internals.length === 0) return;
 		const internalIds = new Set(internals.map((builtin) => builtin.id));
 		const isInternal = (extension: Extension) => internalIds.has(builtinIdOf(extension.path) ?? "");
-		const leading: Extension[] = [];
+		const required: Extension[] = [];
 		for (const builtin of internals) {
 			const path = `<builtin:${builtin.id}>`;
 			const loaded = result.extensions.find((extension) => builtinIdOf(extension.path) === builtin.id);
 			if (loaded) {
-				leading.push(loaded);
+				required.push(loaded);
 				continue;
 			}
 			try {
-				leading.push(
+				required.push(
 					await loadExtensionFromFactory(
 						builtin.factory,
 						this.cwd,
@@ -1170,7 +1171,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 				result.errors.push({ path, error: error instanceof Error ? error.message : "failed to load extension" });
 			}
 		}
-		result.extensions = [...leading, ...result.extensions.filter((extension) => !isInternal(extension))];
+		const registryIndex = (id: string | undefined): number =>
+			id === undefined ? -1 : this.builtinExtensionFactories.findIndex((builtin) => builtin.id === id);
+		const placed = result.extensions.filter((extension) => !isInternal(extension));
+		for (const internal of required) {
+			const own = registryIndex(builtinIdOf(internal.path));
+			const next = placed.findIndex((extension) => registryIndex(builtinIdOf(extension.path)) > own);
+			placed.splice(next === -1 ? placed.length : next, 0, internal);
+		}
+		result.extensions = placed;
 	}
 
 	private addExtensionConflictDiagnostics(extensionsResult: LoadExtensionsResult): void {

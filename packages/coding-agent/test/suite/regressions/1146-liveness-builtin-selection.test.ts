@@ -61,6 +61,24 @@ describe("liveness watcher under builtin selection (senpi#1146)", () => {
 		expect(session.polls()).toBe(0);
 	});
 
+	it("loads the watcher after the guards and policy and ahead of every builtin that publishes liveness", async () => {
+		const session = await loaderSession({
+			enabledBuiltinExtensions: ["loop-guard", "hooks", "permission-system", "ask-user", "herdr", "todowrite"],
+		});
+		await session.emit("session_start");
+
+		const order = session.loaded().filter((path) => path.startsWith("<builtin:"));
+		expect(order).toEqual([
+			"<builtin:loop-guard>",
+			"<builtin:hooks>",
+			"<builtin:permission-system>",
+			"<builtin:session-liveness>",
+			"<builtin:ask-user>",
+			"<builtin:herdr>",
+			"<builtin:todowrite>",
+		]);
+	});
+
 	it("keeps both consumers working when a denylist names the watcher's id", async () => {
 		const session = await loaderSession({ disabledBuiltinExtensions: ["session-liveness"] });
 		await session.emit("session_start");

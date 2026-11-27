@@ -80,9 +80,6 @@ export const globalDefaultExtensionFactories = {
 } satisfies Record<(typeof globalDefaultExtensionIds)[number], ExtensionFactory>;
 
 export const builtinExtensions: BuiltinExtensionFactory[] = [
-	// Internal, required by herdr and todowrite. First, so its session_start fold is listening before any owner
-	// re-publishes its liveness state there, whichever of its consumers is selected.
-	{ id: "session-liveness", factory: sessionLivenessExtension, internal: true },
 	// Loop guard owns the first veto opportunity so repeated calls never re-run hooks or permission prompts.
 	{ id: "loop-guard", factory: loopGuardExtension },
 	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.
@@ -94,6 +91,10 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
+	// Internal, required by herdr and todowrite. Ahead of every builtin that publishes liveness (ask-user is the
+	// first), so its session_start fold is listening before any owner re-publishes its state there, whichever of
+	// its consumers is selected; behind the guards and policy above, which keep the first veto.
+	{ id: "session-liveness", factory: sessionLivenessExtension, internal: true },
 	{ id: "ask-user", factory: askUserExtension },
 	{ id: "herdr", factory: herdrExtension, requires: ["session-liveness"] },
 	{ id: "imagegen", factory: imageGenExtension },
