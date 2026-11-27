@@ -67,35 +67,30 @@ describe("senpi#6245 the attachment gate is enforced without any switch", () => 
 				expect(own).toMatchObject({ success: true });
 			});
 		},
-		30_000,
 	);
 
-	it(
-		"refuses the client a quiet takeover let go, and keeps serving the client that took over (#5735)",
-		() =>
-			disposing(takeoverRig(), async ({ rig, call, open, takeOver }) => {
-				rig.connect("a");
-				rig.connect("b");
-				const session = await open("a");
-				expect(await takeOver("b", session, "device-b")).toMatchObject({ success: true });
+	it("refuses the client a quiet takeover let go, and keeps serving the client that took over (#5735)", () =>
+		disposing(takeoverRig(), async ({ rig, call, open, takeOver }) => {
+			rig.connect("a");
+			rig.connect("b");
+			const session = await open("a");
+			expect(await takeOver("b", session, "device-b")).toMatchObject({ success: true });
 
-				expect(
-					await replyTo(rig, "a", {
-						type: "prompt",
-						sessionId: session.sessionId,
-						message: "still mine",
-						clientMessageId: FORGED,
-					}),
-				).toMatchObject(NOT_ATTACHED);
-				expect(carries(rig.recordsFor("b"), FORGED)).toEqual([]);
-				expect(
-					await call("b", {
-						type: "append_user_message",
-						sessionId: session.sessionId,
-						content: "the new holder",
-					}),
-				).toMatchObject({ success: true });
-			}),
-		30_000,
-	);
+			expect(
+				await replyTo(rig, "a", {
+					type: "prompt",
+					sessionId: session.sessionId,
+					message: "still mine",
+					clientMessageId: FORGED,
+				}),
+			).toMatchObject(NOT_ATTACHED);
+			expect(carries(rig.recordsFor("b"), FORGED)).toEqual([]);
+			expect(
+				await call("b", {
+					type: "append_user_message",
+					sessionId: session.sessionId,
+					content: "the new holder",
+				}),
+			).toMatchObject({ success: true });
+		}));
 });
