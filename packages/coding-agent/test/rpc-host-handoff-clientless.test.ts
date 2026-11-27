@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { signalGeneration } from "../src/modes/rpc/host-stop.ts";
 import {
@@ -19,6 +18,7 @@ import {
 	type HandoverRig,
 	startHandoverRig,
 } from "./helpers/rpc-idle-handover-support.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 // Diagnostic dump for a failure of the reopen assertion below: capture the listed durable ids, the
 // transcript's existence, and the handover-parked record tree (entry contents included) so a lost
@@ -93,7 +93,7 @@ async function handOverUntilServed(
 		}
 		// A handoff is complete exactly when the process answering the socket changes
 		// (HostProtocolInfo.instanceId). The status pointer's `current` flag can lag behind it.
-		const serving = await probeHost({ socket: rig.qa.socket }).catch(() => undefined);
+		const serving = await probeSandboxHost(rig.qa).catch(() => undefined);
 		if (
 			serving?.instanceId !== undefined &&
 			serving.instanceId !== from.instanceId &&

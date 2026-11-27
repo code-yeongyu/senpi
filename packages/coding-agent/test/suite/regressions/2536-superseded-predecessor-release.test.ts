@@ -14,7 +14,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import {
 	endpointScratch,
 	hostArgs,
@@ -25,6 +24,7 @@ import {
 	trackSupervisor,
 } from "../../helpers/rpc-host-endpoint-scratch.ts";
 import { waitForPidGone } from "../../helpers/spawned-host-reaper.ts";
+import { probeSandboxHost } from "../../helpers/rpc-sandbox-host.ts";
 
 afterEach(sweepEndpointScratches, 180_000);
 
@@ -36,7 +36,7 @@ describe.skipIf(process.platform === "win32")("a predecessor that leaves before 
 	it("leaves the successor's registration and settings in place, so the next ensure reports its pid", async () => {
 		const qa = endpointScratch("2536");
 		const predecessorPid = await realHost(qa, qa.legacy);
-		const predecessor = await probeHost({ socket: qa.legacy });
+		const predecessor = await probeSandboxHost(qa, { socket: qa.legacy });
 		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
 		let predecessorGone: boolean | undefined;
 
