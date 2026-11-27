@@ -5,9 +5,10 @@
 //   - golden exists                    -> compare it (a listed cell whose golden exists is STALE and fails the run)
 //   - golden missing, cell listed      -> DEFERRED(<owner>, <issue>): never a PASS, never a failure
 //   - golden missing, cell not listed  -> missing: the case FAILS
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeIfClean } from "./equivalence-record-guard.mjs";
 
 const EQ_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "scenarios", "fused-equivalence");
 const MODES = ["rpc", "tui"];
@@ -81,8 +82,9 @@ export function finishRecord({ dir, results, leaveUnrecorded, manifest }) {
 				.map((name) => name.slice(0, -".json".length))
 		: [];
 	const unrecorded = unrecordedGoldens({ goldenIds, results, leaveUnrecorded });
-	if (unrecorded.length === 0) writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
-	return unrecorded;
+	if (unrecorded.length > 0) return unrecorded;
+	const refusal = writeIfClean(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
+	return refusal ? [refusal] : [];
 }
 
 /**
