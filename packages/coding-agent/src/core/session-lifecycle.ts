@@ -1,6 +1,7 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { effectiveWakes, type TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import type { Goal } from "./extensions/builtin/goal/types.ts";
+import { boundBackground, waitingCustody } from "./lifecycle-background-waits.ts";
 import { LifecycleChildren } from "./lifecycle-children.ts";
 import { LifecycleLedger, type LifecyclePersistence } from "./lifecycle-ledger.ts";
 import { projectWaitItems } from "./lifecycle-wait-items.ts";
@@ -308,6 +309,7 @@ export class SessionLifecycleController {
 	private evaluate(): void {
 		const runtime = this.options.readRuntime();
 		const active = this.obligations.active;
+		const waiting = waitingCustody(active);
 		const childRecords = this.children.reports
 			.filter((report) => report.childSessionId !== this.options.sessionId && report.terminal === undefined)
 			.sort((a, b) => (a.taskId < b.taskId ? -1 : a.taskId > b.taskId ? 1 : 0));
@@ -321,24 +323,17 @@ export class SessionLifecycleController {
 				...(label === undefined ? {} : { label }),
 				...(since === undefined ? {} : { since }),
 			}));
-		const childSources = active
+		const childSources = waiting
 			.filter((record) => record.kind === "children")
 			.map((record) => ({
 				source: record.source ?? record.key,
 				activeCount: record.activeCount ?? 1,
 				...projectWaitItems(record),
 			}));
-		// A delivery's own custody while its send is in flight is the session starting a turn, not a wait (senpi#6810);
-		// once the live run consumed it, it is that run's own work until settleRun (senpi#6814 review).
+		// A delivery in flight can start a turn but does not itself constitute a background wait (#6810).
 		const deliveryInFlight = active.some((record) => this.obligations.isDeliveryInFlight(record));
-		const liveRun = this.ledger.runActive ? this.ledger.runId : undefined;
-		const background: LifecycleWaits["background"][number][] = active
-			.filter(
-				(record) =>
-					record.kind === "background" &&
-					!this.obligations.isDeliveryInFlight(record) &&
-					!this.obligations.isConsumedBy(record, liveRun),
-			)
+		const background: LifecycleWaits["background"][number][] = waiting
+			.filter((record) => record.kind === "background" && !this.obligations.isDeliveryInFlight(record))
 			.map((record) => ({
 				source: record.source ?? record.key,
 				activeCount: record.activeCount ?? 1,
@@ -346,7 +341,7 @@ export class SessionLifecycleController {
 			}));
 		const children = Math.max(
 			childRecords.length,
-			active
+			waiting
 				.filter((record) => record.kind === "children")
 				.reduce((sum, record) => sum + (record.activeCount ?? 1), 0),
 		);
@@ -377,7 +372,7 @@ export class SessionLifecycleController {
 					background.push({ source: "staged-recovery", activeCount: 1 });
 					break;
 				case "wake-source":
-					if (active.some((record) => record.source === expectation.source)) break;
+					if (waiting.some((record) => record.source === expectation.source)) break;
 					// A channel name is not a producer-declared kind.
 					background.push({ source: expectation.source, activeCount: 1 });
 					break;
@@ -462,7 +457,7 @@ export class SessionLifecycleController {
 					: undefined;
 		const waits: LifecycleWaits = {
 			children,
-			background,
+			...boundBackground(background),
 			human,
 			...(childSources.length ? { childSources } : {}),
 			...(childReports.length ? { childReports } : {}),
@@ -497,7 +492,15 @@ export class SessionLifecycleController {
 					: this.modelSince
 						? { kind: "model", since: this.modelSince }
 						: undefined;
-		this.ledger.update({ state, waits, holds: runtime.holds, failure, lastStop, activity });
+		this.ledger.update({
+			state,
+			waits,
+			backgroundSources: background,
+			holds: runtime.holds,
+			failure,
+			lastStop,
+			activity,
+		});
 	}
 
 	/**

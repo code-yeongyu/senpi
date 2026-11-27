@@ -195,7 +195,12 @@ it("restores named custody through the registry and recompute and still retires 
 		.findLast((entry) => entry.type === "custom" && entry.customType === "session-lifecycle");
 	expect(record?.type).toBe("custom");
 	if (record?.type !== "custom") throw new Error("Missing lifecycle record");
-	expect(readLifecycleRecord(record.data)?.waitingOn).toEqual(controller.snapshot.waitingOn);
+	// The record stores background sources as changes (senpi#5612); restore below rebuilds the named list.
+	expect(readLifecycleRecord(record.data)?.waitingOn).toEqual({
+		...controller.snapshot.waitingOn,
+		background: [],
+		backgroundOmitted: 1,
+	});
 	const restored = new SessionLifecycleController({ ...options, entries: manager.getEntries() });
 	restored.restoreComplete();
 	expect(restored.snapshot.waitingOn).toEqual(controller.snapshot.waitingOn);
