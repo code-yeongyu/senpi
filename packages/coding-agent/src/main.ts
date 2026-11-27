@@ -46,6 +46,7 @@ import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
+import { exportSessionHtml } from "./engine/queries.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
@@ -80,7 +81,6 @@ import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
-import { exportFromFile } from "./core/export-html/index.ts";
 import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
@@ -1361,16 +1361,13 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (parsed.export) {
-		let result: string;
-		try {
-			const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
-			result = await exportFromFile(parsed.export, outputPath);
-		} catch (error: unknown) {
-			const message = error instanceof Error ? error.message : "Failed to export session";
-			console.error(chalk.red(`Error: ${message}`));
+		const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
+		const exported = await exportSessionHtml({ session: parsed.export, ...(outputPath ? { out: outputPath } : {}) });
+		if (exported.kind === "error") {
+			console.error(chalk.red(`Error: ${exported.error.message}`));
 			process.exit(1);
 		}
-		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
+		await printThenExit(() => console.log(`Exported to: ${exported.value.path}`), 0);
 	}
 
 	let appMode: AppMode = parsed.printPromptSizes

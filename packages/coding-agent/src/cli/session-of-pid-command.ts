@@ -1,5 +1,5 @@
 import { APP_NAME } from "../config.ts";
-import { resolvePidSession } from "../core/session-spawn-attestation.ts";
+import { sessionOfPid } from "../engine/session-of-pid.ts";
 import { exitAfterOutput } from "./print-then-exit.ts";
 
 /**
@@ -10,8 +10,8 @@ import { exitAfterOutput } from "./print-then-exit.ts";
  */
 export async function dispatchSessionOfPidCommand(args: readonly string[]): Promise<void> {
 	if (args[0] !== "session-of-pid") return;
-	const pid = Number(args[1]);
-	if (args.length !== 3 || args[2] !== "--json" || !Number.isInteger(pid) || pid <= 0) {
+	const result = args.length === 3 && args[2] === "--json" ? await sessionOfPid({ pid: Number(args[1]) }) : undefined;
+	if (result === undefined || result.kind === "error") {
 		await exitAfterOutput(
 			`${JSON.stringify({
 				version: 1,
@@ -23,6 +23,6 @@ export async function dispatchSessionOfPidCommand(args: readonly string[]): Prom
 		);
 		return;
 	}
-	const answer = await resolvePidSession(pid);
+	const answer = result.value;
 	await exitAfterOutput(`${JSON.stringify({ version: 1, ok: true, ...answer })}\n`, answer.attested ? 0 : 1);
 }
