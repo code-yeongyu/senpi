@@ -297,14 +297,6 @@ function getAliases(): Record<string, string> {
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 export type ExtensionFactoryResolver = (extensionPath: string, resolvedPath: string) => ExtensionFactory | undefined;
 
-// Runtimes whose filesystem policies the built-in tools already composed: a policy registered later would never apply.
-const composedPolicyRuntimes = new WeakSet<ExtensionRuntime>();
-
-/** Called once the built-in tools composed `runtime`'s filesystem policies; later registrations are refused. */
-export function closeFilesystemPolicyRegistration(runtime: ExtensionRuntime): void {
-	composedPolicyRuntimes.add(runtime);
-}
-
 // Bun's module registry must not own generation graphs. Live runtimes and the
 // existing factory cache retain wrappers; invalidation releases runtime ownership.
 const runtimeFactories = new WeakMap<ExtensionRuntime, Set<ExtensionFactory>>();
@@ -629,7 +621,7 @@ function createExtensionAPI(
 		registerFilesystemPolicy(policy: FilesystemPolicy): FilesystemPolicyRegistration {
 			runtime.assertActive();
 			// Recording it would report a policy no tool consults (omo#15251): refuse loudly instead.
-			if (composedPolicyRuntimes.has(runtime)) {
+			if (runtime.filesystemPoliciesComposed) {
 				const reason = `Extension "${extension.path}" registered a filesystem policy after the session's tools composed their policies, so it would never apply; register it while the extension loads.`;
 				console.warn(`[extensions] ${reason}`);
 				return { applied: false, reason };

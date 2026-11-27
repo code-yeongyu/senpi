@@ -3874,6 +3874,8 @@ export interface ExtensionRuntimeState {
 	isLoopRemote: () => boolean;
 	/** The device the session's tools run on, and the extension that registered it (registerDeviceMachine). */
 	deviceMachine: { readonly machine: ToolMachine; readonly extensionPath: string } | undefined;
+	/** Set once the built-in tools composed this runtime's filesystem policies; a later registration is refused. */
+	filesystemPoliciesComposed?: boolean;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
 	pendingProviderRegistrations: PendingProviderConfigRegistration[];
 	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */

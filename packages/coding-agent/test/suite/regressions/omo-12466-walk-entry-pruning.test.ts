@@ -66,13 +66,21 @@ describe("a policy that prunes walked entries (omo#12466)", () => {
 		const late = memoryTree(true);
 		const clean = memoryTree(false);
 
+		// fd returns the first `limit` entries it meets in no fixed order, so a partial page is compared by its shape:
+		// line count, details and notices. The full page is compared line for line.
+		const lines = (result: Awaited<ReturnType<typeof find>>) =>
+			(result.content[0]?.type === "text" ? result.content[0].text : "").trim().split("\n").sort();
 		for (const limit of [2, 3, 10]) {
 			const pruned = await find(late, pruning(late, lateIdentity(late)).policy, limit);
 			const reference = await find(clean, pruning(clean, undefined).policy, limit);
 
 			expect(JSON.stringify(pruned)).not.toContain(FOREIGN);
 			expect(JSON.stringify(pruned)).not.toContain("late-id");
-			expect(comparable(pruned, late)).toEqual(comparable(reference, clean));
+			expect(lines(pruned).every((line) => line.startsWith("agents/global/"))).toBe(true);
+			expect(lines(pruned)).toHaveLength(lines(reference).length);
+			expect(comparable(pruned.details ?? null, late)).toEqual(comparable(reference.details ?? null, clean));
+			expect(pruned.content.slice(1)).toEqual(reference.content.slice(1));
+			if (limit >= 3) expect(lines(pruned)).toEqual(lines(reference));
 		}
 	});
 
