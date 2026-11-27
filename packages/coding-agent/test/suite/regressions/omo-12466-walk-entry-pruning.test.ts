@@ -124,4 +124,55 @@ describe("a policy that prunes walked entries (omo#12466)", () => {
 		expect(JSON.stringify(pruned)).not.toContain(FOREIGN);
 		expect(comparable(pruned, late)).toEqual(comparable(reference, clean));
 	});
+
+	it("offers no filter below a root where prunesBelow says nothing is pruned, and prunes when it throws", () => {
+		const exclude = () => true;
+		const never = composeFilesystemPolicies([
+			{ check: () => ALLOW, excludesEntry: exclude, prunesBelow: () => false },
+		]);
+		const throwing = composeFilesystemPolicies([
+			{
+				check: () => ALLOW,
+				excludesEntry: exclude,
+				prunesBelow: () => {
+					throw new Error("synthetic prunesBelow failure");
+				},
+			},
+		]);
+		const unanswered = composeFilesystemPolicies([{ check: () => ALLOW, excludesEntry: exclude }]);
+
+		expect(never?.entryExclusionBelow?.("/synthetic/root", "grep")).toBeUndefined();
+		expect(throwing?.entryExclusionBelow?.("/synthetic/root", "grep")?.("/synthetic/root/a", "grep")).toBe(true);
+		expect(unanswered?.entryExclusionBelow?.("/synthetic/root", "grep")?.("/synthetic/root/a", "grep")).toBe(true);
+	});
+
+	it("find takes a single walk of the requested size when nothing below its root can be pruned", async () => {
+		const clean = memoryTree(false);
+		const asked: number[] = [];
+		const policy = composeFilesystemPolicies([
+			{ check: () => ALLOW, excludesEntry: () => true, prunesBelow: () => false },
+		]);
+		if (!policy) throw new Error("no composed policy");
+		const tool = createFindToolDefinition(clean, {
+			filesystemPolicy: policy,
+			operations: {
+				exists: () => true,
+				glob: (_pattern, _cwd, { limit }) => {
+					asked.push(limit);
+					return [join(clean, "agents", "global", "repo", "a.md")];
+				},
+			},
+		});
+
+		const result = await tool.execute(
+			"find",
+			{ pattern: "**/*.md", path: clean, limit: 1 },
+			undefined,
+			undefined,
+			undefined as never,
+		);
+
+		expect(asked).toEqual([1]);
+		expect(JSON.stringify(result)).toContain("a.md");
+	});
 });
