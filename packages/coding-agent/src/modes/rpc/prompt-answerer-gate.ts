@@ -20,7 +20,6 @@ function attached(host: RouterContext, connection: string | undefined, sessionId
 	return connection === undefined || host.sessionsByConnection.get(connection)?.has(sessionId) === true;
 }
 
-
 /**
  * A new run's opener becomes its answerer, under the default rule; called where the opener's connection attaches to a
  * run it created, on every open path (a compact admission included), so no path leaves a run without the rule.

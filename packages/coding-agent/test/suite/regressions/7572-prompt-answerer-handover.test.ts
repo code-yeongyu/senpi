@@ -47,7 +47,8 @@ async function handedOver(designatedAnswerer: boolean, legacyRecord = false) {
 
 async function promptAndAwaitDialog(peer: Peer, log: FrameLog, sessionId: string): Promise<WireRecord> {
 	const asked = log.next(
-		(record) => record.type === "extension_ui_request" && record.method === "select" && record.sessionId === sessionId,
+		(record) =>
+			record.type === "extension_ui_request" && record.method === "select" && record.sessionId === sessionId,
 	);
 	await peer.send({ type: "prompt", sessionId, message: "go" });
 	return asked;
@@ -73,7 +74,11 @@ describe("#7572 a designated-answerer run across a host handover", () => {
 					value: "Allow once",
 					...(answerKey === undefined ? {} : { answerKey }),
 				}),
-			).toMatchObject({ success: false, errorCode: "prompt_answerer_required", errorData: { reason: "host_handover" } });
+			).toMatchObject({
+				success: false,
+				errorCode: "prompt_answerer_required",
+				errorData: { reason: "host_handover" },
+			});
 
 		expect(await client.send({ type: "close_session", sessionId: run.sessionId })).toMatchObject({ success: true });
 		// The close ended the first turn inside its call, so its scripted reply was never taken: start the script again.
@@ -102,7 +107,11 @@ describe("#7572 a designated-answerer run across a host handover", () => {
 		const client = await host!.proven();
 		const log = new FrameLog(client);
 		expect(
-			await client.send({ type: "attach_session", sessionId: run.sessionId, durableSessionId: run.durableSessionId }),
+			await client.send({
+				type: "attach_session",
+				sessionId: run.sessionId,
+				durableSessionId: run.durableSessionId,
+			}),
 		).toMatchObject({ success: true, data: { answerer: true } });
 		const dialog = await promptAndAwaitDialog(client, log, run.sessionId);
 		const ended = log.next((record) => record.type === "tool_execution_end" && record.sessionId === run.sessionId);

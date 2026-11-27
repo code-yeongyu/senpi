@@ -40,7 +40,10 @@ describe("#7572 the answer key never leaves the opener and the host's memory", (
 				[
 					fauxToolCall(
 						"bash",
-						{ command: "env > child-env.txt; ls -l /proc/self/fd > child-fds.txt; cat /proc/self/environ > child-environ.bin" },
+						{
+							command:
+								"env > child-env.txt; ls -l /proc/self/fd > child-fds.txt; cat /proc/self/environ > child-environ.bin",
+						},
 						{ id: "dump" },
 					),
 				],
@@ -59,11 +62,17 @@ describe("#7572 the answer key never leaves the opener and the host's memory", (
 
 		const holder = await host.proven();
 		expect(
-			await holder.send({ type: "attach_session", sessionId, durableSessionId: data.state.sessionId, answerKey: key }),
+			await holder.send({
+				type: "attach_session",
+				sessionId,
+				durableSessionId: data.state.sessionId,
+				answerKey: key,
+			}),
 		).toMatchObject({ success: true, data: { answerer: true } });
 
 		const dumped = log.next(
-			(record) => record.type === "tool_execution_end" && record.sessionId === sessionId && record.toolCallId === "dump",
+			(record) =>
+				record.type === "tool_execution_end" && record.sessionId === sessionId && record.toolCallId === "dump",
 		);
 		const idle = log.next((record) => record.type === "agent_idle" && record.sessionId === sessionId);
 		await opener.send({ type: "prompt", sessionId, message: "dump" });
@@ -71,11 +80,18 @@ describe("#7572 the answer key never leaves the opener and the host's memory", (
 		await idle;
 
 		const asked = log.next(
-			(record) => record.type === "extension_ui_request" && record.sessionId === sessionId && record.title === "Question",
+			(record) =>
+				record.type === "extension_ui_request" && record.sessionId === sessionId && record.title === "Question",
 		);
 		void opener.send({ type: "prompt", sessionId, message: `/${ASK_COMMAND}` }).catch(() => {});
 		const dialog = await asked;
-		const keyed: WireRecord = { type: "extension_ui_response", sessionId, uiRequestId: dialog.id, value: "x", answerKey: key };
+		const keyed: WireRecord = {
+			type: "extension_ui_response",
+			sessionId,
+			uiRequestId: dialog.id,
+			value: "x",
+			answerKey: key,
+		};
 		const answered = await opener.send(keyed);
 		expect(answered).toMatchObject({ success: true });
 		const refused = await opener.send(keyed);
@@ -86,7 +102,11 @@ describe("#7572 the answer key never leaves the opener and the host's memory", (
 		expect(replies).not.toContain(key);
 		const files = await filesUnder(host.scratch);
 		expect(files.map((file) => file.path)).toEqual(
-			expect.arrayContaining([join(cwd, "child-env.txt"), join(cwd, "child-fds.txt"), join(cwd, "child-environ.bin")]),
+			expect.arrayContaining([
+				join(cwd, "child-env.txt"),
+				join(cwd, "child-fds.txt"),
+				join(cwd, "child-environ.bin"),
+			]),
 		);
 		expect(files.filter((file) => file.bytes.includes(key)).map((file) => file.path)).toEqual([]);
 		expect(Object.values(process.env).filter((value) => value?.includes(key))).toEqual([]);

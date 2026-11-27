@@ -43,7 +43,11 @@ export class PromptAnswerers {
 	 * A new run of `sessionId`, opened by `opener`. Returns the run's key, which only the opener's reply carries, or
 	 * undefined when the run takes answers from any client (`designatedAnswerer: false`).
 	 */
-	open(sessionId: string, opener: string | undefined, designated = DESIGNATED_ANSWERER_BY_DEFAULT): string | undefined {
+	open(
+		sessionId: string,
+		opener: string | undefined,
+		designated = DESIGNATED_ANSWERER_BY_DEFAULT,
+	): string | undefined {
 		if (!designated) {
 			this.runs.delete(sessionId);
 			return undefined;
@@ -53,7 +57,7 @@ export class PromptAnswerers {
 		return key;
 	}
 
-/** A run that asked for the rule, reopened by the host after a handover: no key exists, so no client answers it. */
+	/** A run that asked for the rule, reopened by the host after a handover: no key exists, so no client answers it. */
 	openAfterHandover(sessionId: string): void {
 		this.runs.set(sessionId, { digest: undefined, designated: new Set(), unavailable: "host_handover" });
 	}

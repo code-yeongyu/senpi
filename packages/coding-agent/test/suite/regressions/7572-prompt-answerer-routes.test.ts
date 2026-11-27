@@ -126,8 +126,8 @@ describe.each<Runtime>(["in-process", "worker"])("#7572 who answers a run's prom
 			errorCode: "prompt_answerer_required",
 		});
 		expect(await pendingIds(back, run.sessionId)).toContain(run.dialog.id);
-		expect(await settle(backLog, back, run.sessionId, answer(run, "Deny", { answerKey: run.answerKey }))).not.toContain(
-			PROBE_TEXT,
-		);
+		expect(
+			await settle(backLog, back, run.sessionId, answer(run, "Deny", { answerKey: run.answerKey })),
+		).not.toContain(PROBE_TEXT);
 	}, 120_000);
 });

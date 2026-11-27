@@ -36,10 +36,7 @@ const answererFields = {
 };
 
 export const attachmentWireResponse = z.union([
-	success(
-		"attach_session",
-		z.strictObject({ sessionId: z.string(), attached: z.literal(true), ...answererFields }),
-	),
+	success("attach_session", z.strictObject({ sessionId: z.string(), attached: z.literal(true), ...answererFields })),
 	// A takeover on a headless engine (senpi#5732): the holder now, its generation, and how many clients were let go.
 	success(
 		"attach_session",
