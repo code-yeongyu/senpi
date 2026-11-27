@@ -6,8 +6,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createEventBus } from "../../../src/core/event-bus.ts";
 import configReloadExtension from "../../../src/core/extensions/builtin/config-reload/index.ts";
 import type { ConfigReloadLogger } from "../../../src/core/extensions/builtin/config-reload/log.ts";
+import { RELOAD_SLOT_TIMEOUT_MS } from "../../../src/core/extensions/builtin/config-reload/reload-queue.ts";
 import { globalDefaultExtensionFactories } from "../../../src/core/extensions/builtin/index.ts";
 import type { WatchEventListener } from "../../../src/core/extensions/builtin/config-reload/watch-engine.ts";
+import { discoverAndLoadExtensions } from "../../../src/core/extensions/loader.ts";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -18,8 +20,6 @@ import { GENERATED_SHIM_BANNER } from "../../../src/core/generated-shim-banner.t
 import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
-// The default bound on one session's hold of the reload queue (config-reload `RELOAD_SLOT_TIMEOUT_MS`).
-const RELOAD_SLOT_BOUND_MS = 60_000;
 const roots: string[] = [];
 const sessions: Harness[] = [];
 // Every reload a test leaves open; afterEach settles them so the process-wide queue is empty for the next test.
@@ -61,25 +61,51 @@ async function loadDefaults(root: string) {
 	return loader;
 }
 
+/** A `diff` shim another installation wrote for its live builtin, whose module records that it ran under `marker`. */
+function foreignInstallationShim(root: string, shim: string, marker: string): string {
+	const builtin = join(root, "another-version", "dist", "core", "extensions", "builtin");
+	mkdirSync(builtin, { recursive: true });
+	const target = join(builtin, "diff.js");
+	writeFileSync(target, `globalThis[Symbol.for("${marker}")] = true;\nexport default function diff() {}\n`);
+	const content = FOREIGN_BANNER + `export { default } from ${JSON.stringify(pathToFileURL(target).href)};\n`;
+	writeFileSync(shim, content);
+	return content;
+}
+
 // #7597, #7599 review: a generated shim marks an installed default. Its code is always this process's own builtin, and
 // a shim another installation wrote for its live builtin is left alone so two installations stop rewriting it.
 it("loads this process's builtin for another installation's shim and leaves the shim alone", async () => {
 	const { root, shim } = fixture();
-	const builtin = join(root, "another-version", "dist", "core", "extensions", "builtin");
-	mkdirSync(builtin, { recursive: true });
-	const target = join(builtin, "diff.js");
-	writeFileSync(
-		target,
-		'globalThis[Symbol.for("senpi-7597-foreign-diff")] = true;\nexport default function diff() {}\n',
-	);
-	const content = FOREIGN_BANNER + `export { default } from ${JSON.stringify(pathToFileURL(target).href)};\n`;
-	writeFileSync(shim, content);
+	const content = foreignInstallationShim(root, shim, "senpi-7597-foreign-diff");
 	const inProcess = vi.spyOn(globalDefaultExtensionFactories, "diff");
 	const loader = await loadDefaults(root);
 	expect(loader.getExtensions().errors).toEqual([]);
 	expect(inProcess).toHaveBeenCalled();
 	expect(Reflect.get(globalThis, Symbol.for("senpi-7597-foreign-diff"))).toBeUndefined();
 	expect(readFileSync(shim, "utf8")).toBe(content);
+});
+
+// #7599 delta review: the shim is a presence marker in whatever agent dir a loader is given, not only the global one.
+it("loads this process's builtin for another installation's shim in a non-global agent dir", async () => {
+	const { root, shim } = fixture();
+	foreignInstallationShim(root, shim, "senpi-7597-foreign-diff-sdk");
+	vi.stubEnv("SENPI_CODING_AGENT_DIR", fixture().root);
+	const inProcess = vi.spyOn(globalDefaultExtensionFactories, "diff");
+	const loader = new DefaultResourceLoader({ cwd: root, agentDir: root });
+	await loader.reload();
+	expect(loader.getExtensions().errors).toEqual([]);
+	expect(inProcess).toHaveBeenCalled();
+	expect(Reflect.get(globalThis, Symbol.for("senpi-7597-foreign-diff-sdk"))).toBeUndefined();
+});
+
+it("loads this process's builtin for another installation's shim through discoverAndLoadExtensions", async () => {
+	const { root, shim } = fixture();
+	foreignInstallationShim(root, shim, "senpi-7597-foreign-diff-public");
+	const inProcess = vi.spyOn(globalDefaultExtensionFactories, "diff");
+	const result = await discoverAndLoadExtensions([], root, root);
+	expect(result.errors).toEqual([]);
+	expect(inProcess).toHaveBeenCalled();
+	expect(Reflect.get(globalThis, Symbol.for("senpi-7597-foreign-diff-public"))).toBeUndefined();
 });
 
 it("repairs another installation's shim whose builtin is gone", async () => {
@@ -207,7 +233,7 @@ it("releases the queue slot after the bound while a reload that never settles ke
 	const group = await watchers([undefined, undefined], logger);
 	await group.rewrite("export default () => {};\n");
 	expect(group.calls).toEqual([0]);
-	await vi.advanceTimersByTimeAsync(RELOAD_SLOT_BOUND_MS - 1);
+	await vi.advanceTimersByTimeAsync(RELOAD_SLOT_TIMEOUT_MS - 1);
 	expect(group.calls).toEqual([0]);
 	await vi.advanceTimersByTimeAsync(1);
 	expect(group.calls).toEqual([0, 1]);
