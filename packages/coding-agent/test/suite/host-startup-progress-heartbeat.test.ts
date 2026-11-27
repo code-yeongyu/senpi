@@ -4,7 +4,7 @@
  * last tick, not just a turning event loop), and only until its own last startup milestone.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startStartupProgress } from "../../src/modes/rpc/host-startup-beacon.ts";
+import { createStartupBeacon, startStartupProgress } from "../../src/modes/rpc/host-startup-beacon.ts";
 import { beginStartupAttempt } from "../../src/modes/rpc/host-startup-run.ts";
 import {
 	parseStartupHandOff,
@@ -96,6 +96,25 @@ describe("startup progress heartbeat", () => {
 		cpu.work(STARTUP_PROGRESS_MIN_CPU_MS);
 		vi.advanceTimersByTime(10 * STARTUP_PROGRESS_INTERVAL_MS);
 		expect(report).toHaveBeenCalledTimes(1);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("stops when the beacon reports the producer's own last milestone", () => {
+		const written: string[] = [];
+		const cpu = busyCpu();
+		const beacon = createStartupBeacon({ handOff: progressHandOff, seq: 1 }, (line) => written.push(line), cpu.cpuMs);
+		const progressRecords = (): number => written.filter((line) => line.includes('"milestone":"progress"')).length;
+		cpu.work(STARTUP_PROGRESS_MIN_CPU_MS);
+		vi.advanceTimersByTime(STARTUP_PROGRESS_INTERVAL_MS);
+		expect(progressRecords()).toBe(1);
+
+		beacon.reportMilestone("public_published");
+		expect(written.at(-1)).toContain('"milestone":"public_published"');
+		for (let tick = 0; tick < 10; tick++) {
+			cpu.work(STARTUP_PROGRESS_MIN_CPU_MS);
+			vi.advanceTimersByTime(STARTUP_PROGRESS_INTERVAL_MS);
+		}
+		expect(progressRecords()).toBe(1);
 		expect(vi.getTimerCount()).toBe(0);
 	});
 

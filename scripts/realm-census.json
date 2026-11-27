@@ -8974,11 +8974,7 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/host-startup-beacon.ts#progress": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/modes/rpc/host-startup-beacon.ts#reporter": {
+		"packages/coding-agent/src/modes/rpc/host-startup-beacon.ts#beacon": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},

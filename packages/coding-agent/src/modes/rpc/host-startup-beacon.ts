@@ -72,7 +72,6 @@ function write(state: BeaconState, line: string): void {
 }
 
 const state = captured();
-const reporter = state ? startupReporter((line) => write(state, line)) : undefined;
 
 /**
  * The supervisor's one writer to its startup pipe. Its own milestones and its host child's relayed records come from
@@ -155,9 +154,7 @@ export function startupHandOff(): StartupHandOff | undefined {
 }
 
 export function reportStartupMilestone(milestone: StartupMilestone): void {
-	if (!state || !reporter) return;
-	reporter.report(startupEventLine(state.handOff.binding, state.handOff.role, ++state.seq, milestone), milestone);
-	progress?.milestone(milestone);
+	beacon?.reportMilestone(milestone);
 }
 
 /** The last milestone each producer reports: its startup work is over, so its progress reports end there. */
@@ -204,7 +201,26 @@ export function startStartupProgress(
 	};
 }
 
-const progress = state ? startStartupProgress(state.handOff, () => reportStartupMilestone("progress")) : undefined;
+/**
+ * One coordinated producer's reports on its startup pipe: its milestones, in `startupReporter`'s phase order, and its
+ * progress heartbeat, which the producer's own last milestone ends.
+ */
+export function createStartupBeacon(
+	producer: { readonly handOff: StartupHandOff; seq: number },
+	emit: (line: string) => void,
+	cpuMs: () => number = processCpuMs,
+) {
+	const reporter = startupReporter(emit);
+	const reportMilestone = (milestone: StartupMilestone): void => {
+		const { binding, role } = producer.handOff;
+		reporter.report(startupEventLine(binding, role, ++producer.seq, milestone), milestone);
+		progress?.milestone(milestone);
+	};
+	const progress = startStartupProgress(producer.handOff, () => reportMilestone("progress"), cpuMs);
+	return { reporter, reportMilestone };
+}
+
+const beacon = state ? createStartupBeacon(state, (line) => write(state, line)) : undefined;
 
 /** The environment value for the host child a coordinated supervisor spawns, or undefined when uncoordinated. */
 export function hostChildStartupHandOff(fillers: readonly number[]): string | undefined {
@@ -213,9 +229,9 @@ export function hostChildStartupHandOff(fillers: readonly number[]): string | un
 
 /** The supervisor relays its host child's startup pipe verbatim inside relay frames; it never writes a host milestone itself. */
 export function relayHostStartupEvents(stream: Readable | null | undefined): void {
-	if (!reporter || !stream) {
+	if (!beacon || !stream) {
 		stream?.resume();
 		return;
 	}
-	reporter.relay(stream);
+	beacon.reporter.relay(stream);
 }
