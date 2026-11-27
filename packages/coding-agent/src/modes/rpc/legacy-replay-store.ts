@@ -56,6 +56,8 @@ export class LegacyReplayStore {
 	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
 	private readonly lifecycleSnapshots = new Map<string, SnapshotRecord>();
 	private readonly pendingQuestions = new Map<string, Map<string, Record<string, unknown>>>();
+	/** Index of the newest record of the session's active message that carries its cumulative `message`. */
+	private readonly snapshotAt = new Map<string, number>();
 	private cursors = 0;
 
 	/** Legacy views of either source not yet released: zero once every barrier ended (R3.C6.4 accounting). */
@@ -101,22 +103,33 @@ export class LegacyReplayStore {
 		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
 		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
 			this.sessionSnapshots.set(sessionId, [record]);
+			if (record.hasMessage) this.snapshotAt.set(sessionId, 0);
+			else this.snapshotAt.delete(sessionId);
 		} else {
 			const records = this.sessionSnapshots.get(sessionId);
-			if (records) this.supersedeNewest(sessionId, records).push(record);
+			if (records) {
+				const owned = record.hasMessage ? this.supersedeSnapshot(sessionId, records) : records;
+				owned.push(record);
+				if (record.hasMessage) this.snapshotAt.set(sessionId, owned.length - 1);
+			}
 		}
-		if (value.type === "message_end") this.sessionSnapshots.delete(sessionId);
+		if (value.type === "message_end") {
+			this.sessionSnapshots.delete(sessionId);
+			this.snapshotAt.delete(sessionId);
+		}
 	}
 
 	/**
-	 * Demotes the newest record to its delta-only form when it is a compact delta, returning the array to append to.
-	 * A frozen cursor reads the array and length it froze, so while any cursor is open the store writes a copy.
+	 * A newer record carries the message, so the previous snapshot, when it is a compact delta, keeps only its delta.
+	 * Records that carry no message (tool events) never supersede it. A frozen cursor reads the array and length it
+	 * froze, so while any cursor is open the store rewrites a copy. Returns the array to append to.
 	 */
-	private supersedeNewest(sessionId: string, records: SnapshotRecord[]): SnapshotRecord[] {
-		const newest = records.at(-1);
-		if (newest?.deltaOnlyLine === undefined) return records;
+	private supersedeSnapshot(sessionId: string, records: SnapshotRecord[]): SnapshotRecord[] {
+		const at = this.snapshotAt.get(sessionId);
+		const previous = at === undefined ? undefined : records[at];
+		if (at === undefined || previous?.deltaOnlyLine === undefined) return records;
 		const owned = this.cursors > 0 ? [...records] : records;
-		owned[owned.length - 1] = supersededRecord(newest.deltaOnlyLine);
+		owned[at] = supersededRecord(previous.deltaOnlyLine);
 		if (owned !== records) this.sessionSnapshots.set(sessionId, owned);
 		return owned;
 	}
@@ -124,6 +137,7 @@ export class LegacyReplayStore {
 	forget(sessionId: string): void {
 		this.pendingQuestions.delete(sessionId);
 		this.sessionSnapshots.delete(sessionId);
+		this.snapshotAt.delete(sessionId);
 		this.lifecycleSnapshots.delete(sessionId);
 	}
 

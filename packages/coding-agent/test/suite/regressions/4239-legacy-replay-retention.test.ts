@@ -89,6 +89,25 @@ it("a late peer's replay of an in-flight message is linear: every delta, one cum
 	writer.unregisterConnection("late");
 });
 
+it("records that carry no message never supersede the snapshot: the newest delta stays whole after tool events", async () => {
+	const writer = new SessionEventWriter(() => {});
+	startMessage(writer);
+	for (let index = 1; index <= 50; index++) {
+		writer.enqueue("s", updateAt(index));
+		writer.enqueue("s", { type: "tool_execution_update", toolCallId: "t", partialResult: { index } });
+	}
+
+	const late = peer(writer, "late");
+	writer.attachConnectionToSession("late", "s");
+	late.release();
+	await writer.flush();
+	const full = fullDeltas(late.parsed());
+
+	expect(full).toHaveLength(1);
+	expect(JSON.stringify(full[0]?.message)).toBe(JSON.stringify(updateAt(50).message));
+	writer.unregisterConnection("late");
+});
+
 it("a baseline frozen mid-stream still reads the cumulative snapshot it froze while later updates supersede it", async () => {
 	const writer = new SessionEventWriter(() => {});
 	startMessage(writer);
