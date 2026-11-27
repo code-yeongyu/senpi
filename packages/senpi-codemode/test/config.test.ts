@@ -172,6 +172,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
+				statusTicker: true,
 				memory: defaultCodemodeSettings.memory,
 			});
 		} finally {
@@ -205,6 +206,7 @@ describe("codemode settings", () => {
 				taskTools: { task: "task", output: "task_output" },
 				outputSink: { headBytes: 20480, maxColumns: 768 },
 				statusEvents: true,
+				statusTicker: true,
 				memory: defaultCodemodeSettings.memory,
 			});
 		} finally {
@@ -229,6 +231,25 @@ describe("codemode settings", () => {
 		try {
 			const loaded = await loadCodemodeSettings({ cwd: join(root, "project"), homeDir: join(root, "home") });
 
+			expect(loaded.settings.statusEvents).toBe(true);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses statusTicker default true and reads false from the settings file", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-codemode-config-"));
+		try {
+			const projectDir = join(root, "project");
+			const homeDir = join(root, "home");
+			expect((await loadCodemodeSettings({ cwd: projectDir, homeDir })).settings.statusTicker).toBe(true);
+
+			await mkdir(join(projectDir, ".senpi"), { recursive: true });
+			await writeFile(join(projectDir, ".senpi", "codemode.json"), JSON.stringify({ statusTicker: false }), {});
+			const loaded = await loadCodemodeSettings({ cwd: projectDir, homeDir });
+
+			expect(loaded.warnings).toEqual([]);
+			expect(loaded.settings.statusTicker).toBe(false);
 			expect(loaded.settings.statusEvents).toBe(true);
 		} finally {
 			await rm(root, { recursive: true, force: true });
