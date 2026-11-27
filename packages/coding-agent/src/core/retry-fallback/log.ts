@@ -1,5 +1,5 @@
-import { closeSync, fchmodSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { access, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { rotateLogIfNeeded } from "../log-file-rotation.ts";
@@ -178,7 +178,7 @@ async function retireOnce(filePath: string): Promise<void> {
 	// The logs directory may not exist yet. Resolve the nearest existing directory before claiming retirement.
 	for (;;) {
 		try {
-			key = join(realpathSync.native(directory), suffix);
+			key = join(await realpath(directory), suffix);
 			break;
 		} catch (error) {
 			const parent = dirname(directory);
