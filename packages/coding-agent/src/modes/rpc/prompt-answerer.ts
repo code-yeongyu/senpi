@@ -38,6 +38,20 @@ function digestOf(key: string): Buffer {
 
 export class PromptAnswerers {
 	private readonly runs = new Map<string, Run>();
+	/** A key minted at the opener's attach, held until that open's reply takes it; never serialized. */
+	private readonly minted = new Map<string, string>();
+
+	/** Whether a key minted for this run waits for its open's reply. */
+	hasMinted(sessionId: string): boolean {
+		return this.minted.has(sessionId);
+	}
+
+	/** The key minted for this run, handed to its open's reply once. */
+	takeMinted(sessionId: string): string | undefined {
+		const key = this.minted.get(sessionId);
+		this.minted.delete(sessionId);
+		return key;
+	}
 
 	/**
 	 * A new run of `sessionId`, opened by `opener`. Returns the run's key, which only the opener's reply carries, or
@@ -48,12 +62,14 @@ export class PromptAnswerers {
 		opener: string | undefined,
 		designated = DESIGNATED_ANSWERER_BY_DEFAULT,
 	): string | undefined {
+		this.minted.delete(sessionId);
 		if (!designated) {
 			this.runs.delete(sessionId);
 			return undefined;
 		}
 		const key = randomBytes(32).toString("base64url");
 		this.runs.set(sessionId, { digest: digestOf(key), designated: new Set([opener ?? SOLE_CLIENT]) });
+		this.minted.set(sessionId, key);
 		return key;
 	}
 
@@ -109,6 +125,7 @@ export class PromptAnswerers {
 	}
 
 	forgetSession(sessionId: string): void {
+		this.minted.delete(sessionId);
 		this.runs.delete(sessionId);
 	}
 }

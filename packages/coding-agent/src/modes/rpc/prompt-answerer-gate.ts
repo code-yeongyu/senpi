@@ -13,9 +13,6 @@ import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
 
-/** A minted key on its way from the opener's attach to its reply; nothing else reads it and it is never serialized. */
-const mintedKeys = new WeakMap<OpenRpcSession, string>();
-
 function attached(host: RouterContext, connection: string | undefined, sessionId: string): boolean {
 	return connection === undefined || host.sessionsByConnection.get(connection)?.has(sessionId) === true;
 }
@@ -31,8 +28,7 @@ export function designateOpener(
 	designated = DESIGNATED_ANSWERER_BY_DEFAULT,
 ): void {
 	if (opened.attached) return;
-	const key = host.answerers.open(opened.sessionId, owner, designated);
-	if (key !== undefined) mintedKeys.set(opened, key);
+	host.answerers.open(opened.sessionId, owner, designated);
 }
 
 type AnswererFields = {
@@ -65,11 +61,9 @@ export function openReplyAnswerer(
 	}
 	if (!opened.attached) {
 		const wanted = designated ?? DESIGNATED_ANSWERER_BY_DEFAULT;
-		if (!wanted) mintedKeys.delete(opened);
-		if (!wanted || !mintedKeys.has(opened)) designateOpener(host, opened, owner, wanted);
+		if (!wanted || !host.answerers.hasMinted(opened.sessionId)) designateOpener(host, opened, owner, wanted);
 	}
-	const answerKey = mintedKeys.get(opened);
-	mintedKeys.delete(opened);
+	const answerKey = host.answerers.takeMinted(opened.sessionId);
 	const answerer = host.answerers.isAnswerer(opened.sessionId, owner, attached(host, owner, opened.sessionId));
 	return { ...answererFields(host, opened.sessionId, answerer), ...(answerKey === undefined ? {} : { answerKey }) };
 }
