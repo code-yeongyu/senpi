@@ -194,6 +194,7 @@ export function createWorkerCore(transport, options) {
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],
 				kernelToolsDisabled: message.kernelToolsDisabled === true,
+				scopeHelper: message.scopeHelper === true,
 				...(killGuard?.guard === undefined ? {} : { killGuard: killGuard.guard }),
 				onChildEvent: (event) => emit({ type: "status", event: { op: CHILD_LIFECYCLE_OP, ...event } }),
 				onShellWaitChange: () => {

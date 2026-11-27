@@ -1,3 +1,4 @@
+import type { TelemetryConsent } from "../../core/telemetry-consent.ts";
 import { randomUUID } from "node:crypto";
 import { Container, setKeybindings, Text, type Component, type Focusable, type TUI } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../../core/keybindings.ts";
@@ -54,10 +55,17 @@ export class AttachedTui extends Container implements Focusable {
 	private before: string | undefined;
 	private loadingHistory: Promise<void> | undefined;
 	private buffering: AttachRecord[] | undefined = [];
+	/** This terminal user's own telemetry answer, sent as a caller of the session it attaches to (senpi#7446). */
+	private readonly telemetryConsent: TelemetryConsent | undefined;
 
-	constructor(ui: TUI, finish: () => void, options: { readonly answerDeadlineMs?: number } = {}) {
+	constructor(
+		ui: TUI,
+		finish: () => void,
+		options: { readonly answerDeadlineMs?: number; readonly telemetryConsent?: TelemetryConsent } = {},
+	) {
 		super();
 		this.ui = ui;
+		this.telemetryConsent = options.telemetryConsent;
 		const keys = KeybindingsManager.create();
 		setKeybindings(keys);
 		this.editor = new CustomEditor(ui, getEditorTheme(), keys);
@@ -160,6 +168,7 @@ export class AttachedTui extends Container implements Focusable {
 				type: "attach_session",
 				sessionId: row.sessionId,
 				durableSessionId: row.durableSessionId,
+				...(this.telemetryConsent !== undefined ? { telemetry: { consent: this.telemetryConsent } } : {}),
 			});
 			this.attached = true;
 			const subscribed = await this.client.request({

@@ -5,6 +5,7 @@
  * (virtual terminal, real composer) registers the endpoint and drains peer deliveries the way OmO's gateway does:
  * read the admission gate, then admit.
  */
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -37,11 +38,33 @@ interface Terminal {
 	readonly socket: string;
 	readonly composer: Composer;
 	readonly requests: string[];
+	readonly inboxDir: string;
+	/** Every admission any drain pass answered, the endpoint's own wakes included, in order. */
+	readonly admissions: SessionControlAdmission[];
 	send(id: string, text: string): void;
+	/** Resolves once a drain pass has admitted `id`. */
+	admitted(id: string): Promise<void>;
+}
+
+/**
+ * Hands a delivery to the terminal and asks it to drain, the way a sender does, then answers every admission of that
+ * delivery. The endpoint also drains on its own (the inbox watch, its arming, idle and emitted wakes), and one of those
+ * passes can take the delivery before the sender's wake runs; the sender's wake then answers nothing (senpi#7483). The
+ * contract is that the delivery is admitted exactly once, so the answer collects every pass, not only the sender's,
+ * after waiting for the admission itself: the helper must not depend on which pass ran or on that pass recording its
+ * admission before the sender's wake answers.
+ */
+async function admit(tui: Terminal, id: string, text: string): Promise<SessionControlAdmission[]> {
+	tui.send(id, text);
+	await controlData(tui.socket, { type: "wake" });
+	await tui.admitted(id);
+	return tui.admissions.filter((admission) => admission.delivery_id === id);
 }
 
 async function terminal(responses: FauxResponseStep[], tools: AgentTool[] = []): Promise<Terminal> {
 	const inbox = new Map<string, string>();
+	const admissions: SessionControlAdmission[] = [];
+	const waiters = new Map<string, Array<() => void>>();
 	let socket: string | undefined;
 	let inboxDir = "";
 	const harness = await createHarness({
@@ -65,6 +88,8 @@ async function terminal(responses: FauxResponseStep[], tools: AgentTool[] = []):
 										}).kind
 									: "held_draft";
 								admitted.push({ delivery_id, kind });
+								admissions.push({ delivery_id, kind });
+								for (const resolve of waiters.get(delivery_id)?.splice(0) ?? []) resolve();
 								if (kind !== "held_draft") inbox.delete(delivery_id);
 							}
 							return { admitted };
@@ -96,7 +121,19 @@ async function terminal(responses: FauxResponseStep[], tools: AgentTool[] = []):
 	await bind.call(mode);
 	if (socket === undefined) throw new Error("the terminal registered no control endpoint");
 	const composer: Composer = Reflect.get(mode, "editor");
-	return { harness, socket, composer, requests, send: (id, text) => inbox.set(id, text) };
+	return {
+		harness,
+		socket,
+		composer,
+		requests,
+		inboxDir,
+		admissions,
+		send: (id, text) => inbox.set(id, text),
+		admitted: (id) =>
+			admissions.some((admission) => admission.delivery_id === id)
+				? Promise.resolve()
+				: new Promise((resolve) => waiters.set(id, [...(waiters.get(id) ?? []), resolve])),
+	};
 }
 
 function emitted(harness: Harness, id: string): Promise<void> {
@@ -149,10 +186,7 @@ describe("a peer delivery to an idle terminal starts its own turn and leaves the
 		tui.composer.setText(DRAFT);
 		const written = emitted(tui.harness, "d1");
 
-		tui.send("d1", "peer message one");
-		expect(await controlData(tui.socket, { type: "wake" })).toEqual({
-			admitted: [{ delivery_id: "d1", kind: "started" }],
-		});
+		expect(await admit(tui, "d1", "peer message one")).toEqual([{ delivery_id: "d1", kind: "started" }]);
 		await written;
 		await tui.harness.session.waitForIdle();
 
@@ -167,10 +201,7 @@ describe("a peer delivery to an idle terminal starts its own turn and leaves the
 		const tui = await terminal([fauxAssistantMessage("answered the peer")]);
 		const written = emitted(tui.harness, "d1");
 
-		tui.send("d1", "peer message one");
-		expect(await controlData(tui.socket, { type: "wake" })).toEqual({
-			admitted: [{ delivery_id: "d1", kind: "started" }],
-		});
+		expect(await admit(tui, "d1", "peer message one")).toEqual([{ delivery_id: "d1", kind: "started" }]);
 		await written;
 		await tui.harness.session.waitForIdle();
 
@@ -193,10 +224,7 @@ describe("a peer delivery to an idle terminal starts its own turn and leaves the
 		tui.composer.setText(DRAFT);
 		const written = emitted(tui.harness, "d1");
 
-		tui.send("d1", "peer message one");
-		expect(await controlData(tui.socket, { type: "wake" })).toEqual({
-			admitted: [{ delivery_id: "d1", kind: "queued" }],
-		});
+		expect(await admit(tui, "d1", "peer message one")).toEqual([{ delivery_id: "d1", kind: "queued" }]);
 		held.release();
 		await run;
 		await written;
@@ -206,5 +234,36 @@ describe("a peer delivery to an idle terminal starts its own turn and leaves the
 		expect(tui.requests.at(-1)).toContain("peer message one");
 		for (const request of tui.requests) expect(request).not.toContain(DRAFT);
 		expect(tui.composer.getText()).toBe(DRAFT);
+	});
+
+	// senpi#7483: the endpoint's own inbox wake takes the delivery before the sender's wake runs. The delivery is still
+	// admitted exactly once, as the running turn's follow-up; the sender's wake finds nothing left and answers nothing.
+	it("the endpoint's own wake drains the delivery first: it is still admitted once, as the turn's follow-up", async () => {
+		const held = heldTool();
+		const tui = await terminal(
+			[
+				fauxAssistantMessage([fauxToolCall("hold", {})], { stopReason: "toolUse" }),
+				fauxAssistantMessage("tool done"),
+				fauxAssistantMessage("answered the peer"),
+			],
+			[held.tool],
+		);
+		const run = tui.harness.session.prompt("start");
+		await held.started;
+		const written = emitted(tui.harness, "d1");
+
+		tui.send("d1", "peer message one");
+		writeFileSync(join(tui.inboxDir, "nudge"), "");
+		await tui.admitted("d1");
+		expect(await controlData(tui.socket, { type: "wake" })).toEqual({ admitted: [] });
+		expect(tui.admissions.filter((admission) => admission.delivery_id === "d1")).toEqual([
+			{ delivery_id: "d1", kind: "queued" },
+		]);
+		held.release();
+		await run;
+		await written;
+		await tui.harness.session.waitForIdle();
+
+		expect(transcript(tui.harness)).toEqual(["user:start", "delivery:d1"]);
 	});
 });

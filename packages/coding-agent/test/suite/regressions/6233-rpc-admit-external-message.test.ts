@@ -98,7 +98,7 @@ describe("admit_external_message", () => {
 		expect(reply).toMatchObject({
 			success: true,
 			command: "admit_external_message",
-			data: { kind: "started", turnId: "0" },
+			data: { kind: "started", turnId: "1" },
 		});
 		expect(deliveries()).toEqual([
 			expect.objectContaining({

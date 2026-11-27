@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi",
-	"version": "2026.11.25",
+	"version": "2026.11.26",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -44,6 +44,10 @@
 			"types": "./dist/private-fds.d.ts",
 			"import": "./dist/private-fds.js"
 		},
+		"./program-resume-startup": {
+			"types": "./dist/program-resume-startup.d.ts",
+			"import": "./dist/program-resume-startup.js"
+		},
 		"./mcp-env-grants": {
 			"types": "./dist/core/extensions/builtin/mcp/env-grants-store.d.ts",
 			"import": "./dist/core/extensions/builtin/mcp/env-grants-store.js"
@@ -63,6 +67,10 @@
 		"./presenter-authority": {
 			"types": "./dist/presenter-authority-slot.d.ts",
 			"import": "./dist/presenter-authority-slot.js"
+		},
+		"./engine": {
+			"types": "./dist/engine/index.d.ts",
+			"import": "./dist/engine/index.js"
 		},
 		"./tools-core": {
 			"types": "./dist/tools-core.d.ts",
@@ -95,12 +103,12 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "0.99.1",
-		"@earendil-works/pi-agent-core": "^2026.11.25",
-		"@earendil-works/pi-ai": "^2026.11.25",
-		"@earendil-works/pi-client": "^2026.11.25",
-		"@earendil-works/pi-protocol": "^2026.11.25",
-		"@earendil-works/pi-realm-registry": "^2026.11.25",
-		"@earendil-works/pi-tui": "^2026.11.25",
+		"@earendil-works/pi-agent-core": "^2026.11.26",
+		"@earendil-works/pi-ai": "^2026.11.26",
+		"@earendil-works/pi-client": "^2026.11.26",
+		"@earendil-works/pi-protocol": "^2026.11.26",
+		"@earendil-works/pi-realm-registry": "^2026.11.26",
+		"@earendil-works/pi-tui": "^2026.11.26",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"ajv": "8.20.0",
 		"chalk": "6.0.0",
@@ -121,9 +129,9 @@
 		"yaml": "2.9.1",
 		"@anthropic-ai/claude-agent-sdk": "0.3.321",
 		"@anthropic-ai/sdk": "0.127.0",
-		"@code-yeongyu/senpi-codemode": "^2026.11.25",
-		"@code-yeongyu/senpi-machine-ops": "^2026.11.25",
-		"@earendil-works/pi-pty": "^2026.11.25",
+		"@code-yeongyu/senpi-codemode": "^2026.11.26",
+		"@code-yeongyu/senpi-machine-ops": "^2026.11.26",
+		"@earendil-works/pi-pty": "^2026.11.26",
 		"@modelcontextprotocol/sdk": "1.32.1",
 		"@mozilla/readability": "0.6.0",
 		"linkedom": "0.18.13",

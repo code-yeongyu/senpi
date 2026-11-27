@@ -399,6 +399,11 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			entry.runtime.setBrowserEngine(message.engine);
 			send({ type: "result", request: message.request });
 			return;
+		case "telemetry_callers":
+			if (!entry?.runtime) throw new Error("session_closing");
+			entry.runtime.setTelemetryCallers(message.verdict);
+			send({ type: "result", request: message.request });
+			return;
 		case "permission_preset":
 			if (!entry?.runtime) throw new Error("session_closing");
 			entry.runtime.setPermissionPreset(message.preset);
