@@ -1,6 +1,6 @@
 import { LEGACY_PROVIDER_IDS } from "../../legacy-provider-ids.ts";
 import type { ProviderEnv } from "../../types.ts";
-import type { Credential } from "../types.ts";
+import type { Credential, OAuthCredentials } from "../types.ts";
 
 export type { Credential };
 
@@ -8,7 +8,7 @@ export const DEFAULT_SLOT_NAME = "default";
 
 export type CredentialSlotSource = "login" | "import" | "env";
 
-export type CredentialSlot = {
+export type CredentialSlot = Partial<OAuthCredentials> & {
 	/** Immutable operational identity. */
 	name: string;
 	/** Optional presentation metadata; never used for credential selection. */
@@ -21,6 +21,28 @@ export type CredentialSlot = {
 	/** Provider-scoped values this account carries (a Kimi region, a Cloudflare account id). */
 	env?: ProviderEnv;
 };
+
+const OAUTH_ACCOUNT_FIELDS = [
+	"route",
+	"issuer",
+	"subject",
+	"clientId",
+	"email",
+	"idToken",
+	"scopes",
+	"planUsageEnabled",
+	"signedOut",
+] as const;
+
+/** Replace account metadata as a unit; an absent field must not inherit a sibling's identity. */
+function withOAuthAccountFields<T extends object>(target: T, source: OAuthCredentials | CredentialSlot): T {
+	const next = { ...target };
+	for (const field of OAUTH_ACCOUNT_FIELDS) {
+		if (source[field] === undefined) Reflect.deleteProperty(next, field);
+		else Reflect.set(next, field, source[field]);
+	}
+	return next;
+}
 
 export type PooledCredential = Credential & {
 	accounts?: CredentialSlot[];
@@ -230,7 +252,10 @@ function projectFlatFields(credential: PooledCredential, slot: CredentialSlot): 
 	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (credential.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return credential;
-		return { ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
+		return withOAuthAccountFields(
+			{ ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env },
+			slot,
+		);
 	}
 	return { ...credential, key: slot.key, ...env };
 }
@@ -278,21 +303,27 @@ export function projectSlot(credential: PooledCredential | undefined, name: stri
 	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (flat.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return undefined;
-		return { ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
+		return withOAuthAccountFields(
+			{ ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env },
+			slot,
+		);
 	}
 	return { ...flat, key: slot.key, ...env };
 }
 
 function slotFromFlatCredentialNamed(credential: Credential, name: string): CredentialSlot {
 	if (credential.type === "oauth") {
-		return {
-			name,
-			source: "login",
-			access: credential.access,
-			refresh: credential.refresh,
-			expires: credential.expires,
-			...credentialSlotEnv(credential),
-		};
+		return withOAuthAccountFields(
+			{
+				name,
+				source: "login" as const,
+				access: credential.access,
+				refresh: credential.refresh,
+				expires: credential.expires,
+				...credentialSlotEnv(credential),
+			},
+			credential,
+		);
 	}
 	return { name, source: "login", key: credential.key, ...credentialSlotEnv(credential) };
 }
@@ -356,6 +387,23 @@ export class EmptyApiKeyError extends Error {
 	}
 }
 
+/**
+ * A reauthorization signed in a different ChatGPT account than the saved one it was started for (#5003). Nothing
+ * is written: the selected account keeps its registration and the other sign-in is not silently swapped in.
+ */
+export class ReauthorizeAccountMismatchError extends Error {
+	override readonly name = "ReauthorizeAccountMismatchError";
+
+	readonly slotName: string;
+
+	constructor(slotName: string) {
+		super(
+			`Signed in to a different ChatGPT account than '${slotName}'; nothing was changed. Sign in as that account, or add the other one as a new account.`,
+		);
+		this.slotName = slotName;
+	}
+}
+
 /** True when an API-key credential names a `key` that is blank, whitespace or not a string. */
 function hasBlankKey(credential: Credential): boolean {
 	if (credential.type !== "api_key" || !Object.hasOwn(credential, "key")) return false;
@@ -393,11 +441,16 @@ export function assertLoginKeyPresent(credential: Credential): void {
  *
  * `onAllocated` reports the account this login committed, so a caller can name
  * it in a receipt without re-reading storage.
+ *
+ * With `accountIdentity`, a flat OAuth login whose identity matches saved
+ * accounts is a re-login of that account, not a new one (omo#9633): see
+ * `replaceSameAccount`.
  */
 export function appendLoginSlot(
 	stored: PooledCredential | undefined,
 	flat: Credential,
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
+	options?: AppendLoginSlotOptions,
 ): Credential {
 	assertLoginKeyPresent(flat);
 	// A pool holds one kind: a login of the other kind replaces the credential instead of joining it
@@ -419,15 +472,195 @@ export function appendLoginSlot(
 		if (!provided) onAllocated?.(DEFAULT_SLOT_NAME, "generated");
 		return flat;
 	}
+	const target =
+		provided || options?.reauthorizeSlot === undefined ? undefined : findSlot(current, options.reauthorizeSlot);
+	if (target) {
+		assertSameReauthorizedAccount(target, flat, options?.accountIdentity);
+		return restoreReauthorizedSlot(current, target, flat, onAllocated);
+	}
 	const storedAccounts = Array.isArray(current.accounts) ? current.accounts : undefined;
+	if (!provided && "signedOut" in current && current.signedOut === true) {
+		// Sign-out keeps only the registration for a later sign-in (senpi#5003 W7). That sign-in takes over
+		// the flat projection; as a sibling slot it would leave the provider resolving to the signed-out copy.
+		const name = storedAccounts ? nextLoginSlotName(current) : DEFAULT_SLOT_NAME;
+		const base = storedAccounts ? upsertSlot(current, slotFromFlatCredentialNamed(flat, name)) : current;
+		const next = { ...base, ...flat, ...(storedAccounts ? { accounts: base.accounts } : {}) };
+		Reflect.deleteProperty(next, "signedOut");
+		onAllocated?.(name, "generated");
+		return next;
+	}
 	if (provided) {
 		// A pool merges onto the stored pool; a flat current keeps the whole-write
 		// shape because the provider's accounts already carry this login.
 		return storedAccounts ? mergeProvidedPool(current, storedAccounts, provided) : flat;
 	}
+	if (flat.type === "oauth" && flat.route === "siwc") {
+		const existing = listSlots(current);
+		const matched = existing.find(
+			(slot) =>
+				slot.route === "siwc" &&
+				(["issuer", "subject", "clientId"] as const).every(
+					(field) => typeof flat[field] === "string" && flat[field].trim() !== "" && flat[field] === slot[field],
+				),
+		);
+		if (matched) {
+			const replacement = {
+				...slotFromFlatCredentialNamed(flat, matched.name),
+				...(matched.displayName === undefined ? {} : { displayName: matched.displayName }),
+			};
+			const next = slotMirrorsFlat(current, matched) ? projectFlatFields(current, replacement) : current;
+			onAllocated?.(matched.name, "generated");
+			if (!storedAccounts) return next;
+			const pooled: PooledCredential = {
+				...next,
+				accounts: existing.map((slot) => (slot === matched ? replacement : slot)),
+			};
+			return pooled;
+		}
+	}
+	// Sign in with ChatGPT names an account by its issuer, subject and issued client ID (matched above). Without
+	// that tuple, a shared ChatGPT token identity is not the same SIWC sign-in, so the login is appended.
+	const replaced =
+		flat.type === "oauth" && flat.route === "siwc"
+			? undefined
+			: replaceSameAccount(current, flat, options?.accountIdentity, onAllocated);
+	if (replaced) return replaced;
 	const name = nextLoginSlotName(current);
 	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
 	onAllocated?.(name, "generated");
+	return next;
+}
+
+export type AppendLoginSlotOptions = {
+	/** The provider's `OAuthAuth.accountIdentity`. */
+	accountIdentity?: (credential: { access: string }) => string | undefined;
+	/** `LoginOptions.reauthorizeSlot`: the saved account this login reauthorizes. */
+	reauthorizeSlot?: string;
+};
+
+/**
+ * A reauthorization of a named saved account rewrites that account and nothing else (#5003). A signed-out account
+ * holds blank tokens, so neither the token-identity match nor the sign-in takeover can find it, and both used to
+ * append a duplicate `login-N`. The account keeps its name, label and source and drops `signedOut`; the flat
+ * projection moves to it when it carried that account or when the whole credential was signed out.
+ */
+/**
+ * The identity a reauthorization must keep. SIWC names an account by issuer, subject and issued client ID, which a
+ * sign-out keeps. A legacy Codex account is named by its token identity, or, once signed out and without a token,
+ * by its workspace (`accountId`). A field the saved account never recorded cannot be compared and is not checked.
+ */
+function assertSameReauthorizedAccount(
+	target: CredentialSlot,
+	flat: Credential,
+	accountIdentity: AppendLoginSlotOptions["accountIdentity"],
+): void {
+	if (flat.type !== "oauth") return;
+	const saved = target as CredentialSlot & Record<string, unknown>;
+	const fresh = flat as Credential & Record<string, unknown>;
+	const differs = (field: string) =>
+		typeof saved[field] === "string" &&
+		saved[field] !== "" &&
+		typeof fresh[field] === "string" &&
+		saved[field] !== fresh[field];
+	if ((saved.route ?? "codex") !== (flat.route ?? "codex")) throw new ReauthorizeAccountMismatchError(target.name);
+	if (flat.route === "siwc") {
+		if (["issuer", "subject", "clientId"].some(differs)) throw new ReauthorizeAccountMismatchError(target.name);
+		return;
+	}
+	const savedIdentity =
+		accountIdentity && typeof target.access === "string" && target.access !== ""
+			? accountIdentity({ access: target.access })
+			: undefined;
+	const freshIdentity = accountIdentity?.(flat);
+	if (savedIdentity !== undefined && freshIdentity !== undefined) {
+		if (savedIdentity !== freshIdentity) throw new ReauthorizeAccountMismatchError(target.name);
+		return;
+	}
+	if (differs("accountId")) throw new ReauthorizeAccountMismatchError(target.name);
+}
+
+function restoreReauthorizedSlot(
+	current: PooledCredential,
+	target: CredentialSlot,
+	flat: Credential,
+	onAllocated: ((name: string, origin: "generated" | "provider") => void) | undefined,
+): Credential {
+	onAllocated?.(target.name, "generated");
+	if (!Array.isArray(current.accounts) || current.accounts.length === 0) return flat;
+	const fresh: CredentialSlot = {
+		...slotFromFlatCredentialNamed(flat, target.name),
+		...(target.displayName === undefined ? {} : { displayName: target.displayName }),
+		...(target.source === undefined ? {} : { source: target.source }),
+	};
+	const accounts = listSlots(current).map((slot) => (slot.name === target.name ? fresh : slot));
+	const wholeSignedOut = "signedOut" in current && current.signedOut === true;
+	const reproject = wholeSignedOut || slotMirrorsFlat(current, target);
+	const next: PooledCredential = { ...(reproject ? projectFlatFields(current, fresh) : current), accounts };
+	if (reproject) Reflect.deleteProperty(next, "signedOut");
+	return next;
+}
+
+/**
+ * A login of an account that is already saved rewrites that account instead of
+ * appending another `login-N` copy of it. Appending kept the old copy, and once the
+ * provider invalidated its token, session affinity kept choosing it (omo#9633).
+ *
+ * The first saved account with the login's identity keeps its name, label, source
+ * and place and takes the fresh material; block fields stored on it are dropped,
+ * since they described the old token. Later saved copies of the same account are
+ * removed, and a pin or user order naming one moves to the kept name: their tokens
+ * are older grants for the same account, which a re-login supersedes. The flat
+ * projection is re-pointed only when it carried one of those copies. A lone flat
+ * credential of the same account is simply overwritten, keeping today's shape.
+ *
+ * Returns `undefined` (append as before) when the provider reports no identity, the
+ * login has none, or no saved account matches. Environment accounts never match.
+ */
+function replaceSameAccount(
+	current: PooledCredential,
+	flat: Credential,
+	accountIdentity: AppendLoginSlotOptions["accountIdentity"],
+	onAllocated: ((name: string, origin: "generated" | "provider") => void) | undefined,
+): Credential | undefined {
+	if (!accountIdentity || flat.type !== "oauth") return undefined;
+	const identity = accountIdentity(flat);
+	if (identity === undefined) return undefined;
+	const slots = listSlots(current);
+	// A token identity names a ChatGPT account, not a sign-in: the legacy Codex route and Sign in with ChatGPT
+	// hold separate grants for one person, so a login replaces only a slot on its own route (#5003).
+	const route = flat.route ?? "codex";
+	const matches = slots.filter(
+		(slot) =>
+			slot.source !== "env" &&
+			(slot.route ?? "codex") === route &&
+			slot.access !== undefined &&
+			accountIdentity({ access: slot.access }) === identity,
+	);
+	const kept = matches[0];
+	if (!kept) return undefined;
+	if (!Array.isArray(current.accounts) || current.accounts.length === 0) {
+		onAllocated?.(kept.name, "generated");
+		return flat;
+	}
+	// Built through the account-field projection so the login's route, issued client, issuer, subject, ID token
+	// and scopes reach the slot; a hand-copied token triple dropped them (#5003).
+	const fresh: CredentialSlot = {
+		...slotFromFlatCredentialNamed(flat, kept.name),
+		...(kept.displayName === undefined ? {} : { displayName: kept.displayName }),
+		...(kept.source === undefined ? {} : { source: kept.source }),
+	};
+	const dropped = new Set(matches.slice(1).map((slot) => slot.name));
+	const accounts = slots.flatMap((slot) => (slot === kept ? [fresh] : dropped.has(slot.name) ? [] : [slot]));
+	const projected = matches.some((slot) => slotMirrorsFlat(current, slot))
+		? projectFlatFields(current, fresh)
+		: current;
+	const next: PooledCredential = { ...projected, accounts };
+	if (next.pinned !== undefined && dropped.has(next.pinned)) next.pinned = kept.name;
+	if (next.order !== undefined) {
+		const order = next.order.map((name) => (dropped.has(name) ? kept.name : name));
+		next.order = order.filter((name, index) => order.indexOf(name) === index);
+	}
+	onAllocated?.(kept.name, "generated");
 	return next;
 }
 
@@ -504,7 +737,10 @@ export function mergeRefreshedSlot(current: PooledCredential, name: string, refr
 	if (!Array.isArray(current.accounts) || current.accounts.length === 0) return mergeRefreshed(current, refreshed);
 	const target = current.accounts.find((slot) => slot.name === name);
 	if (!target) return current;
-	const rotated = { access: refreshed.access, refresh: refreshed.refresh, expires: refreshed.expires };
+	const rotated = withOAuthAccountFields(
+		{ access: refreshed.access, refresh: refreshed.refresh, expires: refreshed.expires },
+		refreshed,
+	);
 	const accounts = current.accounts.map((slot) => (slot === target ? { ...slot, ...rotated } : slot));
 	const mirrorsFlat = target.access === current.access || target.refresh === current.refresh;
 	return mirrorsFlat ? { ...current, ...rotated, accounts } : { ...current, accounts };
@@ -516,11 +752,14 @@ export function mergeRefreshed(current: PooledCredential, refreshed: Credential)
 	}
 	if (refreshed.type !== "oauth" || current.type !== "oauth") return refreshed;
 	const target = current.accounts.find((slot) => slot.access === current.access || slot.refresh === current.refresh);
-	const rotated = {
-		access: refreshed.access,
-		refresh: refreshed.refresh,
-		expires: refreshed.expires,
-	};
+	const rotated = withOAuthAccountFields(
+		{
+			access: refreshed.access,
+			refresh: refreshed.refresh,
+			expires: refreshed.expires,
+		},
+		refreshed,
+	);
 	const accounts = target
 		? current.accounts.map((slot) => (slot === target ? { ...slot, ...rotated } : slot))
 		: current.accounts;

@@ -55,7 +55,9 @@ const vertexAuth: ApiKeyAuth = {
 			],
 		});
 		const project = await interaction.prompt({ type: "text", message: "Enter Google Cloud project ID" });
+		if (!project.trim()) throw new Error("Google Cloud project ID is required.");
 		const location = await interaction.prompt({ type: "text", message: "Enter Google Cloud location" });
+		if (!location.trim()) throw new Error("Google Cloud location is required.");
 		const credentialsPath =
 			method === "service-account"
 				? await interaction.prompt({ type: "text", message: "Enter service account credentials file path" })
@@ -79,13 +81,13 @@ const vertexAuth: ApiKeyAuth = {
 		const key = credential?.key ?? (await env("GOOGLE_CLOUD_API_KEY"));
 		if (key) return { auth: { apiKey: key }, source: credential?.key ? "stored credential" : "GOOGLE_CLOUD_API_KEY" };
 
-		const adcPath = credential?.env?.GOOGLE_APPLICATION_CREDENTIALS ?? (await env("GOOGLE_APPLICATION_CREDENTIALS"));
+		const adcPath = credential?.env?.GOOGLE_APPLICATION_CREDENTIALS || (await env("GOOGLE_APPLICATION_CREDENTIALS"));
 		signal.throwIfAborted();
 		const hasCredentials = await ctx.fileExists(adcPath ?? VERTEX_ADC_PATH);
 		signal.throwIfAborted();
 		const project =
-			credential?.env?.GOOGLE_CLOUD_PROJECT ?? (await env("GOOGLE_CLOUD_PROJECT")) ?? (await env("GCLOUD_PROJECT"));
-		const location = credential?.env?.GOOGLE_CLOUD_LOCATION ?? (await env("GOOGLE_CLOUD_LOCATION"));
+			credential?.env?.GOOGLE_CLOUD_PROJECT || (await env("GOOGLE_CLOUD_PROJECT")) || (await env("GCLOUD_PROJECT"));
+		const location = credential?.env?.GOOGLE_CLOUD_LOCATION || (await env("GOOGLE_CLOUD_LOCATION"));
 		if (hasCredentials && project && location) {
 			return credential
 				? { auth: {}, env: credential.env, source: "stored credential" }

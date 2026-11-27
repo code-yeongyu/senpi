@@ -56,6 +56,7 @@ function createTodoHarness(
 			tool = definition;
 		},
 		appendEntry: () => {},
+		events: { on: () => () => {}, emit: () => {} },
 	} as unknown as ExtensionAPI;
 	const ctx = {
 		ui: {

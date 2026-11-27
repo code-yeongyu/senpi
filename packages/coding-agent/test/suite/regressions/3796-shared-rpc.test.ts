@@ -153,7 +153,124 @@ it("targets only grant_select and rejects another connection's answer", async ()
 	expect(await decision).toBe(true);
 });
 
-async function answer(connection: string, frame: Record<string, unknown>): Promise<void> {
+// senpi#4269 review M3: the refused sender hears it, so its dialog does not vanish as if answered.
+it("answers a grant response from a connection that may not answer it with a typed refusal", async () => {
+	const current = await setup();
+	const delivered = nextSelect();
+	const decision = selectMcpGrant(getMcpGrantPresentation(current.session.sessionId), "synthetic grant");
+	const frame = await delivered;
+	await writer?.withConnection("question-only", () =>
+		handler?.handleInputLine(
+			JSON.stringify({ type: "extension_ui_response", id: frame.id, value: "Grant and save permanently" }),
+		),
+	);
+	await writer?.flushConnection("question-only");
+	expect(frames.get("question-only")).toContainEqual(
+		expect.objectContaining({
+			type: "response",
+			command: "extension_ui_response",
+			id: frame.id,
+			success: false,
+			error: "grant_answer_refused",
+		}),
+	);
+	await writer?.withConnection("grant-client", () =>
+		handler?.handleInputLine(JSON.stringify({ type: "extension_ui_response", id: frame.id, value: "Deny" })),
+	);
+	expect(await decision).toBe(false);
+});
+
+// Grant answer correlation: a response names the request it answers by `uiRequestId` (long form) or
+// `id` (short form); the sender and capability rules apply to the request it answers either way.
+function answer(connection: string, frame: Record<string, unknown>): Promise<void> | undefined {
+	return writer?.withConnection(connection, () =>
+		handler?.handleInputLine(JSON.stringify({ type: "extension_ui_response", ...frame })),
+	);
+}
+
+function refusal(id: string) {
+	return expect.objectContaining({
+		type: "response",
+		command: "extension_ui_response",
+		id,
+		success: false,
+		error: "grant_answer_refused",
+	});
+}
+
+it("grant answer correlation: refuses a long-form answer from a connection without grant_select", async () => {
+	const current = await setup();
+	const delivered = nextSelect();
+	const decision = selectMcpGrant(getMcpGrantPresentation(current.session.sessionId), "synthetic grant");
+	const frame = await delivered;
+	let settled = false;
+	void decision.then(() => {
+		settled = true;
+	});
+	await answer("question-only", { id: "answer-frame-a", uiRequestId: frame.id, value: "Grant and save permanently" });
+	await writer?.flushConnection("question-only");
+	expect(frames.get("question-only")).toContainEqual(refusal("answer-frame-a"));
+	expect(settled).toBe(false);
+	await answer("grant-client", { id: frame.id, value: "Deny" });
+	expect(await decision).toBe(false);
+});
+
+it("grant answer correlation: refuses a long-form answer from a grant_select connection that did not receive the grant", async () => {
+	const current = await setup();
+	connect("grant-other", ["grant_select"]);
+	const delivered = nextSelect();
+	const decision = selectMcpGrant(getMcpGrantPresentation(current.session.sessionId), "synthetic grant");
+	const frame = await delivered;
+	const [receiver, ...alsoReceived] = [...frames]
+		.filter(([, records]) => records.some((record) => record.id === frame.id))
+		.map(([id]) => id);
+	expect(alsoReceived).toEqual([]);
+	if (receiver === undefined) throw new Error("no connection received the grant");
+	const other = receiver === "grant-client" ? "grant-other" : "grant-client";
+	let settled = false;
+	void decision.then(() => {
+		settled = true;
+	});
+	await answer(other, { id: "answer-frame-b", uiRequestId: frame.id, value: "Grant and save permanently" });
+	await writer?.flushConnection(other);
+	expect(frames.get(other)).toContainEqual(refusal("answer-frame-b"));
+	expect(settled).toBe(false);
+	await answer(receiver, { id: frame.id, value: "Deny" });
+	expect(await decision).toBe(false);
+});
+
+it("grant answer correlation: settles a short-form answer from the capable sender", async () => {
+	const current = await setup();
+	const delivered = nextSelect();
+	const decision = selectMcpGrant(getMcpGrantPresentation(current.session.sessionId), "synthetic grant");
+	const frame = await delivered;
+	await answer("grant-client", { id: frame.id, value: "Deny" });
+	expect(await decision).toBe(false);
+	await writer?.flushConnection("grant-client");
+	expect(frames.get("grant-client")).toContainEqual(
+		expect.objectContaining({ type: "response", command: "extension_ui_response", id: frame.id, success: true }),
+	);
+});
+
+it("grant answer correlation: settles a long-form answer from the capable sender", async () => {
+	const current = await setup();
+	const delivered = nextSelect();
+	const decision = selectMcpGrant(getMcpGrantPresentation(current.session.sessionId), "synthetic grant");
+	const frame = await delivered;
+	await answer("grant-client", { id: "answer-frame-d", uiRequestId: frame.id, value: "Deny" });
+	expect(await decision).toBe(false);
+	await writer?.flushConnection("grant-client");
+	expect(frames.get("grant-client")).toContainEqual(
+		expect.objectContaining({
+			type: "response",
+			command: "extension_ui_response",
+			id: "answer-frame-d",
+			success: true,
+		}),
+	);
+});
+
+async function answerGrant(connection: string, frame: Record<string, unknown>): Promise<void> {
 	await writer?.withConnection(connection, () =>
 		handler?.handleInputLine(
 			JSON.stringify({ type: "extension_ui_response", value: "Grant and save permanently", ...frame }),
@@ -175,9 +292,9 @@ async function pendingGrant(current: Harness) {
 // #4348: grant answers are matched by the request they answer (uiRequestId ?? id).
 it("does not apply a long-form grant answer from a connection without grant_select", async () => {
 	const { frame, decision, state } = await pendingGrant(await setup());
-	await answer("question-only", { id: "synthetic-answer-a", uiRequestId: frame.id });
+	await answerGrant("question-only", { id: "synthetic-answer-a", uiRequestId: frame.id });
 	expect(state.settled).toBe(false);
-	await answer("grant-client", { id: frame.id });
+	await answerGrant("grant-client", { id: frame.id });
 	expect(await decision).toBe(true);
 });
 
@@ -186,21 +303,21 @@ it("does not apply a long-form grant answer from another grant_select connection
 	connect("grant-other", ["grant_select"]);
 	await writer?.flushConnection("grant-other");
 	expect(frames.get("grant-other")?.some((record) => record.method === "select")).toBe(false);
-	await answer("grant-other", { id: "synthetic-answer-b", uiRequestId: frame.id });
+	await answerGrant("grant-other", { id: "synthetic-answer-b", uiRequestId: frame.id });
 	expect(state.settled).toBe(false);
-	await answer("grant-client", { id: frame.id });
+	await answerGrant("grant-client", { id: frame.id });
 	expect(await decision).toBe(true);
 });
 
 it("settles a grant from the short-form answer of the capable recipient", async () => {
 	const { frame, decision } = await pendingGrant(await setup());
-	await answer("grant-client", { id: frame.id });
+	await answerGrant("grant-client", { id: frame.id });
 	expect(await decision).toBe(true);
 });
 
 it("settles a grant from the long-form answer of the capable recipient", async () => {
 	const { frame, decision } = await pendingGrant(await setup());
-	await answer("grant-client", { id: "synthetic-answer-d", uiRequestId: frame.id });
+	await answerGrant("grant-client", { id: "synthetic-answer-d", uiRequestId: frame.id });
 	expect(await decision).toBe(true);
 });
 

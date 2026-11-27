@@ -2,6 +2,10 @@ import { EventEmitter } from "node:events";
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 
 export const EXTENSION_RPC_EVENT_CHANNEL = "senpi:extension-rpc-event";
+/**
+ * Emitted on subscription with a reply function for sending state to just the new listener.
+ */
+export const EXTENSION_RPC_SUBSCRIBED_CHANNEL = "senpi:extension-rpc-subscribed";
 
 export type ExtensionRpcEvent = {
 	readonly name: string;

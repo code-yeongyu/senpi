@@ -36,14 +36,19 @@ describe("build-all", () => {
 			"packages/pty",
 			"packages/telemetry",
 			"packages/protocol",
+			"packages/realm-registry",
 			"packages/ai",
 			"packages/client",
+			"packages/machine-ops",
 			"packages/agent",
 			"packages/session-backends/sqlite-node",
 			"packages/coding-agent",
 			"packages/server",
 		]);
 		assert.ok(index("packages/ai") > index("packages/telemetry"));
+		assert.ok(index("packages/ai") > index("packages/realm-registry"));
+		assert.ok(index("packages/machine-ops") > index("packages/realm-registry"));
+		assert.ok(index("packages/coding-agent") > index("packages/realm-registry"));
 		assert.ok(index("packages/agent") > index("packages/ai"));
 		assert.ok(index("packages/client") > index("packages/protocol"));
 		assert.ok(index("packages/session-backends/sqlite-node") > index("packages/agent"));
@@ -89,7 +94,13 @@ describe("build-all", () => {
 
 		// Then
 		assert.equal(packageJson.name, "@earendil-works/pi-pty");
-		assert.deepEqual(phaseOne, ["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol"]);
+		assert.deepEqual(phaseOne, [
+			"packages/tui",
+			"packages/pty",
+			"packages/telemetry",
+			"packages/protocol",
+			"packages/realm-registry",
+		]);
 		assert.deepEqual(BUILD_PHASES[0], ["packages/chord"]);
 	});
 

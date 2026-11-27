@@ -3,10 +3,37 @@ import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { mock } from "node:test";
+import { fileURLToPath } from "node:url";
 import { runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
+import { CHILD_LIVENESS_RECHECK_MS, CHILD_LIVENESS_RECHECK_PS_MS } from "../../src/modes/rpc/host-stop-intent.ts";
 
 const [mode, socket, agentDir] = process.argv.slice(2);
-if (mode === "host" || mode === "host-term") {
+// #4746: the test holds the other end of this socketpair. Its EOF means the test let go (cleanup, failure, or a
+// killed runner), so both fixture processes exit on it; the socket host ignores SIGTERM and its supervisor's death.
+const SUPERVISOR_LEASE_FD = 4;
+const HOST_LEASE_FD = 5;
+function exitWhenLeaseEnds(fd: number): void {
+	const lease = new net.Socket({ fd, readable: true, writable: false });
+	lease.on("error", () => {});
+	lease.once("close", () => process.exit(1));
+	lease.resume();
+	lease.unref();
+}
+if (mode === "host" || mode === "host-term" || mode === "host-drain" || mode === "host-drain-descendant") {
+	exitWhenLeaseEnds(HOST_LEASE_FD);
+	// A drained host with nothing to park leaves through its own clean exit, as the real host's idle path does.
+	if (mode !== "host" && mode !== "host-term") process.on("SIGUSR1", () => process.exit(0));
+	// A descendant that keeps the lifetime slot open past the host: EOF on it can never come. It holds the lease too.
+	if (mode === "host-drain-descendant") {
+		childProcess.spawn(
+			process.execPath,
+			[
+				"-e",
+				`const s = new (require("node:net").Socket)({ fd: ${HOST_LEASE_FD}, readable: true, writable: false }); s.on("error", () => {}); s.once("close", () => process.exit(0)); s.resume();`,
+			],
+			{ stdio: ["ignore", "ignore", "ignore", 3, "ignore", HOST_LEASE_FD] },
+		);
+	}
 	const address = process.argv.find((arg) => arg.startsWith("unix://"))?.slice(7);
 	if (!address) throw new Error("missing internal socket");
 	// The supervisor hands a POSIX host its internal key on stdin and proves readiness over the sealed hop
@@ -49,11 +76,13 @@ if (mode === "host" || mode === "host-term") {
 	if (mode === "host-term") server.once("listening", () => process.stderr.write("host-term-ready\n"));
 } else {
 	if (!socket || !agentDir) throw new Error("missing supervisor paths");
+	exitWhenLeaseEnds(SUPERVISOR_LEASE_FD);
 	const timeout = globalThis.setTimeout;
 	const waits = new Map<number, () => void>();
 	let sequence = 0;
 	mock.method(globalThis, "setTimeout", (run: () => void, ms: number) => {
-		if (![2_000, 5_000, 30_000].includes(ms)) return timeout(run, ms);
+		if (![2_000, 5_000, CHILD_LIVENESS_RECHECK_MS, CHILD_LIVENESS_RECHECK_PS_MS, 30_000].includes(ms))
+			return timeout(run, ms);
 		const timer = timeout(() => {}, 2_147_483_647);
 		const id = ++sequence;
 		waits.set(id, run);
@@ -64,10 +93,11 @@ if (mode === "host" || mode === "host-term") {
 	let child: childProcess.ChildProcess | undefined;
 	let releaseExit: (() => void) | undefined;
 	mock.method(childProcess, "spawn", (...args: Parameters<typeof childProcess.spawn>) => {
-		if (mode === "honour-term") {
-			if (!Array.isArray(args[2]?.stdio)) throw new Error("normal-stop fixture needs explicit child stdio");
-			args[2] = { ...args[2], stdio: args[2].stdio.map((value, index) => (index === 2 ? "pipe" : value)) };
-		}
+		if (!Array.isArray(args[2]?.stdio)) throw new Error("fixture host spawn needs explicit child stdio");
+		const stdio = args[2].stdio.map((value, index) => (mode === "honour-term" && index === 2 ? "pipe" : value));
+		while (stdio.length < HOST_LEASE_FD) stdio.push("ignore");
+		stdio[HOST_LEASE_FD] = SUPERVISOR_LEASE_FD;
+		args[2] = { ...args[2], stdio };
 		child = spawn(...args);
 		process.send?.({ type: "host", pid: child.pid });
 		if (mode === "honour-term") {
@@ -78,7 +108,7 @@ if (mode === "host" || mode === "host-term") {
 				if (output.includes("host-term-ready\n")) process.send?.({ type: "host-ready" });
 			});
 		}
-		if (mode === "gate-exit") {
+		if (mode.endsWith("gate-exit")) {
 			// SIGKILL itself cannot be delayed deterministically: hold libuv's exit observation instead.
 			let code: number | null = null;
 			let signal: NodeJS.Signals | null = null;
@@ -138,11 +168,30 @@ if (mode === "host" || mode === "host-term") {
 			run();
 		}
 	});
-	await runHostSupervisor({
-		socket,
-		agentDir,
-		hostArgs: [],
-		childCommand: process.execPath,
-		childArgs: [import.meta.filename, mode === "honour-term" ? "host-term" : "host"],
-	});
+	const hostMode =
+		mode === "honour-term"
+			? "host-term"
+			: mode === "descendant-gate-exit"
+				? "host-drain-descendant"
+				: mode === "drain-gate-exit" || mode === "wrapped-gate-exit"
+					? "host-drain"
+					: "host";
+	// The real launch chain: the built CLI entry, relaunched isolated because it carries a runtime option.
+	const realCli = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
+	const launchCommand =
+		mode === "real-chain"
+			? {
+					childCommand: process.execPath,
+					childArgs: ["--max-old-space-size=256", realCli, "--mode", "rpc", "--multi-session"],
+				}
+			: mode === "wrapped-gate-exit"
+				? // A launcher that drops the lifetime slot and replaces its image with the host. The close is its own
+					// `exec` with no command, which POSIX makes permanent: `exec 3>&- cmd` lets bash 3.2 (macOS /bin/sh)
+					// keep a saved copy of the slot at fd 10 in the exec'd host, so the slot never closed there.
+					{
+						childCommand: "/bin/sh",
+						childArgs: ["-c", 'exec 3>&-; exec "$0" "$@"', process.execPath, import.meta.filename, hostMode],
+					}
+				: { childCommand: process.execPath, childArgs: [import.meta.filename, hostMode] };
+	await runHostSupervisor({ socket, agentDir, hostArgs: [], ...launchCommand });
 }

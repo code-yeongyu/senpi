@@ -33,10 +33,12 @@ describe("release package versioning", () => {
 			"packages/chord/package.json",
 			"packages/client/package.json",
 			"packages/coding-agent/package.json",
+			"packages/machine-ops/package.json",
 			"packages/protocol/package.json",
 			"packages/server/package.json",
 			"packages/pty/package.json",
 			"packages/telemetry/package.json",
+			"packages/realm-registry/package.json",
 			"packages/senpi-codemode/package.json",
 			"packages/tui/package.json",
 		]) {

@@ -1,31 +1,37 @@
-import { VERSION } from "../../config.ts";
-
-import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
-import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { compactAdmissionGate, declareSocketClient } from "./compact-socket-commands.ts";
+import { invalidCompactAdmission, unknownCompactAdmission } from "./compact-admission-validation.ts";
+import { compactSubscribe } from "./compact-subscribe-admission.ts";
+import { withAdmissionRequest } from "./compact-admission-reply.ts";
+import { resetStream } from "./compact-reset-stream.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 
-import { multiSessionHostCapabilities } from "./host-capabilities.ts";
-
 import { answerWarm } from "./host-warm.ts";
-import { protocolIdentity } from "./protocol-identity.ts";
+import { answerRecoveryPage, answerReleaseRecovery } from "./recovery-page-command.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
+import { compactTransportDisabled } from "./compact-transport-refusal.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
+import { answerListHands, answerSelectHand } from "./hand-selection-commands.ts";
 import { attachSession, reclaimSession, releaseAttachment } from "./session-attachment-commands.ts";
 import { attachmentGate } from "./session-attachment-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { dispatchSessionBinding } from "./session-held.ts";
-import { moveSession } from "./session-move-commands.ts";
+import { findSession } from "./find-session.ts";
+import { routeMoveSession } from "./session-move-router.ts";
 import { releaseSession } from "./session-release.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
 import { close, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
-import { acknowledgePrompt, otherRequestsSettled, sessionMemory } from "./session-router-observation.ts";
+import { answerListSessions, answerProtocolInfo, answerSubscriptionLimits } from "./session-router-host-reads.ts";
+import { acknowledgePrompt, otherRequestsSettled } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openWithBarrier } from "./session-router-open.ts";
+import { claimSession, parkSession } from "./session-router-park.ts";
+import { syncRetainedRecord } from "./session-router-residency.ts";
 import {
 	answerSetSessionContext,
 	answerSubscribeSessions,
@@ -33,6 +39,7 @@ import {
 	notAttachedRefusal,
 } from "./session-status-commands.ts";
 import { unloadSession } from "./session-unload.ts";
+import { setTelemetryConsent } from "./session-router-telemetry.ts";
 
 /**
  * Every routed command runs inside its session's attribution scope, so a stall the
@@ -40,12 +47,44 @@ import { unloadSession } from "./session-unload.ts";
  * caused it - and anything the command starts inherits the attribution.
  */
 export function handle(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
-	const refusal = attachmentGate(host, command);
+	const malformed = invalidCompactAdmission(command);
+	if (malformed) return Promise.resolve(malformed);
+	const ownership = unknownCompactAdmission(host, command);
+	if (ownership instanceof Promise) return ownership.then((refusal) => refusal ?? admitted(host, command));
+	return ownership ? Promise.resolve(ownership) : admitted(host, command);
+}
+
+function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	const routed = host.routes.command(command, () => admitted(host, command));
+	if (routed) return routed;
+	if ("sessionId" in command && command.sessionId !== undefined && host.registry.peek(command.sessionId)?.speculative)
+		return Promise.resolve(error(command.id, command.type, "unknown_session"));
+	if (command.type === "park_session") return parkSession(host, command);
+	const refusal = attachmentGate(host, command) ?? compactAdmissionGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
+	// RULING-111 (LEAK-B/C): the host-side pre-declaration belongs to the compact negotiation; with the flag off a
+	// session-scoped declaration reaches its session exactly as on main.
+	if (command.type === "set_client_info" && compactUpdatesEnabled()) {
+		const reply = declareSocketClient(host, command);
+		if (!reply.success) return Promise.resolve(reply);
+		const peer = host.writer.currentConnection();
+		if (command.capabilities !== undefined && peer !== undefined)
+			command = { ...command, capabilities: [...(host.pendingCapabilities.get(peer) ?? [])] };
+		if (command.id === undefined && command.capabilities === undefined) return Promise.resolve(undefined);
+	}
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.
-	if (host.draining && sessionId !== undefined && host.handoffClosed.has(sessionId)) return Promise.resolve(undefined);
-	if (host.draining && command.type === "open_session")
+	if (host.draining && sessionId !== undefined && host.handoffClosed.has(sessionId))
+		return Promise.resolve(
+			host.writer.currentConnection()?.startsWith("generation-route-")
+				? error(command.id, command.type, "generation_session_parked")
+				: undefined,
+		);
+	if (
+		host.draining &&
+		command.type === "open_session" &&
+		!(host.writer.currentConnection()?.startsWith("generation-route-") && command.expectedHostInstance !== undefined)
+	)
 		return Promise.resolve(error(command.id, command.type, "host_draining"));
 	// A warm holds no session and no path, so it stays out of the accounting a drain waits on (senpi#2314).
 	if (command.type === "warm")
@@ -56,13 +95,16 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 			hostContext: host.defaults.hostContext,
 		});
 	host.activeRequests.set(sessionId, (host.activeRequests.get(sessionId) ?? 0) + 1);
-	return runWithSessionAttribution({ sessionId }, () => dispatch(host, command)).finally(() => {
-		const remaining = (host.activeRequests.get(sessionId) ?? 1) - 1;
-		if (remaining > 0) host.activeRequests.set(sessionId, remaining);
-		else host.activeRequests.delete(sessionId);
-		if (sessionId !== undefined) for (const listener of host.requestSettledListeners.get(sessionId) ?? []) listener();
-		if (host.draining) sweepDrain(host);
-	});
+	return withAdmissionRequest(command, host.writer.currentConnection(), () =>
+		runWithSessionAttribution({ sessionId }, () => dispatch(host, command)).finally(() => {
+			const remaining = (host.activeRequests.get(sessionId) ?? 1) - 1;
+			if (remaining > 0) host.activeRequests.set(sessionId, remaining);
+			else host.activeRequests.delete(sessionId);
+			if (sessionId !== undefined)
+				for (const listener of host.requestSettledListeners.get(sessionId) ?? []) listener();
+			if (host.draining) sweepDrain(host);
+		}),
+	);
 }
 
 /** Attachments held by connections other than the caller: every one of the caller's own holds is excluded. */
@@ -73,62 +115,58 @@ function otherAttachments(host: RouterContext, caller: string | undefined, sessi
 
 export async function dispatch(
 	host: RouterContext,
-	command: Exclude<RpcCommand, { type: "warm" }>,
+	command: Exclude<RpcCommand, { type: "warm" | "park_session" }>,
 ): Promise<RpcResponse | undefined> {
-	if (command.type === "get_protocol_info") {
-		const capabilities = multiSessionHostCapabilities({
-			warm: host.registry.warm !== undefined,
-			toolRuntime: host.defaults.toolRuntime ?? "in-process",
-			negotiated: host.connectionOptions?.capabilities ?? [],
-			mcpPresenters: host.writer.mcpPresenters !== undefined,
-		});
-		return {
-			id: command.id,
-			type: "response",
-			command: "get_protocol_info",
-			success: true,
-			data: {
-				protocolVersion: 1,
-				serverVersion: VERSION,
-				capabilities,
-				mode: "multi",
-				...protocolIdentity(host.defaults.agentDir),
-				memory_pressure: host.memoryPressure,
-			},
-		};
+	if (command.type === "reset_stream" && host.admissions) return resetStream(host, command);
+	if (command.type === "cancel_attempt" && host.admissions !== undefined) {
+		const peer = host.writer.currentConnection();
+		const epoch = peer === undefined ? undefined : host.writer.socketEpochOf(peer);
+		if (epoch === undefined) return error(command.id, command.type, "unsupported_transport");
+		const outcome = await host.admissions.cancel(epoch, command.admissionId);
+		return { id: command.id, type: "response", command: "cancel_attempt", success: true, data: { outcome } };
 	}
-	if (command.type === "get_subscription_limits") {
-		return {
-			id: command.id,
-			type: "response",
-			command: "get_subscription_limits",
-			success: true,
-			data: { accounts: subscriptionLimits.snapshot() },
-		};
-	}
+	if ((command.type === "reset_stream" || command.type === "cancel_attempt") && host.admissions === undefined)
+		return compactTransportDisabled(command);
+	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
+	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
 	if (command.type === "list_sessions") {
-		// Worker sessions are machine-driven work: a client sees them only by asking, and
-		// the opaque context blob travels only on that listing, never to every connection.
-		const rows = host.registry.list();
-		const withMemory = rows.map((row) => ({ ...row, memory: sessionMemory(host, row.sessionId) }));
-		const sessions =
-			command.include_workers === true
-				? withMemory
-				: withMemory.filter((row) => row.kind !== "worker").map(({ context: _context, ...row }) => row);
-		return {
-			id: command.id,
-			type: "response",
-			command: "list_sessions",
-			success: true,
-			data: { sessions },
-		};
+		if (!host.writer.currentConnection()?.startsWith("generation-route-")) {
+			try {
+				await host.routes.discover();
+			} catch (cause) {
+				return error(command.id, command.type, code(cause));
+			}
+		}
+		return answerListSessions(host, command);
 	}
+	if (command.type === "list_hands") return answerListHands(host, command);
+	if (command.type === "select_hand") return answerSelectHand(host, command);
 	if (command.type === "detach_connection")
 		return detachConnection(command, host.writer.currentConnection(), (id) => releaseConnection(host, id));
 	if (command.type === "open_session") return openWithBarrier(host, command);
-	if (command.type === "attach_session") return attachSession(host, command);
+	if (command.type === "claim_session") return claimSession(host, command);
+	if (command.type === "attach_session") {
+		const reply = await attachSession(host, command);
+		if (
+			reply?.success === false &&
+			(reply.error === "unknown_session" || reply.error === "session_identity_mismatch")
+		)
+			try {
+				return await host.routes.attachByIdentity(command, reply);
+			} catch (cause) {
+				return error(command.id, command.type, code(cause));
+			}
+		return reply;
+	}
 	if (command.type === "release_attachment") return releaseAttachment(host, command);
 	if (command.type === "reclaim_session") return reclaimSession(host, command);
+	if (command.type === "find_session")
+		return findSession(
+			// The host's own directory when the registry carries none: a worker-runtime host runs its sessions in workers and
+			// still keeps the session files. Only this lookup reads it; `move_session` reads the registry's and stays refused.
+			{ agentDir: host.registry.agentDir ?? host.defaults.agentDir, hosted: () => host.registry.list() },
+			command,
+		);
 	if (command.type === "close_session") return close(host, command);
 	if (command.type === "release_session")
 		return releaseSession(
@@ -146,23 +184,7 @@ export async function dispatch(
 			},
 			command,
 		);
-	if (command.type === "move_session") {
-		const agentDir = host.registry.agentDir;
-		if (agentDir === undefined)
-			return error(
-				command.id,
-				command.type,
-				"move_unsupported: this host keeps no agent directory to move sessions in",
-			);
-		return moveSession(
-			{
-				agentDir,
-				hostedPaths: () =>
-					host.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
-			},
-			command,
-		);
-	}
+	if (command.type === "move_session") return routeMoveSession(host, command);
 	if (command.type === "unload_session") {
 		const caller = host.writer.currentConnection();
 		return unloadSession(
@@ -190,26 +212,10 @@ export async function dispatch(
 			command,
 		);
 	}
-	if (command.type === "set_client_info" && !command.sessionId) {
-		const connection = host.writer.currentConnection();
-		if (
-			command.capabilities !== undefined &&
-			!host.connectionRoles.declare(roleConnection(connection), command.capabilities)
-		)
-			return {
-				id: command.id,
-				type: "response",
-				command: "set_client_info",
-				success: false,
-				error: CONNECTION_ROLE_FIXED,
-			} as RpcResponse;
-		if (connection !== undefined) {
-			host.pendingCapabilities.set(connection, command.capabilities ?? []);
-			host.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
-		}
-		return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
-	}
+	if (command.type === "set_client_info" && !command.sessionId)
+		return command.id === undefined && compactUpdatesEnabled() ? undefined : declareSocketClient(host, command);
 	if (command.type === "subscribe_sessions") {
+		if (host.admissions && command.admissionId !== undefined) return compactSubscribe(host, command);
 		const connection = host.writer.currentConnection();
 		const { answer, activate } = answerSubscribeSessions(command, connection, host.writer.status);
 		// On a socket host the response is enqueued HERE, ahead of activation: a delta published
@@ -238,11 +244,22 @@ export async function dispatch(
 		}
 		return answer;
 	}
-	if (command.type === "unsubscribe_sessions")
-		return answerUnsubscribeSessions(command, host.writer.currentConnection(), host.writer.status);
+	if (command.type === "unsubscribe_sessions") {
+		const peer = host.writer.currentConnection();
+		const answer = answerUnsubscribeSessions(command, peer, host.writer.status);
+		if (answer.success && peer !== undefined) host.writer.unregisterSubscription(peer, command.subscriptionId);
+		return answer;
+	}
 	// A receipt of a session this host has not loaded is read from its transcript, never by loading it.
 	if (command.type === "get_effect_status" && !command.sessionId && command.sessionPath !== undefined)
 		return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
+	// The token owner's page route (S11b): host-level, before any session or worker forwarding; absent with the flag off.
+	if (command.type === "get_recovery_page" && host.writer.recoveryPages !== undefined)
+		return answerRecoveryPage(host.writer.recoveryPages, host.writer, command);
+	if (command.type === "release_recovery" && host.writer.recoveryEvents !== undefined)
+		return answerReleaseRecovery(host.writer.recoveryEvents, host.writer, command);
+	if (command.type === "get_recovery_page" || command.type === "release_recovery")
+		return compactTransportDisabled(command);
 	if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 	const sessionId = command.sessionId;
 	if (host.writer.isSessionSealed(sessionId) && host.registry.peek(sessionId)?.state === "open")
@@ -251,6 +268,7 @@ export async function dispatch(
 			action: "unload_and_reopen",
 		});
 	if (command.type === "set_session_context") return setSessionContext(host, command);
+	if (command.type === "set_telemetry_consent") return setTelemetryConsent(host, command);
 	try {
 		const entry = host.registry.getForCommand(sessionId, command.type);
 		await dispatchSessionBinding(
@@ -276,7 +294,11 @@ export function setSessionContext(
 		return notAttachedRefusal(command);
 	try {
 		const entry = host.registry.getForCommand(command.sessionId, command.type);
-		return answerSetSessionContext(command, entry, host.writer.status);
+		const answered = answerSetSessionContext(command, entry, host.writer.status);
+		// The record carries the overlay a restart reopens the session with (a terminal task_status
+		// is not reopened at all), so it follows each accepted patch.
+		if (answered.success) void syncRetainedRecord(host, command.sessionId, undefined);
+		return answered;
 	} catch (cause) {
 		return error(command.id, command.type, code(cause), detail(cause));
 	}

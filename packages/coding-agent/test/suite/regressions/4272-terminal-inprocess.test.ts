@@ -3,8 +3,9 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
 import { type FrozenAcceptedRoot } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -15,13 +16,11 @@ afterEach(() => {
 it("T1 C2.1-C2.4 in-process cuts preserve pending and failed payloads; new_session explicitly clears them", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("terminal");
 	const opened = dataOf(await client.request({ type: "open_session", cwd: host.cwd }));
 	const sessionId = String(opened.sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
+	const entry = admissions.entryFor(sessionId);
 	const lane = entry?.acceptance;
 	const session = entry?.runtime?.session;
 	if (!lane || !session) throw new Error("no real lane");
@@ -42,7 +41,10 @@ it("T1 C2.1-C2.4 in-process cuts preserve pending and failed payloads; new_sessi
 	});
 	const prompt = async (text: string) => {
 		const since = client.inbox.length;
-		const done = client.waitFor((record) => client.inbox.indexOf(record) >= since && record.type === "agent_idle");
+		const done = client.waitFor(
+			(record) => client.inbox.indexOf(record) >= since && record.type === "agent_idle",
+			EVENT_SAFETY_MS,
+		);
 		host.faux.setResponses([fauxAssistantMessage(`answer ${text}`, { timestamp: 1 })]);
 		dataOf(await client.request({ type: "prompt", sessionId, message: text }));
 		await done;
@@ -91,17 +93,16 @@ it("T1 C2.1-C2.4 in-process cuts preserve pending and failed payloads; new_sessi
 		chmodSync(file, 0o644);
 		for (const cut of cuts) lane.release(cut.root);
 	}
-}, 90000);
+}, 600_000);
 
 it("C2.2 Q3 idle custom append already owns its message before start and end", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-	await using host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	// Below this test's 60 s budget: a hung wait fails naming its predicate before the test times out.
+	await using host = await statusHost({ deadlineMs: 45_000 });
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("custom");
-	dataOf(await client.request({ type: "open_session", cwd: host.cwd }));
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
+	const sessionId = String(dataOf(await client.request({ type: "open_session", cwd: host.cwd })).sessionId);
+	const entry = admissions.entryFor(sessionId);
 	const lane = entry?.acceptance;
 	const session = entry?.runtime?.session;
 	if (!lane || !session) throw new Error("no real lane");

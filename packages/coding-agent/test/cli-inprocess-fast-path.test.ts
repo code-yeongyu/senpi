@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
 
 /**
@@ -75,7 +76,7 @@ function runCli(args: readonly string[], nodeOptionsPrefix = ""): RunResult {
 	const result = spawnSync(process.execPath, [CLI_PATH, ...args], {
 		encoding: "utf8",
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			NODE_OPTIONS: nodeOptions,
 			// Pin the runtime: an ambient `SENPI_RUNTIME=bun` (every senpi-launched shell exports it) makes
 			// `cli.ts` re-exec itself under Bun before the isolation decision, and Bun ignores the

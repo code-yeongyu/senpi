@@ -8,6 +8,8 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 
 import type { SessionKind } from "../../core/extensions/types.ts";
 
+import type { TelemetryConsent, TelemetryDeclaration } from "../../core/telemetry-consent.ts";
+
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse } from "./rpc-question-types.ts";
 import type { RpcHostResponse } from "./rpc-relocation-types.ts";
@@ -15,7 +17,7 @@ import type { RpcSessionCommand } from "./rpc-session-command-types.ts";
 import type { RpcMoveSessionCommand } from "./session-move-wire.ts";
 
 /** Every established command accepts an additive routing envelope. */
-export type RpcCommand =
+type RpcCommandBody =
 	| RpcAttachmentCommand
 	| (RpcSessionCommand & { sessionId?: string })
 	| {
@@ -29,6 +31,9 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			admissionId?: string;
+			/** A C4.4 resend of `admissionId` (RULING-125, docs/rpc.md "Admission retries"); ignored with the flag off. */
+			retry?: true;
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
 			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
@@ -39,6 +44,11 @@ export type RpcCommand =
 			 */
 			expectedHostInstance?: string;
 			sessionPath?: string;
+			/**
+			 * The folder the session works in. Omitted, a `sessionPath` at which a session file exists opens where that
+			 * file's header says (capability `open_session_header_cwd`); a header folder that is not on this host refuses
+			 * the open. Any other open without it works in the host's own folder.
+			 */
 			cwd?: string;
 			provider?: string;
 			modelId?: string;
@@ -64,7 +74,8 @@ export type RpcCommand =
 			 * `pi.sessionContext` and republished on `list_sessions { include_workers: true }`.
 			 * At most 32 keys matching `^[a-z][a-z0-9_]*$`, each value at most 16 KiB, at most
 			 * 32 KiB of JSON in total; anything else is refused with `invalid_session_context`.
-			 * The host never interprets them. Requires the host capability `session_context`.
+			 * The host interprets one: `approvals: "refuse"` declares that nobody answers this session's prompts
+			 * (see `docs/rpc.md`); every other label is opaque to it. Requires the host capability `session_context`.
 			 */
 			context?: Record<string, string>;
 			/**
@@ -114,6 +125,25 @@ export type RpcCommand =
 			 * when the open creates the session; an attach keeps the session's existing policy.
 			 */
 			retryFallback?: SessionRetryFallbackProfile;
+			/**
+			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
+			 * one session after the daemon's own allowlist, never merged into the host process or carried to
+			 * a successor generation, never seen by another session. Names must be on the host's
+			 * caller-passable set (`OMOCAT_LANE` by default, plus `SENPI_RPC_CALLER_ENV_NAMES`); anything
+			 * else is refused with `invalid_session_env`. A task child (`spawnedBy`) inherits its parent's
+			 * entries unless it names them here. Applied when the open creates the session; an attach keeps
+			 * the session's existing env. Requires the host capability `session_env`.
+			 */
+			env?: Record<string, string>;
+			/**
+			 * This caller's live telemetry answer for the session (senpi#7446). Telemetry attributed to the session is
+			 * collected and delivered only while the host permits it AND every caller of the session answered
+			 * `granted`; an open without this field answers `unanswered`, so an older peer never grants. An open that
+			 * attaches to an existing session adds this caller's answer to it. Change it later with
+			 * `set_telemetry_consent`. Requires the host capability `telemetry_consent`; any other value is refused
+			 * with `invalid_launch_profile`.
+			 */
+			telemetry?: TelemetryDeclaration;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| RpcMoveSessionCommand
@@ -151,6 +181,22 @@ export type RpcCommand =
 			clearQueue?: boolean;
 			children?: "refuse" | "detach";
 			force?: boolean;
+			/**
+			 * `"refuse"` (senpi#7004): a busy session holding admitted deliveries not yet written is refused
+			 * `work_pending` with their ids in `pending.deliveries`, with or without `interrupt`, and nothing is
+			 * interrupted. An idle session's are handed back either way. Absent: an interrupt hands them back
+			 * (`dropped.deliveries`). Capability `unload_refuse_deliveries`.
+			 */
+			deliveries?: "refuse";
+			/**
+			 * oh-my-openagent#14313: close without interrupting. New deliveries are refused `session_closing` at once,
+			 * queued input is handed back (`dropped`), the running turn ends on its own within `waitMs` (default 60 s,
+			 * at most 600 s), and monitors, loops and the goal stop cleanly instead of coming back on a reopen. A drain
+			 * that outlives `waitMs` is refused `turn_active` with `timed_out` and leaves the session open. Capability
+			 * `unload_graceful`; a terminal's control endpoint takes it too, and its terminal then exits.
+			 */
+			graceful?: boolean;
+			waitMs?: number;
 	  }
 	| {
 			id?: string;
@@ -169,6 +215,16 @@ export type RpcCommand =
 	  }
 	| {
 			id?: string;
+			/**
+			 * Which session FILE of this host carries `durableSessionId`, for a client whose session is closed and
+			 * unlisted so its routing key names nothing (senpi#6429). A read: it opens, claims and changes nothing.
+			 * Capability `find_session`.
+			 */
+			type: "find_session";
+			durableSessionId: string;
+	  }
+	| {
+			id?: string;
 			type: "list_sessions";
 			/**
 			 * Include `kind: "worker"` rows, each with its `context` (default false). A
@@ -180,6 +236,20 @@ export type RpcCommand =
 	  }
 	| {
 			id?: string;
+			/** The hands a headless engine can run a session's tools on (R4); capability `hand_selection`. */
+			type: "list_hands";
+			/** Also answer this session's recorded hand as `selected` (`null` = local). */
+			sessionId?: string;
+	  }
+	| {
+			id?: string;
+			/** Records which hand runs this session's tools; `null` returns them to this process (R4). */
+			type: "select_hand";
+			sessionId: string;
+			device: string | null;
+	  }
+	| {
+			id?: string;
 			/**
 			 * Subscribe this connection to `session_status` records (docs/rpc.md, "Session status stream"). The
 			 * answer carries a snapshot at `seq: 0`; every later record of the subscription is strictly +1.
@@ -187,6 +257,9 @@ export type RpcCommand =
 			 * capability `session_status`.
 			 */
 			type: "subscribe_sessions";
+			admissionId?: string;
+			/** A C4.4 resend of `admissionId` (RULING-125, docs/rpc.md "Admission retries"); ignored with the flag off. */
+			retry?: true;
 			/** `"all"` (default), routing/durable ids or paths, or the children of one durable session id. */
 			sessions?: "all" | { ids: string[] } | { childrenOf: string };
 			/** Include `kind: "worker"` sessions (default: true for `childrenOf`, false otherwise). */
@@ -219,6 +292,19 @@ export type RpcCommand =
 	  }
 	| {
 			id?: string;
+			/**
+			 * Change THIS connection's telemetry answer for a session it is attached to (senpi#7446), without
+			 * restarting the host or the session: `granted`, `declined` or `unanswered`. On a session a caller opened
+			 * the answer also stays with the session after the connection leaves, so a revocation outlives it.
+			 * Refused with `session_not_attached` from a connection that is not attached. Requires the host
+			 * capability `telemetry_consent`.
+			 */
+			type: "set_telemetry_consent";
+			sessionId: string;
+			consent: TelemetryConsent;
+	  }
+	| {
+			id?: string;
 			type: "warm";
 			/**
 			 * Load what the next `open_session` with these inputs needs - the extension module graph and
@@ -230,6 +316,24 @@ export type RpcCommand =
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  };
+
+/** Compact callers may identify their own admission on any correlated session request. */
+export type RpcCommand = (
+	| RpcCommandBody
+	| {
+			id?: string;
+			/** Build one invisible session for later claim; never an attachment. Requires `park_claim`. */
+			type: "park_session";
+			cwd: string;
+			kind?: SessionKind;
+			context?: Record<string, string>;
+	  }
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
+			type: "claim_session";
+			cwd: string;
+	  })
+) & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
 export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;

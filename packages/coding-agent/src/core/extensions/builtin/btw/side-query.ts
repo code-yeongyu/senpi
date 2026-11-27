@@ -25,6 +25,8 @@ export const DEFAULT_ESTABLISHMENT_TIMEOUT_MS = 30_000;
 
 export interface SideQueryContextInput {
 	systemPrompt: string;
+	/** The turn's stable prefix of `systemPrompt`; the side query keeps it so it reads the turn's cache (senpi#4447). */
+	systemPromptStablePrefix?: string;
 	history: readonly Message[];
 	question: string;
 	promptContextWindow?: number;
@@ -77,6 +79,9 @@ export function buildSideQueryContext(input: SideQueryContextInput): Context {
 	);
 	return {
 		systemPrompt,
+		...(input.systemPromptStablePrefix === undefined
+			? {}
+			: { systemPromptStablePrefix: input.systemPromptStablePrefix }),
 		messages,
 		tools: [],
 	};

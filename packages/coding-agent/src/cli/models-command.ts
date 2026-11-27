@@ -1,17 +1,9 @@
 import chalk from "chalk";
-import { APP_NAME, getModelsPath } from "../config.ts";
-import { ModelConfig } from "../core/model-config.ts";
-import {
-	discoverProviderModels,
-	type ModelsDiscoveryAuth,
-	ModelsDiscoveryError,
-	type ModelsDiscoveryReport,
-} from "../core/model-discovery.ts";
-import { ModelRuntime } from "../core/model-runtime.ts";
-import { resolveHeadersOrThrow } from "../core/resolve-config-value.ts";
+import { APP_NAME, getAgentDir } from "../config.ts";
+import type { ModelsDiscoveryReport } from "../core/model-discovery.ts";
+import { discoverModels } from "../engine/models.ts";
 
 const USAGE = `${APP_NAME} models discover <provider>`;
-const DISCOVERY_TIMEOUT_MS = 30_000;
 
 /** `models discover ...` is the only `models` subcommand; anything else stays a prompt. */
 export function isModelsDiscoverCommand(args: readonly string[]): boolean {
@@ -26,16 +18,6 @@ Fetches <baseUrl>/models once for an OpenAI-compatible provider defined in model
 every listed model to that provider's "models" array (the original file is kept as a backup).
 With "compat": { "supportsReasoningEffort": true } on the provider, the reasoning_efforts each
 entry advertises become its thinkingLevelMap and defaultThinkingLevel.`);
-}
-
-async function resolveAuth(providerId: string, signal: AbortSignal): Promise<ModelsDiscoveryAuth> {
-	// Configured headers (routing, tenant) apply whether or not the provider has a credential.
-	const config = await ModelConfig.load(getModelsPath());
-	const configured = await resolveHeadersOrThrow(config.getProvider(providerId)?.headers, `provider "${providerId}"`);
-	const runtime = await ModelRuntime.create({ allowModelNetwork: false, signal });
-	// A keyless local server is not a registered provider; it is still discoverable.
-	const auth = runtime.getProvider(providerId) ? (await runtime.getAuth(providerId, { signal }))?.auth : undefined;
-	return { apiKey: auth?.apiKey, headers: { ...configured, ...auth?.headers } };
 }
 
 function describe(report: ModelsDiscoveryReport, id: string): string {
@@ -82,23 +64,16 @@ export async function runModelsDiscoverCommand(args: readonly string[]): Promise
 		return 0;
 	}
 	const [providerId, ...rest] = args;
-	if (!providerId || providerId.startsWith("-") || rest.length > 0) {
+	const result =
+		rest.length > 0 ? undefined : await discoverModels({ agentDir: getAgentDir() }, { provider: providerId ?? "" });
+	if (result === undefined || (result.kind === "error" && result.error.code === "invalid_input")) {
 		console.error(chalk.red(`Usage: ${USAGE}`));
 		return 1;
 	}
-	const signal = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS);
-	try {
-		const report = await discoverProviderModels({
-			providerId,
-			modelsPath: getModelsPath(),
-			auth: await resolveAuth(providerId, signal),
-			signal,
-		});
-		console.log(formatModelsDiscoveryReport(report));
-		return 0;
-	} catch (error) {
-		const message = error instanceof ModelsDiscoveryError || error instanceof Error ? error.message : String(error);
-		console.error(chalk.red(`Error: ${message}`));
+	if (result.kind === "error") {
+		console.error(chalk.red(`Error: ${result.error.message}`));
 		return 1;
 	}
+	console.log(formatModelsDiscoveryReport(result.value));
+	return 0;
 }

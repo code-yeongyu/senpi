@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 
 import { MAX_MATCH_LINES } from "../../src/core/extensions/builtin/job-widgets/index.ts";
-import { block, describeEachMatcher, harness, ScriptedSource, validSpec } from "./support.ts";
+import { formatJobWidgetLine, PLAIN_LINE_STYLE } from "../../src/core/extensions/builtin/job-widgets/tui-line.ts";
+import { block, describeEachMatcher, harness, ScriptedSource, START, validSpec } from "./support.ts";
 
 const BLENDER_SPEC = {
 	title: "Blender render · per-frame time",
@@ -199,6 +200,55 @@ describeEachMatcher("job widget derivation", () => {
 		expect(spark.values).toHaveLength(48);
 		expect(spark.values[0]).toBe(763);
 		expect(spark.last).toBe("1000");
+	});
+
+	const STEP_LINES = ["step 23/60 loss=1.540 acc=0.580", "step 24/60 loss=1.509 acc=0.590"];
+	const STEPS_TOTAL = { field: "steps", agg: "last" };
+	it.each([
+		["a literal total", { total: 60 }, "24/60"],
+		["a literal total and a unit restating it", { total: 60, unit: "/60" }, "24/60"],
+		["a literal total and a spaced restating unit", { total: 60, unit: "/ 60" }, "24/60"],
+		["a literal total and a unit restating it before a real unit", { total: 60, unit: "of 60 steps" }, "24/60 steps"],
+		["a total key", { total: STEPS_TOTAL }, "24/60"],
+		["a total key and a unit restating it", { total: STEPS_TOTAL, unit: "/60" }, "24/60"],
+		["a total key and a real unit", { total: STEPS_TOTAL, unit: "steps" }, "24/60 steps"],
+		["a label containing the total", { total: 60, label: "steps of 60" }, "24/60"],
+	])("shows a meter's count once with %s", (_name, meter, text) => {
+		const spec = validSpec(
+			{
+				title: "training",
+				rules: [{ from: "out", match: String.raw`^step (?P<step>\d+)/(?P<steps>\d+)` }],
+				blocks: [{ kind: "meter", field: "step", agg: "last", label: "steps", ...meter }],
+			},
+			[{ id: "out", lines: STEP_LINES }],
+			"python train.py --steps 60",
+		);
+		const out = new ScriptedSource("out");
+		const h = harness(spec, out);
+		out.append(`${STEP_LINES.join("\n")}\n`);
+		h.ingest();
+		const derived = h.derive();
+		expect(block(derived, "meter")).toMatchObject({ value: 24 / 60, text });
+		const line = formatJobWidgetLine(
+			{ id: "bash_1", kind: "bash", state: "live", view: derived.view, updatedAtMs: START },
+			120,
+			PLAIN_LINE_STYLE,
+		);
+		expect(line).toContain(`] ${text}`);
+		expect(line?.split("60").length).toBe("label" in meter ? 3 : 2);
+	});
+
+	it("draws a meter whose total is unknown as its value alone", () => {
+		const spec = validSpec({
+			title: "training",
+			rules: [{ from: "out", match: String.raw`^step (?P<step>\d+)/(?P<steps>\d+)` }],
+			blocks: [{ kind: "meter", field: "step", agg: "last", label: "steps", total: "?" }],
+		});
+		const out = new ScriptedSource("out");
+		const h = harness(spec, out);
+		out.append(`${STEP_LINES.join("\n")}\n`);
+		h.ingest();
+		expect(h.derive().view.blocks).toEqual([{ kind: "stat", items: [{ label: "steps", text: "24" }] }]);
 	});
 
 	it("matches only the newest lines of a burst but counts every line", () => {

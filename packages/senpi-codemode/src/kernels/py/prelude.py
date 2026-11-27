@@ -14,6 +14,7 @@ import base64
 import codecs
 import contextlib
 import importlib
+import importlib.util
 import gc
 import inspect
 import io
@@ -42,6 +43,20 @@ from typing import Iterator
 from threading import Lock, Thread
 from typing import Any, Callable, Union
 from urllib.parse import unquote
+# Resolve the loopback bridge's lazy codec before user authority exists.
+codecs.lookup("idna")
+_permission_path = Path(__file__).with_name("permission_bridge.py")
+_permission_spec = importlib.util.spec_from_file_location(
+    "_senpi_permission_bridge", _permission_path
+)
+if _permission_spec is None or _permission_spec.loader is None:
+    raise RuntimeError("Python permission bridge asset is unavailable")
+_permission_module = importlib.util.module_from_spec(_permission_spec)
+exec(compile(_permission_path.read_bytes(), str(_permission_path), "exec"), _permission_module.__dict__)
+initialize_permissions = _permission_module.initialize
+# The kernel's own signals (parent watch, retirement) keep these originals: the kill guard wraps the cell-visible ones.
+_SIGNAL_PROCESS = os.kill
+_SIGNAL_GROUP = getattr(os, "killpg", None)
 
 sys.__stdout__.write('{"type":"status","event":{"op":"kernel-startup","stage":"runtime-init"}}\n')
 sys.__stdout__.flush()
@@ -51,6 +66,7 @@ USER_NS: dict[str, Any] = {"__name__": "__main__", "__doc__": None, "__builtins_
 LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(LOOP)
 EMIT_LOCK = Lock()
+permission_context = contextvars.ContextVar("senpi_unconfigured_permission", default=None)
 
 # Mirrors src/bridge/reserved.ts; this standalone subprocess asset cannot import TypeScript.
 RESERVED_AGENT_TOOL = "__agent__"
@@ -103,10 +119,21 @@ def emit(frame: dict[str, Any]) -> None:
 
 
 def bridge_error(exc: BaseException) -> dict[str, str]:
+    authority = permission_context.get()
+    if (authority and authority.get("active")) or isinstance(exc, KeyboardInterrupt) or getattr(exc, "code", None) == "cell_permission_denied":
+        # Formatting an exception must not issue a second cell-requested read
+        # (linecache opens source files). Keep the real frames without source I/O.
+        frames = [f'  File "{frame.f_code.co_filename}", line {line}, in {frame.f_code.co_name}\n'
+                  for frame, line in traceback.walk_tb(exc.__traceback__)]
+        stack = "Traceback (most recent call last):\n" + "".join(frames) + f"{type(exc).__name__}: {exc}\n"
+    else:
+        stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return {
         "name": type(exc).__name__,
         "message": str(exc),
-        "stack": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+        "stack": stack,
+        **({"code": getattr(exc, "code")} if getattr(exc, "code", None) else {}),
+        **({"permissionRule": getattr(exc, "permissionRule")} if getattr(exc, "permissionRule", None) else {}),
     }
 
 
@@ -910,6 +937,7 @@ class KernelToolRunner:
 
     def _run(self, invocation: Invocation, message: dict[str, Any]) -> None:
         output = io.StringIO()
+        permission_scope = permission_context.set(message.get("authority"))
         try:
             entry = self._registry.resolve(message)
             args = validate_args(entry.input_schema, message.get("args"))
@@ -935,8 +963,9 @@ class KernelToolRunner:
             self._reply_error(invocation, exc.code, str(exc), output, exc.details)
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — the invocation boundary serializes the tool's own failure.
             self._reply_error(invocation, "kernel_tool_failed", f"{type(exc).__name__}: {exc}", output,
-                              stack="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+                              stack=bridge_error(exc)["stack"])
         finally:
+            permission_context.reset(permission_scope)
             with self._lock:
                 self._invocations.pop(invocation.request_id, None)
 
@@ -1964,9 +1993,10 @@ def _footprint_reader() -> Callable[[], tuple[int, bool]] | None:
             if darwin() is not None:
                 return darwin
     if sys.platform.startswith("linux") and os.path.exists("/proc/self/status"):
+        open_status = open
 
         def linux() -> tuple[int, bool] | None:
-            with open("/proc/self/status", encoding="ascii", errors="replace") as status:
+            with open_status("/proc/self/status", encoding="ascii", errors="replace") as status:
                 for line in status:
                     if line.startswith("RssAnon:"):
                         return int(line.split()[1]) * 1024, False
@@ -2234,7 +2264,8 @@ def _enter_source_file(source_file: str | None) -> Callable[[], None]:
 
 
 def run_cell(
-    cell_id: str, code: str, preludes: Any = None, source_file: str | None = None, cell_token: str | None = None
+    cell_id: str, code: str, preludes: Any = None, source_file: str | None = None, cell_token: str | None = None,
+    authority: Any = None,
 ) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
@@ -2245,6 +2276,7 @@ def run_cell(
     result: dict[str, Any]
     leave_source_file: Callable[[], None] = lambda: None
     cell_scope = CURRENT_CELL_TOKEN.set(cell_token)
+    permission_scope = permission_context.set(authority)
     try:
         KERNEL_TOOL_TOKEN.acquire()
         with capture_streams(KERNEL_TOOL_STREAMS, (stdout, stderr), cell=True):
@@ -2277,6 +2309,7 @@ def run_cell(
         # Liveness and revocation first: nothing the cell installed (an import finder, a path hook) can skip them.
         KERNEL_TOOL_TOKEN.release()
         CURRENT_CELL_TOKEN.reset(cell_scope)
+        permission_context.reset(permission_scope)
         try:
             leave_source_file()
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — user code can break the restore; it must not wedge the kernel.
@@ -2299,8 +2332,20 @@ def elapsed(start: float) -> int:
     return max(0, int((time.monotonic() - start) * 1000))
 
 
+def _install_kill_guard(port: int) -> None:
+    # The host exports the protected pids only while the guard is on (`terminal.killGuard`); absent means off.
+    protected = os.environ.get("SENPI_KILL_GUARD_PROTECTED")
+    if protected is None:
+        return
+    # Loaded only when the guard is on, so a kernel without it starts exactly as before.
+    _kill_guard_path = Path(__file__).with_name("kill_guard.py")
+    namespace: dict[str, Any] = {"__builtins__": __builtins__, "__file__": str(_kill_guard_path)}
+    exec(compile(_kill_guard_path.read_bytes(), str(_kill_guard_path), "exec"), namespace)
+    namespace["install"](port, [int(pid) for pid in protected.split(",") if pid.isdigit()])
+
+
 def _handle_message(message: dict[str, Any]) -> bool:
-    global CONNECTION
+    global CONNECTION, permission_context
     message_type = message.get("type")
     if message_type == "init":
         connection = message.get("connection")
@@ -2312,6 +2357,11 @@ def _handle_message(message: dict[str, Any]) -> bool:
         if isinstance(generation, int) and not isinstance(generation, bool):
             KERNEL_TOOL_REGISTRY.generation = generation
         KERNEL_MEMORY.configure(message.get("memory"))
+        if KERNEL_MEMORY.thresholds is not None:
+            KERNEL_MEMORY._footprint()
+        if message.get("permission") is not None:
+            permission_context = initialize_permissions(message["permission"], connection["port"])
+        _install_kill_guard(connection["port"])
         emit({"type": "ready"})
         return True
     if message_type == "run":
@@ -2326,6 +2376,7 @@ def _handle_message(message: dict[str, Any]) -> bool:
             message.get("preludes"),
             source_file if isinstance(source_file, str) and source_file else None,
             token if isinstance(token, str) else None,
+            message.get("authority"),
         )
         return True
     if message_type == "close":
@@ -2370,7 +2421,8 @@ def _terminate_process_group(reason: str) -> None:
             stream.write(f"{PARENT_WATCH_MARKER} {reason}; stopping the kernel\n")
             stream.flush()
     with contextlib.suppress(OSError):
-        os.killpg(os.getpgrp(), signal.SIGKILL)
+        if _SIGNAL_GROUP is not None:
+            _SIGNAL_GROUP(os.getpgrp(), signal.SIGKILL)
 
 
 def _watch_parent(initial_ppid: int) -> None:
@@ -2394,7 +2446,7 @@ def _watch_named_parent(parent_pid: int) -> None:
     while True:
         time.sleep(0.5)
         try:
-            os.kill(parent_pid, 0)
+            _SIGNAL_PROCESS(parent_pid, 0)
         except ProcessLookupError:
             _terminate_process_group(f"its host process {parent_pid} is gone")
             return

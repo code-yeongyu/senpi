@@ -7,13 +7,16 @@ import {
 	kernelToolsStorage,
 } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
-import { resolveSandbox } from "../config/feature-settings.ts";
+import { resolveJsCells, resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
 import type { JsEnvironments } from "../environments/js-environments.ts";
 import type { PackagesInstallEnvironments } from "../environments/packages-install.ts";
 import { KERNEL_TOOLS_CAPABILITIES, type KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import { sandboxCellExecutor, sandboxRuntimeInfo } from "../kernels/sandbox/sandbox-cell.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
+import { withWrittenFiles } from "../written-files/report.ts";
+import { settleWrittenFiles } from "../written-files/written-files.ts";
+import { bindBridgeCell } from "./bridge-cell-binding.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
 import type { EvalDetachedCellManager } from "./detached-cell-manager.ts";
@@ -21,6 +24,7 @@ import { EvalBackgroundCapacityError, resultAfterDetach, resultForDetachedState 
 import { buildEvalExecutionEventPayload, type EvalExecutionSettleOutcome } from "./eval-execution-event.ts";
 import { EvalKernelResetRefusedError } from "./eval-kernel-reset-refused-error.ts";
 import { evalTimeoutBehavior } from "./eval-request.ts";
+import { jsCellParseMessage } from "./js-cell-parse-message.ts";
 import type { CreateEvalToolOptions, EvalCellInvocation } from "./eval-tool-options.ts";
 import { describeTimeoutState } from "./interrupt-note.ts";
 import { loadCell } from "./load-cell.ts";
@@ -209,20 +213,19 @@ async function executeCell(
 		void pending.catch((error: unknown) => execution.cancel(error));
 	};
 	let releaseCellKernelTools: (() => void) | undefined;
+	// Opened first so the scan of the workspace's state before the cell overlaps kernel acquisition (senpi#7232).
+	const written = options.writtenFiles?.open(invocation.ctx);
 	try {
 		const kernel = await execution.wait(options.kernelManager.getKernel(invocation.input.language, onMessage));
 		// Computed before the handler so its construction-time snapshot captures this cell's capability.
 		// Worker messages later restore that snapshot before calling host tools (#1754, #2512).
 		const kernelTools = kernelToolsFor(kernel);
-		// Subprocess kernels call the host over the bridge, outside this async context. Their calls carry a fresh secret
-		// minted for this run and sent only to this cell's kernel, never the model-visible cell id, so code in another
-		// kernel cannot name this cell into its tools. JS calls already run inside this cell's scope (#1754).
-		const bridgeCellToken =
-			kernelTools === undefined || invocation.input.language === "js" ? undefined : randomUUID();
-		releaseCellKernelTools =
-			kernelTools === undefined || bridgeCellToken === undefined
-				? undefined
-				: options.kernelManager.bindCellKernelTools?.(bridgeCellToken, kernelTools);
+		const bridgeCell = bindBridgeCell(options.kernelManager, invocation.input.language, kernelTools, {
+			nestedToolUpdate: (callId, partial) => handler?.toolUpdates.nestedToolUpdate(callId, partial),
+			nestedToolSettled: (callId) => handler?.toolUpdates.nestedToolSettled(callId),
+		});
+		const bridgeCellToken = bridgeCell.token;
+		releaseCellKernelTools = bridgeCell.release;
 		const runBound = async (): Promise<AgentToolResult<EvalToolDetails>> => {
 			const queue = kernel.queueSnapshot();
 			state.queuedBehind = [...(queue.activeCellId === null ? [] : [queue.activeCellId]), ...queue.queuedCellIds];
@@ -298,6 +301,7 @@ async function executeCell(
 			const envRoot = environments === undefined ? undefined : () => environments.activeRoot ?? "";
 			const jsEnvironments = invocation.input.language === "js" ? options.jsEnvironments : undefined;
 			const packageRoot = jsEnvironments === undefined ? undefined : () => jsEnvironments.packageRoot;
+			if (written !== undefined) await execution.wait(written.ready);
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
@@ -321,7 +325,32 @@ async function executeCell(
 			);
 			if (result.ok && state.pendingBridgeCalls.length > 0)
 				await execution.wait(Promise.all(state.pendingBridgeCalls));
-			return await handler.finalize(result);
+			const finished = await handler.finalize(
+				!result.ok &&
+					result.error.code === "js_cell_parse_error" &&
+					invocation.input.language === "js" &&
+					magic.kind === "ordinary"
+					? {
+							...result,
+							error: {
+								...result.error,
+								message: jsCellParseMessage(
+									invocation.input.code,
+									result.error.message,
+									resolveJsCells(options.settings ?? {}).typescript,
+								),
+							},
+						}
+					: result,
+			);
+			// The cell's code ended, so its state is final now: the written files settle after it as host work. A stop, list or
+			// wake count never waits on the write hooks, and a stop cannot cancel hooks for code that already ended; the
+			// settled result (with its file list) still becomes the cell's result and notification (senpi#7232).
+			const settled = execution
+				.wait(settleWrittenFiles(written, state.signal, [execution, cell.deadlines]))
+				.then((writtenFiles) => withWrittenFiles(finished, writtenFiles));
+			cellManager.complete(cell, finished, settled);
+			return await settled;
 		};
 		return kernelTools ? await kernelToolsStorage.run(kernelTools, runBound) : await runBound();
 	} catch (error) {
@@ -342,10 +371,14 @@ async function executeCell(
 	} finally {
 		// First, so nothing below can skip it: from here on a host call carrying this run's secret gets no kernel tools.
 		releaseCellKernelTools?.();
+		written?.close();
 		state.active = false;
 		bridgeAbortController.abort();
 		execution.finish();
-		if (handler) await handler.flushOutput();
+		if (handler) {
+			await handler.stopScopedWatches();
+			await handler.flushOutput();
+		}
 		// The cell settled: stop the kernel dispatcher from holding this cell's listener (#2260).
 		options.kernelManager.releaseKernelListener?.(invocation.input.language, onMessage);
 	}

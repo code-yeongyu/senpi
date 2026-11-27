@@ -209,6 +209,13 @@ async function deliverClaimed(
 	} catch (error) {
 		result = { ok: false, error: error instanceof Error ? error.message : String(error) };
 	}
+	if (!result.ok && result.sessionHeld === true) {
+		// Opened elsewhere after the shouldDefer check: nothing ran, so this is a deferral, not a failed occurrence.
+		// Put the claimed generation back (a recurring job's re-arm is undone first) and retry like any deferral.
+		if (job.everyMs !== null) await rearmRecurringJob(options.dir, job);
+		await restorePending(options.dir, record, job.id);
+		return { event: "deferred", id: job.id, sessionId: job.sessionId, reason: result.error };
+	}
 	await settleOccurrence(
 		options.dir,
 		record,

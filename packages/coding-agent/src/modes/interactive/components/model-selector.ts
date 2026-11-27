@@ -32,6 +32,18 @@ export interface ModelSelection {
 	readonly asDefault: boolean;
 }
 
+/** Where the picker sits on screen, so it can keep itself within one screen. */
+export interface ModelSelectorLayout {
+	/** Rows the screen keeps below the picker (widgets and footer) at this width. */
+	rowsBelow(width: number): number;
+}
+
+/**
+ * The list never shrinks below one model. At phone width the picker's own hint lines wrap and leave room for
+ * only a couple of models on a short screen; "more above/below" still says where the rest are.
+ */
+const MIN_VISIBLE_MODELS = 1;
+
 export interface ModelSelectorFavoriteOptions {
 	favoriteModelIds?: FavoriteModelIds;
 	onFavoriteChange?: (
@@ -83,6 +95,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private readonly refreshAbortController = new AbortController();
 	private refreshTimeout?: ReturnType<typeof setTimeout>;
 	private closed = false;
+	private readonly layout?: ModelSelectorLayout;
+	// The list length that keeps the whole picker plus the rows below it within the terminal height.
+	private fittedMaxVisible?: number;
+	private shownModelRows = 0;
 
 	constructor(
 		tui: ModelSelectorTui,
@@ -95,10 +111,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		onCancel: () => void,
 		initialSearchInput?: string,
 		favorites?: ModelSelectorFavoriteOptions,
+		layout?: ModelSelectorLayout,
 	) {
 		super();
 
 		this.tui = tui;
+		this.layout = layout;
 		this.currentModel = currentModel;
 		this.modelRuntime = modelRuntime;
 		this.scopedModels = scopedModels;
@@ -317,13 +335,16 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.listContainer.clear();
 
 		// Window long registries using the same viewport-aware sizing as the
-		// extension selector, while retaining a stable fallback for test doubles.
-		const maxVisible = this.tui.terminal ? Math.max(5, Math.floor(this.tui.terminal.rows / 2)) : 10;
+		// extension selector, while retaining a stable fallback for test doubles,
+		// and never longer than what fits on screen (see render).
+		const defaultMaxVisible = this.tui.terminal ? Math.max(5, Math.floor(this.tui.terminal.rows / 2)) : 10;
+		const maxVisible = Math.min(defaultMaxVisible, this.fittedMaxVisible ?? defaultMaxVisible);
 		const startIndex = Math.max(
 			0,
 			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredModels.length - maxVisible),
 		);
 		const endIndex = Math.min(startIndex + maxVisible, this.filteredModels.length);
+		this.shownModelRows = endIndex - startIndex;
 
 		if (startIndex > 0) {
 			this.listContainer.addChild(new Text(theme.fg("muted", `  … ${startIndex} more above`), 0, 0));
@@ -383,6 +404,33 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				new Text(theme.fg(this.refreshStatusSuccess ? "success" : "muted", `  ${this.refreshStatusMessage}`), 0, 0),
 			);
 		}
+	}
+
+	/**
+	 * The picker replaces the editor below the transcript. If it is taller than the screen minus the rows below
+	 * it, its top rows scroll into the terminal's scrollback; closing it then shrinks the document with its
+	 * first changed row above the screen, which the renderer can only show by clearing the scrollback and
+	 * replaying the whole transcript (a full-screen flash, and a shifted screen on a phone,
+	 * sisyphuslabs/doriterm#2745). So the model list is shortened until the picker fits.
+	 */
+	override render(width: number): string[] {
+		let lines = super.render(width);
+		const rows = this.tui.terminal?.rows;
+		if (rows === undefined || !this.layout) return lines;
+		const budget = rows - this.layout.rowsBelow(width);
+		// Resizing the list can add or drop a "more above/below" row, so it settles within a few passes. A list
+		// shortened earlier grows back when the screen gets taller (a phone keyboard closing).
+		for (let pass = 0; pass < 3; pass++) {
+			const overflow = lines.length > budget;
+			if (overflow && this.shownModelRows <= MIN_VISIBLE_MODELS) break;
+			const target = Math.max(MIN_VISIBLE_MODELS, budget - (lines.length - this.shownModelRows));
+			const next = overflow ? Math.min(target, this.shownModelRows - 1) : target;
+			if (!overflow && (this.fittedMaxVisible === undefined || next <= this.fittedMaxVisible)) break;
+			this.fittedMaxVisible = next;
+			this.updateList();
+			lines = super.render(width);
+		}
+		return lines;
 	}
 
 	handleInput(keyData: string): void {

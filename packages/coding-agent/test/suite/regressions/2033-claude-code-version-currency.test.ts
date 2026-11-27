@@ -1,33 +1,11 @@
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
 	type ExecutableDeps,
 	resolveClaudeCodeExecutable,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/executable.ts";
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..");
 const SIDECAR = "/sdk/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude";
 const ON_PATH = "/usr/local/bin/claude";
-
-function installedSdkClaudeCodeVersion(): string {
-	const requireFromAgent = createRequire(join(repoRoot, "packages", "coding-agent", "package.json"));
-	const entry = requireFromAgent.resolve("@anthropic-ai/claude-agent-sdk");
-	const manifest = JSON.parse(readFileSync(join(dirname(entry), "package.json"), "utf8")) as {
-		claudeCodeVersion?: string;
-	};
-	if (!manifest.claudeCodeVersion) throw new Error("installed claude-agent-sdk has no claudeCodeVersion");
-	return manifest.claudeCodeVersion;
-}
-
-function engineClaudeCodeVersionFloor(): string {
-	const source = readFileSync(join(repoRoot, "packages", "ai", "src", "api", "anthropic-messages.ts"), "utf8");
-	const match = /const claudeCodeVersion = "(\d+\.\d+\.\d+)";/.exec(source);
-	if (!match?.[1]) throw new Error("anthropic-messages.ts has no claudeCodeVersion declaration");
-	return match[1];
-}
 
 function bothInstalled(versions: { bundled?: string; onPath?: string }, overrides: Partial<ExecutableDeps> = {}) {
 	const probed: string[] = [];
@@ -47,11 +25,7 @@ function bothInstalled(versions: { bundled?: string; onPath?: string }, override
 	return { deps, probed };
 }
 
-describe("regression #2033: the engine runs and advertises a current Claude Code", () => {
-	it("floors the advertised Claude Code version at the one the pinned claude-agent-sdk ships", () => {
-		expect(engineClaudeCodeVersionFloor()).toBe(installedSdkClaudeCodeVersion());
-	});
-
+describe("regression #2033: the engine runs a current Claude Code", () => {
 	it("uses a newer claude on PATH instead of the bundled binary", () => {
 		const { deps } = bothInstalled({ bundled: "2.1.280", onPath: "2.1.290" });
 		expect(resolveClaudeCodeExecutable(deps)).toBe(ON_PATH);

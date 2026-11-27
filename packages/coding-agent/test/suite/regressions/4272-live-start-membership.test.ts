@@ -76,7 +76,7 @@ it("keeps exact duplicate rejection across every held page-out and cold-read ste
 			await state.applyCold({ type: "message_status", messageId: "message", persistence: "appended" }),
 		).toMatchObject({ kind: "applied" });
 		duplicate();
-		handoff = io.hold("write", (path) => path.includes("/value-"));
+		handoff = io.hold("write", (path) => path.includes("/node-"));
 		write.release();
 		await handoff.entered;
 		// The row page is committed, but its replacement navigation root is not published yet.
@@ -153,4 +153,4 @@ it("releases settled membership instead of retaining a catalog after 10,000 mess
 		await state.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

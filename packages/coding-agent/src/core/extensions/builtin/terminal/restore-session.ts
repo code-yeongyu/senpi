@@ -10,6 +10,8 @@
 import { existsSync } from "node:fs";
 import { encodedSessionId } from "../../../session-sidecar-store.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { isStaleExtensionContextError } from "../goal/stale-context.ts";
+import { withTerminalContext } from "./context-lifetime.ts";
 import { createLeaseKeeper, type LeaseKeeper } from "./lease-keeper.ts";
 import {
 	type AcquireTerminalLeaseResult,
@@ -68,12 +70,19 @@ export function whenRestoreDecided(sessionKey: string): Promise<void> {
 }
 
 export function flushRestoreDigest(pi: ExtensionAPI, state: PersistenceState): void {
-	state.digestSlot.flush((message) => {
-		// terminal.notify "off" keeps the model channel silent; the user still sees the digest.
-		if (state.settings.notify !== "off") return deliverRestoreDigest(pi, state.ctx, message);
-		state.ctx?.ui?.notify?.(message.content, "info");
-		return true;
-	});
+	withTerminalContext(
+		() =>
+			state.digestSlot.flush((message) => {
+				// terminal.notify "off" keeps the model channel silent; the user still sees the digest.
+				if (state.settings.notify !== "off") return deliverRestoreDigest(pi, state.ctx, message);
+				state.ctx?.ui?.notify?.(message.content, "info");
+				return true;
+			}),
+		() => {
+			state.keeper?.stop();
+			state.digestSlot = createDigestSlot();
+		},
+	);
 }
 
 function emptyDigest(): RestoreDigest {
@@ -109,10 +118,19 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 	if (dir === undefined || sessionManager === undefined) return decided();
 	const encoded = encodedSessionId(sessionKey);
 	const generation = state.generation;
+	const retire = (): void => {
+		state.keeper?.stop();
+		state.digestSlot = createDigestSlot();
+		decided();
+	};
+	const retired = (error: unknown): void => {
+		if (!isStaleExtensionContextError(error)) throw error;
+		retire();
+	};
 
 	const own = async (lease: AcquireTerminalLeaseResult & { acquired: true }): Promise<void> => {
-		ctx?.ui?.setStatus?.(RESTORE_STATUS_KEY, undefined);
 		state.lease = { path: lease.path, pid: lease.pid, token: lease.token };
+		ctx?.ui?.setStatus?.(RESTORE_STATUS_KEY, undefined);
 		const writer = new TerminalManifestWriter({ session: sessionManager });
 		state.manifestWriter = writer;
 		state.recordedBackgroundIds.clear();
@@ -128,6 +146,7 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 					processStartedAtMs: ownProcessStartedAtMs(),
 				});
 			} catch (error) {
+				if (isStaleExtensionContextError(error)) throw error;
 				// A restore that throws (an unreadable transcript, a kill error on a confirmed orphan)
 				// still decides: the session hears it failed, and the lease stays bound for shutdown.
 				ctx?.ui?.notify?.(`Terminal restore failed: ${errorText(error)}`, "warning");
@@ -154,7 +173,7 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 		// A corrupt manifest is left as it was (fail closed); a readable one is rewritten to the truth.
 		if (restoredFromReadableManifest) await writer.persistRestored();
 		state.ensurePersistence = null;
-		const self = { pid: process.pid, bootAtMs: processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
+		const self = { pid: process.pid, bootAtMs: await processBootAtMs(), processStartedAtMs: ownProcessStartedAtMs() };
 		// Housekeeping only: a failed sweep leaves the files for the next start to reclaim.
 		void sweepTerminalStateDir(dir, { self, keep: new Set([`${encoded}.lease`, `${encoded}.json`]) }).catch(
 			() => undefined,
@@ -184,14 +203,18 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 				? { intervalMs: restoreSessionTestHooks.keeperIntervalMs }
 				: {}),
 			onTakeover: (lease) => {
-				state.restoreInFlight = own(lease);
+				state.restoreInFlight = own(lease).catch(retired);
 				return state.restoreInFlight;
 			},
 			onError: (error) => {
 				const waiting = state.keeper?.state === "waiting";
-				ctx?.ui?.notify?.(
-					`Terminal lease ${waiting ? "check failed, still waiting" : "takeover failed"}: ${errorText(error)}`,
-					"warning",
+				withTerminalContext(
+					() =>
+						ctx?.ui?.notify?.(
+							`Terminal lease ${waiting ? "check failed, still waiting" : "takeover failed"}: ${errorText(error)}`,
+							"warning",
+						),
+					retire,
 				);
 			},
 		});
@@ -206,24 +229,29 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 		});
 		if (lease === null) return wait(null);
 		if (lease.acquired) {
-			state.restoreInFlight = own(lease);
+			state.restoreInFlight = own(lease).catch(retired);
 			return;
 		}
 		wait(lease.holder);
 	};
 
-	if (existsSync(createTerminalManifestStore(sessionManager).filePath)) return acquire();
+	if (existsSync(createTerminalManifestStore(sessionManager).filePath)) return acquire().catch(retired);
 	// Nothing to restore: the lease and the recorder wait for the first real registration.
 	decided();
 	let binding: Promise<void> | null = null;
 	state.ensurePersistence = () => {
-		binding ??= acquire().then(() => state.restoreInFlight);
+		binding ??= acquire()
+			.then(() => state.restoreInFlight)
+			.catch(retired);
 		return binding;
 	};
 }
 
-/** session_shutdown (not reload): stop waiting, finish any restore, suspend and flush, release. */
-export async function stopPersistence(state: PersistenceState, sessionKey: string): Promise<void> {
+/**
+ * session_shutdown (not reload): stop waiting, finish any restore, suspend and flush, release. A graceful close
+ * (`closed`, oh-my-openagent#14313) records nothing to restore instead of suspending.
+ */
+export async function stopPersistence(state: PersistenceState, sessionKey: string, closed = false): Promise<void> {
 	const keeper = state.keeper;
 	keeper?.stop();
 	state.keeper = null;
@@ -236,7 +264,7 @@ export async function stopPersistence(state: PersistenceState, sessionKey: strin
 	const writer = state.manifestWriter;
 	if (writer && state.bundle) await writer.observeMonitorState(state.bundle.monitors.snapshot());
 	detachPersistence(state, sessionKey);
-	if (writer) await writer.recordShutdown();
+	if (writer) await (closed ? writer.recordClosed() : writer.recordShutdown());
 	if (lease !== null) await releaseTerminalLease(lease);
 	decisions.get(sessionKey)?.resolve();
 }

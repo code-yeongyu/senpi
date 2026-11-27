@@ -14,7 +14,7 @@ const FIRST_DELIVERY: SentinelDeliveryState = {
 	forceFullDelivery: false,
 };
 
-function loopFile(overrides: Partial<LoopFileSnapshot> = {}): LoopFileSnapshot {
+function loopFile(overrides: Partial<Extract<LoopFileSnapshot, { present: true }>> = {}): LoopFileSnapshot {
 	return {
 		present: true,
 		path: "/repo/.senpi/loop.md",
@@ -23,7 +23,7 @@ function loopFile(overrides: Partial<LoopFileSnapshot> = {}): LoopFileSnapshot {
 		size: 52,
 		contentHash: "hash-a",
 		...overrides,
-	} as LoopFileSnapshot;
+	};
 }
 
 function sentinelInput(overrides: Partial<TickPromptInput> = {}): TickPromptInput {
@@ -36,7 +36,7 @@ function sentinelInput(overrides: Partial<TickPromptInput> = {}): TickPromptInpu
 		deliveryState: FIRST_DELIVERY,
 		loopFile: loopFile(),
 		...overrides,
-	} as TickPromptInput;
+	};
 }
 
 function expectNoClaudeToolNames(text: string): void {

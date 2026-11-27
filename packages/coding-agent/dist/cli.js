@@ -8,36 +8,67 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
     return path;
 };
 import "./valid-cwd.js";
+// Then, before anything else: under Bun the OSC 7577 token leaves the startup environment by an in-place exec, which
+// runs the cwd guard above again (senpi#7493).
+import "./program-resume-startup.js";
+// Release a coordinated start's filler pipes while the private table is still in the environment (senpi#4602).
+import "./private-fd-startup-release.js";
+// Then: capture the private descriptor table before anything can spawn (senpi#4749).
+import "./private-fds.js";
+import "./windows-power-throttling-startup.js";
 import "./internal-role.js";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, fstatSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
+import { isFifoMode } from "./utils/inherited-duplex.js";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.js";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.js";
+import { dispatchSessionOfPidCommand } from "./cli/session-of-pid-command.js";
+import { dispatchKillGuardCommand } from "./cli/kill-guard-command.js";
 import { enableStartupCompileCache } from "./compile-cache.js";
 import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallPackageDir, isBundledNode, } from "./config.js";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
+import { runtimeExecArgv } from "./utils/runtime-exec-argv.js";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
-/** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
+import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.js";
+import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.js";
+import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.js";
+/**
+ * The descriptors a supervised launch hands the engine survive CLI re-execution, so the process that ends up serving
+ * holds them itself rather than leaving them with this launcher: the lifetime slot (the supervisor reads its EOF as
+ * the host's end, senpi#7525), the presenter channel of a presenter-enabled launch, and the startup pipe of a
+ * coordinated start (senpi#4602), whose hand-off variable is still unread here.
+ */
 function reexecStdio() {
     const argv = process.argv.slice(2);
-    const presenter = argv.indexOf("--mcp-presenter-fd");
-    if (presenter < 0 || argv[presenter + 1] !== "4")
+    const presenterAt = argv.indexOf("--mcp-presenter-fd");
+    const ownerAt = argv.indexOf("--owner-fd");
+    const carried = [
+        ((ownerAt >= 0 && argv[ownerAt + 1] === "3") || process.env.SENPI_RPC_HOST_WATCH_FD === "3") && 3,
+        presenterAt >= 0 && argv[presenterAt + 1] === "4" && 4,
+        Boolean(process.env[HOST_STARTUP_EVENTS_ENV]) && STARTUP_EVENT_FD,
+    ].filter((fd) => fd !== false && isChannelDescriptor(fd));
+    if (carried.length === 0)
         return "inherit";
+    const slots = ["inherit", "inherit", "inherit"];
+    for (const fd of carried) {
+        while (slots.length < fd)
+            slots.push("ignore");
+        slots[fd] = fd;
+    }
+    return slots;
+}
+function isChannelDescriptor(fd) {
     try {
-        const stat = fstatSync(4);
-        if (!stat.isSocket() && !stat.isFIFO())
-            return "inherit";
+        const stat = fstatSync(fd);
+        return stat.isSocket() || isFifoMode(stat.mode);
     }
     catch {
-        return "inherit";
+        return false;
     }
-    const owner = argv.indexOf("--owner-fd");
-    const lifetime = (owner >= 0 && argv[owner + 1] === "3") || process.env.SENPI_RPC_HOST_WATCH_FD === "3";
-    return ["inherit", "inherit", "inherit", lifetime ? 3 : "ignore", 4];
 }
 // Upstream's `cli/setup.ts` helper is deliberately not used here: this launcher only decides the
 // runtime and process structure, and `cli-main.ts` performs the equivalent process/title/env/http
@@ -70,10 +101,18 @@ function reexecUnderBunIfNeeded() {
     if (decision.action === "stay") {
         return false;
     }
-    const result = spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], {
+    const transfer = preparePrivateFdSpawn({
         stdio: reexecStdio(),
         windowsHide: true,
     });
+    const result = (() => {
+        try {
+            return spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], transfer.options);
+        }
+        finally {
+            transfer.close();
+        }
+    })();
     if (result.signal) {
         process.kill(process.pid, result.signal);
         return true;
@@ -81,11 +120,15 @@ function reexecUnderBunIfNeeded() {
     process.exitCode = result.status ?? 1;
     return true;
 }
+// The kill guard's runtime shims ask this executable to judge a signal (senpi#5349). Hidden and never in help; it
+// loads only the judge, so it answers before any runtime re-exec or engine import.
+await dispatchKillGuardCommand(process.argv.slice(2));
 if (reexecUnderBunIfNeeded()) {
     process.exit();
 }
 const args = process.argv.slice(2);
 await dispatchAgentDirectoryCommand(args);
+await dispatchSessionOfPidCommand(args);
 // Must run before cli-main is loaded, by either path: it caches the engine graph this process
 // imports on the fast path below, and it publishes NODE_COMPILE_CACHE so a spawned cli-main child
 // inherits this process's cache directory instead of resolving and re-filling its own.
@@ -129,7 +172,9 @@ function requiresIsolatedProcess() {
     // same exec arguments and spawn again forever. The marker is read before anything else runs.
     if (process.env[ISOLATED_CHILD_ENV] === "1")
         return false;
-    return process.execArgv.length > 0 || hasInheritedInspectorOption();
+    // Decide on the sanitized argv (senpi#2952): the caller's entry mode (-e/-p/-i and friends) is
+    // not a runtime option, so an eval caller alone must not force an isolated re-launch.
+    return runtimeExecArgv().length > 0 || hasInheritedInspectorOption();
 }
 async function spawnFullCli() {
     const extension = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
@@ -141,9 +186,12 @@ async function spawnFullCli() {
         ? fileURLToPath(import.meta.url)
         : fileURLToPath(new URL(`./cli-main${extension}`, import.meta.url));
     releaseInheritedInspectorForChild();
-    const childEnvironment = isBundledNode ? { ...process.env, [ISOLATED_CHILD_ENV]: "1" } : process.env;
+    // The child carries the caller's runtime options but never its entry mode (senpi#2952): forwarding
+    // raw execArgv replayed a `node -e` caller in the child. Both entries get the isolation marker so
+    // a re-entered cli.ts loads the agent in process instead of spawning again.
+    const childEnvironment = { ...process.env, [ISOLATED_CHILD_ENV]: "1" };
     return await new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
+        const child = spawnWithPrivateFds(spawn, process.execPath, [...runtimeExecArgv(), fullCliPath, ...args], {
             env: childEnvironment,
             stdio: reexecStdio(),
         });

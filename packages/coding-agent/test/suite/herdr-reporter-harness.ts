@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
 import { createHerdrExtension, type HerdrDependencies } from "../../src/core/extensions/builtin/herdr/index.ts";
+import { createSessionLivenessWatcher } from "../../src/core/extensions/builtin/session-liveness/watcher.ts";
+import { noOpUIContext } from "../../src/core/extensions/runner.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 
 export interface HerdrRequest {
@@ -66,8 +68,8 @@ export async function herdrReporterFixture(overrides: Partial<HerdrDependencies>
 	vi.stubEnv("HERDR_ENV", "1");
 	vi.stubEnv("HERDR_SOCKET_PATH", path);
 	vi.stubEnv("HERDR_PANE_ID", "pane-test");
-	const lifecycle = new Map<string, HerdrHandler>();
-	const events = new Map<string, (data: unknown) => unknown>();
+	const lifecycle = new Map<string, HerdrHandler[]>();
+	const events = new Map<string, Set<(data: unknown) => unknown>>();
 	const debug = vi.fn();
 	const connect = vi.fn((target: string) => createConnection(target));
 	const deps: HerdrDependencies = {
@@ -78,27 +80,35 @@ export async function herdrReporterFixture(overrides: Partial<HerdrDependencies>
 		debug,
 		...overrides,
 	};
-	createHerdrExtension(deps)({
+	// The reporter publishes the session's shared liveness watcher, which the host registers first.
+	const pi: Pick<ExtensionAPI, "on" | "events"> = {
 		on: ((name: string, handler: HerdrHandler) => {
-			lifecycle.set(name, handler);
+			lifecycle.set(name, [...(lifecycle.get(name) ?? []), handler]);
 		}) as ExtensionAPI["on"],
 		events: {
 			on: (name, handler) => {
-				events.set(name, handler);
+				const handlers = events.get(name) ?? new Set();
+				handlers.add(handler);
+				events.set(name, handlers);
 				return () => {
-					events.delete(name);
+					handlers.delete(handler);
 				};
 			},
 			emit: (name, data) => {
-				events.get(name)?.(data);
+				for (const handler of events.get(name) ?? []) handler(data);
 			},
 		},
-	});
+	};
+	createSessionLivenessWatcher(pi);
+	createHerdrExtension(deps)(pi);
 	let idle = true;
 	let title: string | undefined = "Reporter QA";
+	const setProgramStatus = vi.fn<ExtensionContext["ui"]["setProgramStatus"]>();
+	const ui: ExtensionContext["ui"] = { ...noOpUIContext, setProgramStatus };
 	const ctx = {
 		mode: "tui",
 		cwd: dir,
+		ui,
 		isIdle: () => idle,
 		sessionManager: {
 			getSessionId: () => "root-session",
@@ -107,10 +117,10 @@ export async function herdrReporterFixture(overrides: Partial<HerdrDependencies>
 		},
 	} as ExtensionContext;
 	const emit = async (type: string, extra: Record<string, unknown> = {}, context = ctx) => {
-		await lifecycle.get(type)?.({ type, ...extra }, context);
+		for (const handler of lifecycle.get(type) ?? []) await handler({ type, ...extra }, context);
 	};
 	const bus = async (name: string, data: unknown) => {
-		await events.get(name)?.(data);
+		await Promise.all([...(events.get(name) ?? [])].map((handler) => handler(data)));
 	};
 	const start = () => emit("session_start", { reason: "startup" });
 	cleanups.push(async () => {
@@ -125,6 +135,7 @@ export async function herdrReporterFixture(overrides: Partial<HerdrDependencies>
 		received,
 		connect,
 		debug,
+		setProgramStatus,
 		ctx,
 		emit,
 		bus,

@@ -2,8 +2,13 @@ import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { Options, SessionMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary, loadClaudeAgentSdk } from "./sdk-boundary.ts";
 import { logContinuityEvent } from "./session-observability.ts";
-import { type AnthropicSubscriptionSessionEntry, closeSession, getOrCreateSession } from "./session-registry.ts";
-import { recordSyncedStream } from "./session-sync.ts";
+import {
+	type AnthropicSubscriptionSessionEntry,
+	closeSession,
+	getOrCreateSession,
+	getSession,
+} from "./session-registry.ts";
+import { recordSyncedStream, sentHashesForEntry } from "./session-sync.ts";
 
 export type ContinuityBinding = {
 	senpiSessionId: string;
@@ -118,11 +123,25 @@ export function bindingFromEntry(
 	};
 }
 
+/**
+ * Closes the live process but keeps its lineage resumable. A switch still waiting for Claude Code's confirmation is
+ * recorded on the model it selects, so the next turn on that model resumes instead of re-sending (senpi#6411).
+ */
+export function keepBindingThenClose(senpiSessionId: string, reason: string): void {
+	const entry = getSession(senpiSessionId);
+	if (entry) {
+		const binding = bindingFromEntry(entry, sentHashesForEntry(entry) ?? []);
+		rememberBinding({ ...binding, modelId: entry.pendingModelSwitch?.modelId ?? binding.modelId });
+	}
+	closeSession(senpiSessionId, reason);
+}
+
 export async function verifyRestoredTranscript(
 	binding: ContinuityBinding,
 	cwd: string,
 	authLane: AnthropicSubscriptionAuthLane,
 ): Promise<boolean> {
+	// Only config-dir roots are private; claude-cli account dirs link `projects` to the shared root read here.
 	if (authLane === "config-dir") return false;
 	let messages: SessionMessage[];
 	try {

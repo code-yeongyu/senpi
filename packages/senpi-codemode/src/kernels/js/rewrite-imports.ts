@@ -1,15 +1,8 @@
-import { parse } from "@babel/parser";
 import type { ImportDeclaration } from "@babel/types";
+import { type AstNode, nodeFrom, parseCellProgram, walkNodes } from "./babel-ast.ts";
 
 const DYNAMIC_IMPORT_CALLEE =
 	'(typeof __senpi_import__ === "function" ? __senpi_import__ : (specifier, options) => import(specifier, options))';
-
-type AstNode = {
-	readonly type: string;
-	readonly start: number;
-	readonly end: number;
-	readonly value: Readonly<Record<string, unknown>>;
-};
 
 type TextEdit = {
 	readonly start: number;
@@ -23,56 +16,6 @@ class UnexpectedImportSpecifierError extends Error {
 
 function assertNever(_value: never): never {
 	throw new UnexpectedImportSpecifierError("Unsupported import specifier");
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-	return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function nodeFrom(value: unknown): AstNode | undefined {
-	if (!isRecord(value)) return undefined;
-	const type = value.type;
-	const start = value.start;
-	const end = value.end;
-	if (typeof type !== "string" || typeof start !== "number" || typeof end !== "number") return undefined;
-	return { type, start, end, value };
-}
-
-function parseProgram(code: string): ReturnType<typeof parse> | undefined {
-	try {
-		return parse(code, {
-			sourceType: "module",
-			allowAwaitOutsideFunction: true,
-			allowReturnOutsideFunction: true,
-			allowImportExportEverywhere: true,
-			allowNewTargetOutsideFunction: true,
-			allowSuperOutsideMethod: true,
-			allowUndeclaredExports: true,
-			errorRecovery: true,
-			plugins: ["typescript"],
-		});
-	} catch (error) {
-		if (error instanceof SyntaxError) return undefined;
-		throw error;
-	}
-}
-
-function walkNodes(root: unknown, visit: (node: AstNode) => void): void {
-	const stack: unknown[] = [root];
-	while (stack.length > 0) {
-		const current = stack.pop();
-		if (Array.isArray(current)) {
-			for (let index = current.length - 1; index >= 0; index -= 1) stack.push(current[index]);
-			continue;
-		}
-		if (!isRecord(current)) continue;
-		const node = nodeFrom(current);
-		if (node) visit(node);
-		for (const [key, value] of Object.entries(current)) {
-			if (key === "loc" || key === "extra" || key === "range" || key.endsWith("Comments")) continue;
-			if (value !== null && typeof value === "object") stack.push(value);
-		}
-	}
 }
 
 function importOptions(node: ImportDeclaration): string | undefined {
@@ -161,7 +104,7 @@ const DYNAMIC_IMPORT_SYNTAX = /\bimport\s*[(/]/u;
 
 export function rewriteImports(code: string): string {
 	if (!IMPORT_SYNTAX.test(code)) return code;
-	const ast = parseProgram(code);
+	const ast = parseCellProgram(code);
 	if (!ast) return code;
 	const edits: TextEdit[] = [];
 
@@ -176,4 +119,48 @@ export function rewriteImports(code: string): string {
 		});
 	}
 	return applyEdits(code, edits);
+}
+
+/** Host-side preflight: worker assets stay dependency-free, and direct eval keeps native lexical scope. */
+export function hasDynamicCodeCapability(code: string): boolean {
+	if (!/\b(?:eval|Function|plugin)\b/u.test(code)) return false;
+	const ast = parseCellProgram(code);
+	if (!ast) return false;
+	let unsupported = false;
+	walkNodes(ast.program, (node) => {
+		if (node.type === "MemberExpression" && !node.value.computed) {
+			const owner = nodeFrom(node.value.object);
+			const member = nodeFrom(node.value.property);
+			const outer = owner && nodeFrom(owner.value.object);
+			const inner = owner && nodeFrom(owner.value.property);
+			if (
+				member?.value.name === "plugin" &&
+				(owner?.value.name === "Bun" || (outer?.value.name === "globalThis" && inner?.value.name === "Bun"))
+			) {
+				unsupported = true;
+			}
+		}
+		if (node.type !== "CallExpression" && node.type !== "NewExpression") return;
+		const callee = nodeFrom(node.value.callee);
+		const object = callee && nodeFrom(callee.value.object);
+		const property = callee && nodeFrom(callee.value.property);
+		const name =
+			callee?.type === "Identifier"
+				? callee.value.name
+				: callee?.type === "MemberExpression" && !callee.value.computed && object?.value.name === "globalThis"
+					? property?.value.name
+					: undefined;
+		if (name !== "eval" && name !== "Function") return;
+		const args = node.value.arguments;
+		if (!Array.isArray(args)) return;
+		for (const argument of args) {
+			const value = nodeFrom(argument);
+			if (value?.type !== "StringLiteral") unsupported = true;
+		}
+		const body = nodeFrom(args.at(-1));
+		if (body?.type === "StringLiteral" && typeof body.value.value === "string") {
+			unsupported ||= hasDynamicCodeCapability(body.value.value);
+		}
+	});
+	return unsupported;
 }

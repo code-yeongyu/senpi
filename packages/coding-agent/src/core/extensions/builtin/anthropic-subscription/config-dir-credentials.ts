@@ -1,6 +1,6 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AccountSlot, assertValidAccountName } from "./accounts.ts";
+import { assertValidAccountName, type EnvAccountSlot } from "./accounts.ts";
 
 // The per-account directory was named for the old provider id. It is moved once
 // to the canonical name (senpi#1989); the account slot names and file contents
@@ -62,7 +62,7 @@ const CLI_OAUTH_SCOPES = [
 	"user:file_upload",
 ] as const;
 
-export function writeConfigDirCredential(agentDir: string, slot: AccountSlot, access: string): string {
+export function writeConfigDirCredential(agentDir: string, slot: EnvAccountSlot, access: string): string {
 	assertValidAccountName(slot.name);
 	const directory = join(resolveAccountsDirectory(agentDir), slot.name);
 	mkdirSync(directory, { recursive: true, mode: 0o700 });

@@ -54,18 +54,23 @@ async function closeFixture() {
 			case "command":
 			case "prompt_surface":
 			case "browser_engine":
+			case "telemetry_callers":
 			case "permission_preset":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "close":
 			case "cancel_ui":
 			case "cancel_grant":
+			case "cancel_secret":
 			case "subscription_limits":
+			case "owners_retired":
 				break;
 			case "mcp_form_bound":
 			case "mcp_form_availability":
 			case "mcp_form_settlement":
 				throw new Error("Private forms must be disabled in this fixture");
+			case "secret_sealed_answer":
+				throw new Error("This fixture raises no secret prompts");
 			default: {
 				const exhaustive: never = message;
 				throw new Error(`Unexpected message ${exhaustive}`);

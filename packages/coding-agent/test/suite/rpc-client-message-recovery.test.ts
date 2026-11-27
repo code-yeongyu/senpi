@@ -166,6 +166,7 @@ describe("RPC client identity recovery", () => {
 		// Then
 		expect(refused).toMatchObject({ success: false });
 		expect(fixture.session.messages.filter((message) => message.role === "user")).toHaveLength(0);
+		expect(fixture.session.currentTurnId).toBeUndefined();
 	});
 
 	it.each([{ clientMessageId: "" }, { clientMessageId: 4 }, { clientTurnId: false }])(

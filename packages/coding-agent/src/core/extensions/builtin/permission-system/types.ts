@@ -85,14 +85,23 @@ export class CorrectedError extends Error {
 }
 
 /** Error thrown when a rule denies the permission */
+/** The canonical forms a denied request was decided with, so the refusal can name an identity-matched rule's layer. */
+export interface DeniedIdentity {
+	readonly canonical: readonly { readonly path: string; readonly foldCase: boolean }[];
+	readonly unresolvable?: string;
+	readonly failClosed?: boolean;
+}
+
 export class DeniedError extends Error {
 	readonly _tag = "PermissionDeniedError";
 	readonly patterns: string[];
+	readonly identity: DeniedIdentity | undefined;
 
-	constructor(patterns: string[]) {
+	constructor(patterns: string[], identity?: DeniedIdentity) {
 		super(`The user has specified a rule which prevents you from using this specific tool call. ${DENIAL_IS_FINAL}`);
 		this.name = "DeniedError";
 		this.patterns = patterns;
+		this.identity = identity;
 	}
 }
 

@@ -47,6 +47,8 @@ function writeRepository(root) {
 			"@earendil-works/pi-ai": "^2026.7.22",
 			"@earendil-works/pi-client": "^2026.7.22",
 			"@earendil-works/pi-protocol": "^2026.7.22",
+			"@code-yeongyu/senpi-machine-ops": "^2026.7.22",
+			"@earendil-works/pi-pty": "^2026.7.22",
 			typebox: "1.3.34",
 		},
 		bundleDependencies: ["@earendil-works/pi-ai"],
@@ -67,6 +69,26 @@ function writeRepository(root) {
 	writeFile(
 		join(root, "packages", "client", "dist", "client.d.ts"),
 		'import type { SessionSnapshot } from "@earendil-works/pi-protocol";\n',
+	);
+	writeJson(join(root, "packages", "machine-ops", "package.json"), {
+		name: "@code-yeongyu/senpi-machine-ops",
+		version: "2026.7.22",
+		dependencies: { "@earendil-works/pi-pty": "^2026.7.22" },
+	});
+	const machineOpsDist = join(root, "packages", "machine-ops", "dist");
+	writeFile(join(machineOpsDist, "src", "index.js"), 'export * from "./files/local-files.js";\n');
+	writeFile(join(machineOpsDist, "src", "index.d.ts"));
+	writeFile(join(machineOpsDist, "src", "process", "in-process-holder.js"), 'import "@earendil-works/pi-pty";\n');
+	writeFile(join(machineOpsDist, "src", "process", "in-process-holder.d.ts"));
+	writeFile(join(machineOpsDist, "test", "conformance", "index.js"), 'import "vitest";\n');
+	writeFile(
+		codingAgentPath(root, "dist", "core", "tools", "machine.js"),
+		[
+			"// Moved to @code-yeongyu/senpi-machine-ops (senpi#5592).",
+			'import { createLocalMachineOps } from "@code-yeongyu/senpi-machine-ops";',
+			'import { createInProcessHolderLink } from "@code-yeongyu/senpi-machine-ops/in-process-holder";',
+			"",
+		].join("\n"),
 	);
 	writeFile(join(root, "packages", "protocol", "dist", "index.js"), "export const protocol = 1;\n");
 	writeFile(join(root, "packages", "protocol", "dist", "index.d.ts"));
@@ -115,12 +137,38 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		assert.deepEqual(manifest.dependencies, {
 			"@earendil-works/chord": "0.85.1",
 			"@earendil-works/pi-ai": "npm:@code-yeongyu/senpi-ai@2026.7.22",
+			"@earendil-works/pi-pty": "npm:@code-yeongyu/senpi-pty@2026.7.22",
 			typebox: "1.3.34",
 		});
 		assert.deepEqual(manifest.files, ["dist", "README.md", "vendor"]);
 		assert.equal(Object.hasOwn(manifest, "bundleDependencies"), false);
 		assert.equal(Object.hasOwn(manifest, "bundledDependencies"), false);
 		assert.equal(existsSync(codingAgentPath(tempDir, "node_modules")), false);
+	});
+
+	it("vendors machine-ops and rewrites its root and in-process-holder imports (senpi#5784)", () => {
+		// Given: senpi's tools import machine-ops at runtime, and machine-ops is never published.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-prepare-machine-ops-"));
+		writeRepository(tempDir);
+
+		// When
+		prepareSenpiBundledWorkspaces(tempDir);
+
+		// Then: both runtime entries resolve into vendor/, the comment naming the package is left alone,
+		// the test-only conformance build is not shipped, and the manifest no longer declares machine-ops.
+		assert.equal(
+			readFileSync(codingAgentPath(tempDir, "dist", "core", "tools", "machine.js"), "utf8"),
+			[
+				"// Moved to @code-yeongyu/senpi-machine-ops (senpi#5592).",
+				'import { createLocalMachineOps } from "../../../vendor/senpi-machine-ops/index.js";',
+				'import { createInProcessHolderLink } from "../../../vendor/senpi-machine-ops/process/in-process-holder.js";',
+				"",
+			].join("\n"),
+		);
+		assert.equal(existsSync(codingAgentPath(tempDir, "vendor", "senpi-machine-ops", "process", "in-process-holder.js")), true);
+		assert.equal(existsSync(codingAgentPath(tempDir, "vendor", "senpi-machine-ops", "test")), false);
+		const manifest = JSON.parse(readFileSync(codingAgentPath(tempDir, "package.json"), "utf8"));
+		assert.equal(Object.hasOwn(manifest.dependencies, "@code-yeongyu/senpi-machine-ops"), false);
 	});
 
 	it("rejects unresolved client or protocol specifiers after rewriting", () => {

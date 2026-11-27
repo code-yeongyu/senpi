@@ -23,6 +23,7 @@ export { loadProjectContextFiles };
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { requiredInternalBuiltins, selectActiveBuiltinIds } from "./builtin-extension-selection.ts";
 import { bundledBuiltinExtensions } from "./bundled-resources.ts";
 import { type ContextFile, loadProjectContextFiles } from "./context-files.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
@@ -61,7 +62,7 @@ import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-mem
 import { SettingsManager } from "./settings-manager.ts";
 import type { SkillProvenance } from "./skill-access.ts";
 import type { Skill } from "./skills.ts";
-import { loadSkills } from "./skills.ts";
+import { ignoredSkillDiagnostics, loadSkills } from "./skills.ts";
 import { warnIfLargeSkillCatalog } from "./skills-prompt.ts";
 import {
 	BUILTIN_PATH_PREFIX,
@@ -275,6 +276,25 @@ function getGlobalDefaultExtensionModulePath(extensionId: (typeof globalDefaultE
 	);
 }
 
+// A write-denied agent dir (a sandboxed review child, senpi#6287) is left as it is: a missing default
+// extension shim is not seeded, so that default does not load, and a stale shim keeps loading whatever it
+// points at. Startup survives either way, and each denied write is reported as an extension warning so a
+// permission problem in a normal agent dir is visible; any other error is a real failure.
+function seedWritable(write: () => void, path: string, denied: Array<{ path: string; warning: string }>): boolean {
+	try {
+		write();
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "EROFS" && code !== "EACCES" && code !== "EPERM") throw error;
+		denied.push({
+			path,
+			warning: `Default extension shim not written (${code}); the extensions directory is not writable, so this default extension is not refreshed.`,
+		});
+		return false;
+	}
+}
+
 function buildGlobalDefaultExtensionShim(modulePath: string): string {
 	return `${GENERATED_GLOBAL_EXTENSION_BANNER}export { default } from ${JSON.stringify(pathToFileURL(modulePath).href)};\n`;
 }
@@ -482,6 +502,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private preSessionHookSourcePaths: string[];
 	private loadedHookSources: LoadedHookSources;
 	private loaded: boolean;
+	private deniedSeedWarnings: Array<{ path: string; warning: string }> = [];
 
 	constructor(options: DefaultResourceLoaderOptions) {
 		this.cwd = resolvePath(options.cwd);
@@ -493,7 +514,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 		this.eventBus = options.eventBus ?? createEventBus();
 		const factories = options.extensionFactories ?? [];
-		this.extensionFactories = factories.filter((input) => !isBuiltinExtension(input));
+		const hostFactories = factories.flatMap((input) =>
+			typeof input !== "function" && input.host ? [{ id: input.name, factory: input.factory }] : [],
+		);
+		this.extensionFactories = factories.filter(
+			(input) => !(typeof input !== "function" && input.host) && !isBuiltinExtension(input),
+		);
 		this.builtinExtensions = new Map(factories.filter(isBuiltinExtension).map((input) => [input.name, input]));
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -518,6 +544,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 								}
 							: extension,
 					);
+		this.builtinExtensionFactories = [...this.builtinExtensionFactories, ...hostFactories];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
@@ -687,6 +714,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.userSkillRoots = [...(resolvedPaths.skillRoots ?? []), ...(cliExtensionPaths.skillRoots ?? [])]
 			.filter((selection) => selection.kind === "user")
 			.map((selection) => selection.selectedRoot);
+		this.ignoredSkillFiles = this.noSkills ? [] : [...(resolvedPaths.ignoredSkills ?? [])];
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -782,6 +810,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const packageWarnings = collectExtensionPackageWarnings(dedupedExtensionPaths, metadataByPath);
 		const extensionsResult = await this.loadFinalExtensionSet(dedupedExtensionPaths, preTrustExtensions);
 		mergeExtensionWarnings(extensionsResult, packageWarnings);
+		mergeExtensionWarnings(extensionsResult, this.deniedSeedWarnings);
 		for (const p of this.additionalExtensionPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -852,6 +881,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 						cwd: this.cwd,
 						agentDir: this.agentDir,
 						...this.settingsManager.getSettings().contextFiles,
+						// senpi#5567: user settings only; a project's settings never redirect the global file.
+						globalPath: this.settingsManager.getGlobalContextFilePath(),
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
@@ -881,7 +912,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		const extensionsDir = join(this.agentDir, "extensions");
-		mkdirSync(extensionsDir, { recursive: true });
+		this.deniedSeedWarnings = [];
+		if (!seedWritable(() => mkdirSync(extensionsDir, { recursive: true }), extensionsDir, this.deniedSeedWarnings))
+			return;
 
 		for (const extensionId of globalDefaultExtensionIds) {
 			const modulePath = getGlobalDefaultExtensionModulePath(extensionId);
@@ -900,11 +933,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 					continue;
 				}
 
-				writeFileSync(targetPath, shim, "utf-8");
+				seedWritable(() => writeFileSync(targetPath, shim, "utf-8"), targetPath, this.deniedSeedWarnings);
 				continue;
 			}
 
-			writeFileSync(targetPath, shim, "utf-8");
+			seedWritable(() => writeFileSync(targetPath, shim, "utf-8"), targetPath, this.deniedSeedWarnings);
 		}
 	}
 
@@ -1037,6 +1070,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const extensionsResult = await this.loadExtensionPaths(extensionPaths);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
+			await this.placeRequiredInternalBuiltins(extensionsResult);
 			const replacementWarnings: Array<{ path: string; warning: string }> = [];
 			extensionsResult.extensions = omitReplacedExtensions(extensionsResult.extensions, replacementWarnings);
 			mergeExtensionWarnings(extensionsResult, replacementWarnings);
@@ -1077,18 +1111,81 @@ export class DefaultResourceLoader implements ResourceLoader {
 			.filter((extension): extension is Extension => extension !== undefined);
 		orderedExtensions.unshift(...factoryExtensions);
 
-		const replacementWarnings: Array<{ path: string; warning: string }> = [];
-		const extensionsResult: LoadExtensionsResult = {
-			extensions: omitReplacedExtensions(orderedExtensions, replacementWarnings),
+		const assembled: LoadExtensionsResult = {
+			extensions: orderedExtensions,
 			errors: [...preTrustExtensions.errors, ...remainingExtensions.errors],
 			warnings: [...(preTrustExtensions.warnings ?? []), ...(remainingExtensions.warnings ?? [])],
 			runtime: preTrustExtensions.runtime,
 			eventBus: preTrustExtensions.eventBus ?? remainingExtensions.eventBus ?? this.eventBus,
 		};
+		await this.placeRequiredInternalBuiltins(assembled);
+		const replacementWarnings: Array<{ path: string; warning: string }> = [];
+		const extensionsResult: LoadExtensionsResult = {
+			...assembled,
+			extensions: omitReplacedExtensions(assembled.extensions, replacementWarnings),
+		};
 		mergeExtensionWarnings(extensionsResult, replacementWarnings);
 		this.rebuildExtensionFlagDefaults(extensionsResult);
 		this.addExtensionConflictDiagnostics(extensionsResult);
 		return extensionsResult;
+	}
+
+	/**
+	 * The one place internal builtins enter a final extension set (senpi#1146): whichever group selected the builtins
+	 * that require them (settings, an explicit `builtin:<name>` path, before or after project trust), they load once,
+	 * each right after the leading run of builtins the registry lists before it: behind the guards and policy when
+	 * those lead the set, and ahead of every other extension (a later builtin, a bundled, inline or path extension),
+	 * any of which may re-publish liveness in its session_start. An internal builtin handles no tool call, so one
+	 * placed ahead of a guard (an inline extension leads the plain branch) takes no veto from it.
+	 */
+	private async placeRequiredInternalBuiltins(result: LoadExtensionsResult): Promise<void> {
+		const builtinIdOf = (path: string): string | undefined =>
+			path.startsWith("<builtin:") && path.endsWith(">")
+				? path.slice("<builtin:".length, -1)
+				: path.startsWith(BUILTIN_PATH_PREFIX)
+					? path.slice(BUILTIN_PATH_PREFIX.length)
+					: undefined;
+		const selected = new Set(result.extensions.flatMap((extension) => builtinIdOf(extension.path) ?? []));
+		const internals = requiredInternalBuiltins(this.builtinExtensionFactories, selected);
+		if (internals.length === 0) return;
+		const internalIds = new Set(internals.map((builtin) => builtin.id));
+		const isInternal = (extension: Extension) => internalIds.has(builtinIdOf(extension.path) ?? "");
+		const required: Extension[] = [];
+		for (const builtin of internals) {
+			const path = `<builtin:${builtin.id}>`;
+			const loaded = result.extensions.find((extension) => builtinIdOf(extension.path) === builtin.id);
+			if (loaded) {
+				required.push(loaded);
+				continue;
+			}
+			try {
+				required.push(
+					await loadExtensionFromFactory(
+						builtin.factory,
+						this.cwd,
+						this.eventBus,
+						result.runtime,
+						path,
+						this.extensionSession,
+					),
+				);
+			} catch (error) {
+				result.errors.push({ path, error: error instanceof Error ? error.message : "failed to load extension" });
+			}
+		}
+		const registryIndex = (id: string | undefined): number =>
+			id === undefined ? -1 : this.builtinExtensionFactories.findIndex((builtin) => builtin.id === id);
+		const placed = result.extensions.filter((extension) => !isInternal(extension));
+		for (const internal of required) {
+			const own = registryIndex(builtinIdOf(internal.path));
+			const listedEarlier = (extension: Extension): boolean => {
+				const index = registryIndex(builtinIdOf(extension.path));
+				return index !== -1 && index < own;
+			};
+			const end = placed.findIndex((extension) => !listedEarlier(extension));
+			placed.splice(end === -1 ? placed.length : end, 0, internal);
+		}
+		result.extensions = placed;
 	}
 
 	private addExtensionConflictDiagnostics(extensionsResult: LoadExtensionsResult): void {
@@ -1150,6 +1247,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private userSkillRoots: string[] = [];
+	private ignoredSkillFiles: string[] = [];
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
@@ -1182,7 +1280,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 				skill.sourceInfo ??
 				this.getDefaultSourceInfoForPath(skill.filePath),
 		}));
-		this.skillDiagnostics = [...resolvedSkills.diagnostics, ...warnIfLargeSkillCatalog(this.skills)];
+		this.skillDiagnostics = [
+			...resolvedSkills.diagnostics,
+			...ignoredSkillDiagnostics(this.ignoredSkillFiles, this.skills),
+			...warnIfLargeSkillCatalog(this.skills),
+		];
 	}
 
 	private updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
@@ -1368,32 +1470,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private getActiveBuiltinExtensionIds(): Set<string> {
-		const enabledBuiltinExtensions = this.settingsManager.getEnabledBuiltinExtensions();
-		const enabledBuiltinExtensionSet = enabledBuiltinExtensions ? new Set(enabledBuiltinExtensions) : undefined;
-		const disabledBuiltinExtensions = new Set(this.settingsManager.getDisabledBuiltinExtensions());
-		const activeBuiltinExtensionIds = new Set<string>();
-
-		for (const builtinExtension of this.builtinExtensionFactories) {
-			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(builtinExtension.id)) {
-				continue;
-			}
-			if (disabledBuiltinExtensions.has(builtinExtension.id)) {
-				continue;
-			}
-
-			activeBuiltinExtensionIds.add(builtinExtension.id);
-		}
-		for (const bundledExtension of bundledBuiltinExtensions) {
-			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(bundledExtension.id)) {
-				continue;
-			}
-			if (disabledBuiltinExtensions.has(bundledExtension.id)) {
-				continue;
-			}
-			activeBuiltinExtensionIds.add(bundledExtension.id);
-		}
-
-		return activeBuiltinExtensionIds;
+		return selectActiveBuiltinIds(
+			this.builtinExtensionFactories,
+			bundledBuiltinExtensions.map((extension) => extension.id),
+			{
+				enabled: this.settingsManager.getEnabledBuiltinExtensions(),
+				disabled: this.settingsManager.getDisabledBuiltinExtensions(),
+			},
+		);
 	}
 
 	private getShadowedVendoredBuiltinPackageNames(): Set<string> {

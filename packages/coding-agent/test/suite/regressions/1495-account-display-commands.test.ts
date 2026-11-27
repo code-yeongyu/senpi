@@ -1,11 +1,12 @@
 import { createModels, createProvider, type OAuthAuth, type ProviderStreams } from "@earendil-works/pi-ai";
 import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import accountExtension from "../../../src/core/extensions/builtin/account/index.ts";
 import { registerClaudeAccountCommand } from "../../../src/core/extensions/builtin/anthropic-subscription/account-command.ts";
 import type { AnthropicSubscriptionCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { createOAuthConfig } from "../../../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
+import { cleanupFakeClaudeCliLogins, fakeClaudeCliLogin } from "../../support/fake-claude-cli-login.ts";
 import gptAccountExtension from "../../../src/core/extensions/builtin/gpt-account.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { accountFooterSuffix } from "../../../src/modes/interactive/components/footer.ts";
@@ -13,6 +14,11 @@ import { composedProvider } from "../../support/anthropic-subscription-provider.
 import { type Command, createAccountCommandContext } from "../account-command-harness.ts";
 
 const fresh = { type: "oauth" as const, access: "fake-access", refresh: "fake-refresh", expires: 4102444800000 };
+// The fake CLI's one-click URL (AUTOMATIC_URL in test/fixtures/claude-cli-auth/fake-claude.mjs).
+const AUTOMATIC_URL =
+	"https://claude.ai/oauth/authorize?code=true&client_id=fixture&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback&state=fixture-state";
+// senpi#7002: records what the TUI auth_url path would otherwise hand to the real platform browser.
+const openedLoginUrls: string[] = [];
 const flow: OAuthAuth = {
 	name: "Fake",
 	login: async () => fresh,
@@ -37,7 +43,11 @@ function command(name: string): Command {
 		on: () => {},
 	} as unknown as ExtensionAPI;
 	gptAccountExtension(pi);
-	registerClaudeAccountCommand(pi, { loadSettings: () => ({}), environment: () => undefined });
+	registerClaudeAccountCommand(pi, {
+		loadSettings: () => ({}),
+		environment: () => undefined,
+		openBrowser: (url) => openedLoginUrls.push(url),
+	});
 	accountExtension(pi);
 	return commands.get(name)!;
 }
@@ -97,6 +107,8 @@ describe.each([
 // The offer is gated on the receipt's `origin`: only a machine-generated id
 // (the OpenAI lane) gets the display-name dialog. The Claude lane names
 // accounts through its own prompt and must never produce a second name dialog.
+afterEach(() => cleanupFakeClaudeCliLogins());
+
 describe("chatgpt-subscription optional post-login naming", () => {
 	it.each(["Work account", "", undefined])(
 		"names a machine-generated slot after persistence; cancellation keeps login usable (%s)",
@@ -141,6 +153,7 @@ describe("chatgpt-subscription optional post-login naming", () => {
 // the receipt's origin keeps the lane at exactly one prompt.
 describe("claude-sdk-oauth post-login naming", () => {
 	it("asks for the account name exactly once per login and never offers a display name", async () => {
+		openedLoginUrls.length = 0;
 		const storage = AuthStorage.inMemory();
 		const models = createModels({ credentials: storage });
 		models.setProvider(
@@ -148,23 +161,29 @@ describe("claude-sdk-oauth post-login naming", () => {
 				oauth: createOAuthConfig({
 					readCurrent: async () =>
 						storage.get("anthropic-subscription") as AnthropicSubscriptionCredential | undefined,
-					loginFlow: flow,
+					claudeCli: fakeClaudeCliLogin(),
 				}),
 			}),
 		);
 		const { ctx, dialogs } = createAccountCommandContext(storage, "/tmp", {
-			dialogs: { input: async () => "Work" },
+			dialogs: { input: async () => "Work", select: () => "Browser login (default)" },
 		});
+		const namePrompts = () =>
+			dialogs.filter((dialog) => dialog.kind === "input" && dialog.title.startsWith("Name for this account"));
 		Object.assign(ctx.modelRegistry, { modelRuntime: models });
 		const handler = command("claude-account").handler;
-		await handler("add", ctx); // empty pool: the adapter picks "default", zero prompts
-		expect(dialogs).toHaveLength(0);
+		await handler("add", ctx); // empty pool: the adapter picks "default", zero name prompts
+		// Each sign-in also offers the Claude login method (browser or copy code, senpi#4436).
+		expect(dialogs.filter((dialog) => dialog.kind === "select")).toHaveLength(1);
+		expect(namePrompts()).toHaveLength(0);
 		expect(listSlots(storage.get("anthropic-subscription")).map((slot) => slot.name)).toEqual(["default"]);
 		await handler("add", ctx); // existing account: the lane prompts for the id, once
-		expect(dialogs).toHaveLength(1);
+		expect(namePrompts()).toHaveLength(1);
 		expect(listSlots(storage.get("anthropic-subscription")).map((slot) => slot.name)).toEqual(["default", "Work"]);
 		for (const slot of listSlots(storage.get("anthropic-subscription"))) {
 			expect(slot).not.toHaveProperty("displayName");
 		}
+		// senpi#7002: both logins hand their one-click URL to the recorder, never to a browser.
+		expect(openedLoginUrls).toEqual([AUTOMATIC_URL, AUTOMATIC_URL]);
 	});
 });

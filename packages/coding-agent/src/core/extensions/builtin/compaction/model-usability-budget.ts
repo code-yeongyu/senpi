@@ -1,5 +1,6 @@
 import { type Api, estimateContextTokens, type Model, normalizeContext, type Tool } from "@earendil-works/pi-ai";
 import { type CompactionPreparation, DEFAULT_COMPACTION_SETTINGS } from "../../../compaction/index.ts";
+import { CLAUDE_SAFETY_MARGIN_TOKENS } from "./claude-safety-margin.ts";
 import { getPromptContextWindow } from "./extension-wiring.ts";
 import { resolveCompactionGeometry } from "./orchestration.ts";
 import { baseThresholdRatioForWindow, computeEffectiveKeepRecentTokens } from "./policy.ts";
@@ -13,7 +14,7 @@ interface ModelSafetyMarginProfile {
 
 /** Measured conversation runway by shipped prompt family, rounded up to a 4K token boundary. */
 const MODEL_SAFETY_MARGIN_PROFILES: readonly ModelSafetyMarginProfile[] = [
-	{ id: "anthropic", tokens: 16_384, providers: ["anthropic"], familyMarkers: ["claude"] },
+	{ id: "anthropic", tokens: CLAUDE_SAFETY_MARGIN_TOKENS, providers: ["anthropic"], familyMarkers: ["claude"] },
 	{ id: "openai-reasoning", tokens: 16_384, providers: ["openai"], familyMarkers: ["gpt-5", "o1", "o3", "o4"] },
 	{ id: "google", tokens: 12_288, providers: ["google"], familyMarkers: ["gemini"] },
 	{ id: "deepseek", tokens: 12_288, providers: ["deepseek"], familyMarkers: ["deepseek"] },

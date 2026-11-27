@@ -1,9 +1,13 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { isRetryableErrorMessage } from "@earendil-works/pi-ai";
 import { type Component, type Container, Text } from "@earendil-works/pi-tui";
 import { z } from "zod";
 import { keyText } from "./components/keybinding-hints.ts";
 import { sanitizeTuiErrorMessage } from "./extension-error-format.ts";
+import { isExcludedFromTurnRetry, isTurnRetryableFailure } from "../../core/turn-retry-eligibility.ts";
+import { describedProviderError } from "./provider-error-description.ts";
+import { providerErrorReason } from "./provider-error-reason.ts";
 import { theme } from "./theme/theme.ts";
 
 const envelope = z.object({
@@ -41,11 +45,36 @@ export function isRetryableProviderError(raw: string | undefined): boolean {
 	return isRetryableErrorMessage(raw);
 }
 
-export function isNetworkProviderMessage(message: AssistantMessage): boolean {
+/** The session facts row ownership reads: the model whose window decides a context overflow. */
+export type RetryOwnershipSession = { readonly model?: { readonly contextWindow: number } | undefined } | undefined;
+
+/**
+ * True when a failed attempt's row belongs to the quiet retry episode instead of painting its raw error. It requires
+ * the retry engine's own decision (`isTurnRetryableFailure`, which excludes a suppressed replay, a local failure, a
+ * model-config failure and a context overflow) AND transient wording, so a row is folded only for a failure the
+ * engine retries (senpi#6012). A failure a classifier already describes in plain language keeps its row.
+ */
+export function isRetryableProviderMessage(message: AssistantMessage, session: RetryOwnershipSession): boolean {
+	if (message.stopReason !== "error" && message.stopReason !== "aborted") return false;
+	const contextWindow = session?.model?.contextWindow ?? 0;
+	if (isExcludedFromTurnRetry(message, contextWindow)) return false;
+	if (isNetworkProviderError(message.errorMessage)) return true;
 	return (
-		(message.stopReason === "error" || message.stopReason === "aborted") &&
-		isNetworkProviderError(message.errorMessage)
+		isTurnRetryableFailure(message, contextWindow) &&
+		isRetryableProviderError(message.errorMessage) &&
+		describedProviderError(message) === undefined
 	);
+}
+
+/** True when the turn's last failed attempt belongs to an active quiet episode, which owes its one final notice. */
+export function episodeOwnsFailure(
+	messages: readonly AgentMessage[],
+	presentation: ProviderErrorPresentation | undefined,
+	session: RetryOwnershipSession,
+): boolean {
+	if (presentation?.hasActiveRetry !== true) return false;
+	const last = messages.findLast((message) => message.role === "assistant");
+	return last?.role === "assistant" && isRetryableProviderMessage(last, session);
 }
 
 class ProviderFailureNotice implements Component {
@@ -92,6 +121,7 @@ export class ProviderErrorPresentation {
 	private readonly chat: Container;
 	private notice: ProviderFailureNotice | undefined;
 	private pending = false;
+	private lastReason: string | undefined;
 
 	constructor(chat: Container) {
 		this.chat = chat;
@@ -106,6 +136,7 @@ export class ProviderErrorPresentation {
 			this.chat.addChild(this.notice);
 		}
 		this.notice.add(raw);
+		this.lastReason = providerErrorReason(raw) ?? this.lastReason;
 	}
 
 	retrying(raw: string, expanded: boolean): void {
@@ -118,6 +149,7 @@ export class ProviderErrorPresentation {
 	clear(): void {
 		this.pending = false;
 		this.retryAwaitingFinish = false;
+		this.lastReason = undefined;
 		// Keep diagnostics reachable through the existing expansion affordance.
 		this.notice?.setSummary(undefined);
 	}
@@ -154,13 +186,15 @@ export class ProviderErrorPresentation {
 		this.pending = false;
 		this.retryAwaitingFinish = false;
 		const count = attempts === undefined ? "" : ` after ${attempts} retries`;
+		const reason = this.lastReason === undefined ? "" : ` (${this.lastReason})`;
 		this.notice?.setSummary(
-			`The model provider could not complete the request${count}. Try again or choose another model with /model.`,
+			`The model provider could not complete the request${count}${reason}. Try again or choose another model with /model.`,
 		);
 	}
 
 	newTurn(): void {
 		this.finish();
 		this.notice = undefined;
+		this.lastReason = undefined;
 	}
 }

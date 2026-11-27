@@ -48,7 +48,7 @@ function ensureOAuth(deps: AuthCommandDeps): void {
 
 function buildProvider(
 	deps: AuthCommandDeps,
-	redirectUrl: string,
+	redirectUrl?: string,
 	onRedirect?: (url: URL) => void | Promise<void>,
 ): McpOAuthProvider {
 	const plan = resolveServerAuth({
@@ -73,7 +73,8 @@ function buildProvider(
 export async function runAuth(deps: AuthCommandDeps): Promise<void> {
 	ensureOAuth(deps);
 	if (deps.config.oauth?.flow === "client_credentials") {
-		const provider = buildProvider(deps, deps.callbackUrl ?? PASTE_REDIRECT);
+		// No authorize request, so no redirect: any stored registration may serve the grant (senpi#6327).
+		const provider = buildProvider(deps);
 		await clientCredentialsGrant(provider, deps.flow);
 		await deps.onReconnect();
 		deps.notify(`MCP server ${deps.serverName} authenticated (client_credentials)`);

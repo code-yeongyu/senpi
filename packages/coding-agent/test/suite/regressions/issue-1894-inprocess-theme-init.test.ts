@@ -33,8 +33,6 @@ assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(testDir, "..", "..", "..");
-const repoRoot = path.resolve(packageDir, "..", "..");
-const tsxCli = path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs");
 const senpiCli = path.join(packageDir, "src", "cli.ts");
 const themeModule = path.join(packageDir, "src", "modes", "interactive", "theme", "theme.ts");
 
@@ -69,12 +67,7 @@ describe("in-process multi-session host initializes the interactive theme", () =
 		socket?.destroy();
 		socket = undefined;
 		if (tmp) {
-			// The socket host runs as a grandchild of the tsx wrapper this test spawned and
-			// renames its own argv (process.title), so neither the child handle nor an
-			// argv match finds it once the wrapper dies. reapProcessesUnder kills the
-			// wrapper (its argv still names the socket path under tmp) and every
-			// descendant with it - kill the wrapper first and the host is unreachable.
-			// Reaping must run BEFORE the wrapper is killed, so no killAndWait here.
+			// Reap the host and its descendants before removing their sandbox.
 			await reapProcessesUnder(tmp);
 			if (host && host.exitCode === null) host.kill("SIGKILL");
 			fs.rmSync(tmp, { recursive: true, force: true });
@@ -90,6 +83,8 @@ describe("in-process multi-session host initializes the interactive theme", () =
 		const workspace = path.join(tmp, "workspace");
 		const socketPath = path.join(tmp, "rpc.sock");
 		const marker = path.join(tmp, "theme-probe-loaded");
+		// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+		fs.mkdirSync(agentDir, { mode: 0o700 });
 		fs.mkdirSync(extensionsDir, { recursive: true });
 		fs.mkdirSync(sessionDir, { recursive: true });
 		fs.mkdirSync(workspace, { recursive: true });
@@ -111,7 +106,6 @@ describe("in-process multi-session host initializes the interactive theme", () =
 		const spawned = spawn(
 			process.execPath,
 			[
-				tsxCli,
 				senpiCli,
 				"--mode",
 				"rpc",
