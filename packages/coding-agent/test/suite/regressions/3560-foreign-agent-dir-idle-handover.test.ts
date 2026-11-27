@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runHostRequest } from "../../../src/modes/rpc/host-runner.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
-import { signalGeneration } from "../../../src/modes/rpc/host-stop.ts";
+import { signalGeneration, stopHost } from "../../../src/modes/rpc/host-stop.ts";
 import {
 	type GenerationScratch,
 	generationEnv,
@@ -110,4 +110,28 @@ describe.skipIf(process.platform === "win32")("an idle handover asked by another
 		expect(own).toMatchObject({ exitCode: 0, payload: { action: "handover_completed" } });
 		expect((await probeSandboxHost(host.qa))?.runtimeBuildId).toBe(host.buildB.runtimeBuildId);
 	}, 180_000);
+
+	// omo#15197: stop and status prove the host from the key root before they act. With the owner proven but no
+	// key record for its launch under the key root in use, each answers a typed refusal (status: reachable, with the
+	// refusal) and the host keeps serving. An empty SENPI_RPC_KEY_ROOT stands in for a root that lacks the record.
+	it("answers stop and status for a host it cannot prove with a typed identity refusal", async () => {
+		const host = await rig("ih-fc");
+		const emptyRoot = foreignAgentDir(host);
+		const target = { socket: host.qa.socket, agentDir: host.qa.agentDir };
+		const saved = process.env.SENPI_RPC_KEY_ROOT;
+		process.env.SENPI_RPC_KEY_ROOT = emptyRoot;
+		try {
+			const refused = { action: "refuse", reason: "host_identity_unproven" };
+			expect(await stopHost({ ...target, force: true })).toMatchObject(refused);
+			expect(await readHostStatus(target)).toMatchObject({
+				reachable: true,
+				refusal: { code: "host_identity_unproven" },
+				lifecycle: null,
+			});
+		} finally {
+			if (saved === undefined) delete process.env.SENPI_RPC_KEY_ROOT;
+			else process.env.SENPI_RPC_KEY_ROOT = saved;
+		}
+		await expectStillServing(host);
+	}, 120_000);
 });

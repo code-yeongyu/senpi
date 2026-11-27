@@ -185,7 +185,8 @@ async function stopIfStale(
 	if (!verdict.stale) return { removed: false, reason: NOT_A_CANDIDATE.has(verdict.reason) ? inUse : verdict.reason };
 	const result = await stopHost({ socket, agentDir, timeoutMs: STALE_STOP_TIMEOUT_MS, requireAnswer: true });
 	if (result.action === "refuse") {
-		return { removed: false, reason: result.reason === "unknown_owner" ? "stale_unproven_owner" : "stale_sessions" };
+		// Only a host with work open is kept for its sessions; one whose owner or identity cannot be proven is kept as unproven.
+		return { removed: false, reason: result.reason === "sessions_live" ? "stale_sessions" : "stale_unproven_owner" };
 	}
 	return { removed: false, stopped: true, pid: result.pid };
 }

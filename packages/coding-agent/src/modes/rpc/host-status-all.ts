@@ -109,9 +109,10 @@ async function endpointStatus(endpoint: HostEndpointEntry, options: StatusAllOpt
 		{ socket: endpoint.socket, agentDir: options.agentDir, includeWorkers: options.includeWorkers },
 		{ prune: false, timeoutMs: endpointProbeTimeoutMs(endpoint.endpoint_kind, options.timeoutMs) },
 	);
+	// A host that answered but could not be proven is alive, never `dead`; it named no instance anyone could trust.
 	const verdict = await judgeEndpointLiveness(
 		paths,
-		answered === undefined ? undefined : (answered.instanceId ?? null),
+		report.refusal !== null ? null : answered === undefined ? undefined : (answered.instanceId ?? null),
 	);
 	const owner = endpoint.endpoint_kind === "tui" ? tuiOwner(report, listing) : null;
 	const stale =
