@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { stat } from "node:fs/promises";
 
 export interface SessionCwdIssue {
@@ -22,7 +23,7 @@ export function getMissingSessionCwdIssue(
 	}
 
 	const sessionCwd = sessionManager.getCwd();
-	if (!sessionCwd || existsSync(sessionCwd)) {
+	if (!sessionCwd || (automountTriggerPathSync(sessionCwd) === undefined && existsSync(sessionCwd))) {
 		return undefined;
 	}
 

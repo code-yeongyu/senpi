@@ -1,4 +1,5 @@
 import { type BigIntStats, statSync } from "node:fs";
+import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
 import * as os from "node:os";
 import * as path from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
@@ -61,6 +62,7 @@ export function resolveExternalPath(inputPath: string, cwd: string): string | un
 	// since two differently cased directories can be distinct on a case-sensitive volume.
 	let cwdIdentity: BigIntStats;
 	try {
+		refuseUnmountedAutomountPath(normalizedCwd);
 		cwdIdentity = statSync(normalizedCwd, { bigint: true });
 	} catch {
 		return normalizedTarget;
@@ -68,6 +70,7 @@ export function resolveExternalPath(inputPath: string, cwd: string): string | un
 	let ancestor = normalizedTarget;
 	for (;;) {
 		try {
+			refuseUnmountedAutomountPath(ancestor);
 			const identity = statSync(ancestor, { bigint: true });
 			if (identity.dev === cwdIdentity.dev && identity.ino === cwdIdentity.ino) return undefined;
 		} catch {

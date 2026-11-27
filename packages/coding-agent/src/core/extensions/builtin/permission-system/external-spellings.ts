@@ -1,4 +1,5 @@
 import { lstatSync, readdirSync, readlinkSync } from "node:fs";
+import { refuseUnmountedAutomountPath, UNMOUNTED_AUTOMOUNT } from "@code-yeongyu/senpi-machine-ops";
 import { dirname, isAbsolute, join, parse, sep } from "node:path";
 import { realpathWithoutOpenStrict } from "../../../../utils/paths.ts";
 import { canonicalPathCase, sameLexicalPath } from "./external-pattern.ts";
@@ -28,6 +29,7 @@ export function decideExternalPaths(
 			result = canonicalPathCase(value, (directory) => {
 				let entries = directories.get(directory);
 				if (entries === undefined) {
+					refuseUnmountedAutomountPath(directory);
 					entries = readdirSync(directory);
 					directories.set(directory, entries);
 				}
@@ -77,6 +79,7 @@ export function decideExternalPaths(
 				const candidate = join(physical, part);
 				let link: string;
 				try {
+					refuseUnmountedAutomountPath(candidate);
 					if (!lstatSync(candidate).isSymbolicLink()) {
 						physical = candidate;
 						continue;
@@ -88,8 +91,12 @@ export function decideExternalPaths(
 					if (!add(intermediate, resolved)) return { action: "ask", rules: [] };
 					link = readlinkSync(candidate);
 				} catch (error) {
-					if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
-						// No links can be followed inside a missing tail.
+					if (
+						error instanceof Error &&
+						"code" in error &&
+						(error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === UNMOUNTED_AUTOMOUNT)
+					) {
+						// No links can be followed inside a missing tail; an unmounted automount names nothing here either.
 						physical = join(candidate, ...pending);
 						break;
 					}

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { readdir } from "node:fs/promises";
 import { processIsLive } from "../../utils/process-identity.ts";
 import { createHostDaemonPaths, generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
@@ -193,7 +194,7 @@ async function reopenOne(
 		return;
 	}
 	await dropHandoverParkedSessionIfFileGone(daemonDir, entry.sessionPath);
-	if (!existsSync(entry.sessionPath)) {
+	if (automountTriggerPathSync(entry.sessionPath) !== undefined || !existsSync(entry.sessionPath)) {
 		process.stderr.write(`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`);
 		return;
 	}

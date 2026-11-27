@@ -90,5 +90,5 @@ describe("4565 an automount path in a tool call never parks the host thread", ()
 			"accepted",
 			expect.stringMatching(/^beat [1-9]\d*$/),
 		]);
-	}, 60_000);
+	});
 });

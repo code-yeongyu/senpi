@@ -1,4 +1,5 @@
 import { isAbsolute } from "node:path";
+import { assertSessionPathsOnThisMachine } from "./session-path-key.ts";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
@@ -54,6 +55,7 @@ export async function openWorkerSession(
 ): Promise<OpenRpcSession> {
 	if (!isAbsolute(profile.cwd) || (profile.sessionPath !== undefined && !isAbsolute(profile.sessionPath)))
 		throw new RpcSessionRegistryError("invalid_path");
+	assertSessionPathsOnThisMachine(profile);
 	// Same contract as RpcSessionRegistry.openSession (#1951), on the registry the multi-session
 	// host actually instantiates (#2010). Both checks run SYNCHRONOUSLY before the first await:
 	// the format check so a bad id is refused with its own code instead of surfacing as the

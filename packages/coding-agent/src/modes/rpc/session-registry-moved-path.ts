@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { resolveMovedPath } from "../../core/extensions/builtin/moved-path-guard/resolve.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistryError } from "./session-registry-types.ts";
 
@@ -14,7 +15,11 @@ export function resolveMovedProfile(requested: RpcSessionLaunchProfile): RpcSess
 		cwd: resolveMovedPath(requested.cwd),
 		...(requested.sessionPath ? { sessionPath: resolveMovedPath(requested.sessionPath) } : {}),
 	};
-	if (profile.sessionPath !== requested.sessionPath && profile.sessionPath && !existsSync(profile.sessionPath))
+	if (
+		profile.sessionPath !== requested.sessionPath &&
+		profile.sessionPath &&
+		(automountTriggerPathSync(profile.sessionPath) !== undefined || !existsSync(profile.sessionPath))
+	)
 		throw new RpcSessionRegistryError("open_failed", `moved session file does not exist: ${profile.sessionPath}`);
 	return profile;
 }

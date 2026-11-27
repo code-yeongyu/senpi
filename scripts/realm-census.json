@@ -9978,7 +9978,11 @@
 		},
 		"packages/machine-ops/src/files/automount-trigger.ts#active": {
 			"class": "per-copy-safe",
-			"reason": "trigger lookup holding a derived-value cache of the mount table, plus the child-resolver options (swapped only by tests); a split only re-reads the table"
+			"reason": "trigger lookup holding a derived-value cache of the mount table, the last settled view and the default view the synchronous check answers from, the child-resolver options (swapped only by tests) and the resolver-helper pool (live count, shared in-flight answers, unanswered window); a split only re-reads the table, and each copy bounds its own helpers, so the total stays bounded"
+		},
+		"packages/machine-ops/src/files/automount-trigger.ts#DARWIN_DEFAULT_VIEW": {
+			"class": "constant",
+			"reason": "the macOS automounter's default map, never mutated; read only as the synchronous check's view before the first mount-table read"
 		},
 		"packages/machine-ops/src/files/bounded-realpath.ts#RESOLUTION_TIMED_OUT": {
 			"class": "constant",

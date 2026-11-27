@@ -6,6 +6,7 @@ import type { MovedBreadcrumb } from "./breadcrumb.ts";
 import { type MovedPath, readJsonFileAsync } from "./breadcrumb-trust.ts";
 import { knownPrefixKeys, prefixKey } from "./known-moves.ts";
 import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
+import { offThisMachine } from "./resolve.ts";
 import { failedReply, movedPathWalk, type ResolverStep } from "./walk.ts";
 
 /** Each filesystem step of a probe; strictly below the guard's whole-call deadline, so one slow step cannot use it all. */
@@ -50,6 +51,9 @@ function realHome(): Promise<string | undefined> {
 }
 
 async function answer(step: ResolverStep, onTimeout: () => void): Promise<unknown> {
+	// `canonical` keeps its out-of-process automount resolution (#7158); every other probe of such a path would hold a
+	// filesystem pool thread for good (senpi#7157), so it is answered without one.
+	if (step.op !== "canonical" && offThisMachine(step)) return failedReply(step);
 	const io =
 		step.op === "canonical"
 			? canonicalizeFilesystemPath(step.path)

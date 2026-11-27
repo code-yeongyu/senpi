@@ -5,6 +5,7 @@
  * Identity is derived without open(2) on the parent, so neither side can block on a wedged mount.
  */
 import type { Stats } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { access, type FileHandle, lstat, open, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
@@ -28,6 +29,9 @@ export async function proveWatchTarget(
 ): Promise<WatchTarget> {
 	const path = resolve(options.cwd, options.path);
 	const parent = dirname(path);
+	// Every probe below would hold a thread on a trigger whose automounter does not answer (senpi#4565).
+	if (automountTriggerPathSync(path) !== undefined)
+		throw new Error(`Cannot watch file: ${path} is under an automount that is not mounted on this machine`);
 	let approvedParent: string;
 	try {
 		await guard.await(pending, access(parent));

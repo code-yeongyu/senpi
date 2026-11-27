@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_DIR_NAME } from "../../../../config.ts";
@@ -21,6 +22,7 @@ function getLegacyPermissionsPath(projectDir: string): string {
 /** Realpath of the project (symlinks resolved); falls back to the normalized spelling when absent. */
 function canonicalProjectDir(projectDir: string): string {
 	try {
+		refuseUnmountedAutomountPath(projectDir);
 		return fs.realpathSync.native(projectDir);
 	} catch {
 		return path.resolve(projectDir);
@@ -37,6 +39,7 @@ export function approvedStorePath(agentDir: string, projectDir: string): string 
 export function approvedStoreRealPath(agentDir: string, projectDir: string): string {
 	const store = approvedStorePath(agentDir, projectDir);
 	try {
+		refuseUnmountedAutomountPath(store);
 		return fs.realpathSync.native(store);
 	} catch {
 		return store;

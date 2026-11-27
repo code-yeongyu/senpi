@@ -29,7 +29,8 @@ if (!root || !trigger || !target) throw new Error("usage: 4565-host-thread-park.
 
 const parked = new Int32Array(new SharedArrayBuffer(4));
 const underTrigger = (value: unknown): boolean =>
-	(typeof value === "string" || value instanceof URL) && `${value}`.replace(/^file:\/\//, "").startsWith(`${trigger}/`);
+	(typeof value === "string" || value instanceof URL) &&
+	`${value}`.replace(/^file:\/\//, "").startsWith(`${trigger}/`);
 const fs = createRequire(import.meta.url)("node:fs") as Record<string, unknown> & {
 	realpathSync: ((...args: unknown[]) => unknown) & { native: (...args: unknown[]) => unknown };
 };
@@ -42,7 +43,16 @@ const park =
 		}
 		return original(...args) as ReturnType<F>;
 	};
-for (const name of ["lstatSync", "statSync", "readdirSync", "readlinkSync", "existsSync", "accessSync", "openSync", "opendirSync"]) {
+for (const name of [
+	"lstatSync",
+	"statSync",
+	"readdirSync",
+	"readlinkSync",
+	"existsSync",
+	"accessSync",
+	"openSync",
+	"opendirSync",
+]) {
 	const original = fs[name];
 	if (typeof original === "function") fs[name] = park(name, original as (...args: never[]) => unknown);
 }
@@ -104,7 +114,15 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 	if (line === "decide") {
 		// The re-armed watch of the field case: a command that only names two paths on another machine.
 		const command = `bun waitSentinel.ts ${target}/t4.done ${target}/t4.status`;
-		const policy = authorizer.policy({ toolCallId: "call-4565", toolName: "monitor", input: { command }, identity: { owner: {}, metadata: "4565" } }, ctx);
+		const policy = authorizer.policy(
+			{
+				toolCallId: "call-4565",
+				toolName: "monitor",
+				input: { command },
+				identity: { owner: {}, metadata: "4565" },
+			},
+			ctx,
+		);
 		process.stdout.write(`decided ${policy.action}\n`);
 	} else if (line === "tick") {
 		for (let step = 0; step < 10; step += 1) {

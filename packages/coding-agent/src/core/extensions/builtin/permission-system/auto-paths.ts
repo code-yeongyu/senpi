@@ -1,4 +1,5 @@
 import { lstatSync } from "node:fs";
+import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
 import * as os from "node:os";
 import * as path from "node:path";
 import { realpathWithoutOpenStrict } from "../../../../utils/paths.ts";
@@ -49,6 +50,7 @@ function projectRoot(cwd: string): string | undefined {
 /** Whether something, even a dangling symlink, exists at `target` itself; git looks at the name. */
 export function existsAtName(target: string): boolean {
 	try {
+		refuseUnmountedAutomountPath(target);
 		return lstatSync(target, { throwIfNoEntry: false }) !== undefined;
 	} catch {
 		// A name the filesystem refuses (too long, a loop, no permission) is not a plain ref either:
@@ -67,6 +69,7 @@ export function targetKind(target: string): TargetKind {
 	const physical = physicalPath(target);
 	if (physical === undefined) return "other";
 	try {
+		refuseUnmountedAutomountPath(physical);
 		const stats = lstatSync(physical);
 		return stats.isFile() ? "file" : stats.isDirectory() ? "directory" : "other";
 	} catch (error) {

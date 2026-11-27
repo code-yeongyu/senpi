@@ -92,7 +92,9 @@ async function canonicalizeUnderAutomount(absolutePath: string): Promise<string>
 		case "unanswered":
 			throw new MachineOpError(
 				"policy_denied",
-				`${absolutePath} is under an automount that did not answer, so where it leads is unknown; refused`,
+				answer.reason === "helper_limit"
+					? `${absolutePath} is under an automount and too many automount lookups are still pending, so where it leads is unknown; refused`
+					: `${absolutePath} is under an automount that did not answer, so where it leads is unknown; refused`,
 			);
 	}
 }

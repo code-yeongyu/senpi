@@ -3,6 +3,7 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "n
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve as nodeResolvePath, parse, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { refuseUnmountedAutomountPath, UNMOUNTED_AUTOMOUNT } from "@code-yeongyu/senpi-machine-ops";
 import { spawnProcessSync } from "./child-process.ts";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -52,7 +53,7 @@ export function canonicalizePathStrict(path: string): string {
 const MAX_SYMLINK_HOPS = 40;
 
 /** Error codes that mean "this component does not exist", which resolution tolerates. */
-const MISSING_PATH_CODES = new Set(["ENOENT", "ENOTDIR"]);
+const MISSING_PATH_CODES = new Set(["ENOENT", "ENOTDIR", UNMOUNTED_AUTOMOUNT]);
 
 function splitParts(pathSegment: string): string[] {
 	return pathSegment.split(sep).filter((part) => part.length > 0);
@@ -93,6 +94,8 @@ function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
 		const candidate = join(root, ...resolved, part);
 		let link: string;
 		try {
+			// An unmounted automount trigger would park this thread in lstat (senpi#4565): it ends the walk like any error.
+			refuseUnmountedAutomountPath(candidate);
 			if (!lstatSync(candidate).isSymbolicLink()) {
 				resolved.push(part);
 				continue;
