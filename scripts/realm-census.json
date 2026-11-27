@@ -11789,6 +11789,14 @@
 		"packages/senpi-codemode/src/bridge/reserved.ts#SCOPE_MONITOR_OP": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/cli/trash-command.ts#USAGE": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/delete-policy/tool.ts#trashToolSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
 		}
 	}
 }

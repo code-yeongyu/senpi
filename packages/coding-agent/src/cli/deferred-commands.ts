@@ -28,6 +28,7 @@ const PACKAGE_COMMAND_ALIAS = "uninstall";
 export const CONFIG_COMMAND_ARGV = "config";
 export const HOST_COMMAND_ARGV = "host";
 export const SCHEDULE_COMMAND_ARGV = "schedule";
+export const TRASH_COMMAND_ARGV = "trash";
 
 /** True when argv[0] selects a package-manager verb, matching `parsePackageCommand()`. */
 export function isPackageCommandArgv(args: readonly string[]): boolean {
@@ -76,4 +77,11 @@ export async function dispatchScheduleCommand(args: readonly string[]): Promise<
 	if (args[0] !== SCHEDULE_COMMAND_ARGV) return undefined;
 	const { runScheduleCommand } = await import("./schedule-command.ts");
 	return await runScheduleCommand(args.slice(1));
+}
+
+/** `senpi trash list|restore|empty`: the user's side of the trash the `trash` tool writes (omo#11072). */
+export async function dispatchTrashCommand(args: readonly string[]): Promise<number | undefined> {
+	if (args[0] !== TRASH_COMMAND_ARGV) return undefined;
+	const { runTrashCommand } = await import("./trash-command.ts");
+	return await runTrashCommand(args.slice(1));
 }

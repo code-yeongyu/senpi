@@ -37,6 +37,7 @@ import {
 	dispatchHostCommand,
 	dispatchPackageCommand,
 	dispatchScheduleCommand,
+	dispatchTrashCommand,
 } from "./cli/deferred-commands.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { resolveHelpExtensionFlags } from "./cli/help-extension-flags.ts";
@@ -1316,6 +1317,11 @@ export async function main(args: string[], options?: MainOptions) {
 	const scheduleExitCode = await dispatchScheduleCommand(args);
 	if (scheduleExitCode !== undefined) {
 		await exitAfterOutput("", scheduleExitCode);
+	}
+
+	const trashExitCode = await dispatchTrashCommand(args);
+	if (trashExitCode !== undefined) {
+		await exitAfterOutput("", trashExitCode);
 	}
 
 	const parsed = parseArgs(args);
