@@ -17,6 +17,11 @@ import { installStaleExtensionContainment } from "./core/stale-extension-contain
 import { installEarlyInspectorVmImportRecovery } from "./inspector-policy.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
 import { dispatchSessionOfPidCommand } from "./cli/session-of-pid-command.ts";
+import { classifyInvocation } from "./cli/invocation-class.ts";
+import { refuseUnusableLaunchKey } from "./cli/launch-key.ts";
+
+// The same classifier as cli.ts, before any dispatch, for the routes that start here directly (B10).
+if (classifyInvocation(process.argv.slice(2)) === "reads_table") refuseUnusableLaunchKey();
 
 await dispatchAgentDirectoryCommand(process.argv.slice(2));
 await dispatchSessionOfPidCommand(process.argv.slice(2));

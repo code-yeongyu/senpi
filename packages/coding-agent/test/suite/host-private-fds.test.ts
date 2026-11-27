@@ -148,12 +148,23 @@ describe("private host descriptors", () => {
 	});
 
 	it.skipIf(process.platform === "win32")(
-		"carries an unparseable table to the engine as present but unavailable",
+		// Before B10 this case said the engine then ran on as "present but unavailable". The descriptor layer still
+		// marks the table this way; the engine now refuses any session start on it (launch-key-failure.test.ts).
+		"carries an unparseable table to the engine as present, unavailable and unreadable",
 		async () => {
 			const result = await exchange("supervisor-report", "%%%");
 			expect(result.code, result.stderr).toBe(0);
 			expect(reports(result.stderr)).toEqual([nested, engine({ declared: false, unparseable: true })]);
 			expect(result.received).toBe("");
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"forwards a table cut short as the unparseable marker, never as a table that parses (B10)",
+		async () => {
+			const result = await exchange("supervisor-report", '{"presenter":4,');
+			expect(result.code, result.stderr).toBe(0);
+			expect(reports(result.stderr)).toEqual([nested, engine({ declared: false, unparseable: true })]);
 		},
 	);
 

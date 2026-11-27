@@ -1,4 +1,6 @@
 import type { CredentialStore } from "@earendil-works/pi-ai";
+import { AuthStorage, ReadOnlyAuthStorage } from "../core/auth-storage.ts";
+import { type CredentialAccountSummary, summarizeCredentialAccounts } from "../core/credential-accounts.ts";
 import { resolveCliModel } from "../core/model-resolver.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { InMemoryCodingAgentModelsStore } from "../core/models-store.ts";
@@ -50,6 +52,56 @@ export async function checkProviderAuth(
 	} catch {
 		return { status: "invalid", provider, reason: "invalid_state" };
 	}
+}
+
+export interface AuthCheckOutcome {
+	readonly result: AuthCheckResult;
+	/** Present only under `json`. */
+	readonly accounts?: CredentialAccountSummary[];
+	/** Present only when `credential` was asked and the provider is ready; never leaves the CLI's own print. */
+	readonly credential?: string;
+}
+
+/**
+ * `auth check`: the one core the command and `engine.auth.check` share. A refusal of the arguments throws
+ * `AuthCommandError`; an unreadable auth state answers `invalid`.
+ */
+export async function runAuthCheck(
+	parsed: Args,
+	options: { readonly refresh: boolean; readonly json: boolean; readonly credential: boolean },
+): Promise<AuthCheckOutcome> {
+	const requested = validateAuthCommandArgs(parsed, "check");
+	let result: AuthCheckResult;
+	let credential: string | undefined;
+	try {
+		const credentials = options.refresh ? AuthStorage.create() : new ReadOnlyAuthStorage();
+		const modelRuntime = await createAuthCheckModelRuntime(credentials);
+		result = await checkProviderAuth(parsed, modelRuntime, { refresh: options.refresh });
+		if (options.credential && result.status === "ready") {
+			credential = await getProviderCredential(result.provider, modelRuntime, credentials, {
+				refresh: options.refresh,
+			});
+			if (!credential) {
+				result = { status: "not_ready", provider: result.provider, reason: "credential_not_available" };
+			}
+		}
+	} catch {
+		result = { status: "invalid", provider: requested.provider ?? requested.model ?? "", reason: "invalid_state" };
+	}
+	let accounts: CredentialAccountSummary[] = [];
+	if (options.json && result.status !== "invalid") {
+		try {
+			const credentials = options.refresh ? AuthStorage.create() : new ReadOnlyAuthStorage();
+			accounts = await summarizeCredentialAccounts(result.provider, await credentials.read(result.provider));
+		} catch {
+			// Account enrichment must never turn a readable auth state into a failure.
+		}
+	}
+	return {
+		result,
+		...(options.json ? { accounts } : {}),
+		...(credential === undefined ? {} : { credential }),
+	};
 }
 
 export async function getProviderCredential(

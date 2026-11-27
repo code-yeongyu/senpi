@@ -11698,6 +11698,82 @@
 			"class": "constant",
 			"reason": "exported command metadata literal; never written after load"
 		},
+		"packages/coding-agent/src/engine/launch-argv.ts#INPUT_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata built by a pure function at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/launch-options.ts#Strings": {
+			"class": "constant",
+			"reason": "command metadata built by a pure function at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/launch-options.ts#Paths": {
+			"class": "constant",
+			"reason": "TypeBox schema built from literals at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/launch-options.ts#ThinkingLevel": {
+			"class": "constant",
+			"reason": "command metadata built by a pure function at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/launch-options.ts#LaunchSessionSchema": {
+			"class": "constant",
+			"reason": "TypeBox schema built from literals at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/launch-options.ts#LaunchSetupSchema": {
+			"class": "constant",
+			"reason": "TypeBox schema built from literals at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/launch-options.ts#LaunchInputSchema": {
+			"class": "constant",
+			"reason": "TypeBox schema built from literals at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/launch-options.ts#LaunchPresenterSchema": {
+			"class": "constant",
+			"reason": "TypeBox schema built from literals at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/launch-options.ts#LaunchOptionsSchema": {
+			"class": "constant",
+			"reason": "TypeBox schema built from literals at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-auth.ts#TARGET_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-auth.ts#CHECK_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-auth.ts#AUTH_COMMANDS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-launch.ts#SESSION_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-launch.ts#INPUT_POSITIONALS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-launch.ts#STDIN_FLAG": {
+			"class": "constant",
+			"reason": "command metadata built by a pure function at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-launch.ts#GATED_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-launch.ts#API_KEY_FLAG": {
+			"class": "constant",
+			"reason": "command metadata built by a pure function at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-launch.ts#COMMON_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-launch.ts#LAUNCH_COMMANDS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
 		"packages/coding-agent/src/engine/exported-config.ts#config": {
 			"class": "constant",
 			"reason": "exported namespace of engine functions built at load; never written after load"
@@ -11725,6 +11801,22 @@
 		"packages/coding-agent/src/engine/index.ts#engine": {
 			"class": "constant",
 			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-launch.ts#auth": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-launch.ts#launch": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/result-free-fields.ts#RESULT_FREE_FIELDS": {
+			"class": "constant",
+			"reason": "result field table data literal; never written after load"
+		},
+		"packages/coding-agent/src/cli/invocation-class.ts#INVOCATION_CLASSES": {
+			"class": "constant",
+			"reason": "invocation class table data literal; never written after load"
 		},
 		"packages/senpi-codemode/src/kernels/js/js-source-scan.js#REGEX_PREFIX_KEYWORDS": {
 			"class": "per-copy-safe",

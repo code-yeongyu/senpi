@@ -1109,7 +1109,7 @@
     "typescript/no-non-null-assertion": 4
   },
   "packages/coding-agent/src/main.ts": {
-    "typescript/no-non-null-assertion": 2
+    "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/src/migrations.ts": {
     "typescript/no-non-null-assertion": 1

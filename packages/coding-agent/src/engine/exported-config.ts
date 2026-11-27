@@ -2,7 +2,7 @@ import { getAgentDir } from "../config.ts";
 import { RESOURCE_TYPES } from "../core/resource-overrides/patterns.ts";
 import { agentDirectory } from "./agent-directory.ts";
 import { openResourceConfig, type ResourceSetting, type ResourcesInput, setResource } from "./config.ts";
-import { promptSizesWithDefaultRuntime } from "./default-runtime.ts";
+import { type PromptSizesInput, promptSizesForSetup } from "./default-runtime.ts";
 import { processScope } from "./exported-packages.ts";
 import {
 	invalidInput,
@@ -130,6 +130,6 @@ export const queries = {
 			return exportSessionHtml({ session, ...(out === undefined ? {} : { out }) });
 		},
 	},
-	promptSizes: (_input: Record<string, never> = {}) => promptSizesWithDefaultRuntime(),
+	promptSizes: (input: PromptSizesInput = {}) => promptSizesForSetup(input),
 	tips: () => tips(),
 };

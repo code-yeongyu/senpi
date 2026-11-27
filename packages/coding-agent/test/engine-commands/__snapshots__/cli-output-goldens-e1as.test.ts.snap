@@ -1,0 +1,181 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > check rejects a json flag on print 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: --json is only supported by auth check
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > check stored claude cli account json 1`] = `
+{
+  "status": 1,
+  "stderr": "",
+  "stdout": "{"status":"not_ready","provider":"anthropic-subscription","reason":"provider_not_found","accounts":[{"name":"work","source":"login","blocked":false,"pinned":false,"store":"claude-cli","check":{"model":"claude-model","outcome":"failed","reason":"rate_limit","message":"limit","status":429,"at":1},"signIn":"signed_in"}]}
+",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > check stored key 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "ready
+",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > check stored key credentials 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "{"status":"ready","provider":"openai","authType":"api_key","accounts":[{"name":"default","source":"login","blocked":false,"pinned":false}],"credentials":"sk-golden-synthetic-e1as"}
+",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > check stored key json 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "{"status":"ready","provider":"openai","authType":"api_key","accounts":[{"name":"default","source":"login","blocked":false,"pinned":false}]}
+",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > check unknown provider json 1`] = `
+{
+  "status": 1,
+  "stderr": "",
+  "stdout": "{"status":"not_ready","provider":"no-such","reason":"provider_not_found","accounts":[]}
+",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > check without a target 1`] = `
+{
+  "status": 2,
+  "stderr": "Error: Auth checks require --provider <provider> or --model <model>
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > print-api-key stored key 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "sk-golden-synthetic-e1as
+",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > print-api-key without a target 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: Credential printing requires --provider <provider> or --model <model>
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > auth > print-bearer-token bad min-expiry 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: --min-expiry must use a duration such as 30m or 1h
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > listModels > bad session runtime 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: --session-runtime must be in-process or worker
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > listModels > no extensions no match 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "No models matching "zzzz-no-such-model"
+",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > listModels > skills and themes no match 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "No models matching "zzzz-no-such-model"
+",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > sessionFlags > fork with session 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: --fork cannot be combined with --session
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > sessionFlags > hand with a prompt 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: --hand serves its own endpoint; omit --print, stdin input, prompt arguments and @files
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > sessionFlags > headless with print 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: --headless serves its own endpoint; omit --print, stdin input, prompt arguments and @files
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > sessionFlags > invalid session-id 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: Session id must be non-empty, contain only alphanumeric characters, '-', '_', and '.', and start and end with an alphanumeric character
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > sessionFlags > rebind with session-id 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: --rebind cannot be combined with --session-id
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > sessionFlags > rpc with a file 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: @file arguments are not supported in RPC mode
+",
+  "stdout": "",
+}
+`;
+
+exports[`CLI paths E1a-s moved onto shared cores (senpi#7451 no-behaviour-change baseline) > sessionFlags > session-id with continue 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: --session-id cannot be combined with --continue
+",
+  "stdout": "",
+}
+`;

@@ -3,6 +3,7 @@
  * (senpi#7450), so a downstream registry enumerates them from the engine and not from a hand-kept list.
  */
 
+import { AUTH_COMMANDS } from "./metadata-auth.ts";
 import {
 	type EngineCommandMetadata,
 	flag,
@@ -15,16 +16,19 @@ import {
 	SETUP_FLAGS,
 	TRUST_FLAGS,
 } from "./metadata-flags.ts";
+import { LAUNCH_COMMANDS } from "./metadata-launch.ts";
 
-export {
-	type EngineCommandFlag,
-	type EngineCommandMetadata,
-	type EngineCommandPositional,
-	type EngineFlagMapping,
-	GATED_SLICE,
+export type {
+	EngineCommandFlag,
+	EngineCommandMetadata,
+	EngineCommandPositional,
+	EngineFlagFormat,
+	EngineFlagMapping,
 } from "./metadata-flags.ts";
 
 export const ENGINE_COMMANDS: readonly EngineCommandMetadata[] = [
+	...AUTH_COMMANDS,
+	...LAUNCH_COMMANDS,
 	{
 		call: "packages.install",
 		argv: ["install"],

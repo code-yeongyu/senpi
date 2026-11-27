@@ -5,6 +5,7 @@ import { ModelConfig } from "../core/model-config.ts";
 import { discoverProviderModels, type ModelsDiscoveryReport } from "../core/model-discovery.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { resolveHeadersOrThrow } from "../core/resolve-config-value.ts";
+import type { LaunchSetup } from "./launch-options.ts";
 import { type EngineOk, type EngineResult, engineError, engineOk, errorMessage } from "./result.ts";
 
 const CATALOG_REFRESH_TIMEOUT_MS = 15_000;
@@ -82,6 +83,8 @@ export async function discoverModels(
 export interface ModelsListInput {
 	/** A fuzzy filter over `<provider> <id>`. */
 	readonly pattern?: string;
+	/** The launch setup the listing's runtime is built from, as `--list-models` reads it from the launch flags. */
+	readonly setup?: LaunchSetup;
 }
 
 /**

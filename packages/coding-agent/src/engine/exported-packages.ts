@@ -1,7 +1,7 @@
 import { getAgentDir } from "../config.ts";
 import { builtInExtensions } from "../extensions/index.ts";
 import type { EngineCommandScope } from "./command-settings.ts";
-import { listModelsWithDefaultRuntime } from "./default-runtime.ts";
+import { listModelsForSetup } from "./default-runtime.ts";
 import { isInvalid, optionalBoolean, optionalString, requiredString } from "./input.ts";
 import { discoverModels, type ModelsDiscoverInput, type ModelsListInput, updateModelCatalogs } from "./models.ts";
 import {
@@ -74,6 +74,10 @@ export const models = {
 	list: async (input: ModelsListInput = {}) => {
 		const pattern = optionalString(input, "pattern");
 		if (isInvalid(pattern)) return pattern;
-		return listModelsWithDefaultRuntime(pattern === undefined ? {} : { pattern });
+		const setup = input?.setup;
+		return listModelsForSetup({
+			...(pattern === undefined ? {} : { pattern }),
+			...(setup === undefined ? {} : { setup }),
+		});
 	},
 };

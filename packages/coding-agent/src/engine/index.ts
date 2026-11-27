@@ -1,10 +1,11 @@
 /**
  * `@code-yeongyu/senpi/engine`: one typed function per engine command the omo launcher forwards
- * (senpi#7450). Each answers data or a typed refusal; none prints or exits. The CLI commands are
- * renderers over the same functions. Endpoint, key-root, presenter and launch-setup inputs are not
- * exported here; they arrive with the security design (E1a-s), and `ENGINE_COMMANDS` marks them.
+ * (senpi#7450, senpi#7451). Each answers data or a typed refusal; none prints or exits. The CLI commands
+ * are renderers over the same cores. No exported function answers a credential: the provider-credential
+ * operations refuse, and a launch takes a key only as a readable handle it delivers to the launched process.
  */
 
+import { auth, launch } from "./exported-launch.ts";
 import { config, queries, schedule } from "./exported-config.ts";
 import { host } from "./exported-host.ts";
 import { models, packages } from "./exported-packages.ts";
@@ -12,7 +13,49 @@ import { models, packages } from "./exported-packages.ts";
 export type { AgentDirectorySelection } from "./agent-directory.ts";
 export type { ChangedResource, ResolvedResources, ResourceConfigCode, ResourceRef } from "./config.ts";
 export type { ResourceSetting, ResourcesInput, GlobalResourceSetting, ProjectResourceSetting } from "./config.ts";
-export type { HostAnswer, HostCode } from "./host.ts";
+export type {
+	AuthBearerTokenInput,
+	AuthCheckCode,
+	AuthCheckInput,
+	AuthCredentialCode,
+	AuthCredentialsInput,
+	AuthStatus,
+	AuthTargetInput,
+} from "./auth.ts";
+export type { AuthAccount, AuthAccountCheck, AuthAccountCheckCode } from "../cli/auth-account-check.ts";
+export type { SessionAuthAccount, SessionAuthStatus } from "./auth-session.ts";
+export type { FieldPaths, FreeFieldPaths } from "./result-fields.ts";
+export { RESULT_FREE_FIELDS } from "./result-free-fields.ts";
+export type { ResultFieldOrigin, ResultFreeField } from "./result-free-fields.ts";
+export { toSessionAuthStatus } from "./auth-session.ts";
+export { LAUNCH_KEY_DEADLINE_MS, LAUNCH_KEY_FAILED_EXIT_CODE, LAUNCH_KEY_FAILURES } from "../cli/launch-key.ts";
+export type { LaunchKeyFailure } from "../cli/launch-key.ts";
+export type { EngineExit } from "./launch-process.ts";
+export { AUTH_ACCOUNT_CHECK_CODES } from "../cli/auth-account-check.ts";
+export type { PromptSizesInput } from "./default-runtime.ts";
+export type { HostAnswer, HostCode, HostEndpointSelector, HostPresenterInput } from "./host.ts";
+export type { LaunchCode, LaunchedEngine, LaunchExit, LaunchRpcAnswer, LaunchSocketAnswer } from "./launch.ts";
+export {
+	LaunchInputSchema,
+	LaunchOptionsSchema,
+	LaunchPresenterSchema,
+	LaunchSessionSchema,
+	LaunchSetupSchema,
+} from "./launch-options.ts";
+export type {
+	LaunchHandOptions,
+	LaunchHeadlessOptions,
+	LaunchInput,
+	LaunchInteractiveOptions,
+	LaunchKeyHandle,
+	LaunchMode,
+	LaunchOptions,
+	LaunchPrintOptions,
+	LaunchRpcOptions,
+	LaunchSession,
+	LaunchSetup,
+} from "./launch-options.ts";
+export type { LaunchPrintEvent, LaunchPrintRun } from "./launch-print-stream.ts";
 export type {
 	HostEnsureInput,
 	HostGcInput,
@@ -21,11 +64,12 @@ export type {
 	HostStatusInput,
 	HostStopInput,
 } from "./host.ts";
-export { ENGINE_COMMANDS, GATED_SLICE } from "./metadata.ts";
+export { ENGINE_COMMANDS } from "./metadata.ts";
 export type {
 	EngineCommandFlag,
 	EngineCommandMetadata,
 	EngineCommandPositional,
+	EngineFlagFormat,
 	EngineFlagMapping,
 } from "./metadata.ts";
 export type { ListedModel, ModelListing, ModelsDiscoverInput, ModelsListInput } from "./models.ts";
@@ -60,4 +104,6 @@ export const engine = {
 	promptSizes: queries.promptSizes,
 	tips: queries.tips,
 	host,
+	auth,
+	launch,
 } as const;

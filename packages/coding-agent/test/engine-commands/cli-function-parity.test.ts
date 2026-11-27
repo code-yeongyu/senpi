@@ -213,6 +213,11 @@ describe("host: the CLI and the function answer alike, payload and exit code", (
 			() => ["host", "handoff", "--launch-spec", spec(), "--json"],
 		],
 		["status refusal", () => engine.host.status(), () => ["host", "status", "--json"]],
+		[
+			"status at a named endpoint (senpi#7451)",
+			() => engine.host.status({ endpoint: { socket: join(root, "named.sock") } }),
+			() => ["host", "status", "--socket", join(root, "named.sock"), "--json"],
+		],
 		["stop refusal", () => engine.host.stop(), () => ["host", "stop", "--json"]],
 		["gc", () => engine.host.gc(), () => ["host", "gc", "--json"]],
 		[

@@ -37,6 +37,10 @@ export type PrivateFdForward =
 interface PrivateFdState {
 	readonly present: boolean;
 	readonly declared: ReadonlySet<string>;
+	/** Names the table gave a descriptor (not `null`); absent in a state an older engine copy stored. */
+	readonly offered?: Set<string>;
+	/** A table was present and did not parse (cut short, over the read limit, or not a table at all). */
+	readonly unreadable?: boolean;
 	readonly unparseable: boolean;
 	readonly channels: Map<string, Exclude<PrivateFdEntry, null>>;
 	readonly forward: Map<string, PrivateFdEntry>;
@@ -144,12 +148,13 @@ export function parseTable(
 	readonly entries: Map<string, PrivateFdEntry>;
 	readonly parsed: boolean;
 	readonly discard: ReadonlySet<number>;
+	readonly offered: ReadonlySet<string>;
 } {
 	const table = decodePrivateFdTable(encoded);
 	const entries = new Map<string, PrivateFdEntry>();
 	if (!table.parsed) {
 		for (const name of table.names) entries.set(name, null);
-		return { entries, parsed: false, discard: new Set() };
+		return { entries, parsed: false, discard: new Set(), offered: new Set(table.names) };
 	}
 	const raw = table.entries;
 	const runtime: PrivateFdInspection = {
@@ -179,7 +184,9 @@ export function parseTable(
 		}
 	}
 	const discard = new Set<number>();
+	const offered = new Set<string>();
 	for (const [name, fd] of raw) {
+		if (fd !== null) offered.add(name);
 		// A descriptor named twice belongs to neither name.
 		const numbers: unknown[] = Array.isArray(fd) ? fd : [fd];
 		const shared = numbers.some((number) => typeof number === "number" && (counts.get(number) ?? 0) > 1);
@@ -189,7 +196,7 @@ export function parseTable(
 	}
 	// A handle that stays inheritable would reach every child this process spawns, so close it like POSIX does.
 	for (const [fd, ok] of cleared) if (!ok && fd !== runtime.ipc) discard.add(fd);
-	return { entries, parsed: true, discard };
+	return { entries, parsed: true, discard, offered };
 }
 
 /** A discarded Windows name may not be open at all (its clear failed for that reason): nothing to close then. */
@@ -215,18 +222,32 @@ function capturedState(): PrivateFdState {
 		delete process.env[PRIVATE_FDS_TABLE_ENV];
 		delete process.env[PRIVATE_FDS_FINAL_ENV];
 	}
-	const { entries, parsed, discard } = encoded
+	const {
+		entries,
+		parsed,
+		discard,
+		offered: offeredNames,
+	} = encoded
 		? parseTable(encoded)
-		: { entries: new Map<string, PrivateFdEntry>(), parsed: true, discard: new Set<number>() };
+		: {
+				entries: new Map<string, PrivateFdEntry>(),
+				parsed: true,
+				discard: new Set<number>(),
+				offered: new Set<string>(),
+			};
 	for (const fd of discard) closeDiscarded(fd);
 	const unparseable = !parsed && entries.size === 0;
 	const state: PrivateFdState = {
 		present: Boolean(encoded),
 		declared: new Set(entries.keys()),
+		offered: new Set(offeredNames),
+		unreadable: Boolean(encoded) && !parsed,
 		unparseable,
 		channels: new Map(),
 		forward: new Map(),
-		forwardUnparseable: unparseable && !final,
+		// Every table that did not parse forwards the marker, not only a nameless one: a hop must never turn it into a
+		// table that parses (B10).
+		forwardUnparseable: !parsed && !final,
 	};
 	for (const [name, fd] of entries) {
 		if (fd !== null) state.channels.set(name, fd);
@@ -243,6 +264,28 @@ export function privateChannelDeclared(name: string): boolean {
 	return state.declared.has(name);
 }
 
+/**
+ * True when the launcher gave this name a descriptor, usable or not, and nothing in this process has taken it yet. A
+ * name declared `null` was taken by an earlier hop; a name offered a descriptor this process could not adopt is a
+ * channel that failed.
+ */
+export function privateChannelOffered(name: string): boolean {
+	return state.offered?.has(name) ?? false;
+}
+
+/**
+ * True when this launch carried a private table that did not parse, whatever names it still quotes: it cannot prove
+ * which channels it declared.
+ */
+export function privateFdTableUnreadable(): boolean {
+	return state.unreadable ?? false;
+}
+
+/** True while this process holds an adoptable channel for the name, not yet taken. */
+export function privateChannelAdoptable(name: string): boolean {
+	return state.channels.has(name);
+}
+
 /** True when this launch carried a table at all, even one that does not parse. */
 export function privateTablePresent(): boolean {
 	return state.present;
@@ -255,6 +298,7 @@ export function privateFdTableUnparseable(): boolean {
 
 /** Claim once. The caller owns disposal of the socket or both halves of the pipe pair. */
 export function takeInheritedPrivateChannel(name: string): Duplex | undefined {
+	state.offered?.delete(name);
 	const fd = state.channels.get(name);
 	if (fd === undefined) return undefined;
 	state.channels.delete(name);
