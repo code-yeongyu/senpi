@@ -3202,6 +3202,10 @@
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
+		"packages/coding-agent/src/core/context-file-names.ts#CONTEXT_FILE_NAMES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/continue-from-leaf.ts#CONTINUE_FROM_LEAF_MESSAGES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

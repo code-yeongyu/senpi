@@ -26,7 +26,7 @@ import { baselineManifest, goldenDir, observe } from "../../scenarios/fused-equi
 import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
 import { readWitness, witnessOk } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
 import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
-import { goldenLeaks, recordHostProblems } from "../lib/equivalence-record-guard.mjs";
+import { goldenLeaks, recordHostProblems, writeIfClean } from "../lib/equivalence-record-guard.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
 import {
 	finishRecord,
@@ -202,13 +202,10 @@ async function main() {
 				// A golden is written only from runs that agreed with each other: a nondeterministic case is a FAIL, never a golden.
 				// A golden that carries host-private text (a project-rules block, a real home path) is never written.
 				const serialized = `${JSON.stringify({ id: testCase.id, title: testCase.title, observations: first }, null, 1)}\n`;
-				const leaks = goldenLeaks(serialized, homedir());
-				if (leaks.length)
-					error = `golden refused, it carries host-private text: ${leaks.map((l) => `${l.marker} x${l.count}`).join(", ")}`;
-				else if (result.repeatDiffs.length === 0) {
+				if (result.repeatDiffs.length === 0) {
 					mkdirSync(dir, { recursive: true });
-					writeFileSync(goldenPath, serialized);
-					result.written = true;
+					error = writeIfClean(goldenPath, serialized);
+					result.written = !error;
 				}
 				result.error = error;
 				result.diffs = [];

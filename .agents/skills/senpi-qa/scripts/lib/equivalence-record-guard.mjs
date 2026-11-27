@@ -6,8 +6,9 @@
 //
 // The file names and rule locations come from the CLI's own discovery code, so the guard never checks fewer than the
 // CLI reads; names are matched case-insensitively, which also covers case-insensitive filesystems.
-import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { existsSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { CONTEXT_FILE_NAMES } from "../../../../../packages/coding-agent/src/core/context-file-names.ts";
 import {
 	PROJECT_RULES_START_MARKER,
@@ -38,16 +39,31 @@ export function goldenLeaks(serialized, home) {
 		.filter((leak) => leak.count > 0);
 }
 
+/**
+ * The one write path for a golden or a baseline manifest: the exact bytes are scanned and written only when clean.
+ * Returns undefined after writing, or the refusal that fails the record run (nothing is written).
+ */
+export function writeIfClean(path, serialized, home = homedir()) {
+	const leaks = goldenLeaks(serialized, home);
+	if (leaks.length)
+		return `${basename(path)} refused, it carries host-private text: ${leaks.map((l) => `${l.marker} x${l.count}`).join(", ")}`;
+	writeFileSync(path, serialized);
+	return undefined;
+}
+
 function inside(child, parent) {
 	const path = relative(parent.toLowerCase(), child.toLowerCase());
 	return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
+/** Fails closed: a directory that cannot be listed is an error, never "no rule files here". */
 function entriesLower(dir) {
 	try {
 		return new Map(readdirSync(dir).map((name) => [name.toLowerCase(), name]));
-	} catch {
-		return new Map();
+	} catch (error) {
+		// A rule path segment that names a plain file (a `.github` file, say) holds no entries.
+		if (error?.code === "ENOTDIR") return new Map();
+		throw error;
 	}
 }
 

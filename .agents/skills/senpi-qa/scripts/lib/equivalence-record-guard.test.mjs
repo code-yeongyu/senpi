@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { CONTEXT_WRAPPERS, goldenLeaks, recordHostProblems } from "./equivalence-record-guard.mjs";
+import { finishRecord, summarizeRun } from "./equivalence-deferred.mjs";
+import { CONTEXT_WRAPPERS, goldenLeaks, recordHostProblems, writeIfClean } from "./equivalence-record-guard.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..");
 const recorder = join(repoRoot, ".agents", "skills", "senpi-qa", "scripts", "scenarios", "fused-equivalence-qa.mjs");
@@ -104,10 +114,29 @@ test("the recorder refuses such a host before any case runs", () =>
 		assert.doesNotMatch(run.stdout, /\[(PASS|FAIL)\] E01/);
 	}));
 
-test("the recorder writes a golden only from text the scan passed", () => {
+test("a leaky golden is not written and the write reports why", () =>
+	withRoot((root) => {
+		const path = join(root, "E08.json");
+		const refusal = writeIfClean(path, golden("<project_rules>\nprivate\n</project_rules>"), "/srv/people/alice");
+		assert.match(refusal, /^E08\.json refused, it carries host-private text: <project_rules> x1/);
+		assert.equal(existsSync(path), false);
+		assert.equal(writeIfClean(path, golden("clean"), "/srv/people/alice"), undefined);
+		assert.equal(readFileSync(path, "utf8"), golden("clean"));
+	}));
+
+test("a leaky baseline manifest is not written and the record run fails", () =>
+	withRoot((dir) => {
+		const manifest = { command: "node fused-equivalence-qa.mjs --record --child binary:/home/alice/senpi" };
+		const results = [{ id: "E01", pass: true, written: true }];
+		const unrecorded = finishRecord({ dir, results, leaveUnrecorded: [], manifest });
+		assert.equal(unrecorded.length, 1);
+		assert.match(unrecorded[0], /^baseline\.json refused, it carries host-private text: \/home\/ x1/);
+		assert.equal(existsSync(join(dir, "baseline.json")), false);
+		assert.equal(summarizeRun(results, [], "record", unrecorded).exitCode, 1);
+	}));
+
+test("the recorder writes goldens only through the scanned write path", () => {
 	const source = readFileSync(recorder, "utf8");
-	assert.match(source, /const leaks = goldenLeaks\(serialized, homedir\(\)\);/);
-	assert.equal(source.match(/writeFileSync\(goldenPath, /g)?.length, 1);
-	assert.match(source, /writeFileSync\(goldenPath, serialized\)/);
-	assert.match(source, /goldenLeaks\(JSON\.stringify\(manifest\), homedir\(\)\)/);
+	assert.match(source, /error = writeIfClean\(goldenPath, serialized\);/);
+	assert.doesNotMatch(source, /writeFileSync\(\s*goldenPath/);
 });
