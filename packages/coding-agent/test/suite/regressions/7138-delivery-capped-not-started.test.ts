@@ -104,7 +104,11 @@ it("a capped delivery starts no turn even when the cap no longer applies by the 
 				resolve();
 			});
 		});
-		const answer = h.session.externalAdmission.admit({ delivery_id: "slide", text: "[from lead] s", deliverAs: "followUp" });
+		const answer = h.session.externalAdmission.admit({
+			delivery_id: "slide",
+			text: "[from lead] s",
+			deliverAs: "followUp",
+		});
 		vi.setSystemTime(Date.now() + 61_000);
 		await emitted;
 		await h.session.waitForIdle();
