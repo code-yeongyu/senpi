@@ -114,7 +114,8 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { startOpenTimer } from "./core/open-timing.ts";
-import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
+import { armStartupStallNotice, isStdioRpcLaunch, RPC_STARTUP_STALL_DEADLINE_MS } from "./core/startup-stall-notice.ts";
+import { lastTimedPhase, printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import {
 	getSavedProjectTrustState,
 	hasTrustRequiringProjectResources,
@@ -1250,6 +1251,15 @@ export async function main(args: string[], options?: MainOptions) {
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.
 	recordTiming("processStart->main", Math.round(process.uptime() * 1000));
+	// A stdio RPC client sees nothing until startup ends, so a stall names its last phase on stderr (senpi#7556).
+	const rpcStartupStall = isStdioRpcLaunch(args)
+		? armStartupStallNotice({
+				deadlineMs: RPC_STARTUP_STALL_DEADLINE_MS,
+				label: `${APP_NAME} rpc`,
+				lastPhase: lastTimedPhase,
+				write: (line) => void process.stderr.write(line),
+			})
+		: undefined;
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
 	const offlineMode =
 		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
@@ -1761,6 +1771,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
+		rpcStartupStall?.ready();
 		await runRpcMode(runtime, toolRuntime);
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the

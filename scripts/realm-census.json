@@ -7335,6 +7335,10 @@
 			"class": "per-copy-safe",
 			"reason": "install-once guard or handle for a hook this copy installs; holds no A1-A3 asset"
 		},
+		"packages/coding-agent/src/core/startup-stall-notice.ts#realClock": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/subscription-limits/limit-store.ts#subscriptionLimits": {
 			"class": "per-copy-safe",
 			"reason": "observed subscription-limit store; a split only delays one copy learning a limit, not A1-A3 (design 3.3)"
@@ -7358,6 +7362,10 @@
 		"packages/coding-agent/src/core/timings.ts#ENABLED": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/timings.ts#lastPhase": {
+			"class": "per-copy-safe",
+			"reason": "last startup phase this copy's time() closed, read through this copy's module API; a split only hides one copy's phase from the other, holds no A1-A3 asset"
 		},
 		"packages/coding-agent/src/core/timings.ts#timingNamespaces": {
 			"class": "per-copy-safe",
