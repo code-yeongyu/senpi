@@ -38,6 +38,10 @@ export interface HostProtocolInfo {
 	readonly path_identity_resolver?: PathIdentityResolverStatus;
 	/** Content digest of the runtime the host loaded at startup (`sha256:<64 hex>`); absent on older hosts. */
 	readonly runtimeBuildId?: string;
+	/** The runtime root the host runs (senpi#7086); absent on older hosts. */
+	readonly installPath?: string;
+	/** Whether that runtime root is still on disk when the host answered; absent on older hosts. */
+	readonly installPresent?: boolean;
 	/** The agent directory the host reads and writes; absent on older hosts. Only a client of the same dir may replace it. */
 	readonly agentDir?: string;
 	/** The conditional idle handover this host holds, as it reported it. */
@@ -69,6 +73,8 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 		...(typeof data.memory_pressure === "boolean" && { memory_pressure: data.memory_pressure }),
 		...(pathIdentityResolver !== undefined && { path_identity_resolver: pathIdentityResolver }),
 		...(runtimeBuildId !== undefined && { runtimeBuildId }),
+		...(typeof data.installPath === "string" && data.installPath !== "" && { installPath: data.installPath }),
+		...(typeof data.installPresent === "boolean" && { installPresent: data.installPresent }),
 		...(typeof data.agentDir === "string" && data.agentDir !== "" && { agentDir: data.agentDir }),
 		...(isRecord(data.handover) && { handover: data.handover }),
 	};

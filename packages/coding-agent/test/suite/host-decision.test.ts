@@ -302,6 +302,36 @@ const rows: readonly Row[] = [
 		policy: "upgrade",
 		expected: { action: "reuse", reason: "compatible", upgradeable: true, warning: "profile_mismatch_attached" },
 	},
+	// senpi#7086: another install of the same engine never displaces a host whose own install is still on disk, so two live
+	// installs cannot hand the host back and forth; once the serving install is gone, a present one replaces it.
+	{
+		name: "same engine, the serving install still present -> reuse",
+		client: client({ identity: identity("2026.9.16-3"), launchProfile: profile(PLUGIN_SET_B) }),
+		host: host({ launch_profile: profile(PLUGIN_SET_A), installPresent: true }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true },
+	},
+	{
+		name: "same engine, the serving install removed -> handoff:install_gone",
+		client: client({ identity: identity("2026.9.16-3"), launchProfile: profile(PLUGIN_SET_B) }),
+		host: host({ launch_profile: profile(PLUGIN_SET_A), installPresent: false }),
+		policy: "upgrade",
+		expected: { action: "handoff", reason: "install_gone", upgradeable: true },
+	},
+	{
+		name: "the serving install removed, but the client may not upgrade -> reuse",
+		client: client({ identity: identity("2026.9.16-3"), launchProfile: profile(PLUGIN_SET_B) }),
+		host: host({ launch_profile: profile(PLUGIN_SET_A), installPresent: false }),
+		policy: "never",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true },
+	},
+	{
+		name: "the serving install removed, but the client runs an older engine -> reuse",
+		client: client({ identity: identity("2026.9.16"), launchProfile: profile(PLUGIN_SET_B) }),
+		host: host({ launch_profile: profile(PLUGIN_SET_A), installPresent: false }),
+		policy: "upgrade",
+		expected: { action: "reuse", reason: "compatible", upgradeable: true },
+	},
 ];
 
 describe("decideHostAction", () => {
@@ -316,5 +346,21 @@ describe("decideHostAction", () => {
 			"session_context",
 			"session_kind",
 		]);
+	});
+
+	// senpi#7086: two live installs of one build alternating ensure never hand the host over.
+	it("two present installs of one build alternating ensure decide reuse every time", () => {
+		const installs = [profile(PLUGIN_SET_A), profile(PLUGIN_SET_B)];
+		let serving = installs[0];
+		for (let round = 0; round < 6; round++) {
+			const asking = installs[(round + 1) % 2];
+			const decision = decideHostAction(
+				client({ identity: identity("2026.9.16-3"), launchProfile: asking }),
+				host({ launch_profile: serving, installPresent: true }),
+				"upgrade",
+			);
+			expect(decision.action).toBe("reuse");
+			if (decision.action === "handoff") serving = asking;
+		}
 	});
 });

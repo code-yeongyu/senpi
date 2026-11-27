@@ -191,10 +191,9 @@ describe.skipIf(process.platform === "win32")("conditional idle handover refusal
 
 		expect(mismatch).toMatchObject({ exitCode: 3, payload: { reason: "target_build_mismatch" } });
 		expect(stale).toMatchObject({ exitCode: 3, payload: { reason: "stale_generation" } });
-		expect(current).toMatchObject({
-			exitCode: 0,
-			payload: { action: "handover_completed", runtimeBuildId: host.buildA.runtimeBuildId },
-		});
+		// senpi#7086: the named generation already runs the target build and its install is present, so the host's own
+		// already_current refusal is reported; nothing moved.
+		expect(current).toMatchObject({ exitCode: 3, payload: { action: "refuse", reason: "already_current" } });
 		expect((await probeHost({ socket: host.qa.socket }))?.instanceId).toBe(host.instanceId);
 	}, 120_000);
 });

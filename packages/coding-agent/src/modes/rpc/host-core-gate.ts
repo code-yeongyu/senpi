@@ -15,12 +15,15 @@ import {
 	withHostIdentity,
 } from "./host-handover-wire.ts";
 import { HostIdleHandover, type HostIdleHandoverOptions } from "./host-idle-handover.ts";
+import { type HostInstall, readHostInstall } from "./host-install.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RpcSessionRegistry } from "./session-registry.ts";
 
 export interface HostCoreHooks {
 	/** The runtime this host loaded at startup, reported by `get_protocol_info`. */
 	readonly runtimeBuildId?: string;
+	/** The runtime root this host runs: `get_protocol_info` reports it and whether it is still on disk (senpi#7086). */
+	readonly installPath?: string;
 	/** Present on a host that can hand over at its next idle point (a POSIX socket host). */
 	readonly handover?: Omit<HostIdleHandoverOptions, "isIdle">;
 	/** This host's agent dir and public socket: a `begin_handover` naming another agent dir is refused (#3560). */
@@ -49,6 +52,9 @@ export interface MachineWorkGate {
 export class HostCoreGate {
 	readonly handover: HostIdleHandover | undefined;
 	private readonly runtimeBuildId: string | undefined;
+	private readonly installPath: string | undefined;
+	/** Read again before every `begin_handover` is judged, so the idle handover sees the install as it is now. */
+	private installPresent: boolean | undefined;
 	private readonly endpoint: HostCoreHooks["endpoint"];
 	private readonly inFlight = new Map<string | undefined, number>();
 	private readonly answering = new Set<Promise<void>>();
@@ -61,12 +67,15 @@ export class HostCoreGate {
 	) {
 		this.route = route;
 		this.runtimeBuildId = hooks.runtimeBuildId;
+		this.installPath = hooks.installPath;
 		this.endpoint = hooks.endpoint;
+		const handover = hooks.handover;
 		this.handover =
-			hooks.handover === undefined
+			handover === undefined
 				? undefined
 				: new HostIdleHandover({
-						...hooks.handover,
+						...handover,
+						identity: () => ({ ...handover.identity(), installPresent: this.installPresent }),
 						isIdle: () => !(hooks.machineWork?.busy() ?? false) && isHostIdle(registry, this.inFlight),
 						holdNewWork: () => hooks.machineWork?.hold(),
 						releaseNewWork: () => hooks.machineWork?.release(),
@@ -92,6 +101,7 @@ export class HostCoreGate {
 		}
 		const request = parseBeginHandover(parsed);
 		if (typeof request === "string") return beginHandoverResponse(parsed.id, request);
+		this.installPresent = (await this.currentInstall())?.present;
 		// Settled before `begin` so its claim on the operation stays free of awaits.
 		const detail =
 			request.agentDir === undefined || this.endpoint === undefined
@@ -130,9 +140,13 @@ export class HostCoreGate {
 			else this.inFlight.delete(key);
 			this.handover?.observe();
 		}
-		return response === undefined
-			? undefined
-			: withHostIdentity(response, this.runtimeBuildId, this.handover?.view());
+		if (response === undefined) return undefined;
+		const install = response.command === "get_protocol_info" ? await this.currentInstall() : undefined;
+		return withHostIdentity(response, this.runtimeBuildId, this.handover?.view(), install);
+	}
+
+	private currentInstall(): Promise<HostInstall | undefined> {
+		return this.installPath === undefined ? Promise.resolve(undefined) : readHostInstall(this.installPath);
 	}
 }
 

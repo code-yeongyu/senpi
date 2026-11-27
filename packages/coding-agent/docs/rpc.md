@@ -2037,6 +2037,15 @@ nested `node_modules`, `.d.ts`/`.map` files and the build/snapshot manifests are
 after the host started leaves the host's id unchanged, while a client started from the new bundle computes a
 different one. A host whose runtime cannot be read reports no id (unverified) and still starts.
 
+The host also reports `installPath` (the runtime root it runs: the compiled executable, or the package's
+`dist`/`src` tree) and `installPresent` (whether that path still exists when it answers; read at each answer).
+Two installs of one build share a `runtimeBuildId`, so a host started from one keeps serving while the other
+asks: neither `host ensure` nor an idle handover moves a host to an install of its own build while its own
+install is present, and two live installs of one build never hand the host back and forth (senpi#7086). Once the
+serving install is gone (`installPresent: false`), `host ensure --policy upgrade` from a client of the same
+engine whose extension set covers the host's hands it over (`reason: "install_gone"`), and an idle handover to
+the same build is accepted and waits for the host's idle point like any other.
+
 `host ensure` and `host handoff` also print `clientRuntimeBuildId`: the id a host launched from that launch
 spec by THIS client would report. A client compares it with `runtimeBuildId` to know whether the host serving
 the socket runs its runtime.
@@ -2045,7 +2054,8 @@ A POSIX socket host with an id advertises `runtime_identity_handover` and accept
 `senpi host handoff --when idle --operation <id> --if-instance <instanceId> --if-generation <n>
 --target-build <runtimeBuildId>`. The CLI refuses `target_build_mismatch` unless the target is its own
 `clientRuntimeBuildId` (the successor runs the CLI's runtime), `stale_generation` unless the socket is served
-by the named generation, `handover_unsupported` when the host does not advertise the capability, and
+by the named generation, `already_current` when the named generation already runs the target build and its
+install is present (nothing moves; exit 3), `handover_unsupported` when the host does not advertise the capability, and
 `foreign_agent_dir` when the host belongs to another agent dir (the same check as the generation handoff's,
 `detail` naming both). It then sends the host `begin_handover`, carrying its own `agent_dir`, and the HOST
 owns the operation:
@@ -2249,7 +2259,7 @@ which prints the bare socket path).
   This is process-local state, not an environment marker, so a shell child remains free to run the explicit
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
-  launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
+  launchProfile, runtimeBuildId, binaryPath, installPresent, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
   zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, path_identity_resolver, env_keys, generations, pointer, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is

@@ -7,6 +7,7 @@
  * `data` shape: `{ state, operation_id, ... }` for an operation, `{ refused, detail }` for a refusal.
  */
 
+import type { HostInstall } from "./host-install.ts";
 import { type EngineBuildIdentity, engineIdentityOf } from "../../core/engine-build-identity.ts";
 import { writeDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
@@ -120,6 +121,7 @@ export function withHostIdentity(
 	response: RpcResponse,
 	runtimeBuildId: string | undefined,
 	handover: HandoverView | undefined,
+	install?: HostInstall,
 ): object {
 	if (response.command !== "get_protocol_info" || !response.success) return response;
 	return {
@@ -127,6 +129,7 @@ export function withHostIdentity(
 		data: {
 			...response.data,
 			...(runtimeBuildId !== undefined && { runtimeBuildId }),
+			...(install !== undefined && { installPath: install.path, installPresent: install.present }),
 			...(handover !== undefined && { handover: handoverWire(handover) }),
 		},
 	};
