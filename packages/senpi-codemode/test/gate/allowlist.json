@@ -7259,6 +7259,15 @@
 			],
 			"reason": "senpi#7032 (oh-my-openagent#14291): contract test that the eval description names the session's eval-only tools within Claude Code's 4096-char MCP description cap even when the rest of the description is longer, by putting that line right after the first sentence. It passed in main's CI measurement. No prompt cell moves (240/240 match the baseline).",
 			"changes": []
+		},
+		"senpi#7471": {
+			"additions": [
+				"imports/extension/node:stream",
+				"imports/firstKernel/node:stream",
+				"legacyContracts/test/py-kernel.test.ts/PythonKernel live gives a cell's child process EOF on stdin instead of the control pipe (#2980)"
+			],
+			"reason": "senpi#7471 (fixes senpi#2980): the Python kernel's control pipe is private by the spawn contract. process.ts now spawns the interpreter with stdin on the null device and host frames on fd 3, and checks that fd 3 is a Writable with a value import of node:stream, a Node builtin, so node:stream enters the extension and first-kernel import scopes through kernels/py/process.ts; no host runtime module enters either scope. The contract row is the new live regression test: a cell's child process reads EOF on stdin instead of inheriting the control pipe, which on Windows hung the child at startup (RED 10/10 on windows-latest before the fix, GREEN 10/10 after). No prompt cell moves.",
+			"changes": []
 		}
 	}
 }
