@@ -62,7 +62,8 @@ export interface DeliveryStamp {
 	readonly turnMark?: InputTurnMark;
 }
 
-type PendingLane = ExternalDeliverAs | "start" | (() => boolean);
+/** `capped`: a start answered held with the engine-turn cap; it opens no run, so it is neither busy nor joined. */
+type PendingLane = ExternalDeliverAs | "start" | "capped" | (() => boolean);
 
 export class ExternalAdmission {
 	private turnEpochValue = 0;
@@ -188,13 +189,13 @@ export class ExternalAdmission {
 		if (!this.isBusy() && input.whenIdle !== "queue") {
 			const holds = this.port.heldBy();
 			const cap = holds.length > 0 ? undefined : this.port.cappedBy();
-			this.pending.set(id, "start");
-			// A capped start opens no run, so no later delivery may join it as the turn it opens (senpi#7138).
-			if (cap === undefined) this.startIssuedAt = turn_epoch;
+			this.pending.set(id, cap === undefined ? "start" : "capped");
+			this.startIssuedAt = turn_epoch;
 			// A start that settles without writing the entry left it queued for later (the runtime's
 			// admission-retention path): from then on it is held like any queued delivery.
 			void this.port.start(message).finally(() => {
-				if (this.pending.get(id) === "start") this.pending.set(id, "followUp");
+				const lane = this.pending.get(id);
+				if (lane === "start" || lane === "capped") this.pending.set(id, "followUp");
 			});
 			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
 			if (holds.length > 0) return { kind: "held", holds: [...holds], turn_epoch };
@@ -254,6 +255,11 @@ export class ExternalAdmission {
 		this.failed.set(id, error);
 	}
 
+	/** Whether admission answered this delivery held with the engine-turn cap, so its start must open no run (senpi#7138). */
+	answeredCapped(message: AgentMessage): boolean {
+		return this.pending.get(deliveryIdOf(message) ?? "") === "capped";
+	}
+
 	/**
 	 * A run settled: its refused messages leave the model context at the next run's start, so the failed
 	 * deliveries may be admitted again - unless the file's last write was refused too.
@@ -266,7 +272,7 @@ export class ExternalAdmission {
 	dropQueued(): void {
 		this.releaseRestored();
 		for (const [id, lane] of this.pending) {
-			if (lane !== "start" && typeof lane !== "function") this.pending.delete(id);
+			if (lane !== "start" && lane !== "capped" && typeof lane !== "function") this.pending.delete(id);
 		}
 	}
 

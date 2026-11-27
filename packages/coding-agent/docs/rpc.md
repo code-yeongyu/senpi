@@ -90,7 +90,9 @@ A session the engine-turn cap paused (no hold, but `get_state.engineTurnCap` is 
 `not_paused`: Resume continues it with one turn that carries any held input and messages the cap kept and a hidden
 note that automatic turns were paused, and that turn ends the cap's count as a person's message does. The answer is
 `resumed: true` with `engineTurnCap` naming the cap it lifted. `mode: "release"` starts no turn, so it cannot lift a
-cap: it answers `resumed: false, reason: "engine_turn_cap"` with `engineTurnCap` and changes nothing.
+cap: it answers `resumed: false, reason: "engine_turn_cap"` with `engineTurnCap` and changes nothing. A resume with
+`unlessStopped: true` comes from another session or a tool, not a person, and answers the same way: only a person lifts
+the cap.
 
 `unlessStopped: true` is for a resume another session or a tool asks for, not a person (senpi#7016): while a person's
 Stop or a parent's run hold is live it answers `resumed: false, reason: "stopped"` and releases nothing, so only the

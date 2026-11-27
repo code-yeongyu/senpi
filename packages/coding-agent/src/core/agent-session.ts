@@ -7948,7 +7948,11 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("finished-without-start");
 			return;
 		}
+		// senpi#7138: a delivery admission answered held with the engine-turn cap starts no turn of its own, whatever
+		// changed since; it neither waits for session work nor parks behind a compaction, and is recorded as refused.
+		const admittedCapped = options?.triggerTurn === true && this.externalAdmission.answeredCapped(appMessage);
 		const waitForExistingSessionWork =
+			!admittedCapped &&
 			options?.triggerTurn === true &&
 			options.deliverAs !== "nextTurn" &&
 			!this.isStreaming &&
@@ -7984,6 +7988,7 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (
+				!admittedCapped &&
 				options?.triggerTurn === true &&
 				((pendingCompactionAdmission !== undefined && pendingCompactionAdmission.outcome !== "completed") ||
 					(activeCompactionGeneration !== undefined &&
@@ -7999,7 +8004,7 @@ export class AgentSession {
 				}
 			} else if (
 				options?.triggerTurn &&
-				this._stopEngineTurn(message.customType, releasedWake !== undefined || releasedByPeer)
+				(this._stopEngineTurn(message.customType, releasedWake !== undefined || releasedByPeer) || admittedCapped)
 			) {
 				if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
@@ -8238,8 +8243,9 @@ export class AgentSession {
 			return answered({ resumed: false, reason: "stopped", ...idle });
 		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
-		// Only a turn a person asked for lifts the cap, so a release that starts no turn names the cap instead.
-		if (cap !== undefined && request.mode === "release")
+		// Only a turn a person asked for lifts the cap, so a release that starts no turn, or a resume a peer asks for
+		// (`unlessStopped`), names the cap instead.
+		if (cap !== undefined && (request.mode === "release" || request.unlessStopped === true))
 			return answered({ resumed: false, reason: "engine_turn_cap", engineTurnCap: cap, ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
@@ -8686,6 +8692,8 @@ export class AgentSession {
 
 	/** The engine-turn cap that pauses automatic turns now, if any (senpi#7138); a person's message or Resume lifts it. */
 	get engineTurnCap(): EngineTurnCap | undefined {
+		// A run in progress, even the last one the cap allows, is not stopped: the cap stops only the turn after it.
+		if (this._isAgentRunActive || this._promptStartPending) return undefined;
 		const stop = this._engineTurnStopNow(false);
 		return stop === null ? undefined : engineTurnCapOf(stop);
 	}

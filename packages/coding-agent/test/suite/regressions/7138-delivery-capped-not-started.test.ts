@@ -5,7 +5,7 @@
  * messages and ends the window. (The unattended-hold half of #7138 is #6490: a peer message releases that hold.)
  */
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/session-control-types.ts";
 import { buildRpcSessionState } from "../../../src/modes/rpc/rpc-session-state.ts";
 import { createHarness, type Harness } from "../harness.ts";
@@ -84,8 +84,56 @@ it("a second delivery admitted while a capped start is pending does not join it 
 	});
 	await h.session.waitForIdle();
 	expect(first).toMatchObject({ kind: "held", engine_turn_cap: { reason: "cap-per-resume-window" } });
-	expect(second).toMatchObject({ kind: "queued", turn_epoch: first.turn_epoch });
+	expect(second).toMatchObject({ kind: "held", engine_turn_cap: { reason: "cap-per-resume-window" } });
 	expect(h.faux.state.callCount).toBe(8);
+});
+
+it("a capped delivery starts no turn even when the cap no longer applies by the time its start is decided", async () => {
+	// The answer is decided at admission; the cap-per-minute window sliding before the start runs must not turn it
+	// into a turn (the stop was re-decided later before, after a session-work wait or a compaction).
+	vi.useFakeTimers({ toFake: ["Date"] });
+	try {
+		const h = await createHarness({ settings: { engineTurns: { maxToolFreePerMinute: 2 } } });
+		harnesses.push(h);
+		h.setResponses(Array.from({ length: 4 }, () => fauxAssistantMessage([fauxText("done")])));
+		for (let i = 0; i < 2; i++) await h.session.sendCustomMessage(wake, { triggerTurn: true });
+		const emitted = new Promise<void>((resolve) => {
+			const stop = h.session.externalAdmission.onEmitted((id) => {
+				if (id !== "slide") return;
+				stop();
+				resolve();
+			});
+		});
+		const answer = h.session.externalAdmission.admit({ delivery_id: "slide", text: "[from lead] s", deliverAs: "followUp" });
+		vi.setSystemTime(Date.now() + 61_000);
+		await emitted;
+		await h.session.waitForIdle();
+		expect(answer).toMatchObject({ kind: "held", engine_turn_cap: { reason: "cap-per-minute", count: 2 } });
+		expect(h.faux.state.callCount).toBe(2);
+		expect(deliveryIndex(h, "[from lead] s")).toBeGreaterThanOrEqual(0);
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+it("a resume a peer asks for (unlessStopped) names the cap and starts nothing", async () => {
+	const h = await resumeWindowSpent();
+	const answer = await h.session.resumeSessionRequest({ unlessStopped: true });
+	expect(answer).toMatchObject({ resumed: false, reason: "engine_turn_cap", engineTurnCap: { count: 8 } });
+	expect(h.faux.state.callCount).toBe(8);
+});
+
+it("the cap is not reported while the last turn it allows is still running", async () => {
+	const h = await createHarness({ settings: { engineTurns: { maxPerUserInput: 2, maxToolFreePerMinute: 0 } } });
+	harnesses.push(h);
+	h.setResponses(Array.from({ length: 2 }, () => fauxAssistantMessage([fauxText("done")])));
+	const seen: unknown[] = [];
+	h.session.subscribe((event) => {
+		if (event.type === "message_end" && event.message.role === "assistant") seen.push(h.session.engineTurnCap);
+	});
+	for (let i = 0; i < 2; i++) await h.session.sendCustomMessage(wake, { triggerTurn: true });
+	expect(seen).toEqual([undefined, undefined]);
+	expect(h.session.engineTurnCap).toEqual({ reason: "cap-per-message", count: 2 });
 });
 
 it("Resume continues a session the cap stopped: one turn carries the parked delivery and ends the window", async () => {
