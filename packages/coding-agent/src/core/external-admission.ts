@@ -33,6 +33,12 @@ import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
 
 export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
 
+/** What `onAdmitted` reports: the delivery's id and its text, nothing else of the record. */
+export interface ExternalMessageAdmitted {
+	readonly delivery_id: string;
+	readonly text: string;
+}
+
 export interface ExternalAdmissionPort {
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
 	readonly isBusy: () => boolean;
@@ -74,6 +80,7 @@ export class ExternalAdmission {
 	private readonly failed = new Map<string, string>();
 	private fileTakesWrites = true;
 	private readonly emittedListeners = new Set<(deliveryId: string) => void>();
+	private readonly admittedListeners = new Set<(admitted: ExternalMessageAdmitted) => void>();
 	private editorSource: (() => EditorHoldState) | undefined;
 	private closedReason: string | undefined;
 	private readonly port: ExternalAdmissionPort;
@@ -133,6 +140,12 @@ export class ExternalAdmission {
 		return () => this.settledListeners.delete(listener);
 	}
 
+	/** A delivery entered the runtime (started, queued, steered or held): once per id, never for a refusal. */
+	onAdmitted(listener: (admitted: ExternalMessageAdmitted) => void): () => void {
+		this.admittedListeners.add(listener);
+		return () => this.admittedListeners.delete(listener);
+	}
+
 	onEmitted(listener: (deliveryId: string) => void): () => void {
 		this.emittedListeners.add(listener);
 		return () => this.emittedListeners.delete(listener);
@@ -168,6 +181,14 @@ export class ExternalAdmission {
 	}
 
 	admit(input: AdmitExternalMessageInput, stamp: DeliveryStamp = {}): ExternalAdmissionResult {
+		const held = this.pending.has(input.delivery_id);
+		const result = this.admitOnce(input, stamp);
+		if (!held && this.pending.has(input.delivery_id))
+			for (const listener of this.admittedListeners) listener({ delivery_id: input.delivery_id, text: input.text });
+		return result;
+	}
+
+	private admitOnce(input: AdmitExternalMessageInput, stamp: DeliveryStamp): ExternalAdmissionResult {
 		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;
