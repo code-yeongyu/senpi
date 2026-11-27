@@ -215,6 +215,9 @@ export const REVIEWED_FIELDS = {
 			"kind",
 			"modelId",
 			"permissionPreset",
+			// `persona` (omo#13057) is prompt text and tool names that only narrow the session this open creates (the caller
+			// could open it with every tool): no path, credential or process, class unchanged. Its text is never read as a file.
+			"persona",
 			"promptSurface",
 			"provider",
 			"retain_on_disconnect",

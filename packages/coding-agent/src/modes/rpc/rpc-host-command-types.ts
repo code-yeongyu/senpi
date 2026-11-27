@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
+import type { SessionPersona } from "../../core/session-persona.ts";
 
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 
@@ -125,6 +126,15 @@ type RpcCommandBody =
 			 * when the open creates the session; an attach keeps the session's existing policy.
 			 */
 			retryFallback?: SessionRetryFallbackProfile;
+			/**
+			 * The instructions and tool policy THIS session runs with (e.g. a task child's agent): `appendSystemPrompt` is
+			 * literal text appended to its system prompt, `tools` the only tools it may have (empty = none),
+			 * `excludeTools` tools it never has. It narrows the host's own flags and never widens them, follows the
+			 * session through a successor's reopen, and an attach naming a different one is refused with
+			 * `session_path_in_use` (`persona_mismatch`). Requires the host capability `session_persona`; a malformed
+			 * value is refused with `invalid_launch_profile`.
+			 */
+			persona?: SessionPersona;
 			/**
 			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
 			 * one session after the daemon's own allowlist, never merged into the host process or carried to
