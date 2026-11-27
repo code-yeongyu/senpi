@@ -117,31 +117,41 @@ export class RpcPublicEndpoint {
 				throw new RpcEndpointAuthError("unsafe_key_record", keys);
 			if ((directory.mode & 0o7777) !== 0o700) await fs.chmod(keys, 0o700);
 			await checkRpcKeyDirectory(keys, true);
+			// The record is written and verified beside keys/ and then linked in, so a reader of keys/ (a client
+			// resolving its host's launch, the gc pass) sees it complete or not at all (senpi#7055). link() refuses an
+			// existing name, which keeps the never-overwrite rule the exclusive create gave.
+			const staging = join(this.agentDir, "rpc", `.${this.launchId}.publishing`);
 			const handle = await fs.open(
-				this.recordPath,
+				staging,
 				constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
 				0o600,
 			);
-			this.created = true;
-			process.once("exit", this.exitCleanup);
 			try {
-				await handle.writeFile(
-					JSON.stringify({
-						version: 1,
-						launch_id: this.launchId,
-						key: this.key.toString("hex"),
-						pid: process.pid,
-						process_start: (await readProcessStartTime(process.pid)) ?? null,
-						endpoint: this.endpoint,
-						created_at: new Date().toISOString(),
-					}),
-				);
-				await handle.sync();
-				const info = await handle.stat();
-				if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o7777) !== 0o600)
-					throw new RpcEndpointAuthError("unsafe_key_record", this.recordPath);
+				try {
+					await handle.writeFile(
+						JSON.stringify({
+							version: 1,
+							launch_id: this.launchId,
+							key: this.key.toString("hex"),
+							pid: process.pid,
+							process_start: (await readProcessStartTime(process.pid)) ?? null,
+							endpoint: this.endpoint,
+							created_at: new Date().toISOString(),
+						}),
+					);
+					await handle.sync();
+					const info = await handle.stat();
+					if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o7777) !== 0o600)
+						throw new RpcEndpointAuthError("unsafe_key_record", this.recordPath);
+				} finally {
+					await handle.close();
+				}
+				await fs.link(staging, this.recordPath);
+				this.created = true;
+				process.once("exit", this.exitCleanup);
 			} finally {
-				await handle.close();
+				// The staged copy is never a record: it leaves on success (the link holds the inode) and on failure.
+				await fs.unlink(staging);
 			}
 			this.publication.resolve();
 		} catch (cause) {

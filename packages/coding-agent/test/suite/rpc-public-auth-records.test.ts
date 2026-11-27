@@ -13,6 +13,7 @@ import { Peer, sandbox, teardown } from "./rpc-public-auth-harness.ts";
 // (the code under test included) through these per-test hooks, which run before the real call.
 const fsHooks = vi.hoisted(() => ({
 	beforeOpen: undefined as ((path: string) => Promise<void> | void) | undefined,
+	afterOpen: undefined as ((path: string) => Promise<void> | void) | undefined,
 	lstatUid: undefined as ((path: string) => number | undefined) | undefined,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -21,7 +22,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 		...actual,
 		open: async (path: string, flags?: string | number, mode?: number) => {
 			await fsHooks.beforeOpen?.(path);
-			return actual.open(path, flags, mode);
+			const handle = await actual.open(path, flags, mode);
+			await fsHooks.afterOpen?.(path);
+			return handle;
 		},
 		lstat: async (path: string) => {
 			const info = await actual.lstat(path);
@@ -34,6 +37,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	fsHooks.beforeOpen = undefined;
+	fsHooks.afterOpen = undefined;
 	fsHooks.lstatUid = undefined;
 	vi.restoreAllMocks();
 	for (const close of cleanup.splice(0).reverse()) await close();
@@ -63,6 +67,26 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 		expect((await stat(successor.recordPath)).mode & 0o777).toBe(0o600);
 	});
 
+	// #7055: a reader of rpc/keys (a client resolving its host's launch, the gc pass, another generation) must never
+	// see a created-but-unwritten record; the record appears complete or not at all.
+	it("never shows a partial record under rpc/keys while publishing", async () => {
+		const qa = await endpoint();
+		const keys = join(qa.agentDir, "rpc", "keys");
+		const seenWhileOpen: string[] = [];
+		fsHooks.afterOpen = async () => {
+			for (const name of await readdir(keys).catch(() => [] as string[]))
+				seenWhileOpen.push(`${name}:${(await readFile(join(keys, name), "utf8")).length}`);
+		};
+		await qa.endpoint.publish();
+		fsHooks.afterOpen = undefined;
+		expect(seenWhileOpen.filter((entry) => entry.endsWith(":0"))).toEqual([]);
+		expect(JSON.parse(await readFile(qa.endpoint.recordPath, "utf8"))).toMatchObject({
+			launch_id: qa.endpoint.launchId,
+		});
+		expect(await readdir(keys)).toEqual([qa.endpoint.launchId]);
+		expect((await readdir(join(qa.agentDir, "rpc"))).filter((name) => name !== "keys")).toEqual([]);
+	});
+
 	it("does not overwrite an existing launch record", async () => {
 		const qa = await endpoint();
 		await mkdir(join(qa.agentDir, "rpc", "keys"), { recursive: true, mode: 0o700 });
@@ -83,11 +107,9 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 		const publishing = new Promise<void>((resolve) => {
 			reached = resolve;
 		});
-		fsHooks.beforeOpen = async (path) => {
-			if (path === qa.endpoint.recordPath) {
-				reached();
-				await held;
-			}
+		fsHooks.beforeOpen = async () => {
+			reached();
+			await held;
 		};
 		let answered = 0;
 		const server = createServer((socket) => {
@@ -114,6 +136,7 @@ describe.skipIf(process.platform === "win32")("public RPC launch key records", (
 		expect(client.records).toEqual([]);
 		release();
 		await publish;
+		fsHooks.beforeOpen = undefined;
 		expect(await response).toHaveProperty("data.auth.server_proof");
 	});
 
