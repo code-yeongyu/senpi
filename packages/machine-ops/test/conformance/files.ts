@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { opErrorCode } from "../../src/errors.ts";
 import type { OpName } from "../../src/types.ts";
@@ -296,6 +296,35 @@ export function defineFileCases(runner: ConformanceRunner, target: ConformanceTa
 			}),
 		);
 	});
+
+	if (process.platform === "darwin") {
+		describe("files.grep and files.glob on macOS", () => {
+			it(
+				"a search from the home directory never enters a privacy-protected folder (omo#15240)",
+				withFixture(target, async ({ ops, ctx, root }) => {
+					const savedHome = process.env.HOME;
+					process.env.HOME = root;
+					try {
+						await mkdir(join(root, "Music"));
+						await writeFile(join(root, "Music", "song.txt"), INSIDE_TEXT);
+						const grep = await ops.files.grep({ path: ".", pattern: "second" }, ctx());
+						assert.deepEqual(
+							grep.matches.map((match) => match.path),
+							[join(root, "inside.txt")],
+						);
+						const glob = await ops.files.glob({ pattern: "*.txt" }, ctx());
+						assert.deepEqual(
+							glob.entries.map((entry) => entry.path),
+							[join(root, "inside.txt")],
+						);
+					} finally {
+						if (savedHome === undefined) delete process.env.HOME;
+						else process.env.HOME = savedHome;
+					}
+				}),
+			);
+		});
+	}
 
 	describe("files.stat", () => {
 		it(

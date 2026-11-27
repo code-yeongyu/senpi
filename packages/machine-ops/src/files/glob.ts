@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 import path from "node:path";
 import { MachineOpError } from "../errors.ts";
 import type { GlobResult } from "../types.ts";
+import { type ProtectedDirs, type WalkGuard, walkGuard } from "./privacy-protected.ts";
 
 /** Resolves the `fd` binary; undefined means fd is unavailable. */
 export type FdResolver = () => Promise<string | undefined>;
@@ -60,9 +61,12 @@ function runFdGlob(
 	searchPath: string,
 	limit: number,
 	signal: AbortSignal,
+	guard: WalkGuard,
 ): Promise<GlobResult> {
 	return (async () => {
 		const args: string[] = ["--glob", "--color=never", "--hidden"];
+		// A leading '/' anchors an exclude to the search root; the folder's own name is escaped so it matches literally.
+		for (const excluded of guard.excluded) args.push("--exclude", `/${excluded.replace(/[*?[\]{}\\]/g, "\\$&")}`);
 		// fd normally ignores .gitignore outside git repos, so keep --no-require-git there. Inside repos, use fd's
 		// default git-aware behavior so parent .gitignore rules stop at nested repo boundaries:
 		// https://github.com/earendil-works/pi/issues/5960
@@ -176,7 +180,13 @@ export function globToRegExp(glob: string): RegExp {
 }
 
 /** Pure-Node fallback when no fd exists: skips .git and node_modules, does not read .gitignore. */
-async function walkGlob(pattern: string, searchPath: string, limit: number, signal: AbortSignal): Promise<GlobResult> {
+async function walkGlob(
+	pattern: string,
+	searchPath: string,
+	limit: number,
+	signal: AbortSignal,
+	guard: WalkGuard,
+): Promise<GlobResult> {
 	const matcher = globToRegExp(pattern.replace(/^\.\//, ""));
 	const matchBasename = !pattern.includes("/");
 	const entries: { path: string }[] = [];
@@ -199,7 +209,7 @@ async function walkGlob(pattern: string, searchPath: string, limit: number, sign
 				entries.push({ path: full });
 				if (entries.length >= limit) break;
 			}
-			if (dirent.isDirectory()) pending.push(full);
+			if (dirent.isDirectory() && !guard.skips(full)) pending.push(full);
 		}
 	}
 	return { entries, truncated: entries.length >= limit };
@@ -211,15 +221,17 @@ export async function localGlob(
 	limit: number | undefined,
 	signal: AbortSignal,
 	resolveFd: FdResolver | undefined,
+	protectedDirs: ProtectedDirs,
 ): Promise<GlobResult> {
 	const effectiveLimit = limit ?? DEFAULT_LIMIT;
+	const guard = walkGuard(searchPath, protectedDirs);
 	if (resolveFd !== undefined) {
 		const fdPath = await resolveFd();
 		if (signal.aborted) throw new MachineOpError("aborted", "Operation aborted");
 		if (!fdPath) throw new MachineOpError("io_error", "fd is not available and could not be downloaded");
-		return runFdGlob(fdPath, pattern, searchPath, effectiveLimit, signal);
+		return runFdGlob(fdPath, pattern, searchPath, effectiveLimit, signal, guard);
 	}
 	const fdPath = await findFdOnPath();
-	if (fdPath !== undefined) return runFdGlob(fdPath, pattern, searchPath, effectiveLimit, signal);
-	return walkGlob(pattern, searchPath, effectiveLimit, signal);
+	if (fdPath !== undefined) return runFdGlob(fdPath, pattern, searchPath, effectiveLimit, signal, guard);
+	return walkGlob(pattern, searchPath, effectiveLimit, signal, guard);
 }
