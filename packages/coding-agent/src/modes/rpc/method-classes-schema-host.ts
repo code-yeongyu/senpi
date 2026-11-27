@@ -61,6 +61,7 @@ const openProperties = {
 	browserEngine: Opt(literals("connected", "builtin", "none")),
 	retryFallback: Opt(RetryFallback),
 	persona: Opt(SessionPersona),
+	persistence: Opt(literals("file", "none")),
 	env: Opt(SessionEnv),
 	telemetry: Opt(TelemetryDeclaration),
 };

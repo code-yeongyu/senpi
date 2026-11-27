@@ -194,6 +194,8 @@ export interface RpcSessionRow {
 	waiting?: RetryWait;
 	/** The session's current model; absent while unknown (an opening session). */
 	model?: { provider: string; id: string };
+	/** `none`: a memory-only session (senpi#7567), never the user's conversation; a session list leaves it out. */
+	persistence?: "none";
 }
 
 export interface OpenRpcSession {

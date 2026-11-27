@@ -260,6 +260,12 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			for (const limits of message.subscriptionLimits) subscriptionLimits.adopt(limits);
 			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
 			const profile = resolveMovedProfile(message.profile);
+			// A memory-only session is named by no file, here or on the host (senpi#7567).
+			if (profile.persistence === "none") {
+				prepared = { ...message, profile };
+				send({ type: "prepared", request: message.request });
+				return;
+			}
 			const path =
 				profile.sessionPath ??
 				join(

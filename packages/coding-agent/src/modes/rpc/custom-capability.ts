@@ -204,6 +204,13 @@ export const RETRY_FALLBACK_PROFILE_CAPABILITY = "retry_fallback_profile";
 export const SESSION_PERSONA_CAPABILITY = "session_persona";
 
 /**
+ * HOST capability: this host honors `open_session.persistence: "none"` (senpi#7567), a session that lives in memory
+ * only and never creates or extends a file. A host without it would ignore the field and persist the session, so a
+ * controller that needs an unwritten session refuses to start on a host that does not name this.
+ */
+export const SESSION_PERSISTENCE_NONE_CAPABILITY = "session_persistence_none";
+
+/**
  * HOST capability: this host takes each caller's live telemetry answer (senpi#7446) on `open_session.telemetry`,
  * `attach_session.telemetry` and `set_telemetry_consent`, and decides a session's telemetry from the host's own
  * setting AND every caller of that session. A caller sends its answer only to a host that names this.
