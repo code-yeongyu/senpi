@@ -69,6 +69,25 @@ it("a peer delivery behind the resume-window cap is answered held with the cap, 
 	expect(state.holds).toEqual([]);
 });
 
+it("a second delivery admitted while a capped start is pending does not join it as a turn that never opens", async () => {
+	// senpi#7478 lets a delivery join a pending start as the turn that start opens; a capped start opens none.
+	const h = await resumeWindowSpent();
+	const first = h.session.externalAdmission.admit({
+		delivery_id: "cap-a",
+		text: "[from lead] a",
+		deliverAs: "followUp",
+	});
+	const second = h.session.externalAdmission.admit({
+		delivery_id: "cap-b",
+		text: "[from lead] b",
+		deliverAs: "followUp",
+	});
+	await h.session.waitForIdle();
+	expect(first).toMatchObject({ kind: "held", engine_turn_cap: { reason: "cap-per-resume-window" } });
+	expect(second).toMatchObject({ kind: "queued", turn_epoch: first.turn_epoch });
+	expect(h.faux.state.callCount).toBe(8);
+});
+
 it("Resume continues a session the cap stopped: one turn carries the parked delivery and ends the window", async () => {
 	const h = await resumeWindowSpent();
 	await admitAndSettle(h, "cap-2", "[from lead] parked");
