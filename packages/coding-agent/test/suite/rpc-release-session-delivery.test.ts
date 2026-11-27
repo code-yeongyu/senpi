@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { RELEASE_QUEUED_HINT, RELEASED_ADMISSION_CLOSED } from "../../src/modes/rpc/session-release.ts";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { afterReleased, heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
@@ -146,10 +147,27 @@ describe("release_session and gateway deliveries (real host)", () => {
 	});
 
 	it("an interrupted release refused `attached` reopens admission and still hands back what it took", async () => {
-		// Given: a running turn, user text queued behind it, and a prompt held in its input handler, which
-		// keeps the interrupt's settle window open.
+		// Given: a running turn, user text queued behind it, and an observer's reload-veto read held in its extension
+		// handler, which keeps the interrupt's settle window open. The read is exempt from the attachment gate, so the
+		// observer holds nothing (senpi#6245: a held prompt would need an attached sender, itself a holder).
 		const gateway = gatewayFixture();
-		await using host = await startReleaseHost(gateway.extension);
+		let vetoEntered!: () => void;
+		const vetoHeld = new Promise<void>((resolve) => {
+			vetoEntered = resolve;
+		});
+		let releaseVeto!: () => void;
+		const vetoMayAnswer = new Promise<void>((resolve) => {
+			releaseVeto = resolve;
+		});
+		const withHeldVeto: ExtensionFactory = (pi) => {
+			gateway.extension(pi);
+			pi.on("session_before_reload", async () => {
+				vetoEntered();
+				await vetoMayAnswer;
+				return undefined;
+			});
+		};
+		await using host = await startReleaseHost(withHeldVeto);
 		host.faux.setResponses([
 			fauxAssistantMessage("seed reply"),
 			heldTurn,
@@ -162,19 +180,17 @@ describe("release_session and gateway deliveries (real host)", () => {
 		await host.send({ type: "prompt", id: "work", sessionId, message: "long work" });
 		await started;
 		await host.send({ type: "follow_up", id: "f", sessionId, message: "USER FOLLOW TEXT" });
-		const input = gateway.holdNextInput();
-		void host.send(
-			{ type: "prompt", id: "slow", sessionId, message: "slow input", streamingBehavior: "followUp" },
-			"held-input",
-		);
-		await input.entered;
 
-		// When: the release interrupts, and a client attaches while it waits for the held prompt.
+		const veto = host.send({ type: "check_reload_veto", id: "veto", sessionId }, "observer");
+		await vetoHeld;
+
+		// When: the release interrupts, and a client attaches while the observer's read is still open.
 		const aborted = nextEvent(session, "agent_end");
 		const reply = host.release(sessionId, { interrupt: true });
 		await aborted;
 		expect(await host.attach(sessionPath)).toMatchObject({ success: true, data: { attached: true } });
-		input.go();
+		releaseVeto();
+		expect(await veto).toMatchObject({ success: true });
 
 		// Then: refused with what the interrupt took, and the session the host keeps admits deliveries again.
 		expect(await reply).toMatchObject({

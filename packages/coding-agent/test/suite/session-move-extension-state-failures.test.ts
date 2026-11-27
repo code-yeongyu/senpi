@@ -52,7 +52,7 @@ describe("a failing session_move_import handler (senpi#3681 review)", () => {
 		expect(await host.release(sessionId)).toMatchObject({ success: true });
 		const pendingDir = moveIn(sessionPath, "move-61");
 
-		const first = await host.attach(sessionPath);
+		const first = await host.attach(sessionPath, "reopener");
 
 		expect(first).toMatchObject({ success: true });
 		expect(reported).toHaveBeenCalledWith(
@@ -64,13 +64,16 @@ describe("a failing session_move_import handler (senpi#3681 review)", () => {
 
 		const reopenedId = (first.data as { sessionId: string }).sessionId;
 		expect(
-			await host.send({
-				type: "release_session",
-				id: "release-attached",
-				sessionId: reopenedId,
-				reason: "takeover",
-				force: true,
-			}),
+			await host.send(
+				{
+					type: "release_session",
+					id: "release-attached",
+					sessionId: reopenedId,
+					reason: "takeover",
+					force: true,
+				},
+				"reopener",
+			),
 		).toMatchObject({ success: true });
 		expect(await host.attach(sessionPath)).toMatchObject({ success: true });
 

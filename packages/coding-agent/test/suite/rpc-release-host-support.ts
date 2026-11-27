@@ -101,7 +101,6 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 		if (record.type === "response" && typeof record.id === "string") answerWaiters.get(record.id)?.(record);
 	};
 	const writer = new SessionEventWriter(receive);
-	// Session-scoped commands need no attachment: this connection sends them, like a gateway client.
 	const sink = (connection: string) => ({
 		writeRaw: (line: string) => receive(line, connection),
 		waitForBackpressure: async () => {},
@@ -144,6 +143,7 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 		async open(name: string): Promise<OpenedSession> {
 			const connection = `open-${name}`;
 			writer.registerConnection(connection, sink(connection));
+			connections.add(connection);
 			if (options.capabilities !== undefined) {
 				const capabilities = [...options.capabilities];
 				await writer.withConnection(connection, () =>
@@ -163,12 +163,15 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 			if (sessionId === undefined || session === undefined) throw new Error(`open failed: ${JSON.stringify(reply)}`);
 			// `agent_settled` ends every run, but reaches subscribers before its extension handlers finish (omo#11419),
 			// so the seed prompt call can still be open then: wait for it to return, as a release would count it busy.
+			// senpi#6245: the driver is an attached client of every session it drives, like a real caller.
+			await send({ type: "open_session", id: `driver-${serial}`, cwd, sessionPath, retain_on_disconnect: true });
 			const settled = nextEvent(session, "agent_settled");
 			await send({ type: "prompt", id: `seed-${serial}`, sessionId, message: "seed the transcript" });
 			await settled;
 			const bindings = (Reflect.get(router, "context") as RouterContext).bindings;
 			const pending = () => bindings.get(sessionId)?.pendingPrompts?.() ?? [];
 			for (let calls = pending(); calls.length > 0; calls = pending()) await Promise.allSettled(calls);
+			connections.delete(connection);
 			writer.unregisterConnection(connection);
 			await router.releaseConnection(connection);
 			return { sessionId, sessionPath: data?.state?.sessionFile ?? sessionPath, session };

@@ -118,6 +118,8 @@ describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses"
 		session.subscribe((event) => {
 			if (event.type === "transcript_write_failed" && event.role === "custom") chmodSync(sessionPath, 0o644);
 		});
+		// senpi#6245: the retrying sender is an attached client of the session, like every sender of wake.
+		expect(await host.attach(sessionPath, "mid-run")).toMatchObject({ success: true });
 		redeliverMidRun = () => host.send({ type: "wake", id: "w2", sessionId, delivery_ids: ["refused-1"] }, "mid-run");
 		chmodSync(sessionPath, 0o444);
 
