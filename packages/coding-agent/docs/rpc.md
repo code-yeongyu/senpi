@@ -8484,6 +8484,12 @@ request stays pending.
   prompts as advisory. A same-user process that can rewrite the host's parked records can switch the rule off for the
   next reopen in the same way.
 - Secret inputs keep their own raiser route and are not checked here.
+- No hang: while none of a run's answerers is attached (the opener dropped and nobody presented the key, or the run
+  came back from a handover), the session's UI reports `capabilities.answerer: "absent"`. A permission ask then is
+  refused at once with a reason naming that the run's designated answerer is not connected, and no dialog is raised.
+  A dialog or question already raised when the last answerer left stays pending for 30 seconds; an answerer that
+  attaches with the key within that window answers it, otherwise it is settled as unanswered, and a permission prompt
+  settled this way gets the same refusal. A run that did not ask for the rule never reports `answerer`.
 
 What this protects: the prompts of a **live** run, against every client but the one that opened it, including a
 program that run itself started with the user's RPC keys. It does not bind the session across runs. Whoever opens a
