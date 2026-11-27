@@ -117,5 +117,5 @@ it("keeps parsed promotions, not the entries they came from, in the session's fo
 		content: `${LEGACY_TOOL_SEARCH_ACTIVATION_MARKER} mcp_fx_tool_1`,
 		timestamp: 2,
 	});
-	expect(manager.reduceHistory(activationMarkers)).toEqual([{ version: 1, names: ["mcp_fx_tool_1"] }]);
+	expect([...manager.reduceHistory(activationMarkers).values()]).toEqual([{ version: 1, names: ["mcp_fx_tool_1"] }]);
 });

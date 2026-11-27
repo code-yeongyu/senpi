@@ -1,7 +1,6 @@
 import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-reference";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
-import { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
 import { getMcpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
@@ -234,7 +233,7 @@ export class McpService {
 			// per-turn context event fires, so the context-event replay alone lands
 			// one turn late. Doing it here puts restored tools on the very first
 			// wire payload after a --continue/resume.
-			if (binding !== undefined) await this.#rehydrateFromSessionHistory(binding);
+			if (binding !== undefined) this.#rehydrateFromSessionHistory(binding);
 			// An unbound attach (no `pi`) still reports its own config; a session released while this attach ran reports
 			// nothing, so no snapshot outlives its release.
 			if (shouldCaptureWireStatus(ctx)) {
@@ -671,10 +670,9 @@ export class McpService {
 		this.#bindingFor(pi)?.registration?.activate(names);
 	}
 
-	async #rehydrateFromSessionHistory(binding: McpSessionBinding): Promise<void> {
+	#rehydrateFromSessionHistory(binding: McpSessionBinding): void {
 		const manager = binding.context.sessionManager;
-		if (manager)
-			await this.#toolSearchFor(binding)?.maybeRehydrateFromHistoryInSlices(manager, new EventLoopSlicer());
+		if (manager) this.#toolSearchFor(binding)?.maybeRehydrateFromSessionHistory(manager);
 	}
 
 	async handleSessionShutdown(event: SessionShutdownEvent): Promise<void> {
@@ -940,7 +938,7 @@ export class McpService {
 									// A raced attach ran its history replay before this catalog
 									// existed; replay now so restored tools still land on the
 									// first turn's payload (idempotent: already-active names skip).
-									await this.#rehydrateFromSessionHistory(live);
+									this.#rehydrateFromSessionHistory(live);
 								} catch (error) {
 									failures.push(error);
 								}
