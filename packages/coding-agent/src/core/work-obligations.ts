@@ -1,7 +1,13 @@
 import type { DeliveryTicketId, ObligationKind, ObligationToken, WorkObligations } from "./session-lifecycle-types.ts";
 import { normalizeWaitItems, waitItemSignature } from "./lifecycle-wait-items.ts";
 import type { SessionEntry } from "./session-manager.ts";
-import { type CustodyPayload, custodyIsOpen, readWorkCustody, type WorkCustodyRecord } from "./work-custody-record.ts";
+import {
+	closedCustody,
+	type CustodyPayload,
+	custodyIsOpen,
+	readWorkCustody,
+	type WorkCustodyRecord,
+} from "./work-custody-record.ts";
 
 /** Custody keys the engine opens itself (senpi#3986): queued deliveries and published wake sources. */
 export const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
@@ -248,7 +254,9 @@ export class SessionWorkObligations implements WorkObligations {
 		if (ended.length > 0) this.store.changed();
 	}
 
-	private install(record: WorkCustodyRecord): void {
+	private install(next: WorkCustodyRecord): void {
+		// A closing record carries no payload forward (senpi#7603): nothing reads it once the record is closed.
+		const record = custodyIsOpen(next) ? next : closedCustody(next);
 		try {
 			this.store.append(record);
 			this.unpersisted.delete(record.id);
