@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
+import { activationMarkers } from "../../../src/core/extensions/builtin/tool-search/activation-history.ts";
 import {
 	emitActivationMarker,
 	deriveMcpRegistrationId,
@@ -103,4 +104,18 @@ it("restores both generations of promotions after idle without reparsing the ses
 		manager.dispose();
 		await cleanupRoots(cleanups);
 	}
+});
+
+// The session keeps this fold's state for its life, so it holds the parsed promotions only, never an entry: a tool
+// result that merely quotes the marker text (a read of the tool-search sources) would otherwise stay resident whole.
+it("keeps parsed promotions, not the entries they came from, in the session's fold", () => {
+	const manager = SessionManager.inMemory();
+	const quoted = `export const LEGACY_TOOL_SEARCH_ACTIVATION_MARKER = "${LEGACY_TOOL_SEARCH_ACTIVATION_MARKER}";\n`;
+	manager.appendMessage({ role: "user", content: quoted + "source line\n".repeat(20_000), timestamp: 1 });
+	manager.appendMessage({
+		role: "user",
+		content: `${LEGACY_TOOL_SEARCH_ACTIVATION_MARKER} mcp_fx_tool_1`,
+		timestamp: 2,
+	});
+	expect(manager.reduceHistory(activationMarkers)).toEqual([{ version: 1, names: ["mcp_fx_tool_1"] }]);
 });

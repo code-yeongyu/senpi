@@ -1,18 +1,18 @@
 import type { HistoryReducer } from "../../../session-history-reduce.ts";
-import type { SessionEntry } from "../../../session-manager.ts";
-import type { ParsedActivationMarker } from "./engine/marker.ts";
-import { mayHoldActivationMarker } from "./engine/marker-candidates.ts";
+import { type ParsedActivationMarker, parseActivationMarkers } from "./engine/marker.ts";
 
 /**
- * The entries of a session's history that may hold an activation marker, in append order (senpi#7600). The state is
- * append-only and holds only the rare candidates, so the session keeps it across extension generations and a later
+ * The activation markers of a session's history, in append order (senpi#7600). The state is append-only and holds
+ * only parsed markers, never an entry or its text: a tool result that merely quotes the marker text would otherwise
+ * stay resident for the life of the session. The session keeps the state across extension generations, so a later
  * replay folds just the entries appended since; each reader keeps its own position in it.
  */
-export const activationCandidates: HistoryReducer<SessionEntry[]> = {
+export const activationMarkers: HistoryReducer<ParsedActivationMarker[]> = {
 	initial: () => [],
-	add: (candidates, entry) => {
-		if (mayHoldActivationMarker(entry)) candidates.push(entry);
-		return candidates;
+	add: (markers, entry) => {
+		// A name sliced out of the serialized entry can keep that whole string alive as its base; a copy holds its own.
+		for (const marker of parseActivationMarkers([entry])) markers.push(JSON.parse(JSON.stringify(marker)));
+		return markers;
 	},
 };
 
