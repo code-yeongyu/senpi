@@ -16,6 +16,7 @@
  * (#3419 review H1).
  */
 import { realpathSync, statSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 
@@ -45,6 +46,8 @@ export function messagePathProjectRoot(cwd: string): string | undefined {
 }
 
 function existing(candidate: string): { realpath: string; kind: "file" | "directory" } | undefined {
+	// A message can name a path of another machine; under an unmounted automount it is not here (senpi#4565).
+	if (automountTriggerPathSync(candidate) !== undefined) return undefined;
 	try {
 		const realpath = realpathSync.native(candidate);
 		const stats = statSync(realpath);

@@ -1,7 +1,6 @@
-import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { isPresetRule } from "./config.ts";
+import { currentPathFacts } from "./path-facts.ts";
 import { evaluate, evaluateExternalSpelling, evaluateWithIdentity, type IdentityMatcher } from "./evaluate.ts";
 import { type IdentityInput, PATH_PERMISSIONS } from "./identity-decision.ts";
 import type { PermissionPresetName, Rule, Ruleset } from "./types.ts";
@@ -125,13 +124,13 @@ function targetIsProtectedStore(store: string, target: string | readonly string[
 function canonicalForCompare(value: string): string | undefined {
 	if (!value.includes("/") && !value.includes(path.sep)) return undefined;
 	const fold = (real: string) => (process.platform === "darwin" ? real.toLowerCase() : real);
+	const facts = currentPathFacts();
 	let existing = path.resolve(value);
 	const missing: string[] = [];
 	for (;;) {
 		try {
-			// realpath opens the path: under an unmounted automount it would park the host thread (senpi#4565).
-			refuseUnmountedAutomountPath(existing);
-			return fold(path.join(fs.realpathSync.native(existing), ...missing));
+			// Read from the call's prefetched facts: a synchronous realpath here parked a host on a macOS /home (senpi#4565).
+			return fold(path.join(facts.realpath(existing), ...missing));
 		} catch {
 			const parent = path.dirname(existing);
 			if (parent === existing) return undefined;

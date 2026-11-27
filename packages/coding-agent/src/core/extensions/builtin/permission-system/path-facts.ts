@@ -1,5 +1,6 @@
 import type { BigIntStats } from "node:fs";
 import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
+import type { OpenFreeWalkIo } from "../../../../utils/paths.ts";
 import {
 	automountTriggerPathSync,
 	RESOLUTION_TIMED_OUT,
@@ -66,6 +67,11 @@ export class PathFacts {
 
 	realpath(path: string): string {
 		return this.#read("realpath", path) as string;
+	}
+
+	/** The open-free walker's two calls, answered from these facts. */
+	get walkIo(): OpenFreeWalkIo {
+		return { lstatIsLink: (path) => this.lstat(path).isSymbolicLink(), readlink: (path) => this.readlink(path) };
 	}
 
 	/** Whether the last run read a fact that was not fetched yet. */
@@ -138,6 +144,23 @@ export async function decideWithPathFacts<T>(decide: (facts: PathFacts) => T, fa
 /** The pending-fact code {@link PathFacts} readers throw; never an answer about the path itself. */
 export const FACT_PENDING = "EFACTPENDING";
 
-export function isAutomountUnmounted(path: string): boolean {
-	return automountTriggerPathSync(path) !== undefined;
+let active: PathFacts | undefined;
+
+/** Run a synchronous section (it must not await) with `facts` as the ones its path probes read. */
+export function withPathFacts<T>(facts: PathFacts, run: () => T): T {
+	const previous = active;
+	active = facts;
+	try {
+		return run();
+	} finally {
+		active = previous;
+	}
+}
+
+/**
+ * The facts of the section running now. Outside {@link withPathFacts} nothing was prefetched, so every probe reads as
+ * pending (the conservative answer) and nothing touches the filesystem on the host thread.
+ */
+export function currentPathFacts(): PathFacts {
+	return active ?? new PathFacts();
 }

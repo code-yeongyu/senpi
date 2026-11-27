@@ -20,7 +20,14 @@ import {
 	canonicalSessionPath,
 	sessionDirectoryRemoved,
 } from "../../../src/modes/rpc/session-path-key.ts";
-import { realpathWithoutOpen, realpathWithoutOpenStrict } from "../../../src/utils/paths.ts";
+import { findProjectRoot } from "../../../src/core/extensions/builtin/rules/rules/project-root.ts";
+import { resolveMessagePath } from "../../../src/core/message-path-resolution.ts";
+import {
+	canonicalizePath,
+	canonicalizePathStrict,
+	realpathWithoutOpen,
+	realpathWithoutOpenStrict,
+} from "../../../src/utils/paths.ts";
 
 // senpi#4565: on macOS a synchronous probe of a path under /home (an autofs trigger) can park the host thread for
 // good. Before the first mount-table read lands, every host-thread probe site must answer such a path from the
@@ -171,6 +178,32 @@ const sites: ReadonlyArray<readonly [string, () => unknown, (answer: unknown) =>
 		"moved-path resolution (moved-path-guard/resolve.ts)",
 		() => findMovedPath(`${ELSEWHERE}/x`),
 		(answer) => expect(answer).toBeUndefined(),
+	],
+	[
+		"project root (rules/project-root.ts findProjectRoot)",
+		() => findProjectRoot(`${ELSEWHERE}/src`),
+		(answer) => expect(answer).toBeNull(),
+	],
+	[
+		"a path named in a message (message-path-resolution.ts)",
+		() => resolveMessagePath({ path: `${ELSEWHERE}/notes.md`, cwd: "/tmp" }).status,
+		(answer) => expect(answer).toBe("not_found"),
+	],
+	[
+		"canonicalizePath (utils/paths.ts)",
+		() => canonicalizePath(`${ELSEWHERE}/x`),
+		(answer) => expect(answer).toBe(`${ELSEWHERE}/x`),
+	],
+	[
+		"canonicalizePathStrict refuses with a typed code (utils/paths.ts)",
+		() => {
+			try {
+				return canonicalizePathStrict(`${ELSEWHERE}/x`);
+			} catch (error) {
+				return (error as { code?: string }).code;
+			}
+		},
+		(answer) => expect(answer).toBe("EAUTOMOUNT"),
 	],
 ];
 

@@ -3,7 +3,11 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "n
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve as nodeResolvePath, parse, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { refuseUnmountedAutomountPath, UNMOUNTED_AUTOMOUNT } from "@code-yeongyu/senpi-machine-ops";
+import {
+	automountTriggerPathSync,
+	refuseUnmountedAutomountPath,
+	UNMOUNTED_AUTOMOUNT,
+} from "@code-yeongyu/senpi-machine-ops";
 import { spawnProcessSync } from "./child-process.ts";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -28,6 +32,8 @@ export interface PathInputOptions {
  * entries.
  */
 export function canonicalizePath(path: string): string {
+	// realpath opens the path: under an unmounted automount it would park this thread (senpi#4565).
+	if (automountTriggerPathSync(path) !== undefined) return path;
 	try {
 		return realpathSync.native(path);
 	} catch {
@@ -46,6 +52,7 @@ export function canonicalizePath(path: string): string {
  * to decide what an unresolvable path means.
  */
 export function canonicalizePathStrict(path: string): string {
+	refuseUnmountedAutomountPath(path);
 	return realpathSync.native(path);
 }
 
@@ -76,7 +83,18 @@ interface OpenFreeResolution {
  * containment decision would approve one directory while the I/O reached another, so neither the
  * input nor a link target is normalized before traversal.
  */
-function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
+/** The two calls the open-free walk makes per component; the synchronous filesystem by default. */
+export interface OpenFreeWalkIo {
+	lstatIsLink(path: string): boolean;
+	readlink(path: string): string;
+}
+
+const SYNC_WALK_IO: OpenFreeWalkIo = {
+	lstatIsLink: (path) => lstatSync(path).isSymbolicLink(),
+	readlink: (path) => readlinkSync(path),
+};
+
+function resolveWithoutOpen(inputPath: string, io: OpenFreeWalkIo): OpenFreeResolution {
 	const absolutePath = isAbsolute(inputPath) ? inputPath : nodeResolvePath(inputPath);
 	const { root } = parse(absolutePath);
 	const pending = splitParts(absolutePath.slice(root.length));
@@ -96,13 +114,13 @@ function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
 		try {
 			// An unmounted automount trigger would park this thread in lstat (senpi#4565): it ends the walk like any error.
 			refuseUnmountedAutomountPath(candidate);
-			if (!lstatSync(candidate).isSymbolicLink()) {
+			if (!io.lstatIsLink(candidate)) {
 				resolved.push(part);
 				continue;
 			}
 			hops += 1;
 			if (hops > MAX_SYMLINK_HOPS) return { path: join(candidate, ...pending), errorCode: "ELOOP" };
-			link = readlinkSync(candidate);
+			link = io.readlink(candidate);
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException)?.code ?? "UNKNOWN";
 			return { path: join(candidate, ...pending), errorCode: code };
@@ -131,7 +149,12 @@ function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
  * and use {@link realpathWithoutOpenStrict} where an incomplete answer must not be trusted.
  */
 export function realpathWithoutOpen(inputPath: string): string {
-	return resolveWithoutOpen(inputPath).path;
+	return realpathWithoutOpenWith(inputPath, SYNC_WALK_IO);
+}
+
+/** {@link realpathWithoutOpen} over injected `io`: the permission decision walks its prefetched path facts (senpi#4565). */
+export function realpathWithoutOpenWith(inputPath: string, io: OpenFreeWalkIo): string {
+	return resolveWithoutOpen(inputPath, io).path;
 }
 
 /**
@@ -142,7 +165,12 @@ export function realpathWithoutOpen(inputPath: string): string {
  * an unresolved path can name a different file than the one the I/O will reach.
  */
 export function realpathWithoutOpenStrict(inputPath: string): string {
-	const resolution = resolveWithoutOpen(inputPath);
+	return realpathWithoutOpenStrictWith(inputPath, SYNC_WALK_IO);
+}
+
+/** {@link realpathWithoutOpenStrict} over injected `io`. */
+export function realpathWithoutOpenStrictWith(inputPath: string, io: OpenFreeWalkIo): string {
+	const resolution = resolveWithoutOpen(inputPath, io);
 	if (resolution.errorCode !== undefined && !MISSING_PATH_CODES.has(resolution.errorCode)) {
 		throw Object.assign(new Error(`${resolution.errorCode}: cannot resolve path '${inputPath}' without opening it`), {
 			code: resolution.errorCode,
