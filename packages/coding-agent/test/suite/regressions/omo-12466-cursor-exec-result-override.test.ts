@@ -99,7 +99,8 @@ describe("a tool_result replacement on the Cursor exec path (omo#12466)", () => 
 
 		const frame = await bridge.grep?.({ toolCallId: "call-3", pattern: "synthetic", path: "/synthetic" } as never);
 
-		expect(frame).toMatchObject({ content: [{ type: "text", text: DENY }], isError: true, details: {} });
+		expect(frame).toMatchObject({ content: [{ type: "text", text: DENY }], isError: true });
+		expect((frame as ToolResultMessage).details).toEqual({});
 		expect(ends).toHaveLength(1);
 		expect(ends[0]?.structuredContent).toBeUndefined();
 		expect(JSON.stringify({ frame, ends })).not.toContain("synthetic-foreign-line");
@@ -116,6 +117,7 @@ describe("a tool_result replacement on the Cursor exec path (omo#12466)", () => 
 
 		const frame = await bridge.grep?.({ toolCallId: "call-4", pattern: "synthetic", path: "/synthetic" } as never);
 
-		expect(frame).toMatchObject({ content: [{ type: "text", text: "synthetic own line" }], isError, details });
+		expect(frame).toMatchObject({ content: [{ type: "text", text: "synthetic own line" }], isError });
+		expect((frame as ToolResultMessage).details).toEqual(details);
 	});
 });
