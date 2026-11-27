@@ -135,6 +135,8 @@ type RpcCommandBody =
 			 * value is refused with `invalid_launch_profile`.
 			 */
 			persona?: SessionPersona;
+			/** Explicitly reopen the retired identity. Ordinary opens never consume retirement. */
+			reopenRetired?: true;
 			/**
 			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
 			 * one session after the daemon's own allowlist, never merged into the host process or carried to
@@ -338,7 +340,7 @@ export type RpcCommand = (
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  }
-	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd" | "reopenRetired"> & {
 			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
 			type: "claim_session";
 			cwd: string;

@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { admitRetirement, RetirementFault } from "../../core/session-retirement.ts";
 import { RETRY_ROUTED_OPEN } from "./predecessor-routes.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { startOpenTimer } from "../../core/open-timing.ts";
@@ -31,7 +32,9 @@ export function openWithBarrier(
 	replyAs?: OpenReplyAs,
 ): Promise<RpcResponse | undefined> {
 	if (compactUpdatesEnabled() && command.admissionId !== undefined)
-		return compactOpen(host, command, (accept, signal) => openPhysicalWithBarrier(host, command, accept, signal));
+		return compactOpen(host, command, (accept, signal) =>
+			openPhysicalWithBarrier(host, command, accept, signal, replyAs),
+		);
 	return openPhysicalWithBarrier(host, command, undefined, undefined, replyAs);
 }
 
@@ -43,7 +46,8 @@ function openPhysicalWithBarrier(
 	replyAs?: OpenReplyAs,
 ): Promise<RpcResponse | undefined> {
 	const owner = host.writer.currentConnection();
-	if (owner === undefined) return open(host, command, undefined, { replyAs });
+	const explicitReopen = replyAs === undefined && command.reopenRetired === true;
+	if (owner === undefined) return open(host, command, undefined, { replyAs, explicitReopen });
 	// Every open already accepted anywhere on this host, not just on this connection: the
 	// in-process runtime serves them on ONE loop, so the wait this caller faces is the total.
 	let inFlight = 0;
@@ -58,7 +62,7 @@ function openPhysicalWithBarrier(
 			position: inFlight + 1,
 			in_flight: inFlight,
 		});
-	const start = () => open(host, command, owner, accept === undefined ? { replyAs } : { accept, signal });
+	const start = () => open(host, command, owner, { replyAs, explicitReopen, accept, signal });
 	// A late open's physical session is released by its admission (the accept/rollback path, 4272-admission-
 	// abandonment), so the late response itself owns nothing to release here.
 	const opened = signal === undefined ? start() : runAdmissionProducer(signal, start, async () => {});
@@ -88,6 +92,7 @@ export async function open(
 	owner?: string,
 	options?: {
 		readonly reply?: boolean;
+		readonly explicitReopen?: boolean;
 		readonly accept?: OpenAcceptance;
 		readonly signal?: AbortSignal;
 		readonly defaults?: boolean;
@@ -107,6 +112,7 @@ export async function open(
 	const validated = validatedOpenProfile(host, command, options);
 	if ("type" in validated) return validated;
 	let opened: OpenRpcSession | undefined;
+	let retirement: Awaited<ReturnType<typeof admitRetirement>>;
 	const timer = startOpenTimer(`host-open:${command.id ?? "-"}`);
 	const assertSessionNotHeld = sessionHeldCheck(
 		(observedStarts) => host.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
@@ -127,6 +133,8 @@ export async function open(
 		timer.mark("held_check");
 		options?.signal?.throwIfAborted();
 		if (invalidSpawnedBy(command)) return error(command.id, "open_session", "invalid_spawned_by");
+		const agentDir = host.registry.agentDir ?? host.defaults.agentDir;
+		retirement = await admitRetirement(agentDir, command, options?.explicitReopen);
 		const ancestry = command.spawnedBy;
 		opened = await host.registry.openSession(
 			ancestry ? { ...profile, spawnedBy: ancestry } : profile,
@@ -157,6 +165,7 @@ export async function open(
 		const entry = host.registry.getForCommand(openedSession.sessionId, "open_session");
 		if (!opened.attached && options?.contextOverlay !== undefined) entry.contextOverlay = options.contextOverlay;
 		const state = entry.worker?.snapshot?.state;
+		retirement?.check(entry.runtime?.session.sessionId ?? state?.sessionId ?? entry.durableSessionId);
 		// The runtime has now published its own lease. Recheck before attaching or replying,
 		// so an opener racing the initial lookup is rolled back rather than admitted.
 		await assertSessionNotHeld(
@@ -200,6 +209,7 @@ export async function open(
 		// After the open SUCCEEDS (MEDIUM-A): a failed open keeps any record entry, so a later start
 		// still reopens that session.
 		await syncRetainedRecord(host, openedSession.sessionId, command.sessionPath);
+		await retirement?.consume();
 		if (options?.accept) {
 			return undefined;
 		}
@@ -214,6 +224,8 @@ export async function open(
 		);
 		return undefined;
 	} catch (cause) {
+		await retirement?.rollback();
+		retirement = undefined;
 		if (opened) {
 			// Only a non-attached open published session_opened and an open status before this
 			// rollback, and only while the registry still holds the live entry, so only that
@@ -233,6 +245,7 @@ export async function open(
 			if (!opened.attached || !compactUpdatesEnabled()) host.writer.forgetSession(opened.sessionId);
 		}
 		if (cause instanceof CompactAdmissionError) throw cause;
+		if (cause instanceof RetirementFault) return error(command.id, command.type, cause.code, cause.detail);
 		if (
 			!opened &&
 			owner &&
@@ -266,5 +279,7 @@ export async function open(
 			if (routed) return routed;
 		}
 		return error(command.id, "open_session", code(cause), detail(cause));
+	} finally {
+		await retirement?.release();
 	}
 }

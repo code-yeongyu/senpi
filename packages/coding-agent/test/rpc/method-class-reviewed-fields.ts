@@ -220,6 +220,7 @@ export const REVIEWED_FIELDS = {
 			"persona",
 			"promptSurface",
 			"provider",
+			"reopenRetired",
 			"retain_on_disconnect",
 			"retry",
 			"retryFallback",

@@ -157,6 +157,7 @@ import {
 	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
 import { buildRpcSessionState } from "./rpc-session-state.ts";
+import { readSessionRetirement } from "../../core/session-retirement.ts";
 import { getSnapshot } from "./get-snapshot.ts";
 import type { UiRequestChange } from "./snapshot-types.ts";
 import { sessionUiAnswerLedger } from "./ui-answer-ledger.ts";
@@ -1754,6 +1755,9 @@ export function createRpcConnectionHandler(
 			case "get_state":
 				return success(id, "get_state", {
 					...buildRpcSessionState(session, lastAbortSource),
+					...(session.sessionFile && {
+						retirement: await readSessionRetirement(session.agentDir, session.sessionId),
+					}),
 					answeredUiRequests: [...sessionUiAnswerLedger(session).snapshot(), ...secretInputs.answered()],
 				});
 			case "request_self_settle":
