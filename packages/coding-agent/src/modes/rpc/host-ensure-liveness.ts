@@ -1,18 +1,20 @@
 /**
- * What an ensure may conclude about a registered generation that did not answer: whether anything still
- * accepts at the public path, and whether the generation is alive but stalled (senpi#2566, IS-5). Split
- * out of `host-ensure.ts`; neither check ever signals anything.
+ * What an ensure may conclude about a registered generation that did not answer: whether its public path still
+ * accepts (`EndpointServing`, probed once by the caller), whether the process that registered it is gone, and
+ * whether the generation is alive but stalled (senpi#2566, IS-5). Split out of `host-ensure.ts`; no check here
+ * ever signals anything.
  */
 import { lstat } from "node:fs/promises";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
-import type { RegisteredHost } from "./host-daemon-registration.ts";
+import type { HostPidFileWriter, RegisteredHost } from "./host-daemon-registration.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
+import type { EndpointServing } from "./host-endpoint-serving.ts";
+import { resolvePidFileOwnership } from "./host-ensure-stop.ts";
 import type { HostHolder } from "./host-holder.ts";
-import { probeSocketReachable } from "./host-probe.ts";
 import { hostChildAlive, hostLoopStalled, stallRefusalWindowMs } from "./host-stalled-evidence.ts";
 import { loopLagErrorMs } from "./loop-lag-threshold.ts";
-import { socketEntryListenerState, statSocketIdentity } from "./socket-ownership.ts";
+import { socketEntryListenerState } from "./socket-ownership.ts";
 
 /**
  * IS-5: a generation nothing can reach whose loop is measurably stalled is still serving its sessions, so
@@ -39,15 +41,16 @@ export async function refuseIfStalled(
  * I1 for a record another process wrote: while something still accepts at the public path, the generation
  * it names may own the endpoint, so the ensure refuses `foreign_writer` - and the refusal names that
  * generation, so every client can say WHO is in the way instead of only that something is
- * (omo-desktop-app#3561). An endpoint nothing accepts at is left to the caller's stranded start (#1936).
+ * (omo-desktop-app#3561). An endpoint nothing accepts at (`absent`) is left to the caller's stranded start (#1936).
  */
 export async function refuseIfForeignHeld(
 	paths: HostDaemonPaths,
 	registered: RegisteredHost,
 	socket: string,
 	protocol: HostProtocolInfo | undefined,
+	serving: EndpointServing,
 ): Promise<void> {
-	if (!(await publicEndpointAccepts(socket))) return;
+	if (serving === "absent") return;
 	const holder = await readHostHolder(paths, registered);
 	throw new HostEnsureRefusedError(socket, "foreign_writer", protocol, undefined, holder);
 }
@@ -67,36 +70,24 @@ export async function readHostHolder(paths: HostDaemonPaths, registered: Registe
 }
 
 /**
- * Only the connect matters here, never an answer: the kernel completes it from the listen backlog
- * without the host's event loop, so a live owner under load still accepts within this budget.
+ * I1's other carve-out (senpi#4769): a record whose writer is provably gone - its pid is not live, or now belongs to a
+ * process started at another time - has nobody left who may end the generation it names. A record with no writer
+ * stamp, or one whose identity cannot be read, is never called gone.
  */
-const FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS = 2_000;
-
-/**
- * Whether SOMETHING still accepts connections at the public path - the one fact that says a
- * registered process may still own the endpoint. A missing entry and an entry nobody listens
- * behind (connection refused) both answer no; an accepted connection, however silent, answers yes.
- * A named pipe has no entry to lose and an abstract socket has no path, so both read as owned;
- * so does an entry this process cannot stat, because an owner that cannot be ruled out is one
- * this ensure must not bind over.
- */
-export async function publicEndpointAccepts(socket: string): Promise<boolean> {
-	if (process.platform === "win32" || socket.startsWith("\0")) return true;
-	const entry = await statSocketIdentity(socket).then(
-		(identity) => (identity === undefined ? "absent" : "present"),
-		() => "unknown",
-	);
-	if (entry === "absent") return false;
-	if (entry === "unknown") return true;
-	return probeSocketReachable(socket, FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS);
+export async function writerGone(
+	writer: HostPidFileWriter | undefined,
+	readStartTime: (pid: number) => Promise<string | undefined>,
+): Promise<boolean> {
+	if (writer === undefined || writer.startTime === null) return false;
+	const identity = { pid: writer.pid, processStartTime: writer.startTime };
+	return (await resolvePidFileOwnership(identity, readStartTime)) === "gone";
 }
 
 /**
  * Whether something stands behind a public path that no registration names: the gate before an
- * ensure would start a host there. Unlike `publicEndpointAccepts` it also counts a listener that
- * refuses only because its backlog is full (`socketEntryListenerState`), because a start there
- * could only lose the bind; the registered paths keep `publicEndpointAccepts`, whose "not
- * accepting" leads to the stall check (IS-5).
+ * ensure would start a host there. Unlike the registered paths' `absent` verdict it also counts a listener
+ * that refuses only because its backlog is full (`socketEntryListenerState`), because a start there
+ * could only lose the bind; on the registered paths that "not accepting" leads to the stall check (IS-5).
  *
  * An entry that is not a socket is held too (#5280): the start's `prepareSocketPath` never removes one, so
  * a start there could only fail. The connect probe cannot tell: macOS answers ENOTSOCK, but Linux answers

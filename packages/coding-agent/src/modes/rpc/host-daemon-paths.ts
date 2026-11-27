@@ -94,6 +94,8 @@ export interface HostDaemonPaths {
 	readonly lockFile: string;
 	readonly settingsFile: string;
 	readonly stderrLog: string;
+	/** The log a fresh start moved aside: the replaced generation's last words (senpi#4769). */
+	readonly previousStderrLog: string;
 	readonly generationsDir: string;
 	readonly reservationsDir: string;
 }
@@ -134,6 +136,7 @@ export function hostDaemonDirectoryPaths(dir: string): HostDaemonDirectory {
 		lockFile: join(dir, "daemon.lock"),
 		settingsFile: join(dir, "settings.json"),
 		stderrLog: join(dir, "stderr.log"),
+		previousStderrLog: join(dir, "stderr.prev.log"),
 		generationsDir: join(dir, "generations"),
 		reservationsDir: join(dir, "reservations"),
 	};

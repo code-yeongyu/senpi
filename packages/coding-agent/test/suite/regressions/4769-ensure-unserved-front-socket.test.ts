@@ -52,28 +52,31 @@ describe.skipIf(process.platform === "win32")("ensure judges a registered primar
 		["gone", "unavailable"],
 		["self", "reset"],
 		["self", "unavailable"],
-	] as const)("replaces a live process whose socket accepts but cannot serve (writer %s, front %s)", async (writer, front) => {
-		const qa = await scratch(`${writer}-${front}`);
-		const host = await startFront(qa, front);
-		await register(qa, host, writer);
-		const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
-		await writeFile(paths.stderrLog, `${OLD_GENERATION_LOG}\n`, { mode: 0o600 });
-		const exited = once(host.child, "exit");
+	] as const)(
+		"replaces a live process whose socket accepts but cannot serve (writer %s, front %s)",
+		async (writer, front) => {
+			const qa = await scratch(`${writer}-${front}`);
+			const host = await startFront(qa, front);
+			await register(qa, host, writer);
+			const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
+			await writeFile(paths.stderrLog, `${OLD_GENERATION_LOG}\n`, { mode: 0o600 });
+			const exited = once(host.child, "exit");
 
-		const result = await ensureHost({
-			agentDir: qa.agentDir,
-			socket: qa.socket,
-			_test: { ...fixtureLaunch(qa), servingProbeExpiry: virtualClock().expire },
-		});
-		result.release();
+			const result = await ensureHost({
+				agentDir: qa.agentDir,
+				socket: qa.socket,
+				_test: { ...fixtureLaunch(qa), servingProbeExpiry: virtualClock().expire },
+			});
+			result.release();
 
-		await exited;
-		expect(result.reused).toBe(false);
-		expect(result.pid).not.toBe(host.pid);
-		expect(await readHostRegistration(paths)).toMatchObject({ record: { pid: result.pid } });
-		expect(await answers(qa.socket)).toBe(true);
-		expect(await readFile(join(paths.dir, "stderr.prev.log"), "utf8")).toContain(OLD_GENERATION_LOG);
-	}, 30_000);
+			await exited;
+			expect(result.reused).toBe(false);
+			expect(result.pid).not.toBe(host.pid);
+			expect(await readHostRegistration(paths)).toMatchObject({ record: { pid: result.pid } });
+			expect(await answers(qa.socket)).toBe(true);
+			expect(await readFile(join(paths.dir, "stderr.prev.log"), "utf8")).toContain(OLD_GENERATION_LOG);
+		},
+	);
 
 	it("still refuses foreign_writer while the writer that registered the unserved host is alive", async () => {
 		const qa = await scratch("live-writer");
@@ -89,7 +92,7 @@ describe.skipIf(process.platform === "win32")("ensure judges a registered primar
 		expect(failure).toBeInstanceOf(HostEnsureRefusedError);
 		expect((failure as HostEnsureRefusedError).reason).toBe("foreign_writer");
 		expect(processIsLive(host.pid)).toBe(true);
-	}, 30_000);
+	});
 
 	it("never replaces a host that holds the connection silent past the probe deadline", async () => {
 		const qa = await scratch("held");
@@ -116,7 +119,7 @@ describe.skipIf(process.platform === "win32")("ensure judges a registered primar
 		expect(failure).toBeInstanceOf(HostEnsureRefusedError);
 		expect((failure as HostEnsureRefusedError).reason).toBe("foreign_writer");
 		expect(processIsLive(host.pid)).toBe(true);
-	}, 30_000);
+	});
 });
 
 async function scratch(label: string): Promise<Qa> {
@@ -189,9 +192,13 @@ async function writerStamp(writer: Writer): Promise<{ pid: number; startTime: st
 	if (writer === "self") return { pid: process.pid, startTime: (await waitForStartTime(process.pid, 10_000)) ?? null };
 	// A writer process that blocks on a pipe until the test closes it: `live` keeps it open, `gone` closes it and
 	// waits for the exit, so the recorded identity names a process that provably no longer exists.
-	const child = spawn(process.execPath, ["-e", "process.stdin.resume(); process.stdin.on('end', () => process.exit(0))"], {
-		stdio: ["pipe", "ignore", "ignore"],
-	});
+	const child = spawn(
+		process.execPath,
+		["-e", "process.stdin.resume(); process.stdin.on('end', () => process.exit(0))"],
+		{
+			stdio: ["pipe", "ignore", "ignore"],
+		},
+	);
 	children.push(child);
 	await once(child, "spawn");
 	const pid = child.pid ?? 0;
