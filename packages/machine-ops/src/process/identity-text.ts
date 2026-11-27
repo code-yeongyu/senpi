@@ -92,8 +92,31 @@ export function stringEnd(text: string, start: number): number {
 const spelled = (key: string) => [...key].map((c) => `(?:${c}|\\\\u00${c.charCodeAt(0).toString(16)})`).join("");
 const KEY_NAME = `(?<!\\\\)(["'])(?:${spelled("secretKey")}|${spelled("sealedKey")})\\1\\s*`;
 const KEY_TEXT = new RegExp(`${KEY_NAME}:\\s*(["'])`, "gi");
-const HUMAN_BEFORE = /["']kind["']\s*:\s*["']human["']/;
-const VERSION_BEFORE = /["']v["']\s*:\s*1(?![\d.eE])/;
+const HUMAN_BEFORE = /["']kind["']\s*:\s*["']human["']/g;
+const VERSION_BEFORE = /["']v["']\s*:\s*1(?![\d.eE])/g;
+
+/** Whether the line holding position i (asked in increasing order) names a human record, kind
+ * and v, before i. Forward pointers only, so a long line costs linear time, not time per key. */
+function humanLineBefore(text: string): (i: number) => boolean {
+	const ends = (pattern: RegExp) => [...text.matchAll(pattern)].map((m) => [m.index, m.index + m[0].length]);
+	const humans = ends(HUMAN_BEFORE);
+	const versions = ends(VERSION_BEFORE);
+	let lineStart = 0,
+		nextBreak = text.indexOf("\n"),
+		h = 0,
+		v = 0,
+		lastHuman = -1,
+		lastVersion = -1;
+	return (i) => {
+		while (nextBreak !== -1 && nextBreak < i) {
+			lineStart = nextBreak + 1;
+			nextBreak = text.indexOf("\n", lineStart);
+		}
+		while (h < humans.length && humans[h][1] <= i) lastHuman = humans[h++][0];
+		while (v < versions.length && versions[v][1] <= i) lastVersion = versions[v++][0];
+		return lastHuman >= lineStart && lastVersion >= lineStart;
+	};
+}
 const KEY_TEXT_END = new RegExp(`${KEY_NAME}(:\\s*)?$`, "i");
 
 /** Fail-safe: where the text spells a secret key but the parser was not at a key there, its
@@ -156,6 +179,7 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 	const found: Span[] = [];
 	const stack: ObjectScope[] = [];
 	const starts = new Set<number>();
+	const humanLine = humanLineBefore(text);
 	// Fail-safe doubt mark: a string ended by a line break means the parser lost its place, so
 	// every secret value is masked until an object opens and closes cleanly at depth zero.
 	let doubt = false;
@@ -205,9 +229,7 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 				scope?.candidates.push(span);
 				// Fail-safe: no known object, a doubt mark, or a line that already named a human record
 				// (an escape earlier on the line can shift the parse out of it): mask regardless.
-				const line = text.slice(text.lastIndexOf("\n", i) + 1, i);
-				if (!scope || doubt || (HUMAN_BEFORE.test(line) && VERSION_BEFORE.test(line)))
-					found.push({ ...span, until: text[v] });
+				if (!scope || doubt || humanLine(i)) found.push({ ...span, until: text[v] });
 			}
 			found.push(...nestedSpans(text, v + 1, close, depth, close === text.length ? undecided : undefined));
 			i = close;

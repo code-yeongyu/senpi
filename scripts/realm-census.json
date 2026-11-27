@@ -10032,6 +10032,10 @@
 			"class": "constant",
 			"reason": "pattern built once at load; read only through matchAll, which clones it, so its lastIndex is never shared"
 		},
+		"packages/machine-ops/src/process/identity-text.ts#HUMAN_BEFORE": {
+			"class": "constant",
+			"reason": "pattern literal read only through matchAll, which clones it, so its lastIndex is never shared"
+		},
 		"packages/machine-ops/src/process/identity-text.ts#KEY_NAME": {
 			"class": "constant",
 			"reason": "pattern source string built once at load from constants; never written after load"
@@ -10047,6 +10051,10 @@
 		"packages/machine-ops/src/process/identity-text.ts#SEPARATOR": {
 			"class": "constant",
 			"reason": "pattern source string built once at load from constants; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#VERSION_BEFORE": {
+			"class": "constant",
+			"reason": "pattern literal read only through matchAll, which clones it, so its lastIndex is never shared"
 		},
 		"packages/machine-ops/src/process/identity-text.ts#TOKEN": {
 			"class": "constant",

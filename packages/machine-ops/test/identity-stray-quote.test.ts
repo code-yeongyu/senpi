@@ -101,6 +101,20 @@ describe("a stray quote does not hide a later human record", () => {
 	});
 });
 
+describe("a key-dense line costs linear time", () => {
+	// Review M5: the same-line facts are found once per line, not once per key.
+	it("doubles the work for twice the keys on one line at most 2.5 times the time", () => {
+		const run = (keys: number) => {
+			const text = `[${'{"kind":"robot","v":1,"secretKey":"x"},'.repeat(keys)}{}]\n`;
+			const started = performance.now();
+			expect(redactIdentityText(text)).toBe(text);
+			return performance.now() - started;
+		};
+		const best = (n: number) => Math.min(run(n), run(n), run(n));
+		expect(best(40000) / best(20000)).toBeLessThan(2.5);
+	});
+});
+
 describe("unclosed braces cost linear time", () => {
 	it("doubles the work for twice the braces at most 2.5 times the time", () => {
 		const run = (braces: number) => {
