@@ -97,5 +97,4 @@ it.each(["in-process", "worker"] as const)(
 			await source.dispose();
 		}
 	},
-	90_000,
 );
