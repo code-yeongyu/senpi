@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
@@ -31,8 +31,8 @@ const fixture = resolve(__dirname, "../../fixtures/before-compaction.jsonl");
 const tempDirs: string[] = [];
 const children: ChildProcess[] = [];
 
-afterEach(async () => {
-	// A case that times out leaves its CLI running together with the cli-main child it re-launched. Both
+afterAll(async () => {
+	// A launch that never exits leaves its CLI running together with the cli-main child it re-launched. Both
 	// overwrite their command line with process.title, so neither can be found by path: kill the CLI's
 	// process group, then wait for the stderr pipe they share to close, which happens once both have exited.
 	for (const child of children.splice(0)) {
@@ -95,31 +95,42 @@ async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ 
 }
 
 describe("missing session path (#2889)", () => {
-	it.each([
+	const launches = [
 		["--session in print mode", (path: string) => ["--session", path, "-p", "hi"]],
 		["--session in RPC mode", (path: string) => ["--session", path, "--mode", "rpc"]],
 		["--fork", (path: string) => ["--fork", path, "-p", "hi"]],
 		["--rebind", (path: string) => ["--rebind", path, "-p", "hi"]],
-	] as const)(
-		"reports a path that names no file and starts no session: %s",
-		async (_label, argsFor) => {
-			const root = createTempDir();
-			const agentDir = join(root, "agent");
-			const projectDir = join(root, "project");
-			mkdirSync(agentDir, { recursive: true });
-			mkdirSync(projectDir, { recursive: true });
-			const missing = join(root, "sessions", "typo-does-not-exist.jsonl");
+	] as const;
+	const runs = new Map<
+		string,
+		{ root: string; agentDir: string; missing: string; code: number | null; stderr: string }
+	>();
 
-			const result = await runCli(argsFor(missing), projectDir, agentDir);
+	beforeAll(async () => {
+		// The cold CLI start is the slow part of every case: all four launch together, once, before the cases assert.
+		await Promise.all(
+			launches.map(async ([label, argsFor]) => {
+				const root = createTempDir();
+				const agentDir = join(root, "agent");
+				const projectDir = join(root, "project");
+				mkdirSync(agentDir, { recursive: true });
+				mkdirSync(projectDir, { recursive: true });
+				const missing = join(root, "sessions", "typo-does-not-exist.jsonl");
+				runs.set(label, { root, agentDir, missing, ...(await runCli(argsFor(missing), projectDir, agentDir)) });
+			}),
+		);
+	}, 120_000);
 
-			expect(result.code).toBe(1);
-			expect(result.stderr).toContain(`No session file at ${missing}`);
-			expect(existsSync(missing)).toBe(false);
-			expect(listFiles(join(root, "sessions"))).toEqual([]);
-			expect(listFiles(join(agentDir, "sessions"))).toEqual([]);
-		},
-		60_000,
-	);
+	it.each(launches.map(([label]) => label))("reports a path that names no file and starts no session: %s", (label) => {
+		const run = runs.get(label);
+		if (run === undefined) throw new Error(`no CLI launch recorded for ${label}`);
+
+		expect(run.code).toBe(1);
+		expect(run.stderr).toContain(`No session file at ${run.missing}`);
+		expect(existsSync(run.missing)).toBe(false);
+		expect(listFiles(join(run.root, "sessions"))).toEqual([]);
+		expect(listFiles(join(run.agentDir, "sessions"))).toEqual([]);
+	});
 
 	it("still opens an existing session file given by path", async () => {
 		const root = createTempDir();
