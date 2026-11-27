@@ -131,9 +131,10 @@ import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from 
 import { emitUserActivity } from "../../core/extensions/user-activity.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import {
-	checkSessionHolders,
+	admitSessionHolders,
 	describeSessionHolders,
 	SESSION_HOLDER_LOOKUP_FAILED,
+	type SessionAdmission,
 	sessionHolderWarning,
 	stopSessionHolders,
 	takeOverRefusal,
@@ -9161,8 +9162,32 @@ export class InteractiveMode {
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
 		// A session another live process holds must not get a second writer here (senpi#5744): the restored
-		// lifecycle would read that process's live run as interrupted and the next input would run it again.
-		const holderCheck = await checkSessionHolders(sessionPath);
+		// lifecycle would read that process's live run as interrupted and the next input would run it again. The check
+		// claims the session first (senpi#5988), so a start racing this resume finds one of the two as the holder.
+		const admission = await admitSessionHolders(sessionPath);
+		try {
+			return await this.resumeAdmittedSession(sessionPath, admission, options);
+		} finally {
+			await admission.release();
+		}
+	}
+
+	private async resumeAdmittedSession(
+		sessionPath: string,
+		admission: SessionAdmission,
+		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
+	): Promise<{ cancelled: boolean }> {
+		const holderCheck = admission.check;
+		const stillOpen = "Not resumed: the session is still open in another process; quit it there, then /resume again.";
+		if (
+			"holders" in holderCheck &&
+			holderCheck.holders.length === 0 &&
+			!admission.claimed &&
+			!(await admission.retake())
+		) {
+			this.showWarning(stillOpen);
+			return { cancelled: true };
+		}
 		if ("holders" in holderCheck && holderCheck.holders.length > 0) {
 			const takeOver = "Take over (stop it there)";
 			const refusal = takeOverRefusal(holderCheck.holders);
@@ -9183,10 +9208,8 @@ export class InteractiveMode {
 				);
 				return { cancelled: true };
 			}
-			if (!stopped) {
-				this.showWarning(
-					"Not resumed: the session is still open in another process; quit it there, then /resume again.",
-				);
+			if (!stopped || !(await admission.retake())) {
+				this.showWarning(stillOpen);
 				return { cancelled: true };
 			}
 		}

@@ -1,23 +1,18 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { SESSION_HELD_EXIT_CODE } from "../../../src/cli/session-opening.ts";
+import { type CliStart, cliStart } from "./5988-start-support.ts";
 
 // senpi#5988: startup admission checks for a live holder, and the starting process publishes its own holder record
 // only later. Two `--session <file>` starts that both run the check before either publishes must not both become
 // writers: exactly one is admitted, and the other gets the held-session refusal.
-const STEP = fileURLToPath(new URL("./5988-start-step.ts", import.meta.url));
-const REPO = fileURLToPath(new URL("../../../../../", import.meta.url));
-
 let root: string;
 let file: string;
 let id: string;
-const started: Start[] = [];
+const started: CliStart[] = [];
 
 beforeEach(async () => {
 	root = await mkdtemp(join(tmpdir(), "5988-simultaneous-start-"));
@@ -30,38 +25,12 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	for (const start of started.splice(0)) {
-		start.child.stdin.end();
-		await start.exited;
-	}
+	for (const start of started.splice(0)) await start[Symbol.asyncDispose]();
 	await rm(root, { recursive: true, force: true });
 });
 
-interface Start {
-	readonly child: ChildProcessWithoutNullStreams;
-	readonly exited: Promise<number | null>;
-	next(): Promise<Record<string, unknown> | undefined>;
-	go(): void;
-}
-
-function start(): Start {
-	const child = spawn("bun", [STEP, JSON.stringify({ root, file, id })], {
-		cwd: REPO,
-		stdio: ["pipe", "pipe", "pipe"],
-	});
-	const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-	const exited = new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code)));
-	const one: Start = {
-		child,
-		exited,
-		next: async () => {
-			const line = await lines.next();
-			if (line.done === true) return undefined;
-			const value: unknown = JSON.parse(line.value);
-			return typeof value === "object" && value !== null ? { ...value } : undefined;
-		},
-		go: () => void child.stdin.write("go\n"),
-	};
+function start(): CliStart {
+	const one = cliStart({ root, file, id });
 	started.push(one);
 	return one;
 }

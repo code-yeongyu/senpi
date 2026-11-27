@@ -30,6 +30,7 @@ import {
 } from "./session-hold-errors.ts";
 import { type HolderGeneration, liveHolders, type SessionHolderProbes } from "./session-holder-records.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
+import { dropStartClaim, startClaimant, takeStartClaim } from "./session-start-claim.ts";
 import { advanceSessionFence } from "./session-write-fence.ts";
 
 export {
@@ -196,6 +197,15 @@ export async function holdSessionFile(
 		release();
 		throw new SessionMovedError(sessionFile);
 	}
+	// The record now stands for this process, so the start claim taken at admission has done its part (senpi#5988). A
+	// claim another start broke (it expired) let that start in: re-check now that this record is visible to it.
+	if ((await dropStartClaim(sessionId)) === "lost") {
+		const others = (await liveSessionHolders(sessionFile, sessionId)).filter(({ pid }) => pid !== process.pid);
+		if (others.length > 0) {
+			release();
+			throw new SessionHeldError(sessionFile, others);
+		}
+	}
 	return { release };
 }
 
@@ -225,12 +235,25 @@ export async function liveSessionHolders(
 	sessionId: string,
 	probes: SessionHolderProbes = {},
 ): Promise<SessionHolder[]> {
+	const dir = holdersDir(sessionFile, sessionId);
+	let holders: SessionHolder[];
 	try {
-		return await liveHolders(holdersDir(sessionFile, sessionId), probes, () => advanceSessionFence(sessionFile));
+		holders = await liveHolders(dir, probes, () => advanceSessionFence(sessionFile));
 	} catch (error) {
-		if (errorCode(error) === "ENOENT") return [];
-		throw error;
+		if (errorCode(error) !== "ENOENT") throw error;
+		holders = [];
 	}
+	// A start that claimed the session is a holder before its record exists (senpi#5988).
+	const claimant = await startClaimant(dir, probes);
+	return claimant === undefined || holders.some(({ pid }) => pid === claimant.pid) ? holders : [...holders, claimant];
+}
+
+/**
+ * Claims the start of `sessionFile` for this process (senpi#5988): true when it now holds the claim, false when another
+ * live process does. The claim counts as a holder until this process's hold on the session publishes its record.
+ */
+export async function claimSessionStart(sessionFile: string, sessionId: string): Promise<boolean> {
+	return takeStartClaim(holdersDir(sessionFile, sessionId), sessionId, await identityRecord(process.cwd()));
 }
 
 // A concurrent mover that finishes removes the emptied lock directory. A recursive mkdir that saw the directory
@@ -289,7 +312,12 @@ export async function withSessionMoveLock<T>(
 	const lock = join(dir, MOVE_LOCK);
 	const mine = await takeMoveLock(sessionFile, lock, options.waitMs ?? DEFAULT_MOVE_LOCK_WAIT_MS);
 	try {
-		const holders = await liveHolders(dir);
+		// Another process's start claim blocks a move; this process's own (a rebind right after admission) does not.
+		const claimant = await startClaimant(dir);
+		const holders = [
+			...(await liveHolders(dir)),
+			...(claimant === undefined || claimant.pid === process.pid ? [] : [claimant]),
+		];
 		if (holders.length > 0) throw new SessionHeldError(sessionFile, holders);
 		return await move();
 	} finally {
