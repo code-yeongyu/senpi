@@ -768,7 +768,12 @@ async function processStream(
 	sentServiceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast",
 ): Promise<void> {
 	await processResponsesStream(
-		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent),
+		mapCodexEvents(
+			parseSSE(response, options?.signal, options?.onTransportActivity),
+			output,
+			model,
+			options?.onProviderStreamEvent,
+		),
 		output,
 		stream,
 		model,
@@ -942,7 +947,11 @@ function normalizeCodexStatus(status: unknown): CodexResponseStatus | undefined 
 // SSE Parsing
 // ============================================================================
 
-async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
+async function* parseSSE(
+	response: Response,
+	signal?: AbortSignal,
+	onActivity?: () => void,
+): AsyncGenerator<Record<string, unknown>> {
 	if (!response.body) return;
 
 	const reader = response.body.getReader();
@@ -962,6 +971,7 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
+			if (!done && value.byteLength > 0) onActivity?.();
 			buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
 			// Treat EOF as terminating the residual SSE frame.
 			if (done && buffer.trim()) buffer += "\n\n";

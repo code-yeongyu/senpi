@@ -63,7 +63,8 @@ export function createBunTerminalSession(
 	}
 	const child = runtime.spawn([options.command, ...options.args], {
 		cwd: options.cwd,
-		env: options.env ? mergeEnvironment(options.env) : undefined,
+		// Bun.spawn without `env` passes the startup environment, ignoring variables deleted from process.env since.
+		env: mergeEnvironment(options.env ?? {}),
 		terminal: {
 			cols: options.cols,
 			rows: options.rows,

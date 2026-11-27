@@ -95,7 +95,10 @@ export function admitInput(
 	});
 	const identity = clientMessageId === undefined ? {} : { clientMessageId };
 	const admitted = (disposition: TerminalInputReceipt["disposition"]): object => {
-		const holds = result.holds === undefined ? {} : { holds: [...result.holds] };
+		const holds = {
+			...(result.holds === undefined ? {} : { holds: [...result.holds] }),
+			...(result.engine_turn_cap === undefined ? {} : { engineTurnCap: result.engine_turn_cap }),
+		};
 		if (clientMessageId === undefined) return answered(id, command.type, { disposition, ...holds });
 		const receipt: TerminalInputReceipt = {
 			fingerprint,

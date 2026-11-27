@@ -16,18 +16,21 @@
  */
 
 import { APP_NAME, getAgentDir } from "../config.ts";
-import { cancelScheduledJob } from "../core/extensions/builtin/schedule/occurrences.ts";
-import { liveRunners, RUNNER_HEARTBEAT_STALE_MS } from "../core/extensions/builtin/schedule/runner-lease.ts";
-import { listScheduledJobs, scheduleDir } from "../core/extensions/builtin/schedule/store.ts";
-import { type RunOptions, runPasses, writeLine } from "./schedule-watch.ts";
+import {
+	cancelSchedule,
+	listSchedules,
+	runSchedule,
+	SCHEDULE_RUN_DEFAULTS,
+	type ScheduleRunInput,
+} from "../engine/schedule.ts";
 
 const EXIT_OK = 0;
 const EXIT_FAILED = 1;
 const EXIT_USAGE = 2;
 
-const DEFAULT_POLL_SECONDS = 60;
-const DEFAULT_TIMEOUT_SECONDS = 900;
-const DEFAULT_CONCURRENCY = 4;
+const DEFAULT_POLL_SECONDS = SCHEDULE_RUN_DEFAULTS.poll_seconds;
+const DEFAULT_TIMEOUT_SECONDS = SCHEDULE_RUN_DEFAULTS.timeout_seconds;
+const DEFAULT_CONCURRENCY = SCHEDULE_RUN_DEFAULTS.concurrency;
 
 const USAGE = `usage: ${APP_NAME} schedule <list|cancel|run> [options]
 
@@ -54,12 +57,12 @@ function positiveInteger(flag: string, value: string | undefined): number {
 	return parsed;
 }
 
-function parseRunOptions(args: readonly string[]): RunOptions {
+function parseRunOptions(args: readonly string[]): ScheduleRunInput {
 	let watch = false;
 	let exec: string | undefined;
-	let pollSeconds = DEFAULT_POLL_SECONDS;
-	let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
-	let concurrency = DEFAULT_CONCURRENCY;
+	let pollSeconds: number = DEFAULT_POLL_SECONDS;
+	let timeoutSeconds: number = DEFAULT_TIMEOUT_SECONDS;
+	let concurrency: number = DEFAULT_CONCURRENCY;
 	for (let index = 0; index < args.length; index += 1) {
 		const arg = args[index];
 		if (arg === "--watch") watch = true;
@@ -71,7 +74,17 @@ function parseRunOptions(args: readonly string[]): RunOptions {
 		else if (arg === "--concurrency") concurrency = positiveInteger(arg, args[++index]);
 		else throw new UsageError(`unknown option for run: ${arg}`);
 	}
-	return { watch, exec, pollSeconds, timeoutSeconds, concurrency };
+	return {
+		watch,
+		...(exec === undefined ? {} : { exec }),
+		poll_seconds: pollSeconds,
+		timeout_seconds: timeoutSeconds,
+		concurrency,
+	};
+}
+
+function writeLine(value: unknown): void {
+	process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
 function formatRelative(ms: number): string {
@@ -81,13 +94,9 @@ function formatRelative(ms: number): string {
 	return ms >= 0 ? `in ${text}` : `${text} ago`;
 }
 
-async function list(dir: string, json: boolean): Promise<number> {
-	const { jobs, invalid } = await listScheduledJobs(dir);
-	const now = Date.now();
-	const runners = (await liveRunners(dir)).map((runner) => ({
-		...runner,
-		fresh: now - runner.beatAt <= RUNNER_HEARTBEAT_STALE_MS,
-	}));
+async function list(agentDir: string, json: boolean): Promise<number> {
+	const { value } = await listSchedules({ agentDir });
+	const { jobs, invalid, runners, observedAt: now } = value;
 	if (json) {
 		writeLine({
 			jobs: jobs.map((record) => ({
@@ -119,36 +128,54 @@ async function list(dir: string, json: boolean): Promise<number> {
 	return EXIT_OK;
 }
 
-async function cancel(dir: string, id: string | undefined): Promise<number> {
+async function cancel(agentDir: string, id: string | undefined): Promise<number> {
 	if (id === undefined) throw new UsageError("cancel needs a job id");
-	const removed = await cancelScheduledJob(dir, id);
-	if (removed === undefined) {
-		process.stderr.write(`No scheduled prompt ${id}.\n`);
+	const result = await cancelSchedule({ agentDir }, { id });
+	if (result.kind === "error") {
+		process.stderr.write(`${result.error.message}\n`);
 		return EXIT_FAILED;
 	}
 	process.stdout.write(
-		removed.inFlight
+		result.value.inFlight
 			? `Cancelled ${id}. One delivery had already started and may still complete; nothing after it will run.\n`
 			: `Cancelled ${id}.\n`,
 	);
 	return EXIT_OK;
 }
 
+/** SIGTERM and SIGINT stop a watching runner after its current pass; a single pass keeps the default handling. */
+async function run(agentDir: string, input: ScheduleRunInput): Promise<number> {
+	const controller = new AbortController();
+	const stop = () => controller.abort();
+	if (input.watch === true) {
+		process.on("SIGTERM", stop);
+		process.on("SIGINT", stop);
+	}
+	try {
+		const result = await runSchedule({ agentDir }, { ...input, signal: controller.signal }, { onEvent: writeLine });
+		if (result.kind === "error") throw new UsageError(result.error.message);
+		return result.value.failed ? EXIT_FAILED : EXIT_OK;
+	} finally {
+		process.off("SIGTERM", stop);
+		process.off("SIGINT", stop);
+	}
+}
+
 /** Runs `senpi schedule ...` (argv without the leading `schedule`) and returns the exit code. */
 export async function runScheduleCommand(args: readonly string[]): Promise<number> {
-	const dir = scheduleDir(getAgentDir());
+	const agentDir = getAgentDir();
 	const [subcommand, ...rest] = args;
 	try {
 		switch (subcommand) {
 			case "list":
 				if (rest.some((arg) => arg !== "--json"))
 					throw new UsageError(`unknown option for list: ${rest.join(" ")}`);
-				return await list(dir, rest.includes("--json"));
+				return await list(agentDir, rest.includes("--json"));
 			case "cancel":
 				if (rest.length > 1) throw new UsageError("cancel takes exactly one job id");
-				return await cancel(dir, rest[0]);
+				return await cancel(agentDir, rest[0]);
 			case "run":
-				return await runPasses(dir, parseRunOptions(rest));
+				return await run(agentDir, parseRunOptions(rest));
 			case "--help":
 			case "-h":
 			case "help":

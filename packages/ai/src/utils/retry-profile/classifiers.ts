@@ -57,7 +57,7 @@ export const classifyKimiFailure: RetryClassifier = (failure) => {
 
 /**
  * Structured status codes the senpi default classifier treats as retryable
- * when — and only when — the message regexes have no opinion. Mirrors the
+ * when the message classification has no opinion. Mirrors the
  * transient half of Kimi's table plus the Cloudflare gateway codes senpi
  * already retries by regex.
  */
@@ -76,8 +76,8 @@ const SENPI_STRUCTURED_TERMINAL_PROVIDER_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Senpi assistant-turn classifier: the existing message regexes decide first;
- * structured failure facts are consulted only where the regexes are silent.
+ * Senpi assistant-turn classifier: the message regexes decide first, using the
+ * structured HTTP status in preference to legacy 408 text.
  *
  * Precedence (terminal wins at every tie):
  * 1. Deterministic failure kinds (abort/refusal/sensitive/quota/image-format)
@@ -104,7 +104,7 @@ export const classifySenpiAssistantFailure: RetryClassifier = (failure) => {
 			return { verdict: "terminal" };
 	}
 
-	const regexVerdict = classifyErrorMessage(failure.message);
+	const regexVerdict = classifyErrorMessage(failure.message, failure.statusCode);
 	if (regexVerdict === "non-retryable") return { verdict: "terminal" };
 
 	if (failure.shouldRetry === false) return { verdict: "terminal" };

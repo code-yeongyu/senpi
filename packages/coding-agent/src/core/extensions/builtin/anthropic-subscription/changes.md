@@ -1,3 +1,41 @@
+## 2026-11-22 - Preserve the typed Claude sign-in error (senpi#5722)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts` carries the account labels from `ClaudeSignInRequiredError` onto the failed message.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-context.ts` shares its operational account label filter with the stream.
+
+### Why
+
+- The adapter previously retained the guidance text but lost the distinction between sign-in and rejection.
+
+### Why an extension could not handle it
+
+- The built-in adapter is the last boundary with the local exception object.
+
+### Expected merge conflict zones
+
+- LOW: the stream error handler and account label helper.
+
+## 2026-11-03 - Signed-in account dirs record their account (senpi#5594)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-account-link.ts` (new): every read and write is asynchronous (`node:fs/promises`). `writeAccountLink` keeps `.senpi-account.json` inside each signed-in account dir (slot name, `signedInAt`, display name; no token, 0600); `renameAccountLink` rewrites the display name on a rename; `backfillAccountLinks` records existing signed-in accounts; `relinkAfterStaleWrite` runs only while a `legacy_sign_in_retired` slot is left and re-links unreferenced dirs (read in dir-id order; newest sign-in per name wins, ties by dir id; the record's display name wins over the stale slot's; a healthy slot keeps its dir; a missing account is appended), returning the same list when nothing changed so a second load writes nothing.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`: login writes the record under the same lock that claims its slot, so it cannot overwrite a later rename of that slot. A failed record write keeps the sign-in; login reports the failure after the lock is released, and the next load backfills the record.
+
+### Why
+
+- auth.json alone cannot keep the slot-to-dir link while an older engine can overwrite the entry (senpi#5594).
+
+### Why an extension could not handle it
+
+- This is the extension's own login path.
+
+### Expected merge conflict zones
+
+- LOW: the claim step in `login()` of `oauth-login.ts`.
+
 ## 2026-11-19 - Claude Code receives senpi's MCP tool descriptions whole (senpi#7032)
 
 ### What changed

@@ -41,35 +41,39 @@ describe("credential notices: exactly once per change in every mode (senpi#3486)
 	});
 	afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-	it("print mode shows it once per run (runtime creation + print mode), then not on the next run", () => {
+	it("print mode shows it once per run (runtime creation + print mode), then not on the next run", async () => {
 		const run = launch();
 		const shown = [
-			...messages(collectAuthDiagnostics(run, "runtime creation", { persistSeen: true })),
-			...messages(collectAuthDiagnostics(run, "print mode", { persistSeen: true })),
+			...messages(await collectAuthDiagnostics(run, "runtime creation", { persistSeen: true })),
+			...messages(await collectAuthDiagnostics(run, "print mode", { persistSeen: true })),
 		];
 		expect(count(shown)).toBe(1);
-		expect(count(messages(collectAuthDiagnostics(launch(), "runtime creation", { persistSeen: true })))).toBe(0);
+		expect(count(messages(await collectAuthDiagnostics(launch(), "runtime creation", { persistSeen: true })))).toBe(
+			0,
+		);
 	});
 
-	it("model listing shows it once, then not on the next run", () => {
-		expect(count(messages(collectAuthDiagnostics(launch(), "model listing", { persistSeen: true })))).toBe(1);
-		expect(count(messages(collectAuthDiagnostics(launch(), "model listing", { persistSeen: true })))).toBe(0);
+	it("model listing shows it once, then not on the next run", async () => {
+		expect(count(messages(await collectAuthDiagnostics(launch(), "model listing", { persistSeen: true })))).toBe(1);
+		expect(count(messages(await collectAuthDiagnostics(launch(), "model listing", { persistSeen: true })))).toBe(0);
 	});
 
-	it("interactive mode shows it once, marks it seen after showing, then not on the next start", () => {
-		const notices = interactiveAuthNotices(launch());
+	it("interactive mode shows it once, marks it seen after showing, then not on the next start", async () => {
+		const notices = await interactiveAuthNotices(launch());
 		expect(count(notices.messages)).toBe(1);
 		notices.markSeen();
-		expect(count(interactiveAuthNotices(launch()).messages)).toBe(0);
+		expect(count((await interactiveAuthNotices(launch())).messages)).toBe(0);
 	});
 
-	it("an RPC run reports it without hiding it from the next interactive start", () => {
-		expect(count(messages(collectAuthDiagnostics(launch(), "runtime creation", { persistSeen: false })))).toBe(1);
-		expect(count(interactiveAuthNotices(launch()).messages)).toBe(1);
+	it("an RPC run reports it without hiding it from the next interactive start", async () => {
+		expect(count(messages(await collectAuthDiagnostics(launch(), "runtime creation", { persistSeen: false })))).toBe(
+			1,
+		);
+		expect(count((await interactiveAuthNotices(launch())).messages)).toBe(1);
 	});
 
-	it("the seen record holds no key material and a failed write does not abort startup", () => {
-		const notices = interactiveAuthNotices(launch());
+	it("the seen record holds no key material and a failed write does not abort startup", async () => {
+		const notices = await interactiveAuthNotices(launch());
 		notices.markSeen();
 		const seen = readFileSync(join(dir, "agent", "auth-notices-seen.json"), "utf-8");
 		expect(seen).not.toContain("sk-secret-material-3486");
@@ -77,7 +81,7 @@ describe("credential notices: exactly once per change in every mode (senpi#3486)
 
 		rmSync(join(dir, "agent", "auth-notices-seen.json"));
 		mkdirSync(join(dir, "agent", "auth-notices-seen.json"));
-		const blocked = interactiveAuthNotices(launch());
+		const blocked = await interactiveAuthNotices(launch());
 		expect(() => blocked.markSeen()).not.toThrow();
 	});
 

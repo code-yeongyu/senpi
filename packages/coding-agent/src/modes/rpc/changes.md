@@ -1,3 +1,83 @@
+## 2026-11-25 - The internal hop lives in the host's own directory and survives losing it (senpi#7452)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: on POSIX, `createInternalSocketPath(baseDir)` places the hop directory in `baseDir` (the supervisor passes the endpoint's daemon directory, `<agentDir>/rpc-host-daemon/<hash>`) whenever `<baseDir>/senpi-rpc-host-internal-<8>/host.sock` fits `MAX_SOCKET_PATH_BYTES`; the OS temp directory and then `/tmp` remain the fallbacks (senpi#3487). `writeInternalHopOwner` is the one writer of the `.owner` record.
+- `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`: `reapOrphanedInternalHostDirs(hostDirs)` also scans the endpoint daemon directories it is given, and on Linux keeps any hop directory that still has a listening unix socket bound inside it, read from `/proc/net/unix` (a `senpi-bind-*` alias path is read back through its link).
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `ensureHost` passes the endpoint's daemon directory to the reaper.
+- `packages/coding-agent/src/modes/rpc/host-internal-hop-guard.ts` (new): `guardInternalHop` re-checks a supervised host's hop entry every `INTERNAL_HOP_GUARD_INTERVAL_MS` (5 s). An absent entry is re-bound at the same path, recreating the private 0700 directory (non-recursively) with an `.owner` naming the supervisor; an entry it cannot re-bind, or one another socket took, is reported through `onLost`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a supervised POSIX host listening in its scratch directory arms the guard after its bind. A re-bind adds a listener (closed with the others, shielded, at shutdown) and updates the bound identity; a loss drains the host, so the supervisor exits with its child and the next ensure starts a fresh generation.
+
+### Why
+
+- A long-lived supervised host lost its hop directory in the shared temp dir while both processes kept running. Every new client was then refused, `host status` reported `reachable: false` for the live supervisor, and a pinned start refused `endpoint_occupied`; nothing ended the generation. The reaper's only liveness evidence was the `.owner` pid, so once the socket name was gone it could finish removing a directory a live host still served.
+
+### Why an extension could not handle it
+
+- The hop placement, the ensure-time reaper and the host's own listener are host lifecycle internals; no extension runs in the supervisor or before the host binds.
+
+### Expected merge conflict zones
+
+- LOW: `multi-session-host.ts` listener creation and the shutdown close of the listening socket.
+- LOW: `host-lifecycle-scratch.ts` `createInternalSocketPath`.
+
+## 2026-11-23 - Replay extension state to a client that attaches to an open session (senpi#4669)
+
+### What changed
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts` sends an `attach_session` caller that declared extension events the session's current extension state, whatever the opener declared; a compact attach gets it only after its admission answered and its baseline is queued.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts` run that replay through the session's extension runner.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` delivers those records to the one attachment, without retaining them for later attachments, and checks at write time that the same attachment still holds the session.
+
+### Why
+- The session's subscription already existed, so its replay at subscription never reached a client that attached later; an idle session left that client without state until the next change.
+
+### Why an extension could not handle it
+- Only the shared host knows which connection just attached and can address that connection alone.
+
+### Expected merge conflict zones
+- The `attach_session` admission path and the session binding's handler surface.
+
+## 2026-11-20 - Sign in with ChatGPT over login_start gets this installation's device ID (#7133, senpi#7127)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` `startLogin`: both branches pass `getDeviceId` from `session.settingsManager.getOrCreateDeviceId()`, the same source the TUI uses. The fresh-login branch also passes `appName`, which `ModelRuntime.login` adds for the reauthorize branch.
+- `packages/coding-agent/test/suite/regressions/7127-rpc-siwc-device-id.test.ts` (new): `login_start chatgpt-subscription`, then "Continue with ChatGPT", yields an `auth_login_url` with `client_id=dynamic_agent_client` and `ext_agent_host_id=urn:uuid:<device id>`, then the manual-code input request.
+- `packages/coding-agent/test/suite/gpt-account-extension.test.ts`: the RPC reauthorize case asserts the provider login receives the device ID. `packages/coding-agent/test/suite/rpc-auth-and-connection-handler.test.ts`: the call assertion expects the options argument.
+
+### Why
+
+- senpi#7127: a Sign in with ChatGPT login started over RPC failed at once with "requires a device ID (UUID) for this installation". The flow reads the ID only from the caller's login options, and the RPC path passed none, so no RPC client could offer it.
+
+### Why an extension could not handle it
+
+- `login_start` is the RPC handler's own command; an extension cannot change the options it hands to a provider login.
+
+### Expected merge conflict zones
+
+- LOW: the `startLogin` options in `connection-handler.ts`.
+
+## 2026-11-06 - verify_api_key takes a region (senpi#5649)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/verify-api-key-region.ts` (new): `verifyApiKeyRegionBaseUrl` runs the provider's own API-key login with the key and region as its answers (the same answers `login_api_key` stores, so an unknown region or a region for a provider whose key has none fails exactly as `login_api_key` fails), then reads the regional host from the provider's own auth resolve — the mapping the `/login` Kimi Code flow uses. Nothing is stored. The default region returns `undefined`, so the caller probes the catalog host as before.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `verify_api_key` case resolves the region host first when `region` is given and passes it to `verifyApiKey`; without a region the call is unchanged. Region resolution and the probe share one 15 s timeout.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`, `rpc-session-command-types.ts`: `verify_api_key` takes the same optional `region` as `login_api_key`.
+- `packages/coding-agent/docs/rpc.md`: the `verify_api_key` section documents `region`.
+
+### Why
+
+- `verify_api_key` could not check a Kimi Code key for the region it will be stored with: the RPC had no region, and the probe used the catalog base URL. The desktop's replace and add-key flow runs `verify_api_key` before saving, so a regional Kimi key could not be replaced or added correctly.
+
+### Why an extension could not handle it
+
+- `verify_api_key` and its command schema are the RPC host's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the `verify_api_key` schema in `method-classes-schema-session.ts` and its command type in `rpc-session-command-types.ts`.
+
 ## 2026-11-22 - Host generation rows retain the measured footprint (senpi#3707)
 
 ### What changed

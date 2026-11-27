@@ -76,7 +76,7 @@ async function ensureHostInKeyRoot(options: EnsureHostOptions): Promise<EnsuredH
 	// ensureHost until a waiter exhausted its budget and surfaced a raw "database is
 	// locked". Its own guards (60s age, dead owner pid) already make it safe unlocked; so do the bind-alias
 	// reaper's (60s age, this user's 0700 directory, its bind directory gone).
-	await Promise.all([reapOrphanedInternalHostDirs(), reapOrphanedBindAliases()]);
+	await Promise.all([reapOrphanedInternalHostDirs([paths.dir]), reapOrphanedBindAliases()]);
 	// A lock waiter must outlast the longest critical section one compliant holder can run: W, derived from
 	// the resolved child-stall setting once per operation (senpi#4602, `startupEnvelope`). Each SQLite busy
 	// wait stays short because it blocks the event loop; W is the cumulative budget. Exhausting it is

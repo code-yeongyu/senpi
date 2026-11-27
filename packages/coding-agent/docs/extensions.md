@@ -350,6 +350,7 @@ user sends prompt ────────────────────�
   │   │   LLM responds, may call tools:            │       │
   │   │     ├─► tool_execution_start               │       │
   │   │     ├─► tool_call (can block)              │       │
+  │   │     ├─► tool_call_ready (final arguments)  │       │
   │   │     ├─► tool_execution_update              │       │
   │   │     ├─► tool_result (can modify)           │       │
   │   │     └─► tool_execution_end                 │       │
@@ -1237,6 +1238,16 @@ pi.on("tool_call", (event) => {
 });
 ```
 
+#### tool_call_ready
+
+Fired once for each call about to run, before the tool executes: after its whole `tool_call` chain let it run, or at once when no `tool_call` handler is registered. `event.input` is a deep copy of the arguments the tool runs with, after the `tool_call` handlers' changes, so an observer sees a path a handler redirected. Observe only: what a handler returns or changes is ignored. Not fired for a blocked call. The call waits for these handlers; Stop (the turn's abort) ends that wait and the call does not run. On a split session it fires where the call runs, not where a forwarded `tool_call` handler is served. The event type is exported as `ToolCallReadyEvent`.
+
+```typescript
+pi.on("tool_call_ready", (event) => {
+  if (event.toolName === "write") reserve(event.toolCallId, event.input.path);
+});
+```
+
 #### tool_result
 
 Fired after tool execution finishes and before `tool_execution_end` plus the final tool result message events are emitted. **Can modify result.**
@@ -1447,6 +1458,10 @@ const note = ctx.sessionManager.reduceHistory(latestNote);
 Optional read-only getter for the absolute path to the current session's authoritative goal-store file. The host resolves it from the session manager and `ctx.cwd`; reading it performs no file creation. Persisted sessions honor session-directory overrides, while in-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Do not derive it from `getSessionFile()`.
 
 Shell tools and eval kernels expose this value as `PI_GOAL_STORE_FILE` and `ctx.cwd` as `PI_SESSION_CWD`. Hand-built contexts and older hosts may omit the getter, in which case `PI_GOAL_STORE_FILE` is unset.
+
+### ctx.telemetryPermitted
+
+Optional read-only getter: whether telemetry attributed to this session may be collected or delivered right now. It is `true` only while the host's own setting permits telemetry AND every caller of the session granted it (see `telemetry_consent` in `docs/rpc.md`). A classic launch has no caller but the host, so the host's setting alone decides. The value changes while the session runs, so read it when an event is collected and again before delivering anything buffered; drop what it no longer permits. A runner with no session answers `false`; hand-built contexts and older hosts may omit the getter, which a reader treats as `false`.
 
 ### ctx.onUserActivity()
 
@@ -1902,7 +1917,7 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 |---|---|---|
 | `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. An endpoint lives for one extension generation: a reload disposes the endpoints the retiring generation registered (also one whose registration finishes after the reload began, which answers `failed`), so register again from `session_start` with reason `reload`. Repeated failures of `drain` show one notice until a pass succeeds. |
 | `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while input the user submitted is still on its way into the runtime. A draft still in the composer never holds a delivery (senpi#7043). |
-| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch, holds? }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake), `held` (with `holds`: the session is idle under a person's Stop, an interrupted run or a parent's run hold, which a peer cannot release; the delivery is kept as a held notice and starts once that hold is released; an `unattended` hold alone is released by the delivery, senpi#6490) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch, holds?, engine_turn_cap? }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake), `held` (with `holds`: the session is idle under a person's Stop, an interrupted run or a parent's run hold, which a peer cannot release; the delivery is kept as a held notice and starts once that hold is released; an `unattended` hold alone is released by the delivery, senpi#6490; or with `engine_turn_cap` `{ reason, count }`: the engine-turn cap stops its turn, the delivery is recorded and the turn a person's message or Resume starts answers it, senpi#7138) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
 | `relocationOffered()` | `boolean` | Whether the session's host offers continuing it on another computer right now. The builtin relocation tools are active only while it is `true`. |
@@ -3489,6 +3504,8 @@ Add these fields to `pi.registerTool(...)`:
 **Important:** You cannot register a tool named `tool_search` yourself; it is a reserved name.
 
 A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
+
+A tool that already did the work itself can still run the `tool_result` handlers for it with `ctx.reportToolResult({ toolName, input, content, details?, isError? })`. No tool runs and no `tool_call` handler is asked; the event carries `parentToolCallId` and an id of the form `<calling id>/reported-<n>`. It resolves to `{ toolCallId, result, failures }`: `result` is what the handlers changed (undefined when none changed anything), and `failures` lists the handlers that threw, timed out or were interrupted, which never rejects the call. Code mode uses it for the files an `eval` cell wrote without calling `write` or `edit`.
 
 `ctx.issuedByModel` says whether the model issued the running call, either through the agent loop or through a provider's exec channel (Cursor), so its result joins the transcript. On a hand (brain/hand split), a call the brain's agent loop dispatched counts too. It is `false` for a call made through `ctx.executeTool()` or `pi.executeTool()`.
 

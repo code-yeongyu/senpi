@@ -62,6 +62,7 @@ export const EXTENSION_EVENT_PLACEMENT = {
 	input: "split",
 	input_disposition: "loop",
 	tool_call: "runtime",
+	tool_call_ready: "runtime",
 	tool_result: "runtime",
 } as const satisfies Record<ExtensionEvent["type"], ExtensionEventPlacement>;
 
