@@ -1150,6 +1150,10 @@ export class ExtensionRunner {
 		const questionFn = ui.question;
 		return inheritMcpMrtrPresentation(ui, {
 			...ui,
+			// Read through, not copied: an RPC UI's capabilities change while the session runs (senpi#7572 `answerer`).
+			get capabilities() {
+				return ui.capabilities;
+			},
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
 			input: (title, placeholder, opts) =>
