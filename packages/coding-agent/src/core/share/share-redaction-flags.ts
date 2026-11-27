@@ -33,8 +33,20 @@ const FLAG_VALUE = new RegExp(
 	"g",
 );
 const FROM_ELSEWHERE = /-(?:stdin|file|path|env|prompt|command|cmd)$/i;
+// Boolean switches whose names read as sensitive take no value: `pg_dump --no-password mydb`, `--ask-vault-pass site.yml`.
+const BOOLEAN_SWITCH = /^(?:no|ask|skip)-/i;
+const takesNoValue = (name: string): boolean => FROM_ELSEWHERE.test(name) || BOOLEAN_SWITCH.test(name);
 // For these clients a bare `--password` only asks for a prompt; the word after it is the database (`psql --password mydb`).
-const PROMPTING_PASSWORD_CLIENT = /\b(?:psql|mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b/;
+// Only the command's own program counts: a host, driver or script named after a client grants nothing.
+const PROMPTING_PASSWORD_CLIENT = /^(?:psql|mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)$/;
+// Words before a command's program that are not its program: `VAR=value` assignments and the `sudo`/`env` wrappers.
+const NOT_PROGRAM = /^(?:[A-Za-z_][A-Za-z0-9_]*=.*|sudo|env)$/;
+
+/** Whether the program of the command these words start (its first word past env assignments, sudo and env) is a prompting client. */
+function programPromptsForPassword(words: readonly string[]): boolean {
+	const program = words.find((word) => !NOT_PROGRAM.test(word));
+	return program !== undefined && PROMPTING_PASSWORD_CLIENT.test(program.replace(/^.*[\\/]/, ""));
+}
 
 function promptsForPassword(text: string, offset: number, flag: string, separator: string): boolean {
 	if (separator === "=" || flag.toLowerCase() !== "--password") return false;
@@ -46,7 +58,12 @@ function promptsForPassword(text: string, offset: number, flag: string, separato
 		before.lastIndexOf("|"),
 		before.lastIndexOf("\n"),
 	);
-	return PROMPTING_PASSWORD_CLIENT.test(before.slice(commandStart + 1));
+	return programPromptsForPassword(
+		before
+			.slice(commandStart + 1)
+			.split(/(?:[ \t]|\\\r?\n)+/)
+			.filter(Boolean),
+	);
 }
 const CLIENT_FLAG = new RegExp(
 	String.raw`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b${SAME_COMMAND}${SEP}-p(?:\\\r?\n)?|\bsshpass\b${SSHPASS_OPTIONS}${SEP}-p(?:${SEP})?|\bredis-cli\b${SAME_COMMAND}${SEP}-a${SEP}|\bdocker\b${SAME_COMMAND}${SEP}login\b${SAME_COMMAND}${SEP}-p${SEP})(?!assword)${VALUE}`,
@@ -97,7 +114,7 @@ export function redactFlagSecrets(text: string, onRedact: () => void): string {
 				whole: string,
 			) => {
 				const name = flag.slice(2);
-				if (!isSensitiveKeyName(name) || FROM_ELSEWHERE.test(name)) return match;
+				if (!isSensitiveKeyName(name) || takesNoValue(name)) return match;
 				if (promptsForPassword(whole, offset, flag, separator)) return match;
 				return redactValue(`${flag}${separator}`, quote, quote === undefined ? bare : quoted);
 			},
@@ -194,13 +211,9 @@ export function redactFlagArguments(items: unknown[], onRedact: () => void): unk
 		if (item.startsWith("-")) return item;
 		if (typeof previous !== "string" || !/^--[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(previous)) return item;
 		const name = previous.slice(2);
-		if (!isSensitiveKeyName(name) || FROM_ELSEWHERE.test(name)) return item;
+		if (!isSensitiveKeyName(name) || takesNoValue(name)) return item;
 		const words = items.slice(0, index).filter((word): word is string => typeof word === "string");
-		if (
-			name.toLowerCase() === "password" &&
-			PROMPTING_PASSWORD_CLIENT.test(words.map((word) => word.replace(/^.*\//, "")).join(" "))
-		)
-			return item;
+		if (name.toLowerCase() === "password" && programPromptsForPassword(words)) return item;
 		onRedact();
 		return "<redacted>";
 	});
