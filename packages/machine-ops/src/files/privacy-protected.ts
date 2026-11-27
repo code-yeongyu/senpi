@@ -32,7 +32,8 @@ export interface ProtectedDirs {
 
 export function privacyProtectedDirs(
 	platform: NodeJS.Platform = process.platform,
-	home: string = homedir(),
+	// HOME first, as Node's os.homedir() reads it on every call; Bun's keeps the home it saw first.
+	home: string = process.env.HOME || homedir(),
 ): ProtectedDirs {
 	if (platform !== "darwin") return { paths: [], caseInsensitive: false };
 	const named = DARWIN_PROTECTED_FOLDERS.map((folder) =>
