@@ -10008,6 +10008,10 @@
 			"class": "realm-registry",
 			"reason": "file-mutation-queue/v1: any copy's edit, write, patch or remote-hand operation on one file must queue, and the stuck-holder diagnostics see every copy (design 3.2, 3.3)"
 		},
+		"packages/machine-ops/src/files/privacy-protected.ts#DARWIN_PROTECTED_FOLDERS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/machine-ops/src/files/realpath-without-open.ts#MISSING_PATH_CODES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
