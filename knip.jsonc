@@ -976,8 +976,6 @@
       "packages/coding-agent/src/core/session-move/ownership.ts": ["isOwnershipEntryType"],
       // pre-existing at origin main aceb1cc1d9: unused exports RevokeMismatchError
       "packages/coding-agent/src/core/session-move/revoke.ts": ["RevokeMismatchError"],
-      // pre-existing at origin main aceb1cc1d9: unused exports writeAtomic
-      "packages/coding-agent/src/core/session-sidecar-store.ts": ["writeAtomic"],
       // pre-existing at origin main aceb1cc1d9: unused exports SESSION_SUMMARY_CACHE_LIMIT, SESSION_SUMMARY_CACHE_MAX_TEXT_BYTES
       "packages/coding-agent/src/core/session-summary-cache.ts": ["SESSION_SUMMARY_CACHE_LIMIT", "SESSION_SUMMARY_CACHE_MAX_TEXT_BYTES"],
       // pre-existing at origin main aceb1cc1d9: unused exports SESSION_SUMMARY_INDEX_MAX_BYTES
