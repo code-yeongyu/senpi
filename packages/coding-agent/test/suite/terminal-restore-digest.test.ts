@@ -1,5 +1,3 @@
-import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
-import { getAgentDir } from "../../src/config.ts";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -227,7 +225,7 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 	let extraChildren: Array<{ kill(): void }> = [];
 	let counter = 0;
 
-	beforeEach(async () => {
+	beforeEach(() => {
 		initTheme("dark");
 		process.env.SENPI_PTY_FORCE_PIPE = "1";
 		tmp = mkdtempSync(join(tmpdir(), "senpi-restore-digest-"));
@@ -236,7 +234,6 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		sessionDir = join(tmp, "sessions");
 		mkdirSync(join(cwd, ".senpi"), { recursive: true });
 		writeFileSync(join(cwd, ".senpi", "settings.json"), JSON.stringify({ terminal: { notify: "wake" } }));
-		await new ProjectTrustStore(getAgentDir()).set(cwd, true);
 		sessionId = `restore-digest-${Date.now().toString(36)}-${++counter}`;
 		stateDir = join(sessionDir, "extensions", "terminal");
 		live = [];

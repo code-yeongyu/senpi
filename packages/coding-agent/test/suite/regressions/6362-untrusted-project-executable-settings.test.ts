@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAgentDir } from "../../../src/config.ts";
-import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "../../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
+import { EXECUTABLE_SETTING_PATHS } from "../../../src/core/project-executable-settings.ts";
 import { registerCursorCliOauthExtension } from "../../../src/core/extensions/builtin/cursor-cli-oauth/index.ts";
 import { loadCursorCliOauthProviderSettingsFromDisk } from "../../../src/core/extensions/builtin/cursor-cli-oauth/settings.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
@@ -58,6 +58,7 @@ describe("settings that name an executable (senpi#6362)", () => {
 			shellCommandPrefix: "echo prefixed",
 			npmCommand: [program],
 			externalEditor: program,
+			cursorCliOauthProvider: { enabled: true, executablePath: program },
 		}));
 		const untrusted = SettingsManager.create(r.project, r.agentDir);
 		expect([untrusted.getShellPath(), untrusted.getShellCommandPrefix(), untrusted.getNpmCommand()]).toEqual([
@@ -66,7 +67,7 @@ describe("settings that name an executable (senpi#6362)", () => {
 			undefined,
 		]);
 		const reasons = untrusted.drainErrors().map((error) => error.error.message);
-		for (const key of ["shellPath", "shellCommandPrefix", "npmCommand", "externalEditor"])
+		for (const key of EXECUTABLE_SETTING_PATHS)
 			expect(reasons.some((reason) => reason.includes(key) && reason.includes("not trusted"))).toBe(true);
 
 		await r.trust();
@@ -107,11 +108,10 @@ describe("settings that name an executable (senpi#6362)", () => {
 		expect(await commandFor()).toBe(r.program);
 	});
 
-	it("CLI provider settings: an untrusted project can neither enable a provider nor choose its executable", async () => {
+	it("CLI provider settings: an untrusted project can neither enable the Cursor CLI lane nor choose its executable", async () => {
 		const r = rig(
 			(program) => ({
 				cursorCliOauthProvider: { enabled: true, executablePath: program },
-				anthropicSubscriptionProvider: { enabled: true },
 			}),
 			getAgentDir(),
 		);
@@ -119,14 +119,12 @@ describe("settings that name an executable (senpi#6362)", () => {
 			enabled: false,
 			executablePath: undefined,
 		});
-		expect(loadAnthropicSubscriptionProviderSettingsFromDisk(r.project).enabled).not.toBe(true);
 
 		await r.trust();
 		expect(loadCursorCliOauthProviderSettingsFromDisk(r.project)).toMatchObject({
 			enabled: true,
 			executablePath: r.program,
 		});
-		expect(loadAnthropicSubscriptionProviderSettingsFromDisk(r.project).enabled).toBe(true);
 	});
 
 	it("CLI provider settings: a trusted project's provider still runs its executable at startup", async () => {

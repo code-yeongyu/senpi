@@ -1,5 +1,3 @@
-import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
-import { getAgentDir } from "../../src/config.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,7 +82,6 @@ describe("terminal extension pulse gating", () => {
 		reducedMotion?: boolean;
 		busy?: boolean;
 	}): Promise<Array<string | undefined>> {
-		await new ProjectTrustStore(getAgentDir()).set(cwd, true);
 		writeFileSync(
 			join(cwd, ".senpi", "settings.json"),
 			JSON.stringify({ terminal: { notify: "off" }, reducedMotion: options.reducedMotion }),

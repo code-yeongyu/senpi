@@ -65,7 +65,7 @@ function layeredSettings(global: unknown = {}, project: unknown = {}): SettingsM
 	const storage = new InMemorySettingsStorage();
 	storage.withLock("global", () => JSON.stringify({ claudeSdkOauthProvider: global }));
 	storage.withLock("project", () => JSON.stringify({ claudeSdkOauthProvider: project }));
-	return SettingsManager.fromStorage(storage, { projectTrusted: true });
+	return SettingsManager.fromStorage(storage);
 }
 
 afterEach(() => {

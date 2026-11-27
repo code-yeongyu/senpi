@@ -31,7 +31,7 @@ afterEach(() => {
 describe("SettingsManager runtime overrides (--no-model-fallback, omo#8700)", () => {
 	it("keeps an override after a save of an unrelated setting", () => {
 		const { agentDir, projectDir } = createPaths();
-		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const manager = SettingsManager.create(projectDir, agentDir);
 		manager.applyOverrides({ retry: { modelFallback: false } });
 
 		manager.setDefaultThinkingLevel("high");
@@ -41,7 +41,7 @@ describe("SettingsManager runtime overrides (--no-model-fallback, omo#8700)", ()
 
 	it("keeps an override across reload()", async () => {
 		const { agentDir, projectDir } = createPaths();
-		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const manager = SettingsManager.create(projectDir, agentDir);
 		manager.applyOverrides({ retry: { modelFallback: false }, askUser: { enabled: false } });
 
 		await manager.reload();
@@ -52,7 +52,7 @@ describe("SettingsManager runtime overrides (--no-model-fallback, omo#8700)", ()
 
 	it("lets an explicit in-session setter win for exactly the key it sets", () => {
 		const { agentDir, projectDir } = createPaths();
-		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const manager = SettingsManager.create(projectDir, agentDir);
 		manager.applyOverrides({ retry: { modelFallback: false }, askUser: { enabled: false } });
 
 		manager.setModelFallbackEnabled(true);
@@ -63,7 +63,7 @@ describe("SettingsManager runtime overrides (--no-model-fallback, omo#8700)", ()
 
 	it("never writes an override to the settings file", async () => {
 		const { agentDir, projectDir } = createPaths();
-		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const manager = SettingsManager.create(projectDir, agentDir);
 		manager.applyOverrides({ retry: { modelFallback: false } });
 
 		manager.setDefaultThinkingLevel("high");
@@ -83,19 +83,13 @@ describe("SettingsManager retry fallback settings", () => {
 
 	it("defaults abortServerSideFallback to true and round-trips an explicit false", () => {
 		const { agentDir, projectDir } = createPaths();
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getAbortServerSideFallback()).toBe(
-			true,
-		);
+		expect(SettingsManager.create(projectDir, agentDir).getAbortServerSideFallback()).toBe(true);
 
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { abortServerSideFallback: false } }));
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getAbortServerSideFallback()).toBe(
-			false,
-		);
+		expect(SettingsManager.create(projectDir, agentDir).getAbortServerSideFallback()).toBe(false);
 
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { abortServerSideFallback: "no" } }));
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getAbortServerSideFallback()).toBe(
-			true,
-		);
+		expect(SettingsManager.create(projectDir, agentDir).getAbortServerSideFallback()).toBe(true);
 	});
 
 	it("returns the shipped chains when fallback settings are unset or malformed", () => {
@@ -106,13 +100,11 @@ describe("SettingsManager retry fallback settings", () => {
 			"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-opus-5-5": ["claude-fable-5-2:medium", "kimi-k3.1-pro:max"],
 		};
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getRetryFallbackSettings()).toEqual(
-			{
-				modelFallback: true,
-				chains: shipped,
-				revertPolicy: "cooldown-expiry",
-			},
-		);
+		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings()).toEqual({
+			modelFallback: true,
+			chains: shipped,
+			revertPolicy: "cooldown-expiry",
+		});
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -125,24 +117,22 @@ describe("SettingsManager retry fallback settings", () => {
 			}),
 		);
 
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getRetryFallbackSettings()).toEqual(
-			{
-				modelFallback: true,
-				chains: shipped,
-				revertPolicy: "cooldown-expiry",
-			},
-		);
+		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings()).toEqual({
+			modelFallback: true,
+			chains: shipped,
+			revertPolicy: "cooldown-expiry",
+		});
 	});
 
 	it("persists global fallback settings and a later instance reads them", async () => {
 		const { agentDir, projectDir } = createPaths();
-		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const manager = SettingsManager.create(projectDir, agentDir);
 		manager.setModelFallbackEnabled(false);
 		manager.setFallbackRevertPolicy("never");
 		manager.setFallbackChain("claude-fable-5", ["ccapi/kimi-k3:max"]);
 		await manager.flush();
 
-		const reloaded = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const reloaded = SettingsManager.create(projectDir, agentDir);
 		// The configured key replaces its shipped default outright; the other shipped key stays.
 		expect(reloaded.getRetryFallbackSettings()).toEqual({
 			modelFallback: false,
@@ -162,9 +152,7 @@ describe("SettingsManager retry fallback settings", () => {
 		// Removing the user's override restores the shipped default for that family.
 		reloaded.removeFallbackChain("claude-fable-5");
 		await reloaded.flush();
-		expect(
-			SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getRetryFallbackSettings().chains,
-		).toEqual({
+		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains).toEqual({
 			"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
 			"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
@@ -175,31 +163,25 @@ describe("SettingsManager retry fallback settings", () => {
 	it("reports which settings scope supplied the fallback chains", () => {
 		const { agentDir, projectDir } = createPaths();
 		// Nothing configured: the resolved chains are the shipped defaults, not a file.
-		expect(
-			SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getFallbackChainsScope(),
-		).toBeUndefined();
+		expect(SettingsManager.create(projectDir, agentDir).getFallbackChainsScope()).toBeUndefined();
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
 			JSON.stringify({ retry: { fallbackChains: { "claude-fable-5": ["ccapi/kimi-k3:max"] } } }),
 		);
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getFallbackChainsScope()).toBe(
-			"global",
-		);
+		expect(SettingsManager.create(projectDir, agentDir).getFallbackChainsScope()).toBe("global");
 
 		writeFileSync(
 			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 			JSON.stringify({ retry: { fallbackChains: { "anthropic/project": ["ccapi/project"] } } }),
 		);
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getFallbackChainsScope()).toBe(
-			"project",
-		);
+		expect(SettingsManager.create(projectDir, agentDir).getFallbackChainsScope()).toBe("project");
 	});
 
 	it("names a malformed chain map's offending type so one log line identifies it", () => {
 		const { agentDir, projectDir } = createPaths();
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { fallbackChains: null } }));
-		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFallbackChainsScope()).toBe("global");
 		// Malformed input degrades to the shipped defaults, never to a half-read map.
 		expect(manager.getRetryFallbackSettings().chains).toEqual({
@@ -223,8 +205,7 @@ describe("SettingsManager retry fallback settings", () => {
 			}),
 		);
 
-		const chains = SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getRetryFallbackSettings()
-			.chains;
+		const chains = SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains;
 
 		expect(chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
 		// An unrelated key layers over the shipped defaults instead of replacing the map.
@@ -246,11 +227,9 @@ describe("SettingsManager retry fallback settings", () => {
 				retry: { fallbackChains: { "claude-fable-5": ["ccapi/kimi-k3:max"] } },
 			}),
 		);
-		expect(
-			SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getRetryFallbackSettings().chains[
-				"claude-fable-5"
-			],
-		).toEqual(["ccapi/kimi-k3:max"]);
+		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains["claude-fable-5"]).toEqual([
+			"ccapi/kimi-k3:max",
+		]);
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -258,11 +237,9 @@ describe("SettingsManager retry fallback settings", () => {
 		);
 		// Tombstone: the empty list is preserved through resolution and consumed by
 		// canonicalization, which drops every expanded provider variant of the family.
-		expect(
-			SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getRetryFallbackSettings().chains[
-				"claude-fable-5"
-			],
-		).toEqual([]);
+		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains["claude-fable-5"]).toEqual(
+			[],
+		);
 	});
 
 	it("uses project retry settings over global settings, replacing chains wholesale", () => {
@@ -283,9 +260,7 @@ describe("SettingsManager retry fallback settings", () => {
 			JSON.stringify({ retry: { fallbackChains: { "anthropic/project": ["ccapi/project"] } } }),
 		);
 
-		const resolved = SettingsManager.create(projectDir, agentDir, {
-			projectTrusted: true,
-		}).getRetryFallbackSettings();
+		const resolved = SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings();
 		expect(resolved.modelFallback).toBe(false);
 		expect(resolved.revertPolicy).toBe("never");
 		// Project scope replaces the global scope's chain map wholesale: the global
@@ -297,7 +272,7 @@ describe("SettingsManager retry fallback settings", () => {
 
 	it("getHintPolicySettings returns defaults when unset", () => {
 		const { agentDir, projectDir } = createPaths();
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getHintPolicySettings()).toEqual({
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
 			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
 			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
 		});
@@ -309,7 +284,7 @@ describe("SettingsManager retry fallback settings", () => {
 			join(agentDir, "settings.json"),
 			JSON.stringify({ retry: { hintedWaitCapMs: 120_000, probeBackMaxMs: 7_200_000 } }),
 		);
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getHintPolicySettings()).toEqual({
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
 			hintedWaitCapMs: 120_000,
 			probeBackMaxMs: 7_200_000,
 		});
@@ -330,7 +305,7 @@ describe("SettingsManager retry fallback settings", () => {
 				retry: { hintedWaitCapMs: "large", probeBackMaxMs: Number.NaN },
 			}),
 		);
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getHintPolicySettings()).toEqual({
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
 			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
 			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
 		});
@@ -341,7 +316,7 @@ describe("SettingsManager retry fallback settings", () => {
 				retry: { hintedWaitCapMs: -5, probeBackMaxMs: -1 },
 			}),
 		);
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getHintPolicySettings()).toEqual({
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
 			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
 			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
 		});
@@ -354,7 +329,7 @@ describe("SettingsManager retry fallback settings", () => {
 			join(agentDir, "settings.json"),
 			JSON.stringify({ retry: { hintedWaitCapMs: 500_000, probeBackMaxMs: 500_000 } }),
 		);
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getHintPolicySettings()).toEqual({
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
 			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
 			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
 		});
@@ -364,7 +339,7 @@ describe("SettingsManager retry fallback settings", () => {
 			join(agentDir, "settings.json"),
 			JSON.stringify({ retry: { hintedWaitCapMs: 600_000, probeBackMaxMs: 300_000 } }),
 		);
-		expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getHintPolicySettings()).toEqual({
+		expect(SettingsManager.create(projectDir, agentDir).getHintPolicySettings()).toEqual({
 			hintedWaitCapMs: DEFAULT_HINTED_WAIT_CAP_MS,
 			probeBackMaxMs: DEFAULT_PROBE_BACK_MAX_MS,
 		});

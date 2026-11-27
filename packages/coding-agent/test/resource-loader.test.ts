@@ -11,7 +11,6 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
-import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 
 import { createModelRegistry } from "./model-runtime-test-utils.ts";
 
@@ -21,13 +20,12 @@ describe("DefaultResourceLoader", () => {
 	let cwd: string;
 	let originalHome: string | undefined;
 
-	beforeEach(async () => {
+	beforeEach(() => {
 		tempDir = join(tmpdir(), `rl-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		agentDir = join(tempDir, "agent");
 		cwd = join(tempDir, "project");
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(cwd, { recursive: true });
-		await new ProjectTrustStore(agentDir).set(cwd, true);
 		// The bundled codemode extension is default-on everywhere. Disable it through the real
 		// global-settings mechanism so these tests stay isolated to the extensions they create,
 		// matching the disabledBuiltinExtensions convention used in codemode-bridge.test.ts.

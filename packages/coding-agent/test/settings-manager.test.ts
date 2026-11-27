@@ -84,7 +84,7 @@ describe("SettingsManager", () => {
 				}`,
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getTheme()).toBe("dark");
 			expect(manager.getShellCommandPrefix()).toBe("echo // literal /* text */");
@@ -95,7 +95,7 @@ describe("SettingsManager", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "light" }));
 			writeFileSync(join(agentDir, "settings.jsonc"), '{ "theme": "dark", }');
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getTheme()).toBe("dark");
 			expect(manager.getSelectedSettingsSources()).toContainEqual({
@@ -109,7 +109,7 @@ describe("SettingsManager", () => {
 		it("keeps settings.json as the source when it is the only settings file", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "light" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getTheme()).toBe("light");
 			expect(manager.getSelectedSettingsSources()).toContainEqual({
@@ -123,7 +123,7 @@ describe("SettingsManager", () => {
 		it("writes back to the loaded JSONC path without creating settings.json", async () => {
 			const jsoncPath = join(agentDir, "settings.jsonc");
 			writeFileSync(jsoncPath, '{ "theme": "dark", }');
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			manager.setDefaultModel("gpt-5.5");
 			await manager.flush();
@@ -139,7 +139,7 @@ describe("SettingsManager", () => {
 			const jsonPath = join(agentDir, "settings.json");
 			const jsoncPath = join(agentDir, "settings.jsonc");
 			writeFileSync(jsonPath, JSON.stringify({ theme: "light" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			writeFileSync(jsoncPath, '{ "theme": "dark", }');
 
 			await manager.reload();
@@ -165,7 +165,7 @@ describe("SettingsManager", () => {
 			);
 
 			// Create SettingsManager (simulates pi starting up)
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// Simulate user editing settings.json externally to add enabledModels
 			const currentSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
@@ -193,7 +193,7 @@ describe("SettingsManager", () => {
 				}),
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// User adds custom settings externally
 			const currentSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
@@ -221,7 +221,7 @@ describe("SettingsManager", () => {
 				}),
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// User externally sets thinking level to "low"
 			const currentSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
@@ -246,16 +246,14 @@ describe("SettingsManager", () => {
 				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 				JSON.stringify({ deviceId: "project-device" }),
 			);
-			const first = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const first = SettingsManager.create(projectDir, agentDir);
 
 			const deviceId = first.getOrCreateDeviceId();
 			await first.flush();
 
 			expect(deviceId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 			expect(first.getOrCreateDeviceId()).toBe(deviceId);
-			expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getOrCreateDeviceId()).toBe(
-				deviceId,
-			);
+			expect(SettingsManager.create(projectDir, agentDir).getOrCreateDeviceId()).toBe(deviceId);
 			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark", deviceId });
 		});
 	});
@@ -270,7 +268,7 @@ describe("SettingsManager", () => {
 				}),
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getPackages()).toEqual([]);
 			expect(manager.getExtensionPaths()).toEqual(["/local/ext.ts", "./relative/ext.ts"]);
@@ -292,7 +290,7 @@ describe("SettingsManager", () => {
 				}),
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			const packages = manager.getPackages();
 			expect(packages).toHaveLength(2);
@@ -308,7 +306,7 @@ describe("SettingsManager", () => {
 	describe("reload", () => {
 		it("should default steering mode to all when unset", () => {
 			// given
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// when
 			const steeringMode = manager.getSteeringMode();
@@ -327,7 +325,7 @@ describe("SettingsManager", () => {
 				}),
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			writeFileSync(
 				settingsPath,
@@ -349,7 +347,7 @@ describe("SettingsManager", () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			writeFileSync(settingsPath, "{ invalid json");
 			await manager.reload();
@@ -364,7 +362,7 @@ describe("SettingsManager", () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "light/dark" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getTheme()).toBeUndefined();
 			expect(manager.getThemeSetting()).toBe("light/dark");
@@ -384,7 +382,7 @@ describe("SettingsManager", () => {
 			writeFileSync(globalSettingsPath, "{ invalid global json");
 			writeFileSync(projectSettingsPath, "{ invalid project json");
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			const errors = manager.drainErrors();
 
 			expect(errors).toHaveLength(2);
@@ -401,7 +399,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 			const thenRetrySettings = whenManager.getProviderRetrySettings();
 
 			expect(thenRetrySettings.timeoutMs).toBeUndefined();
@@ -411,7 +409,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { provider: { timeoutMs: 12_345 } } }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 			const thenRetrySettings = whenManager.getProviderRetrySettings();
 
 			expect(thenRetrySettings.timeoutMs).toBe(12_345);
@@ -421,7 +419,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getProviderStreamRetryTimeoutMs()).toBe(30_000);
 		});
@@ -430,7 +428,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { provider: { streamRetryTimeoutMs: 45_000 } } }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getProviderStreamRetryTimeoutMs()).toBe(45_000);
 		});
@@ -439,7 +437,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { provider: { streamRetryTimeoutMs: 0 } } }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getProviderStreamRetryTimeoutMs()).toBeUndefined();
 		});
@@ -448,7 +446,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBe(300_000);
 		});
@@ -457,7 +455,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ httpIdleTimeoutMs: 60_000 }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBe(60_000);
 		});
@@ -466,7 +464,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ httpIdleTimeoutMs: 0 }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBeUndefined();
 		});
@@ -478,7 +476,7 @@ describe("SettingsManager", () => {
 				JSON.stringify({ httpIdleTimeoutMs: 0, retry: { provider: { timeoutMs: 5_000 } } }),
 			);
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBe(5_000);
 		});
@@ -487,7 +485,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getRetrySettings().maxRetries).toBe(5);
 		});
@@ -496,7 +494,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { maxRetries: 2 } }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getRetrySettings().maxRetries).toBe(2);
 		});
@@ -505,7 +503,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(300_000);
 		});
@@ -513,7 +511,7 @@ describe("SettingsManager", () => {
 		it("should default the keep-alive-only cap to 15 minutes", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamKeepAliveTimeoutMs()).toBe(900_000);
 		});
@@ -527,7 +525,7 @@ describe("SettingsManager", () => {
 				JSON.stringify({ retry: { provider: { keepAliveTimeoutMs: configured } } }),
 			);
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamKeepAliveTimeoutMs()).toBe(expected);
 		});
@@ -536,7 +534,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { provider: { streamStartTimeoutMs: 30_000 } } }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(30_000);
 		});
@@ -545,7 +543,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { provider: { streamStartTimeoutMs: 0 } } }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamStartTimeoutMs()).toBeUndefined();
 		});
@@ -554,7 +552,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ httpIdleTimeoutMs: 0 }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamStartTimeoutMs()).toBeUndefined();
 		});
@@ -563,7 +561,7 @@ describe("SettingsManager", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ httpIdleTimeoutMs: 60_000 }));
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(60_000);
 		});
@@ -575,7 +573,7 @@ describe("SettingsManager", () => {
 				JSON.stringify({ httpIdleTimeoutMs: 60_000, retry: { provider: { streamStartTimeoutMs: 120_000 } } }),
 			);
 
-			const whenManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const whenManager = SettingsManager.create(projectDir, agentDir);
 
 			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(120_000);
 		});
@@ -625,7 +623,7 @@ describe("SettingsManager", () => {
 				JSON.stringify({ defaultProjectTrust: "never" }),
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getDefaultProjectTrust()).toBe("always");
 		});
@@ -633,7 +631,7 @@ describe("SettingsManager", () => {
 		it("should default invalid project trust settings to ask", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "sometimes" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getDefaultProjectTrust()).toBe("ask");
 		});
@@ -641,18 +639,18 @@ describe("SettingsManager", () => {
 		it("should read a non-negative historical image limit", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { maxHistoricalImages: 2 } }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getMaxHistoricalImages()).toBe(2);
 		});
 
 		it("should ignore invalid historical image limits", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { maxHistoricalImages: -1 } }));
-			const negative = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const negative = SettingsManager.create(projectDir, agentDir);
 			expect(negative.getMaxHistoricalImages()).toBeUndefined();
 
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { maxHistoricalImages: 1.5 } }));
-			const fractional = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const fractional = SettingsManager.create(projectDir, agentDir);
 			expect(fractional.getMaxHistoricalImages()).toBeUndefined();
 		});
 	});
@@ -667,7 +665,7 @@ describe("SettingsManager", () => {
 			rmSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 
 			// Create SettingsManager (reads both global and project settings)
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// Project config folder should NOT have been created just from reading
 			expect(existsSync(join(projectDir, CONFIG_DIR_NAME))).toBe(false);
@@ -684,7 +682,7 @@ describe("SettingsManager", () => {
 			// Delete the project config folder that beforeEach created
 			rmSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// Project config folder should NOT exist yet
 			expect(existsSync(join(projectDir, CONFIG_DIR_NAME))).toBe(false);
@@ -722,7 +720,7 @@ describe("SettingsManager", () => {
 
 	describe("httpIdleTimeoutMs", () => {
 		it("should default to 5 minutes", () => {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
 		});
 
@@ -730,14 +728,14 @@ describe("SettingsManager", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 300000 }));
 			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 0 }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getHttpIdleTimeoutMs()).toBe(0);
 		});
 
 		it("should reject invalid timeout values", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: -1 }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(() => manager.getHttpIdleTimeoutMs()).toThrow("Invalid httpIdleTimeoutMs setting");
 		});
@@ -745,7 +743,7 @@ describe("SettingsManager", () => {
 
 	describe("session_shutdown handler budget", () => {
 		it("defaults to a 2s warning and a 10s hard cap", () => {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getSessionShutdownHandlerWarnMs()).toBe(DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS);
 			expect(manager.getSessionShutdownHandlerTimeoutMs()).toBe(DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS);
@@ -763,14 +761,14 @@ describe("SettingsManager", () => {
 				JSON.stringify({ sessionShutdownHandlerTimeoutMs: 0 }),
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getSessionShutdownHandlerWarnMs()).toBe(500);
 			expect(manager.getSessionShutdownHandlerTimeoutMs()).toBe(0);
 		});
 
 		it("persists both thresholds through their setters", async () => {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			manager.setSessionShutdownHandlerWarnMs(750);
 			manager.setSessionShutdownHandlerTimeoutMs(4500);
@@ -791,7 +789,7 @@ describe("SettingsManager", () => {
 					sessionShutdownHandlerTimeoutMs: invalidValue,
 				}),
 			);
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(() => manager.getSessionShutdownHandlerWarnMs()).toThrow(
 				"Invalid sessionShutdownHandlerWarnMs setting",
@@ -802,7 +800,7 @@ describe("SettingsManager", () => {
 		});
 
 		it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("rejects %s from the setters", (invalidValue) => {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(() => manager.setSessionShutdownHandlerWarnMs(invalidValue)).toThrow(
 				"Invalid sessionShutdownHandlerWarnMs setting",
@@ -858,7 +856,7 @@ describe("SettingsManager", () => {
 
 	describe("TUI mode", () => {
 		it("defaults to regular and persists fullscreen mode", async () => {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getTuiMode()).toBe("regular");
 
@@ -873,7 +871,7 @@ describe("SettingsManager", () => {
 		it("falls back to regular for unsupported values", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ tuiMode: "other" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getTuiMode()).toBe("regular");
 		});
@@ -881,14 +879,14 @@ describe("SettingsManager", () => {
 		it("does not recognize the old uiMode setting", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ uiMode: "fullscreen" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getTuiMode()).toBe("regular");
 		});
 	});
 
 	it("validates and persists fullscreen settings", async () => {
-		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFullscreenExitOutput()).toBe("transcript");
 		expect(manager.getFullscreenScrollbar()).toBe("auto");
 		expect(manager.getFullscreenCopyOnSelect()).toBe(true);
@@ -906,7 +904,7 @@ describe("SettingsManager", () => {
 			join(agentDir, "settings.json"),
 			JSON.stringify({ fullscreenExitOutput: "nothing", fullscreenScrollbar: "sometimes" }),
 		);
-		const reloadedManager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const reloadedManager = SettingsManager.create(projectDir, agentDir);
 		expect(reloadedManager.getFullscreenExitOutput()).toBe("transcript");
 		expect(reloadedManager.getFullscreenScrollbar()).toBe("auto");
 		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
@@ -914,7 +912,7 @@ describe("SettingsManager", () => {
 
 	// #9758: wheel scrolling defaults to auto, persists line counts, and ignores invalid values.
 	it("persists fullscreen wheel scroll lines", async () => {
-		const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFullscreenWheelScrollLines()).toBe("auto");
 
 		manager.setFullscreenWheelScrollLines(3);
@@ -929,15 +927,13 @@ describe("SettingsManager", () => {
 			[null, "auto"],
 		] as const) {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ fullscreenWheelScrollLines: value }));
-			expect(
-				SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getFullscreenWheelScrollLines(),
-			).toBe(expected);
+			expect(SettingsManager.create(projectDir, agentDir).getFullscreenWheelScrollLines()).toBe(expected);
 		}
 	});
 
 	describe("outputPad", () => {
 		it("should default to 1 and persist binary values", async () => {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getOutputPad()).toBe(1);
 
@@ -952,7 +948,7 @@ describe("SettingsManager", () => {
 		it("should treat unsupported outputPad values as default padding", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ outputPad: 2 }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getOutputPad()).toBe(1);
 		});
@@ -987,7 +983,7 @@ describe("SettingsManager", () => {
 
 		it("persists smooth streaming settings", async () => {
 			// Given
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// When
 			manager.setSmoothStreaming(false);
@@ -1004,7 +1000,7 @@ describe("SettingsManager", () => {
 	});
 	describe("markdown.mermaid", () => {
 		it("defaults to streaming and persists rendering modes", async () => {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getMermaidRenderingMode()).toBe("streaming");
 
@@ -1019,9 +1015,7 @@ describe("SettingsManager", () => {
 		it("falls back to streaming for unsupported values", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ markdown: { mermaid: "sometimes" } }));
 
-			expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getMermaidRenderingMode()).toBe(
-				"streaming",
-			);
+			expect(SettingsManager.create(projectDir, agentDir).getMermaidRenderingMode()).toBe("streaming");
 		});
 	});
 	describe("shellCommandPrefix", () => {
@@ -1029,7 +1023,7 @@ describe("SettingsManager", () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ shellCommandPrefix: "shopt -s expand_aliases" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getShellCommandPrefix()).toBe("shopt -s expand_aliases");
 		});
@@ -1038,7 +1032,7 @@ describe("SettingsManager", () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getShellCommandPrefix()).toBeUndefined();
 		});
@@ -1047,7 +1041,7 @@ describe("SettingsManager", () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ shellCommandPrefix: "shopt -s expand_aliases" }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			manager.setTheme("light");
 			await manager.flush();
 
@@ -1061,16 +1055,11 @@ describe("SettingsManager", () => {
 		it("loads global defaults and lets project settings replace them", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools: ["read", "bash"] }));
 
-			expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getDefaultTools()).toEqual([
-				"read",
-				"bash",
-			]);
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual(["read", "bash"]);
 
 			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ defaultTools: ["grep"] }));
 
-			expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getDefaultTools()).toEqual([
-				"grep",
-			]);
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual(["grep"]);
 		});
 
 		it("preserves an empty tool list", () => {
@@ -1102,7 +1091,7 @@ describe("SettingsManager", () => {
 				JSON.stringify({ defaultTools: ["-codemode", "+tool_search"] }),
 			);
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search"]);
 
 			manager.applyOverrides({ defaultTools: ["+codemode"] });
@@ -1115,7 +1104,7 @@ describe("SettingsManager", () => {
 				JSON.stringify({ defaultTools: ["+codemode"] }),
 			);
 
-			expect(SettingsManager.create(projectDir, agentDir, { projectTrusted: true }).getDefaultTools()).toEqual([
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual([
 				"read",
 				"bash",
 				"edit",
@@ -1129,13 +1118,13 @@ describe("SettingsManager", () => {
 	describe("getSessionDir", () => {
 		it("should return undefined when not set", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBeUndefined();
 		});
 
 		it("should return global sessionDir", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "/tmp/sessions" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBe("/tmp/sessions");
 		});
 
@@ -1145,13 +1134,13 @@ describe("SettingsManager", () => {
 				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
 				JSON.stringify({ sessionDir: "./sessions" }),
 			);
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBe("./sessions");
 		});
 
 		it("should expand ~ in sessionDir", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "~/sessions" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
 		});
 	});
@@ -1159,13 +1148,13 @@ describe("SettingsManager", () => {
 	describe("getShellPath", () => {
 		it("should return undefined when not set", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getShellPath()).toBeUndefined();
 		});
 
 		it("should return an absolute shellPath unchanged", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellPath: "/bin/zsh" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getShellPath()).toBe("/bin/zsh");
 		});
 
@@ -1174,13 +1163,13 @@ describe("SettingsManager", () => {
 				join(agentDir, "settings.json"),
 				JSON.stringify({ shellPath: "~/.local/bin/agent-shell-sandbox" }),
 			);
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getShellPath()).toBe(join(homedir(), ".local/bin/agent-shell-sandbox"));
 		});
 
 		it("should expand a bare ~ in shellPath", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellPath: "~" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getShellPath()).toBe(homedir());
 		});
 	});
@@ -1190,7 +1179,7 @@ describe("SettingsManager", () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ defaultThinkingLevel: "low", favoriteModels: ["a:high"] }));
 
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getDefaultThinkingLevel()).toBe("low");
 			expect(manager.getFavoriteModels()).toEqual(["a:high"]);
 
@@ -1210,7 +1199,7 @@ describe("SettingsManager", () => {
 		it("round-trips a level under an opaque provider/id key", async () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getModelThinkingLevel("openai", "gpt-5.5")).toBeUndefined();
 			manager.setModelThinkingLevel("openai", "gpt-5.5", "xhigh");
@@ -1224,13 +1213,13 @@ describe("SettingsManager", () => {
 
 		it("preserves the last non-off level when the effective level becomes off", async () => {
 			const settingsPath = join(agentDir, "state.json");
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			manager.setModelThinkingLevel("openai", "gpt-5.5", "high");
 			manager.setModelThinkingLevel("openai", "gpt-5.5", "off");
 			await manager.flush();
 
-			const restarted = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const restarted = SettingsManager.create(projectDir, agentDir);
 			expect(restarted.getModelThinkingLevel("openai", "gpt-5.5")).toBe("off");
 			expect(restarted.getModelLastOnThinkingLevel("openai", "gpt-5.5")).toBe("high");
 			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toMatchObject({
@@ -1241,7 +1230,7 @@ describe("SettingsManager", () => {
 
 		it("keeps ids containing slashes and colons opaque", async () => {
 			const settingsPath = join(agentDir, "state.json");
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			manager.setModelThinkingLevel("openrouter", "z-ai/glm-5.2:exacto", "high");
 			await manager.flush();
@@ -1257,7 +1246,7 @@ describe("SettingsManager", () => {
 				settingsPath,
 				JSON.stringify({ modelThinkingLevels: { "openai/gpt-5.5": "xhigh", "anthropic/opus": "medium" } }),
 			);
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			manager.setModelThinkingLevel("openai", "gpt-5.5", undefined);
 			await manager.flush();
@@ -1281,7 +1270,7 @@ describe("SettingsManager", () => {
 					},
 				}),
 			);
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getModelThinkingLevel("openai", "number")).toBeUndefined();
 			expect(manager.getModelThinkingLevel("openai", "null")).toBeUndefined();
@@ -1292,7 +1281,7 @@ describe("SettingsManager", () => {
 
 		it("tolerates a non-object modelThinkingLevels value", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ modelThinkingLevels: "nope" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getModelThinkingLevel("openai", "gpt-5.5")).toBeUndefined();
 		});
 
@@ -1308,7 +1297,7 @@ describe("SettingsManager", () => {
 					},
 				}),
 			);
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getModelLastOnThinkingLevel("openai", "number")).toBeUndefined();
 			expect(manager.getModelLastOnThinkingLevel("openai", "off")).toBeUndefined();
@@ -1319,7 +1308,7 @@ describe("SettingsManager", () => {
 		it("preserves a concurrently written model key (nested merge)", async () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			// Another session writes a DIFFERENT model key between our load and our save.
 			writeFileSync(
@@ -1337,7 +1326,7 @@ describe("SettingsManager", () => {
 		it("preserves a concurrently written last-on key (nested merge)", async () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			writeFileSync(
 				join(agentDir, "state.json"),
@@ -1356,7 +1345,7 @@ describe("SettingsManager", () => {
 		it("does not migrate defaultThinkingLevel into the map", async () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ defaultThinkingLevel: "low" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getModelThinkingLevel("openai", "gpt-5.5")).toBeUndefined();
 			manager.setDefaultThinkingLevel("high");
@@ -1370,7 +1359,7 @@ describe("SettingsManager", () => {
 			const globalPath = join(agentDir, "state.json");
 			const projectPath = join(projectDir, CONFIG_DIR_NAME, "settings.json");
 			writeFileSync(projectPath, JSON.stringify({ theme: "project" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			manager.setModelThinkingLevel("openai", "gpt-5.5", "medium");
 			await manager.flush();
@@ -1385,7 +1374,7 @@ describe("SettingsManager", () => {
 	describe("per-model service tier memory", () => {
 		it("round-trips and deletes tiers per model key", async () => {
 			const settingsPath = join(agentDir, "state.json");
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getModelServiceTier("openai", "gpt-5.5")).toBeUndefined();
 			manager.setModelServiceTier("openai", "gpt-5.5", "priority");
@@ -1415,7 +1404,7 @@ describe("SettingsManager", () => {
 					modelServiceTiers: { "openai/a": 1, "openai/b": null, "openai/c": "turbo", "openai/d": "flex" },
 				}),
 			);
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getModelServiceTier("openai", "a")).toBeUndefined();
 			expect(manager.getModelServiceTier("openai", "b")).toBeUndefined();
@@ -1426,7 +1415,7 @@ describe("SettingsManager", () => {
 		it("preserves a concurrently written tier key (nested merge)", async () => {
 			const settingsPath = join(agentDir, "settings.json");
 			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 
 			writeFileSync(
 				join(agentDir, "state.json"),
@@ -1502,7 +1491,7 @@ describe("SettingsManager self-write tracking", () => {
 		mkdirSync(agentDir, { recursive: true });
 
 		try {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			manager.setTheme("dark");
 			manager.setDefaultModel("test-model");
 			await manager.flush();
@@ -1547,7 +1536,7 @@ describe("SettingsManager self-write tracking", () => {
 		mkdirSync(agentDir, { recursive: true });
 
 		try {
-			const manager = SettingsManager.create(projectDir, agentDir, { projectTrusted: true });
+			const manager = SettingsManager.create(projectDir, agentDir);
 			manager.setTheme("first");
 			manager.setTheme("second");
 			await manager.flush();
