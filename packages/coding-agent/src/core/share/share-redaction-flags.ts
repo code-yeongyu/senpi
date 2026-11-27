@@ -38,8 +38,16 @@ const PROSE_SECRET = new RegExp(
 );
 /** Words that complete a sentence about a password rather than being one. */
 const ORDINARY_VALUE =
-	/^(?:required|optional|incorrect|wrong|invalid|missing|expired|revoked|empty|blank|set|unset|correct|valid|changed|reset|stored|saved|hidden|encrypted|safe|weak|strong|long|short|too|not|now|the|a|an|in|on|at|used|needed|ok|okay|fine|same|different|new|old|null|none|undefined|redacted)$/i;
+	/^(?:required|optional|incorrect|wrong|invalid|missing|expired|expiring|revoked|rotated|leaked|compromised|empty|blank|set|unset|correct|valid|changed|reset|stored|saved|hidden|encrypted|available|unavailable|active|inactive|public|private|safe|weak|strong|long|short|too|not|now|the|a|an|in|on|at|used|needed|ok|okay|fine|same|different|new|old|null|none|undefined|redacted)$/i;
 const LENGTH_UNIT = /^[ \t]+(?:characters?|chars?|letters?|digits?|bytes?|long)$/i;
+/** A letters-only value shorter than this is an ordinary word far more often than a password (`the secret is out`). */
+const MIN_LETTERS_ONLY = 8;
+
+function ordinaryProse(value: string, next: string): boolean {
+	if (ORDINARY_VALUE.test(value)) return true;
+	if (/^[A-Za-z]+$/.test(value) && value.length < MIN_LETTERS_ONLY) return true;
+	return /^\d+$/.test(value) && LENGTH_UNIT.test(next);
+}
 
 const placeholder = (value: string): boolean => value === "<redacted>";
 
@@ -68,8 +76,7 @@ export function redactFlagSecrets(text: string, onRedact: () => void): string {
 			PROSE_SECRET,
 			(match, lead: string, quote: string | undefined, quoted: string, bare: string, next = "") => {
 				const value = quote === undefined ? bare : quoted;
-				if (quote === undefined && (ORDINARY_VALUE.test(value) || (/^\d+$/.test(value) && LENGTH_UNIT.test(next))))
-					return match;
+				if (quote === undefined && ordinaryProse(value, next)) return match;
 				return redactValue(lead, quote, value) + next;
 			},
 		);

@@ -63,6 +63,11 @@ describe("share redacts secrets passed as flags and in prose (senpi#3577)", () =
 			"docker login --password-stdin registry.example.com",
 		],
 		["a password length in prose", "the password is 12 characters long"],
+		["a short ordinary word after 'token is'", "git commit -m 'token is ready'"],
+		["an idiom about a secret", "the secret is out"],
+		["ssh's port flag", "ssh -p 2222 host"],
+		["docker's port mapping", "docker run -p 8080:80 nginx"],
+		["curl -u with a user and no password", "curl -u alice https://example.com"],
 	])("leaves %s alone", (_name, command) => {
 		expect(sharedBytes({ command })).toContain(command);
 	});
