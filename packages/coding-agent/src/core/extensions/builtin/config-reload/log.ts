@@ -1,12 +1,11 @@
 import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { LOG_SINK_RETRY_MS, rotateLogIfNeeded } from "../../../log-file-rotation.ts";
+import { redactLogText } from "../../../sensitive-output.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 200;
 const SENSITIVE_PATH = /(^|[/\\])(?:auth\.json|credentials?(?:\.[^/\\]+)?)$/i;
-const SENSITIVE_TEXT =
-	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 
 export type ConfigReloadLogLevel = "debug" | "info" | "warn" | "error";
 
@@ -194,7 +193,7 @@ function safePaths(paths: readonly string[]): string[] {
 }
 
 function safeText(value: string): string {
-	const redacted = value.replace(SENSITIVE_TEXT, "$1[redacted]");
+	const redacted = redactLogText(value);
 	return redacted.length <= MAX_TEXT_LENGTH ? redacted : `${redacted.slice(0, MAX_TEXT_LENGTH - 3)}...`;
 }
 

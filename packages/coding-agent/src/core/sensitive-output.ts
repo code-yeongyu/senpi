@@ -6,6 +6,8 @@ import { redactResolvedReferenceValues } from "./config-reference-redaction.ts";
 // (senpi#4283). The name test runs once per assignment on that name only.
 const ENV_ASSIGNMENT = /\b([A-Z][A-Z0-9_]*)=([^\s'"]+)/g;
 const ENV_SECRET_WORD = /API_KEY|SECRET|TOKEN|PASSWORD|AUTH/;
+const LOG_CREDENTIAL_TEXT =
+	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 
 export function redactSensitiveOutput(text: string): string {
 	return redactSensitiveTokenValues(
@@ -20,6 +22,16 @@ export function redactSensitiveOutput(text: string): string {
 
 export function redactSensitiveTokenValues(text: string, replacement = "[REDACTED]"): string {
 	return redactCredentialShapes(redactResolvedReferenceValues(text, replacement), replacement);
+}
+
+/**
+ * Every diagnostic log writer (session, config-reload, moved-path-guard, compaction) runs each string it writes through
+ * this before truncating it (senpi#6337): a resolved reference value or a credential shape is replaced, then an
+ * authorization header or credential query parameter keeps its name with the value replaced. Truncating first could
+ * leave a prefix of a value that no longer matches.
+ */
+export function redactLogText(text: string): string {
+	return redactSensitiveTokenValues(text, "[redacted]").replace(LOG_CREDENTIAL_TEXT, "$1[redacted]");
 }
 
 /**

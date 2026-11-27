@@ -2,6 +2,7 @@ import { appendFileSync } from "node:fs";
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { envValue } from "../../../brand.ts";
+import { redactLogText } from "../../../sensitive-output.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const ALLOWED_KEYS = new Set([
@@ -256,7 +257,8 @@ async function fileSize(filePath: string): Promise<number> {
 
 function safeValueOf(value: unknown, seen: WeakSet<object>): unknown {
 	if (value === undefined) return undefined;
-	if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null)
+	if (typeof value === "string") return redactLogText(value);
+	if (typeof value === "number" || typeof value === "boolean" || value === null)
 		return value;
 	if (typeof value === "bigint") return value.toString();
 	if (typeof value === "symbol" || typeof value === "function") return String(value);
