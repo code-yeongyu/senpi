@@ -30,7 +30,7 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 			dropFirstUseBoot();
 			bootedContexts.add(ctx.sessionManager ?? runtimeKey);
 			service.beginSession();
-			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
+			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager, new EventLoopSlicer());
 		});
 		pi.on(
 			"context",

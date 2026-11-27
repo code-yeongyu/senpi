@@ -1,6 +1,7 @@
 import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-reference";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
+import { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
 import { getMcpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
@@ -233,7 +234,7 @@ export class McpService {
 			// per-turn context event fires, so the context-event replay alone lands
 			// one turn late. Doing it here puts restored tools on the very first
 			// wire payload after a --continue/resume.
-			if (binding !== undefined) this.#rehydrateFromSessionHistory(binding);
+			if (binding !== undefined) await this.#rehydrateFromSessionHistory(binding);
 			// An unbound attach (no `pi`) still reports its own config; a session released while this attach ran reports
 			// nothing, so no snapshot outlives its release.
 			if (shouldCaptureWireStatus(ctx)) {
@@ -670,10 +671,10 @@ export class McpService {
 		this.#bindingFor(pi)?.registration?.activate(names);
 	}
 
-	#rehydrateFromSessionHistory(binding: McpSessionBinding): void {
-		const entries = binding.context.sessionManager?.getEntries() ?? [];
-		if (entries.length === 0) return;
-		this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(entries);
+	async #rehydrateFromSessionHistory(binding: McpSessionBinding): Promise<void> {
+		const manager = binding.context.sessionManager;
+		if (manager)
+			await this.#toolSearchFor(binding)?.maybeRehydrateFromHistoryInSlices(manager, new EventLoopSlicer());
 	}
 
 	async handleSessionShutdown(event: SessionShutdownEvent): Promise<void> {
@@ -939,7 +940,7 @@ export class McpService {
 									// A raced attach ran its history replay before this catalog
 									// existed; replay now so restored tools still land on the
 									// first turn's payload (idempotent: already-active names skip).
-									this.#rehydrateFromSessionHistory(live);
+									await this.#rehydrateFromSessionHistory(live);
 								} catch (error) {
 									failures.push(error);
 								}
