@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import { resolvePath } from "../../../../utils/paths.ts";
 import { ModelConfig } from "../../../model-config.ts";
@@ -132,10 +133,37 @@ export class ConfigReloadHandoffRegistry<T> {
 
 const reloadHandoffs = new ConfigReloadHandoffRegistry<ReloadHandoff>();
 
+// Joining an occupied queue from session_start would deadlock: the running reload awaits that
+// handler. Queue the work in its originating async scope and let the lifecycle handler return.
+interface ReloadScheduler {
+	schedule(work: () => Promise<void>): Promise<void> | undefined;
+}
+
+const processReloadScheduler = realmRegistry(
+	"@code-yeongyu/senpi/config-reload-scheduler/v1",
+	(): ReloadScheduler => {
+		let tail: Promise<void> | undefined;
+		return {
+			schedule(work) {
+				const previous = tail;
+				const next = (previous ?? Promise.resolve()).then(work);
+				const release = () => {
+					if (tail === settled) tail = undefined;
+				};
+				const settled = next.then(release, release);
+				tail = settled;
+				return previous ? undefined : next;
+			},
+		};
+	},
+	(value): value is ReloadScheduler => hasFunctions(value, ["schedule"]),
+);
+
 export interface ConfigReloadExtensionOptions {
 	readonly agentDir?: string;
 	readonly subscribe?: WatchEventSource;
 	readonly clock?: WatchClock;
+	readonly scheduler?: ReloadScheduler;
 	readonly logger?: ConfigReloadLogger;
 	/** Test seam. Production uses the watch engine's SHA-256 implementation. */
 	readonly hashFile?: (path: string) => string;
@@ -172,6 +200,8 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	let started = false;
 	const watcherClosures: Array<Promise<PromiseSettledResult<void>[]>> = [];
 	let reloadInFlight = false;
+	let reloadScheduled = false;
+	let deferUntilActive = false;
 	let deferredNoticeShown = false;
 	let unavailableReloadLogged = false;
 	let compactionRecheck: ReturnType<typeof setTimeout> | undefined;
@@ -371,8 +401,22 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	};
 
 	const flushPending = async (): Promise<void> => {
+		if (reloadScheduled || reloadInFlight || deferUntilActive || pending.size === 0) return;
+		reloadScheduled = true;
+		await (options.scheduler ?? processReloadScheduler).schedule(async () => {
+			try {
+				await reloadPending();
+			} catch (error) {
+				logger.error("watcher_error", { path: "reload", message: errorMessage(error) });
+			} finally {
+				reloadScheduled = false;
+			}
+		});
+	};
+
+	const reloadPending = async (): Promise<void> => {
 		const ctx = currentContext;
-		if (!ctx || pending.size === 0 || reloadInFlight) return;
+		if (!ctx || deferUntilActive || pending.size === 0 || reloadInFlight) return;
 		if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
 		if (ctx.isCompacting?.() ?? false) {
 			armCompactionRecheck();
@@ -393,7 +437,14 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		// instead of re-notifying "Hot-reloading:" plus the veto warning forever.
 		if (ctx.checkReloadVeto) {
 			const veto = await ctx.checkReloadVeto();
-			if (currentContext !== ctx || reloadInFlight || pending.size === 0 || !canRequestReload(ctx)) return;
+			if (
+				currentContext !== ctx ||
+				deferUntilActive ||
+				reloadInFlight ||
+				pending.size === 0 ||
+				!canRequestReload(ctx)
+			)
+				return;
 			if (veto.cancelled) {
 				const notice = vetoDeferral.defer(veto.reason);
 				if (notice) {
@@ -528,6 +579,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 
 	pi.on("session_start", async (event, ctx) => {
 		started = true;
+		deferUntilActive = event.attended === false;
 		currentContext = ctx;
 		awaitingRegistration.clear();
 		awaitingHandoff = undefined;
@@ -535,6 +587,18 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		await processReloadHandoff(event, ctx);
 	});
 
+	pi.on("session_parked", () => {
+		deferUntilActive = true;
+	});
+	pi.on("session_resumed", async (_event, ctx) => {
+		deferUntilActive = false;
+		currentContext = ctx;
+		await flushPending();
+	});
+	pi.on("agent_start", () => {
+		// A background turn is also activity. Its idle edge can apply the deferred change.
+		deferUntilActive = false;
+	});
 	pi.on("agent_end", async (_event, ctx) => {
 		if (!started) return;
 		currentContext = ctx;
@@ -589,6 +653,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 
 	function canRequestReload(ctx: ExtensionContext): boolean {
 		return (
+			!deferUntilActive &&
 			ctx.isIdle() &&
 			!ctx.hasPendingMessages() &&
 			!(ctx.isCompacting?.() ?? false) &&

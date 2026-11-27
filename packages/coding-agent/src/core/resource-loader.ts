@@ -16,7 +16,7 @@ import { APP_NAME, CONFIG_DIR_NAME, findNodePackageDir, getAgentDir, getPackageD
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import { resolveInstallPath } from "../runtime-snapshot/marker.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
-import { ACCEPTED_SHIM_BANNERS, GENERATED_SHIM_BANNER } from "./generated-shim-banner.ts";
+import { GENERATED_SHIM_BANNER, generatedShimTarget } from "./generated-shim-banner.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 export { loadProjectContextFiles };
@@ -228,7 +228,6 @@ function resolvePromptInput(input: string | undefined, description: string): str
 }
 
 const GENERATED_GLOBAL_EXTENSION_BANNER = GENERATED_SHIM_BANNER;
-const LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS = ACCEPTED_SHIM_BANNERS;
 type GlobalDefaultExtensionId = (typeof globalDefaultExtensionIds)[number];
 
 const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; packageName: string }> = [
@@ -240,10 +239,6 @@ const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; pa
 	{ builtinId: "todowrite", packageName: "pi-todotools" },
 	{ builtinId: "codemode", packageName: "@code-yeongyu/senpi-codemode" },
 ];
-function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
-	return LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.some((banner) => content.startsWith(banner));
-}
-
 /**
  * The shim records an absolute path, and `getPackageDir()` derives from
  * `import.meta.url`. A session launched through the npm bin symlink and one
@@ -327,28 +322,17 @@ function findGeneratedGlobalDefaultExtensionId(
 	return undefined;
 }
 
-/** The module a generated shim re-exports, when it is a generated shim whose target no longer exists. */
-// Exactly what `buildGlobalDefaultExtensionShim` writes: one export line after the banner, nothing else.
-const GENERATED_SHIM_EXPORT_LINE = /^export \{ default \} from ("[^"\n]*");\n?$/;
-
-/**
- * The module a generated shim re-exports, when the file is exactly a generated shim (an accepted banner
- * followed by the single export line and nothing else) and that module no longer exists. A file that
- * carries the banner but also anything a person wrote is never treated as a shim.
- */
 function deadGeneratedShimTarget(content: string): string | undefined {
-	const banner = LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.find((candidate) => content.startsWith(candidate));
-	if (banner === undefined) return undefined;
-	const specifier = GENERATED_SHIM_EXPORT_LINE.exec(content.slice(banner.length))?.[1];
-	if (specifier === undefined) return undefined;
-	let target: string;
-	try {
-		const parsed = JSON.parse(specifier) as string;
-		target = parsed.startsWith("file:") ? fileURLToPath(parsed) : parsed;
-	} catch {
-		return undefined;
-	}
-	return existsSync(target) ? undefined : target;
+	const target = generatedShimTarget(content);
+	return target !== undefined && !existsSync(target) ? target : undefined;
+}
+
+function pointsToLiveBuiltin(target: string, id: GlobalDefaultExtensionId): boolean {
+	const builtin = join("core", "extensions", "builtin", id);
+	return (
+		(target.endsWith(`${sep}${builtin}.js`) || target.endsWith(`${sep}${builtin}.ts`)) &&
+		statSync(target, { throwIfNoEntry: false })?.isFile() === true
+	);
 }
 
 function removeDeadGeneratedShim(shimPath: string): void {
@@ -929,7 +913,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const shim = buildGlobalDefaultExtensionShim(modulePath);
 			if (existsSync(targetPath)) {
 				const existing = readFileSync(targetPath, "utf-8");
-				if (existing === shim || !isGeneratedGlobalDefaultExtensionShim(existing)) {
+				if (existing === shim) continue;
+				const target = generatedShimTarget(existing);
+				if (target === undefined || pointsToLiveBuiltin(target, extensionId)) {
 					continue;
 				}
 
@@ -1749,7 +1735,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return false;
 		}
 		try {
-			return isGeneratedGlobalDefaultExtensionShim(readFileSync(shimPath, "utf-8"));
+			return generatedShimTarget(readFileSync(shimPath, "utf-8")) !== undefined;
 		} catch {
 			return false;
 		}
