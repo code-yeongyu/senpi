@@ -75,8 +75,8 @@ export class SessionCommandRouter {
 				);
 		}
 	}
-	beginDrain(): void {
-		beginDrain(this.context);
+	beginDrain(): Promise<void> {
+		return beginDrain(this.context);
 	}
 	setMemoryPressure(pressure: boolean): void {
 		this.context.memoryPressure = pressure;
@@ -85,8 +85,8 @@ export class SessionCommandRouter {
 		this.context.awaitingPredecessorScan = false;
 		this.context.inheritedHandover = state;
 	}
-	sweepIdleSessions(): void {
-		sweepIdleSessions(this.context);
+	sweepIdleSessions(): Promise<void> {
+		return sweepIdleSessions(this.context);
 	}
 	dispose(): Promise<void> {
 		this.context.routes.dispose();

@@ -177,7 +177,7 @@ export async function parkHost(dir: string, daemonDir: string, options: ParkHost
 		async idleSweep(): Promise<void> {
 			now = 10_000;
 			const parked = this.waitForLine('"session_parked"');
-			router.sweepIdleSessions();
+			await router.sweepIdleSessions();
 			await parked;
 		},
 	};

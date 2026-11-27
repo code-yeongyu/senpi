@@ -6,6 +6,7 @@ import { forgetSessionOwnership } from "./session-router-attachments.ts";
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { recordRetainedSession } from "./session-router-residency.ts";
+import { removedSessionDirectories, sessionDirectoryRemovedIn } from "./session-path-key.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
 
 const DRAIN_SWEEP_MS = 50;
@@ -15,7 +16,7 @@ const DRAIN_SWEEP_MS = 50;
  * resume on reopen, unlike active work. Repeated requests (including grace expiry) rescan
  * without announcing again or aborting a turn.
  */
-export function beginDrain(host: RouterContext): void {
+export function beginDrain(host: RouterContext): Promise<void> {
 	host.draining = true;
 	void host.parks
 		.stop()
@@ -30,18 +31,50 @@ export function beginDrain(host: RouterContext): void {
 	// Armed BEFORE the first pass, so a pass that fails is retried instead of ending the drain
 	// (senpi#2285). Unref'd: a draining host must never be the reason the event loop stays open.
 	if (host.drainTimer === undefined && !host.drainExitRequested) {
-		host.drainTimer = setInterval(() => sweepDrain(host), DRAIN_SWEEP_MS);
+		host.drainTimer = setInterval(() => void sweepDrain(host), DRAIN_SWEEP_MS);
 		host.drainTimer.unref?.();
 	}
-	sweepDrain(host);
+	return sweepDrain(host);
 }
 
 /** One drain pass: park what has settled, and exit once the host holds nothing. */
-export function sweepDrain(host: RouterContext): void {
+export function sweepDrain(host: RouterContext): Promise<void> {
+	// One pass at a time; a pass asked for while one runs follows it, so the pass that finds the host empty is never lost.
+	if (host.drainPass) {
+		host.drainPassAgain = true;
+		return host.drainPass;
+	}
+	const pass = (async () => {
+		do {
+			host.drainPassAgain = false;
+			await drainOnce(host);
+		} while (host.drainPassAgain);
+	})().finally(() => {
+		host.drainPass = undefined;
+	});
+	host.drainPass = pass;
+	return pass;
+}
+
+async function drainOnce(host: RouterContext): Promise<void> {
 	// An accepted open can still be constructing a runtime or binding.
 	if (host.activeRequests.has(undefined)) return;
+	// Whether a transcript directory is gone is checked off the host thread (senpi#4565). A pass that cannot list the
+	// sessions failed as a whole, exactly like one whose verdicts throw: the drain timer retries it (senpi#2285).
+	let removed: ReadonlySet<string>;
+	try {
+		removed = await removedSessionDirectories(openSessionFiles(host));
+	} catch (cause) {
+		process.stderr.write(`senpi rpc handoff drain pass failed, retrying: ${String(cause)}\n`);
+		return;
+	}
+	if (host.activeRequests.has(undefined)) return;
 	// A pass that failed as a whole is retried by the drain timer armed before it (senpi#2285).
-	const verdicts = readDrainVerdicts(host.registry, (sessionId) => host.activeRequests.has(sessionId));
+	const verdicts = readDrainVerdicts(
+		host.registry,
+		(sessionId) => host.activeRequests.has(sessionId),
+		sessionDirectoryRemovedIn(removed),
+	);
 	if (!verdicts) return;
 	holdDrainedTurns(host);
 	for (const sessionId of verdicts.gone) parkForHandoff(host, sessionId, "session_dir_removed");
@@ -70,7 +103,7 @@ export function parkForHandoff(
 		})
 		.finally(() => {
 			host.handoffParks--;
-			sweepDrain(host);
+			void sweepDrain(host);
 		});
 }
 
@@ -83,7 +116,25 @@ export function parkForHandoff(
  * or connected client resets that window. Runs on an unref'd interval and is safe to
  * call directly.
  */
-export function sweepIdleSessions(host: RouterContext): void {
+export function sweepIdleSessions(host: RouterContext): Promise<void> {
+	if (host.idleSweep) return host.idleSweep;
+	const sweep = (async () => {
+		// Whether a transcript directory is gone is checked off the host thread (senpi#4565).
+		const removed = await removedSessionDirectories(openSessionFiles(host));
+		sweepIdleSessionsWith(host, sessionDirectoryRemovedIn(removed));
+	})().finally(() => {
+		host.idleSweep = undefined;
+	});
+	host.idleSweep = sweep;
+	return sweep;
+}
+
+/** The transcript files of the sessions the registry lists. */
+function openSessionFiles(host: RouterContext): string[] {
+	return host.registry.list().flatMap(({ sessionPath }) => (sessionPath === undefined ? [] : [sessionPath]));
+}
+
+function sweepIdleSessionsWith(host: RouterContext, directoryRemoved: (sessionFile: string) => boolean): void {
 	const now = host.idleNow();
 	const idleEvictionMs = host.memoryPressure ? host.idleEvictionMs / 2 : host.idleEvictionMs;
 	const verdicts = selectSweepEvictions(
@@ -92,6 +143,7 @@ export function sweepIdleSessions(host: RouterContext): void {
 		idleEvictionMs,
 		(sessionId) =>
 			host.activeRequests.has(sessionId) || (host.bindings.get(sessionId)?.pendingPrompts?.().length ?? 0) > 0,
+		directoryRemoved,
 	);
 	for (const sessionId of verdicts.orphaned) void evictIdleSession(host, sessionId, "session_dir_removed");
 	for (const sessionId of verdicts.idle) void evictIdleSession(host, sessionId);

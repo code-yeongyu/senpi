@@ -57,9 +57,9 @@ describe("headless engine owns its sessions", () => {
 		for (const kind of ["headless", "client-owned"] as const) {
 			const rig = await startHostRig(kind, { now: () => now, emptyExitMs: 1_000, onEmptyExit: exits[kind] });
 			try {
-				rig.core.router.sweepIdleSessions();
+				await rig.core.router.sweepIdleSessions();
 				now += 2_000;
-				rig.core.router.sweepIdleSessions();
+				await rig.core.router.sweepIdleSessions();
 			} finally {
 				await rig.dispose();
 			}

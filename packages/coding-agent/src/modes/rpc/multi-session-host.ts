@@ -704,7 +704,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const drainForHandoff = (): void => {
 		if (shuttingDown) return;
 		if (draining) {
-			if (handoffAnnounced) router.beginDrain();
+			if (handoffAnnounced) void router.beginDrain();
 			return;
 		}
 		draining = true;
@@ -717,7 +717,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// A failed announcement still drains: parking is what lets this generation exit (senpi#2285).
 			.finally(() => {
 				handoffAnnounced = true;
-				router.beginDrain();
+				void router.beginDrain();
 			});
 	};
 	/**

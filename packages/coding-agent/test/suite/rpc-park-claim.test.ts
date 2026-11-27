@@ -123,7 +123,7 @@ it.each(["drain", "handoff", "stop"] as const)("%s closes parks and writes nothi
 	const durable = host.harnesses[0].session.sessionId;
 	if (action === "stop") await host.router.dispose();
 	else {
-		host.router.beginDrain();
+		await host.router.beginDrain();
 		await host.exited;
 	}
 	await host.closed(durable);

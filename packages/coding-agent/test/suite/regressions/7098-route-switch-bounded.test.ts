@@ -55,7 +55,7 @@ it.skipIf(process.platform === "win32")(
 	"a recovery that stops because this host drains answers every waiting command",
 	async () => {
 		const { host, sessionId, breakRoute } = await routedSession();
-		host.router.beginDrain();
+		await host.router.beginDrain();
 		breakRoute();
 
 		const reply = host.send({ type: "get_state", id: "waiting", sessionId });

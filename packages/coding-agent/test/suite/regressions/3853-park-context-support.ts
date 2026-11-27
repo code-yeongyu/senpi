@@ -53,7 +53,7 @@ export async function parkWithTaskStatus(agentDir: string, sessionPath: string, 
 		if (!patched?.success) throw new Error("context patch failed");
 		// Exercise the router's actual park path, not a hand-written park record.
 		now = 10_000;
-		router.sweepIdleSessions();
+		await router.sweepIdleSessions();
 		await parked.promise;
 	} finally {
 		await router.dispose();

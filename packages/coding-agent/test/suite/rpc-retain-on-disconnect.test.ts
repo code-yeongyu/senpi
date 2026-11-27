@@ -170,7 +170,7 @@ it.each([
 			host.router.handle({ id: "poll", type: "get_state", sessionId: row.sessionId }),
 		);
 		host.clock.now = 1_000;
-		host.router.sweepIdleSessions();
+		await host.router.sweepIdleSessions();
 		await host.writer.withConnection("owner", () =>
 			host.router.handle({ id: "after", type: "get_state", sessionId: row.sessionId }),
 		);
@@ -216,7 +216,7 @@ it.each(["get_state", "memory_report"])(
 		// When: a detached observation is routed just before the deadline.
 		host.registry.getForCommand(row.sessionId, command);
 		host.clock.now = 1_000;
-		host.router.sweepIdleSessions();
+		await host.router.sweepIdleSessions();
 
 		// Then: the observation has not extended the isolate's lifetime, and the close event names it.
 		expect(entry.state).toBe("closing");

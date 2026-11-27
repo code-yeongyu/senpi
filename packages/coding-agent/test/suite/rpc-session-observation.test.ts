@@ -48,7 +48,7 @@ it.each([
 		now = 999;
 		await rig.send("owner", { id: "read", type: "get_state", sessionId: first.sessionId });
 		now = 1_000;
-		rig.router.sweepIdleSessions();
+		await rig.router.sweepIdleSessions();
 
 		// Then: no park/evict event, the registry still lists it open and attached, and the handle still routes.
 		expect(entry.state).toBe("open");
@@ -90,7 +90,7 @@ it.each([
 	// When: a client reads it just before the original deadline, then the sweep runs.
 	await rig.send("observer", { id: "read", type, sessionId: first.sessionId });
 	now = 1_000;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 
 	// Then: observation has not bought another idle window.
 	expect(entry.state).toBe("closing");
@@ -109,7 +109,7 @@ it("renews the idle window for a command that changes the session", async () => 
 	// When: the client changes the name, then the old deadline passes.
 	await rig.send("owner", { id: "name", type: "set_session_name", sessionId: first.sessionId, name: "active" });
 	now = 1_000;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 
 	// Then: actual interaction still renews its lifetime.
 	expect(rig.registry.peek(first.sessionId)?.state).toBe("open");
@@ -130,7 +130,7 @@ it("keeps a just-detached completed worker through its first sweeps so a reconne
 
 	// When: the sweep runs while the disconnect is still fresh.
 	now = 1;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 
 	// Then: the live runtime survives, and a reconnect re-attaches to it rather than re-opening.
 	expect(entry.state).toBe("open");
@@ -158,10 +158,10 @@ it("starts a fresh retirement grace after a worker reconnects and detaches again
 	now = 5_000;
 	await rig.drop("owner");
 	now = 9_999;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 	expect(entry.state).toBe("open");
 	now = 10_000;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 
 	// Then: retirement proceeds at the new boundary and preserves durable identity.
 	expect(entry.state).toBe("closing");

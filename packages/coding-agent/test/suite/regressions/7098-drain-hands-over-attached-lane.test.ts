@@ -30,7 +30,7 @@ it("an attached session mid-turn parks at its turn boundary and the drained gene
 	if (turn === undefined) throw new Error("rig turn missing");
 	turn.start();
 
-	rig.router.beginDrain();
+	await rig.router.beginDrain();
 	await rig.settle();
 
 	expect(turn.automaticTurnHolds).toBe(1);

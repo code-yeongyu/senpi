@@ -18,7 +18,7 @@ import { getMissingSessionCwdIssue } from "../../../src/core/session-cwd.ts";
 import {
 	assertSessionPathsOnThisMachine,
 	canonicalSessionPath,
-	sessionDirectoryRemoved,
+	removedSessionDirectories,
 } from "../../../src/modes/rpc/session-path-key.ts";
 import { findProjectRoot } from "../../../src/core/extensions/builtin/rules/rules/project-root.ts";
 import { resolveMessagePath } from "../../../src/core/message-path-resolution.ts";
@@ -153,8 +153,8 @@ const sites: ReadonlyArray<readonly [string, () => unknown, (answer: unknown) =>
 		(answer) => expect(answer).toBe(`${ELSEWHERE}/session.jsonl`),
 	],
 	[
-		"session directory gone",
-		() => sessionDirectoryRemoved(`${ELSEWHERE}/session.jsonl`),
+		"session directory gone (session-path-key.ts removedSessionDirectories)",
+		async () => (await removedSessionDirectories([`${ELSEWHERE}/session.jsonl`])).has(ELSEWHERE),
 		(answer) => expect(answer).toBe(true),
 	],
 	[

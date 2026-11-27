@@ -69,7 +69,7 @@ it("returns deferred false while the host drain owns physical release", async ()
 	const turn = rig.turns.get(ref.sessionPath);
 	if (!turn) throw new Error("Missing turn");
 	turn.start();
-	rig.router.beginDrain();
+	await rig.router.beginDrain();
 	expect(
 		await rig.send("caller", {
 			id: "draining",

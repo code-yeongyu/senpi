@@ -1,5 +1,4 @@
 import { isHandoffBusy } from "./handoff-activity.ts";
-import { sessionDirectoryRemoved } from "./session-path-key.ts";
 import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 
 export interface DrainVerdicts {
@@ -22,6 +21,7 @@ export function selectDrainVerdicts(
 	registry: Pick<RpcSessionRegistry, "list" | "peek">,
 	inFlight: (sessionId: string) => boolean,
 	unreadable: (sessionId: string, cause: unknown) => void,
+	directoryRemoved: (sessionFile: string) => boolean,
 ): DrainVerdicts {
 	const park: string[] = [];
 	const gone: string[] = [];
@@ -29,7 +29,7 @@ export function selectDrainVerdicts(
 		if (status !== "open" || inFlight(sessionId)) continue;
 		const entry = registry.peek(sessionId);
 		if (!entry || handoffBusy(entry, sessionId, unreadable)) continue;
-		if (sessionPath !== undefined && sessionDirectoryRemoved(sessionPath)) gone.push(sessionId);
+		if (sessionPath !== undefined && directoryRemoved(sessionPath)) gone.push(sessionId);
 		else park.push(sessionId);
 	}
 	return { park, gone };
@@ -56,11 +56,17 @@ function handoffBusy(
 export function readDrainVerdicts(
 	registry: Pick<RpcSessionRegistry, "list" | "peek">,
 	inFlight: (sessionId: string) => boolean,
+	directoryRemoved: (sessionFile: string) => boolean,
 ): DrainVerdicts | undefined {
 	try {
-		return selectDrainVerdicts(registry, inFlight, (sessionId, cause) => {
-			process.stderr.write(`senpi rpc handoff activity of ${sessionId} unreadable, parking: ${String(cause)}\n`);
-		});
+		return selectDrainVerdicts(
+			registry,
+			inFlight,
+			(sessionId, cause) => {
+				process.stderr.write(`senpi rpc handoff activity of ${sessionId} unreadable, parking: ${String(cause)}\n`);
+			},
+			directoryRemoved,
+		);
 	} catch (cause) {
 		process.stderr.write(`senpi rpc handoff drain pass failed, retrying: ${String(cause)}\n`);
 		return undefined;

@@ -158,7 +158,7 @@ it.each(["drain", "shutdown"] as const)("refuses reclaim during %s before admiss
 	turn.start();
 	const tearingDown = phase === "shutdown" ? rig.teardown.hold() : undefined;
 	const shutdown = phase === "shutdown" ? rig.router.dispose() : undefined;
-	if (phase === "drain") rig.router.beginDrain();
+	if (phase === "drain") await rig.router.beginDrain();
 	try {
 		// Shutdown may first await speculative parks. Snapshot after its own close claim, while disposal is held.
 		await tearingDown;

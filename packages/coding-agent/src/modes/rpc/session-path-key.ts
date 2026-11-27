@@ -1,4 +1,5 @@
-import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
+import { automountTriggerPathSync, withResolutionDeadline } from "@code-yeongyu/senpi-machine-ops";
+import { access } from "node:fs/promises";
 import { RpcSessionRegistryError } from "./session-registry-types.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -31,10 +32,34 @@ export function canonicalSessionPath(path: string): string {
 	}
 }
 
-/** The directory a session writes its transcript into is gone: it can never persist again. */
-export function sessionDirectoryRemoved(sessionFile: string): boolean {
-	const directory = dirname(sessionFile);
-	return automountTriggerPathSync(directory) !== undefined || !existsSync(directory);
+/**
+ * The directories of these session files that are gone: a session there can never persist again. Checked off the host
+ * thread (senpi#4565): a directory under an unmounted automount is gone, and one that does not answer within the
+ * resolution deadline counts as present, so a hung mount never ends a session or parks the host.
+ */
+export async function removedSessionDirectories(sessionFiles: readonly string[]): Promise<ReadonlySet<string>> {
+	const removed = new Set<string>();
+	await Promise.all(
+		[...new Set(sessionFiles.map((file) => dirname(file)))].map(async (directory) => {
+			if (automountTriggerPathSync(directory) !== undefined) {
+				removed.add(directory);
+				return;
+			}
+			const gone = await withResolutionDeadline(
+				access(directory).then(
+					() => false,
+					() => true,
+				),
+			);
+			if (gone === true) removed.add(directory);
+		}),
+	);
+	return removed;
+}
+
+/** The "transcript directory is gone" test over a set {@link removedSessionDirectories} answered. */
+export function sessionDirectoryRemovedIn(removed: ReadonlySet<string>): (sessionFile: string) => boolean {
+	return (sessionFile) => removed.has(dirname(sessionFile));
 }
 
 /**

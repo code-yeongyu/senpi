@@ -341,8 +341,10 @@ it("names idle_evicted when a non-retained session hits the idle window", async 
 	await using rig = createInProcessRig(dir, { idleEvictionMs: CLOSE_REASON_IDLE_MS });
 	const session = opened(await rig.open("conn-a", { cwd: dir, sessionPath: join(dir, "idle.jsonl") }), 0);
 
-	// When: the idle window elapses while that session is still listed.
+	// When: the idle window elapses while that session is still listed (the sweep checks transcript directories off
+	// the host thread, senpi#4565, so the test awaits a sweep instead of counting event-loop turns).
 	await vi.advanceTimersByTimeAsync(CLOSE_REASON_IDLE_MS * 2);
+	await rig.router.sweepIdleSessions();
 	await rig.settle();
 
 	// Then: the host closed it for idleness, and it is gone from the listing.
@@ -397,7 +399,7 @@ it("names handoff_parked when a drain parks a detached retained session", async 
 	await rig.drop("conn-a");
 
 	// When: the host is asked to drain for a generation handoff.
-	rig.router.beginDrain();
+	await rig.router.beginDrain();
 	await rig.settle();
 
 	// Then: the record names the handoff, so a client reopens by path instead of treating a loss.
