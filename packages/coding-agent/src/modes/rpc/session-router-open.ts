@@ -23,6 +23,7 @@ import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-pr
 import { holdOpenConnection, type OpenReplyAs, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
 import { closePark } from "./session-router-park.ts";
 import { relocationConnection } from "./session-router-relocation.ts";
+import { withParkedChoices } from "./session-router-parked-choices.ts";
 import { syncRetainedRecord } from "./session-router-residency.ts";
 import { declareTelemetry } from "./session-router-telemetry.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
@@ -107,6 +108,7 @@ export async function open(
 		readonly routedSince?: number;
 	},
 ): Promise<RpcResponse | undefined> {
+	if (options?.defaults !== false) command = await withParkedChoices(host, command);
 	const validated = validatedOpenProfile(host, command, options);
 	if ("type" in validated) return validated;
 	let opened: OpenRpcSession | undefined;
