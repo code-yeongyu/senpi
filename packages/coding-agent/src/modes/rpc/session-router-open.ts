@@ -13,16 +13,13 @@ import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 
 import { sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession } from "./session-registry.ts";
-import { forgetSessionOwnership, releaseOwnedSession, releaseOwnerAttachment } from "./session-router-attachments.ts";
-import { close } from "./session-router-close.ts";
+import { releaseOwnedSession, releaseOwnerAttachment } from "./session-router-attachments.ts";
+import { installOpenBinding } from "./session-router-open-binding.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
-import { sweepDrain } from "./session-router-occupancy.ts";
 import { openSessionFolder } from "./open-session-folder.ts";
 import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-profile.ts";
 import { holdOpenConnection, type OpenReplyAs, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
-import { closePark } from "./session-router-park.ts";
-import { relocationConnection } from "./session-router-relocation.ts";
 import { syncRetainedRecord } from "./session-router-residency.ts";
 import { declareTelemetry } from "./session-router-telemetry.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
@@ -187,62 +184,8 @@ export async function open(
 			telemetryKind,
 		);
 		if (telemetry !== "confirmed") throw new RpcSessionRegistryError("telemetry_update_unconfirmed");
-		if (!host.bindings.has(openedSession.sessionId)) {
-			host.bindings.set(
-				openedSession.sessionId,
-				await host.createBinding(
-					openedSession.sessionId,
-					entry,
-					host.writer,
-					() =>
-						void (entry.speculative
-							? closePark(host, openedSession)
-							: close(host, { type: "close_session", sessionId: openedSession.sessionId })),
-					{
-						...host.connectionOptions,
-						capabilities:
-							owner !== undefined
-								? (host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [])
-								: host.connectionOptions?.capabilities,
-						connectionRoles: host.connectionRoles,
-						clientInfo: {
-							setCapabilities: (connectionId, capabilities) => {
-								if (connectionId !== undefined) {
-									host.writer.setConnectionCapabilities(connectionId, capabilities);
-									host.pendingCapabilities.set(connectionId, [...capabilities]);
-								}
-							},
-							connectionId: () => host.writer.currentConnection(),
-							relocationConnection: () => relocationConnection(host, openedSession.sessionId),
-							deliverTo: (connection, deliver) => host.writer.withConnection(connection, deliver),
-						},
-					},
-				),
-			);
-			timer.mark("binding");
-			if (entry.worker) entry.worker.bindingReady = true;
-			// Wake the drain sweep the moment a session settles, so a handoff parks it
-			// without waiting for the next timer tick. Both hooks are OPTIONAL: an
-			// embedder's runtime and the suite's fakes implement the session surface
-			// they need and nothing more, and an open must never fail because a
-			// settle notification is unavailable - the periodic sweep still parks it.
-			const settled = () => {
-				if (host.draining) queueMicrotask(() => sweepDrain(host));
-			};
-			if (typeof entry.worker?.subscribeSettled === "function") entry.worker.subscribeSettled(settled);
-			else if (typeof entry.runtime?.session.subscribe === "function")
-				entry.runtime.session.subscribe((event) => {
-					// agent_idle, not agent_settled: settle-time extension handlers may still be writing (omo#11419).
-					if (event.type === "agent_idle") settled();
-				});
-			if (entry.worker)
-				void entry.worker.exited.then(async () => {
-					await host.finalizations.get(openedSession.sessionId)?.promise;
-					host.bindings.delete(openedSession.sessionId);
-					forgetSessionOwnership(host, openedSession.sessionId);
-					host.writer.forgetSession(openedSession.sessionId);
-				});
-		}
+		if (!host.bindings.has(openedSession.sessionId))
+			await installOpenBinding(host, openedSession, entry, owner, timer);
 		options?.signal?.throwIfAborted();
 		if (options?.park) {
 			options.park(openedSession);
