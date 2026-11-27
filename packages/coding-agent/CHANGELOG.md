@@ -1,14 +1,26 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.27] - 2026-11-27
 
 ### Breaking Changes
 
 ### Added
 
+- `ctx.reportToolResult()` lets a tool run the session's `tool_result` handlers for work it already did, without running a tool: the event carries `parentToolCallId` and an id of the form `<calling id>/reported-<n>` ([#7276](https://github.com/code-yeongyu/senpi/pull/7276))
+- `@code-yeongyu/senpi/engine`: typed functions for the package, model, config, schedule, query and host lifecycle commands, plus `ENGINE_COMMANDS` metadata of their flags ([#7460](https://github.com/code-yeongyu/senpi/pull/7460))
+- A shared host decides each session's telemetry from the host's own setting AND every caller of that session: `open_session.telemetry`, `attach_session.telemetry` and `set_telemetry_consent` carry each caller's live answer, extensions read `ctx.telemetryPermitted`, an older peer that sends no answer never grants telemetry events, and provider attribution headers are removed by any caller's decline ([#7465](https://github.com/code-yeongyu/senpi/pull/7465))
+- A worker session that does not confirm a revoked telemetry answer within 2 s is ended. If it is not seen to exit within a further 2 s, the host sends `host_telemetry_containment` to every connection and exits with code 79; embedders may observe that exit code ([#7465](https://github.com/code-yeongyu/senpi/pull/7465))
+- Interactive mode tells a terminal that supports the OSC 7577 Program Resume Protocol how to reopen the current session after the terminal restarts, and keeps the terminal's token away from every tool and child process ([#7494](https://github.com/code-yeongyu/senpi/pull/7494))
+
 ### Changed
 
 ### Fixed
+
+- A peer message the engine-turn cap keeps from starting a turn is answered `held` with `engineTurnCap` instead of `started`; `get_state` shows the cap, and `resume_session` continues the session with one turn (or, in release mode, names the cap) instead of answering `not_paused` ([#7444](https://github.com/code-yeongyu/senpi/pull/7444))
+- An external message admitted to an idle session is answered with the turn it starts, not the one before it, and a steer that names that turn is accepted before the turn begins ([#7481](https://github.com/code-yeongyu/senpi/pull/7481))
+- A host supervisor whose host child had exited without the exit being observed (for example after a drain whose successor never took over) no longer holds the RPC socket forever, closing every client and refusing every new host with "address already in use". It now ends the generation and gives the socket up, and it never signals a pid it cannot prove is still its own child ([#7525](https://github.com/code-yeongyu/senpi/pull/7525))
+- The todo widget no longer marks an item in progress while the session is idle: the active mark is drawn only while a turn is active or background work is live, and otherwise the title reads `Todo · paused · N open` with the open count ([#7527](https://github.com/code-yeongyu/senpi/pull/7527)).
+- The todo widget and the herdr pane report now read one session liveness watcher, so a child known only from its task record keeps the todo item active, and a question still pending after a reload keeps the session blocked ahead of running work ([#7527](https://github.com/code-yeongyu/senpi/pull/7527)).
 
 ### Removed
 
