@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,7 +41,9 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 
 	const decide = async (service: PermissionService, permission: string, written: string, executed: string) => {
 		const identity = await service.prepareIdentity(permission, [executed], root);
-		return service.dispatchDecision(permission, written, { ruleAliases: [written, executed], identity });
+		return await withFetchedFacts(() =>
+			service.dispatchDecision(permission, written, { ruleAliases: [written, executed], identity }),
+		);
 	};
 
 	beforeAll(() => {
@@ -101,30 +104,33 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 		expect((await decide(service, "read", `${real}/real/secret`, `${real}/real/secret`)).action).toBe("allow");
 	});
 
-	it("a relative rule and a bare name still deny the written spelling with the canonical route off (C1)", () => {
+	it("a relative rule and a bare name still deny the written spelling with the canonical route off (C1)", async () => {
 		const service = serviceWith([deny("src/*.env"), deny("secret.json")]);
-		expect(service.dispatchDecision("read", "src/a.env").action).toBe("deny");
-		expect(service.dispatchDecision("read", "secret.json").action).toBe("deny");
-		expect(service.dispatchDecision("read", `${real}/src/a.env`).action).toBe("ask");
+		expect((await withFetchedFacts(() => service.dispatchDecision("read", "src/a.env"))).action).toBe("deny");
+		expect((await withFetchedFacts(() => service.dispatchDecision("read", "secret.json"))).action).toBe("deny");
+		expect((await withFetchedFacts(() => service.dispatchDecision("read", `${real}/src/a.env`))).action).toBe("ask");
 	});
 
-	it("an absolute rule matches the executed spelling with the canonical route off (route b)", () => {
+	it("an absolute rule matches the executed spelling with the canonical route off (route b)", async () => {
 		const service = serviceWith([deny(`${real}/real/secret`)]);
 		expect(
-			service.dispatchDecision("read", "link/secret", { ruleAliases: ["link/secret", `${real}/real/secret`] })
-				.action,
+			(
+				await withFetchedFacts(() =>
+					service.dispatchDecision("read", "link/secret", { ruleAliases: ["link/secret", `${real}/real/secret`] }),
+				)
+			).action,
 		).toBe("deny");
 	});
 
-	it("grep's regex form carries no executed path and gets no identity route (M6)", () => {
+	it("grep's regex form carries no executed path and gets no identity route (M6)", async () => {
 		const registry = createBuiltinParserRegistry();
-		const regex = registry
-			.parse("grep", { pattern: "secret" }, root)
-			.find((request) => request.permission === "grep");
+		const regex = (await withFetchedFacts(() => registry.parse("grep", { pattern: "secret" }, root))).find(
+			(request) => request.permission === "grep",
+		);
 		expect(regex?.executed).toBeUndefined();
-		const withPath = registry
-			.parse("grep", { pattern: "x", path: "link" }, root)
-			.find((request) => request.permission === "grep");
+		const withPath = (
+			await withFetchedFacts(() => registry.parse("grep", { pattern: "x", path: "link" }, root))
+		).find((request) => request.permission === "grep");
 		expect(withPath?.executed).toEqual([`${root}/link`]);
 	});
 
@@ -138,24 +144,32 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 				canonical: [{ path: `${realpathSync.native(outside)}/f`, foldCase: false }],
 			};
 			const target = `${realpathSync.native(outside)}/f`;
-			expect(service.dispatchDecision("external_directory", target, { identity }).action).toBe(
-				service.dispatchDecision("external_directory", target).action,
-			);
+			expect(
+				(await withFetchedFacts(() => service.dispatchDecision("external_directory", target, { identity }))).action,
+			).toBe((await withFetchedFacts(() => service.dispatchDecision("external_directory", target))).action);
 		} finally {
 			rmSync(outside, { recursive: true, force: true });
 		}
 	});
 
-	it("an unresolvable request is a synthetic deny only when a deny of its class exists (6.1.3)", () => {
+	it("an unresolvable request is a synthetic deny only when a deny of its class exists (6.1.3)", async () => {
 		const unresolvable: IdentityInput = { canonical: [], unresolvable: "EACCES" };
 		const withDeny = serviceWith([deny(`${real}/elsewhere`)]);
-		const decision = withDeny.dispatchDecision("read", `${root}/x`, { identity: unresolvable });
+		const decision = await withFetchedFacts(() =>
+			withDeny.dispatchDecision("read", `${root}/x`, { identity: unresolvable }),
+		);
 		expect(decision.action).toBe("deny");
 		expect(decision.rules[0]?.pattern).toBe("(path could not be resolved: EACCES)");
 		const withoutDeny = serviceWith([allow(`${real}/elsewhere`)]);
-		expect(withoutDeny.dispatchDecision("read", `${root}/x`, { identity: unresolvable }).action).toBe("ask");
+		expect(
+			(await withFetchedFacts(() => withoutDeny.dispatchDecision("read", `${root}/x`, { identity: unresolvable })))
+				.action,
+		).toBe("ask");
 		const otherClass = serviceWith([deny("rm *", "bash")]);
-		expect(otherClass.dispatchDecision("read", `${root}/x`, { identity: unresolvable }).action).toBe("ask");
+		expect(
+			(await withFetchedFacts(() => otherClass.dispatchDecision("read", `${root}/x`, { identity: unresolvable })))
+				.action,
+		).toBe("ask");
 	});
 
 	it("the refusal names the user's layer for an identity match (provenance)", async () => {
@@ -210,14 +224,22 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 			canonical: { v: PATH_IDENTITY_VERSION, path: `${real}/real/secret`, foldCase: false },
 		});
 		expect(current).not.toBeInstanceOf(Promise);
-		expect(service.dispatchDecision("read", executed, { identity: await current }).action).toBe("deny");
+		const currentIdentity = await current;
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision("read", executed, { identity: currentIdentity })))
+				.action,
+		).toBe("deny");
 		const absent = await service.prepareIdentity("read", [executed], root);
-		expect(service.dispatchDecision("read", executed, { identity: absent }).action).toBe("deny");
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision("read", executed, { identity: absent }))).action,
+		).toBe("deny");
 		const stale = await service.prepareIdentity("read", [executed], root, {
 			canonical: { v: PATH_IDENTITY_VERSION + 1, path: "/nowhere", foldCase: false },
 		});
 		expect(stale.canonical.map((entry) => entry.path)).toEqual([`${real}/real/secret`]);
-		expect(service.dispatchDecision("read", executed, { identity: stale }).action).toBe("deny");
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision("read", executed, { identity: stale }))).action,
+		).toBe("deny");
 	});
 
 	it("the request target's foldCase governs the comparison (N6)", async () => {
@@ -226,8 +248,20 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 		await service.identitySettled();
 		const folded: IdentityInput = { canonical: [{ path: `${real}/real/new/secret`, foldCase: true }] };
 		const exact: IdentityInput = { canonical: [{ path: `${real}/real/new/secret`, foldCase: false }] };
-		expect(service.dispatchDecision("read", `${real}/real/new/secret`, { identity: folded }).action).toBe("deny");
-		expect(service.dispatchDecision("read", `${real}/real/new/secret`, { identity: exact }).action).toBe("ask");
+		expect(
+			(
+				await withFetchedFacts(() =>
+					service.dispatchDecision("read", `${real}/real/new/secret`, { identity: folded }),
+				)
+			).action,
+		).toBe("deny");
+		expect(
+			(
+				await withFetchedFacts(() =>
+					service.dispatchDecision("read", `${real}/real/new/secret`, { identity: exact }),
+				)
+			).action,
+		).toBe("ask");
 	});
 
 	it("the ordering edge is kept: a later allow on another spelling still wins (7.3)", async () => {
@@ -259,7 +293,10 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 			).toBe("deny");
 			const nodeNative: IdentityInput = { canonical: [{ path: executed, foldCase: false }] };
 			await onCanonical.identitySettled();
-			expect(onCanonical.dispatchDecision("read", executed, { identity: nodeNative }).action).toBe("deny");
+			expect(
+				(await withFetchedFacts(() => onCanonical.dispatchDecision("read", executed, { identity: nodeNative })))
+					.action,
+			).toBe("deny");
 		},
 	);
 
@@ -300,19 +337,26 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 		expect(asking.requestIdentity("r-ask")).toBeUndefined();
 	});
 
-	it("external_directory keeps its own inode matcher under evaluateWithIdentity: identity is added, never substituted", () => {
+	it("external_directory keeps its own inode matcher under evaluateWithIdentity: identity is added, never substituted", async () => {
 		const rule = deny(`${real}/real/secret`, "external_directory");
 		const alias = `${root}/link/secret`;
-		expect(evaluate("external_directory", alias, [rule])).toBe(rule);
-		expect(evaluateWithIdentity("external_directory", alias, [rule], undefined)).toBe(rule);
+		expect(await withFetchedFacts(() => evaluate("external_directory", alias, [rule]))).toBe(rule);
+		expect(await withFetchedFacts(() => evaluateWithIdentity("external_directory", alias, [rule], undefined))).toBe(
+			rule,
+		);
 	});
 
-	it("external_directory: a rule written through a link denies the real path at the service boundary", () => {
+	it("external_directory: a rule written through a link denies the real path at the service boundary", async () => {
 		// The direction only the inode matcher reaches: no spelling of the request matches the rule lexically.
 		const viaLink = deny(`${root}/link/secret`, "external_directory");
 		const service = serviceWith([allow("*", "external_directory"), viaLink]);
-		expect(service.dispatchDecision("external_directory", `${real}/real/secret`).action).toBe("deny");
-		expect(service.dispatchDecision("external_directory", `${real}/real/sub/a.env`).action).toBe("allow");
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision("external_directory", `${real}/real/secret`))).action,
+		).toBe("deny");
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision("external_directory", `${real}/real/sub/a.env`)))
+				.action,
+		).toBe("allow");
 	});
 
 	it("zero path rules: nothing is canonicalized and decisions are unchanged", async () => {
@@ -320,6 +364,10 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 		expect(service.identityWanted("read")).toBe(false);
 		const identity = service.prepareIdentity("read", [`${root}/link/secret`], root);
 		expect(identity).not.toBeInstanceOf(Promise);
-		expect(service.dispatchDecision("read", `${root}/link/secret`, { identity: await identity }).action).toBe("ask");
+		const prepared = await identity;
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision("read", `${root}/link/secret`, { identity: prepared })))
+				.action,
+		).toBe("ask");
 	});
 });

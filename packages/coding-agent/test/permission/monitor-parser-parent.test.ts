@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 import { vi } from "vitest";
 
 const fsState = vi.hoisted(() => ({
@@ -42,12 +43,12 @@ function createRoot(): string {
 	return root;
 }
 
-function parseMonitor(input: Record<string, unknown>, cwd: string) {
-	return createBuiltinParserRegistry().parse("monitor", input, cwd);
+async function parseMonitor(input: Record<string, unknown>, cwd: string) {
+	return await withFetchedFacts(() => createBuiltinParserRegistry().parse("monitor", input, cwd));
 }
 
 describe("monitor permission parser: approved parent", () => {
-	it("derives the approved parent without realpath when the parent directory cannot be opened", () => {
+	it("derives the approved parent without realpath when the parent directory cannot be opened", async () => {
 		// given
 		const cwd = createRoot();
 		const parent = join(cwd, "logs");
@@ -57,27 +58,27 @@ describe("monitor permission parser: approved parent", () => {
 		const input: Record<string, unknown> = { description: "probe", path: target };
 
 		// when
-		const requests = parseMonitor(input, cwd);
+		const requests = await parseMonitor(input, cwd);
 
 		// then
 		expect(getApprovedMonitorParent(input)).toBe(parent);
 		expect(requests[0]).toEqual({ permission: "read", patterns: [target], always: [target], executed: [target] });
 	});
 
-	it("resolves a relative monitor path against the cwd", () => {
+	it("resolves a relative monitor path against the cwd", async () => {
 		// given
 		const cwd = createRoot();
 		mkdirSync(join(cwd, "logs"));
 		const input: Record<string, unknown> = { description: "probe", path: join("logs", "out.log") };
 
 		// when
-		parseMonitor(input, cwd);
+		await parseMonitor(input, cwd);
 
 		// then
 		expect(getApprovedMonitorParent(input)).toBe(join(cwd, "logs"));
 	});
 
-	it.skipIf(isWindows)("resolves a symlinked parent to the directory it points at", () => {
+	it.skipIf(isWindows)("resolves a symlinked parent to the directory it points at", async () => {
 		// given
 		const cwd = createRoot();
 		const real = join(cwd, "real");
@@ -87,14 +88,14 @@ describe("monitor permission parser: approved parent", () => {
 		const input: Record<string, unknown> = { description: "probe", path: join(link, "out.log") };
 
 		// when
-		parseMonitor(input, cwd);
+		await parseMonitor(input, cwd);
 
 		// then
 		expect(getApprovedMonitorParent(input)).toBe(real);
 	});
 
 	// Bun's fs.realpath* opens every directory it walks; an execute-only parent fails with EACCES there.
-	it.skipIf(isWindows || isRoot)("derives the approved parent through an execute-only directory", () => {
+	it.skipIf(isWindows || isRoot)("derives the approved parent through an execute-only directory", async () => {
 		// given
 		const cwd = createRoot();
 		const executeOnly = join(cwd, "noread");
@@ -104,7 +105,7 @@ describe("monitor permission parser: approved parent", () => {
 		const input: Record<string, unknown> = { description: "probe", path: join(parent, "out.log") };
 		try {
 			// when
-			parseMonitor(input, cwd);
+			await parseMonitor(input, cwd);
 
 			// then
 			expect(getApprovedMonitorParent(input)).toBe(parent);

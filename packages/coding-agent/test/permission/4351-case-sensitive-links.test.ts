@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 import { vi } from "vitest";
 
 const filesystem = vi.hoisted(() => ({
@@ -51,6 +52,19 @@ vi.mock("node:fs", async (importOriginal) => {
 		},
 	};
 	return { ...actual, ...mocked, default: { ...actual, ...mocked } };
+});
+
+// The permission decision fetches its path facts asynchronously (senpi#4565): they answer from the same model.
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	const fs = await import("node:fs");
+	const modeled = {
+		lstat: async (path: string, options?: { bigint?: boolean }) => fs.lstatSync(path, options),
+		stat: async (path: string, options?: { bigint?: boolean }) => fs.statSync(path, options),
+		readlink: async (path: string) => fs.readlinkSync(path),
+		readdir: async (path: string) => fs.readdirSync(path),
+	};
+	return { ...actual, ...modeled, default: { ...actual, ...modeled } };
 });
 
 import { lstatSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
@@ -114,10 +128,14 @@ describe("4351 distinct case-sensitive symlink entries", () => {
 		const registry = createBuiltinParserRegistry();
 		const input = { path: join(lower, "f.txt") };
 		const cwd = join(root, "workspace");
-		const request = registry.parse("read", input, cwd).find((item) => item.permission === "external_directory");
+		const request = (await withFetchedFacts(() => registry.parse("read", input, cwd))).find(
+			(item) => item.permission === "external_directory",
+		);
 		if (!request) throw new Error("Missing external-directory request");
 		expect(request.patterns).toEqual([join(root, "outside", "f.txt")]);
-		expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe(expected);
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request))).action,
+		).toBe(expected);
 
 		const session = {};
 		const authorizer = createDispatchAuthorizer(
@@ -135,6 +153,7 @@ describe("4351 distinct case-sensitive symlink entries", () => {
 			identity: { owner: registry, metadata: "" },
 		};
 		const context = { cwd, sessionManager: { getSessionId: () => "case-sensitive-links" } } as ExtensionContext;
+		await authorizer.prepare?.(invocation, context);
 		expect(authorizer.policy(invocation, context).action).toBe(expected);
 		const fence = authorizeToolDispatch(session, invocation, context, undefined);
 		if (expected === "deny") {

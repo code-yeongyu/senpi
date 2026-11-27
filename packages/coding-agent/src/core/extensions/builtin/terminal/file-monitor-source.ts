@@ -7,7 +7,7 @@ import { type FSWatcher, watch } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { canonicalWatchPath, probeDirectoryOpenable } from "../../../../utils/fs-watch.ts";
-import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import { realpathWithoutOpenAsync } from "../permission-system/path-facts.ts";
 import { checkFileOnce } from "./file-monitor-check.ts";
 import { RegistrationGuard } from "./file-monitor-guard.ts";
 import { type FileMonitorRecord, newFileRecord, type RegisterFileMonitorOptions } from "./file-monitor-record.ts";
@@ -93,7 +93,7 @@ export class FileMonitorSource {
 		const id = `watch_${this.#nextFileId++}`;
 		let watcher: FSWatcher;
 		try {
-			const activationParent = realpathWithoutOpen(parent);
+			const activationParent = await realpathWithoutOpenAsync(parent);
 			if (activationParent !== approvedParent) {
 				throw new Error(`Cannot watch file: parent directory changed during registration: ${parent}`);
 			}

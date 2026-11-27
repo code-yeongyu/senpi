@@ -1,6 +1,6 @@
 import type { BigIntStats } from "node:fs";
 import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
-import type { OpenFreeWalkIo } from "../../../../utils/paths.ts";
+import { type OpenFreeWalkIo, realpathWithoutOpenWith } from "../../../../utils/paths.ts";
 import {
 	automountTriggerPathSync,
 	RESOLUTION_TIMED_OUT,
@@ -11,7 +11,7 @@ import {
 /** How long one filesystem fact may take before it is recorded as timed out (the automount helper's deadline). */
 export const PATH_FACT_DEADLINE_MS = 5000;
 /** Rounds of fetching a decision's missing facts: each round can reveal one more link hop or listed directory. */
-const MAX_FACT_ROUNDS = 48;
+const MAX_FACT_ROUNDS = 256;
 
 export type FactKind = "lstat" | "stat" | "readlink" | "readdir" | "realpath";
 type Fact = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly code: string };
@@ -162,6 +162,25 @@ export async function decideWithPathFacts<T>(decide: (facts: PathFacts) => T, fa
 
 /** The pending-fact code {@link PathFacts} readers throw; never an answer about the path itself. */
 export const FACT_PENDING = "EFACTPENDING";
+
+/** {@link realpathWithoutOpen} for an async caller: every lstat/readlink runs off the host thread, bounded. */
+export function realpathWithoutOpenAsync(path: string): Promise<string> {
+	return decideWithPathFacts((facts) => realpathWithoutOpenWith(path, facts.walkIo));
+}
+
+/**
+ * Run a synchronous decision once: its answer when it read no fact that was not fetched, or `undefined` when it missed
+ * one (the caller then awaits {@link decideWithPathFacts}). A throw with every fact present is the decision's own.
+ */
+export function decideNowOrWithPathFacts<T>(decide: () => T, facts: PathFacts): T | undefined {
+	try {
+		const answer = decide();
+		return facts.incomplete ? undefined : answer;
+	} catch (error) {
+		if (facts.incomplete) return undefined;
+		throw error;
+	}
+}
 
 let active: PathFacts | undefined;
 

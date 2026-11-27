@@ -12,7 +12,13 @@ import {
 } from "./identity-decision.ts";
 import type { IdentityMatcher } from "./evaluate.ts";
 import { createMountRewrite, readFirmlinks } from "./alias-detector.ts";
-import { decideWithPathFacts, PathFacts, withPathFacts } from "./path-facts.ts";
+import {
+	currentPathFacts,
+	decideNowOrWithPathFacts,
+	decideWithPathFacts,
+	PathFacts,
+	withPathFacts,
+} from "./path-facts.ts";
 import type { PathIdentityResolver } from "./path-identity-host.ts";
 import { PendingRequests } from "./pending-requests.ts";
 import { RuleIdentityCache, type RuleIdentityEntry } from "./rule-identity-cache.ts";
@@ -218,7 +224,8 @@ export class PermissionService {
 	): Decision {
 		this.refreshApproved();
 		const approved = this.approvedFor(scope);
-		return withPathFacts(options.facts ?? new PathFacts(), () => {
+		const facts = options.facts ?? currentPathFacts();
+		const decision = withPathFacts(facts, () => {
 			if (permission === "external_directory") {
 				return decideExternalPaths(target, options.ruleAliases ?? [], (spelling, resolved, canonicalCase) =>
 					this.decideTarget(
@@ -234,6 +241,8 @@ export class PermissionService {
 			}
 			return this.decideTarget(approved, permission, options.ruleAliases ?? target, options);
 		});
+		// A decision that read a fact not fetched yet is incomplete: it may deny, never allow (senpi#4565).
+		return facts.incomplete && decision.action === "allow" ? { action: "ask", rules: decision.rules } : decision;
 	}
 
 	private decideTarget(
@@ -312,18 +321,18 @@ export class PermissionService {
 			...(identity ? { identity } : {}),
 			facts,
 		};
-		const decided = await decideWithPathFacts(
-			() =>
-				info.patterns.map((pattern) => {
-					const aliases =
-						executed && executed.length > 0 ? uniq([...(ruleAliases ?? [pattern]), ...executed]) : ruleAliases;
-					return {
-						pattern,
-						action: this.decide(info.permission, pattern, { ...options, ruleAliases: aliases }, info.sessionID),
-					};
-				}),
-			facts,
-		);
+		const decideAll = () =>
+			info.patterns.map((pattern) => {
+				const aliases =
+					executed && executed.length > 0 ? uniq([...(ruleAliases ?? [pattern]), ...executed]) : ruleAliases;
+				return {
+					pattern,
+					action: this.decide(info.permission, pattern, { ...options, ruleAliases: aliases }, info.sessionID),
+				};
+			});
+		// A decision that reads no path fact (or only prefetched ones) stays synchronous, so its request registers
+		// before `ask` first yields; one that misses a fact waits for it off the host thread (senpi#4565).
+		const decided = decideNowOrWithPathFacts(decideAll, facts) ?? (await decideWithPathFacts(decideAll, facts));
 		for (const { pattern, action } of decided) {
 			if (action === "deny") {
 				deniedPatterns.push(pattern);

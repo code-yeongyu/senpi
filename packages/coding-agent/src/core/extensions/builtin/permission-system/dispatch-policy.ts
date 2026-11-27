@@ -61,9 +61,11 @@ export function createDispatchAuthorizer(
 			}
 			return { permission, rules };
 		});
+		// A parse or decision that read a fact not fetched yet is incomplete: it may deny, never allow (senpi#4565).
+		if (facts.incomplete && action === "allow") action = "ask";
 		return {
 			action,
-			fingerprint: JSON.stringify([sessionID, ctx.cwd, state.preset === "auto", decisions]),
+			fingerprint: JSON.stringify([sessionID, ctx.cwd, state.preset === "auto", decisions, facts.incomplete]),
 		};
 	};
 	return {

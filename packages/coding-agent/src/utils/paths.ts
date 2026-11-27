@@ -89,11 +89,6 @@ export interface OpenFreeWalkIo {
 	readlink(path: string): string;
 }
 
-const SYNC_WALK_IO: OpenFreeWalkIo = {
-	lstatIsLink: (path) => lstatSync(path).isSymbolicLink(),
-	readlink: (path) => readlinkSync(path),
-};
-
 function resolveWithoutOpen(inputPath: string, io: OpenFreeWalkIo): OpenFreeResolution {
 	const absolutePath = isAbsolute(inputPath) ? inputPath : nodeResolvePath(inputPath);
 	const { root } = parse(absolutePath);
@@ -149,7 +144,11 @@ function resolveWithoutOpen(inputPath: string, io: OpenFreeWalkIo): OpenFreeReso
  * and use {@link realpathWithoutOpenStrict} where an incomplete answer must not be trusted.
  */
 export function realpathWithoutOpen(inputPath: string): string {
-	return realpathWithoutOpenWith(inputPath, SYNC_WALK_IO);
+	// The synchronous calls stay in this body so the no-sync audits see every caller that still makes them.
+	return realpathWithoutOpenWith(inputPath, {
+		lstatIsLink: (path) => lstatSync(path).isSymbolicLink(),
+		readlink: (path) => readlinkSync(path),
+	});
 }
 
 /** {@link realpathWithoutOpen} over injected `io`: the permission decision walks its prefetched path facts (senpi#4565). */
@@ -165,7 +164,10 @@ export function realpathWithoutOpenWith(inputPath: string, io: OpenFreeWalkIo): 
  * an unresolved path can name a different file than the one the I/O will reach.
  */
 export function realpathWithoutOpenStrict(inputPath: string): string {
-	return realpathWithoutOpenStrictWith(inputPath, SYNC_WALK_IO);
+	return realpathWithoutOpenStrictWith(inputPath, {
+		lstatIsLink: (path) => lstatSync(path).isSymbolicLink(),
+		readlink: (path) => readlinkSync(path),
+	});
 }
 
 /** {@link realpathWithoutOpenStrict} over injected `io`. */

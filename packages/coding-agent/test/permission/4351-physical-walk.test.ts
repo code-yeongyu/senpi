@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,8 +17,10 @@ describe("4351 physical component walk", () => {
 		pattern,
 		action,
 	});
-	const external = (input: string) => {
-		const request = registry.parse("read", { path: input }, cwd).find((r) => r.permission === "external_directory");
+	const external = async (input: string) => {
+		const request = (await withFetchedFacts(() => registry.parse("read", { path: input }, cwd))).find(
+			(r) => r.permission === "external_directory",
+		);
 		if (!request) throw new Error("Missing external request");
 		return request;
 	};
@@ -38,7 +41,7 @@ describe("4351 physical component walk", () => {
 		["relative", "y"],
 		["absolute", "?"],
 		["relative", "?"],
-	])("denies a physical parent in an %s link target with p/%s/*", (kind, denied) => {
+	])("denies a physical parent in an %s link target with p/%s/*", async (kind, denied) => {
 		mkdirSync(join(root, "a"));
 		mkdirSync(join(root, "x"));
 		mkdirSync(join(root, "p", "q"), { recursive: true });
@@ -48,13 +51,16 @@ describe("4351 physical component walk", () => {
 		const service = new PermissionService([rule("*", "allow"), rule(`${root}/p/${denied}/*`, "deny")], []);
 		for (const input of [join(root, "p", "y", "f.txt"), join(root, "a", "L", "f.txt")]) {
 			expect(realpathSync.native(input)).toBe(join(outside, "f.txt"));
-			const request = external(input);
-			expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe("deny");
+			const request = await external(input);
+			expect(
+				(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request)))
+					.action,
+			).toBe("deny");
 		}
 	});
 
 	// senpi#4351 MEDIUM: L2 is relative to physical b/c, never lexical a/L1.
-	it("allows a relative link without inventing an unresolved-parent spelling", () => {
+	it("allows a relative link without inventing an unresolved-parent spelling", async () => {
 		mkdirSync(join(root, "a", "d"), { recursive: true });
 		mkdirSync(join(root, "b", "c"), { recursive: true });
 		mkdirSync(join(root, "b", "d"));
@@ -63,8 +69,10 @@ describe("4351 physical component walk", () => {
 		symlinkSync("../d", join(root, "b", "c", "L2"), "dir");
 		const input = join(root, "a", "L1", "L2", "f.txt");
 		expect(realpathSync.native(input)).toBe(join(root, "b", "d", "f.txt"));
-		const request = external(input);
+		const request = await external(input);
 		const service = new PermissionService([rule("*", "allow"), rule(`${root}/a/d/*`, "deny")], []);
-		expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe("allow");
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request))).action,
+		).toBe("allow");
 	});
 });

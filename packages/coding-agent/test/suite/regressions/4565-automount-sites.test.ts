@@ -78,7 +78,7 @@ afterAll(() => {
 	syncBuiltinESMExports();
 });
 
-function decide(toolName: string, input: Record<string, unknown>): string {
+async function decide(toolName: string, input: Record<string, unknown>): Promise<string> {
 	const service = new PermissionService(
 		[{ permission: "*", pattern: "*", action: "ask" }],
 		[],
@@ -93,7 +93,9 @@ function decide(toolName: string, input: Record<string, unknown>): string {
 		async () => undefined,
 	);
 	const ctx = { cwd: "/tmp/senpi-4565-project", sessionManager: undefined } as unknown as ExtensionContext;
-	return authorizer.policy({ toolCallId: "call", toolName, input, identity: { owner: {}, metadata: "" } }, ctx).action;
+	const request = { toolCallId: "call", toolName, input, identity: { owner: {}, metadata: "" } };
+	await authorizer.prepare?.(request, ctx);
+	return authorizer.policy(request, ctx).action;
 }
 
 const sites: ReadonlyArray<readonly [string, () => unknown, (answer: unknown) => void]> = [
@@ -208,12 +210,12 @@ const sites: ReadonlyArray<readonly [string, () => unknown, (answer: unknown) =>
 ];
 
 describe("4565 every host-thread probe site answers a path under an unmounted automount without touching it", () => {
-	it.each(sites)("%s", (_name, run, check) => {
+	it.each(sites)("%s", async (_name, run, check) => {
 		// Given the macOS default automount map and no finished mount-table read
 		touched.length = 0;
 
 		// When the site handles a path under /home
-		const answer = run();
+		const answer = await run();
 
 		// Then it answers, and no synchronous filesystem call reached the path
 		check(answer);

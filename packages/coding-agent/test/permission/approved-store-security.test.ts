@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 /**
  * HIGH 1 (Opus #3301 review): the agent must not be able to mint its own approvals.
  *
@@ -160,20 +161,20 @@ describe("HIGH 1: the approvals store moves out of the workspace and resists for
 		);
 
 		// when the gated call is decided at the one decision point
-		const decision = service.dispatchDecision("bash", "rm -rf node_modules");
+		const decision = await withFetchedFacts(() => service.dispatchDecision("bash", "rm -rf node_modules"));
 
 		// then the forged line is ignored: bash still asks (no fail-open)
 		expect(decision.action).toBe("ask");
 	});
 
-	it("refuses a write to the store even when its directories do not exist yet", () => {
+	it("refuses a write to the store even when its directories do not exist yet", async () => {
 		// given a full-access service whose store path and its two parent directories do not exist yet
 		const store = approvedStorePath(agentDir, projectDir);
 		expect(fs.existsSync(path.dirname(path.dirname(store)))).toBe(false);
 		const service = new PermissionService([], [], createLocalEventEmitter(), "full-access", projectDir, agentDir);
 
 		// when the agent asks to write the store before any answer created it
-		const decision = service.dispatchDecision("edit", store);
+		const decision = await withFetchedFacts(() => service.dispatchDecision("edit", store));
 
 		// then the guard recognizes it through the nearest existing ancestor and refuses
 		expect(decision.action).toBe("deny");

@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -69,8 +70,8 @@ describe("auto preset command judge: work it runs without asking", () => {
 		"head -n20 src/index.ts",
 		"echo done",
 		"cat .gitignore",
-	])("allows %s", (command) => {
-		expect(judgeAutoCommand(command, project)).toBe("allow");
+	])("allows %s", async (command) => {
+		expect(await withFetchedFacts(() => judgeAutoCommand(command, project))).toBe("allow");
 	});
 });
 
@@ -138,8 +139,8 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["a ref-shaped name too long for the filesystem", `git log --oneline ${"a".repeat(300)}`],
 		["cat with no file reads the terminal", "cat"],
 		["grep with no file reads the terminal", "grep TODO"],
-	])("asks for %s: %s", (_label, command) => {
-		expect(judgeAutoCommand(command, project)).toBe("ask");
+	])("asks for %s: %s", async (_label, command) => {
+		expect(await withFetchedFacts(() => judgeAutoCommand(command, project))).toBe("ask");
 	});
 });
 
@@ -204,8 +205,8 @@ describe("auto preset command judge: bypass attempts ask", () => {
 		["attached unittest start directory", "python -m unittest discover -s/tmp"],
 		["attached symlink to an outside file", "sort -oinnocent-name src/index.ts"],
 		["symlink to a project credential", "cat link-to-env"],
-	])("asks for %s: %s", (_label, command) => {
-		expect(judgeAutoCommand(command, project)).toBe("ask");
+	])("asks for %s: %s", async (_label, command) => {
+		expect(await withFetchedFacts(() => judgeAutoCommand(command, project))).toBe("ask");
 	});
 });
 
