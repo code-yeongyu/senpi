@@ -304,7 +304,6 @@ async function executeCell(
 			if (written !== undefined) {
 				state.waitingFor = "workspace";
 				cell.waitingFor = "workspace";
-				state.onUpdate?.(activeHandler.liveResult());
 				try {
 					await execution.wait(written.ready);
 				} finally {

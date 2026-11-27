@@ -20,7 +20,7 @@ function textOf(value: AgentToolResult<unknown>): string {
 }
 
 describe("a cell detached while the workspace scan holds it (senpi#7535)", () => {
-	it("names the workspace scan, not the kernel, in the detach answer, the list and the live update", async () => {
+	it("names the workspace scan, not the kernel, in the detach answer, the list and a peek, and emits no extra update", async () => {
 		vi.useFakeTimers();
 		const harness = writtenFilesHarness();
 		const scanHeld = gate();
@@ -60,9 +60,10 @@ describe("a cell detached while the workspace scan holds it (senpi#7535)", () =>
 			expect(answer).toContain("reading the workspace's files before the js kernel runs it");
 			expect(answer).not.toContain("kernel to be ready");
 			expect(listed).toContain("reading the workspace's files before the js kernel runs it");
-			expect(
-				updates.some((text) => text.includes("reading the workspace's files before the js kernel runs it")),
-			).toBe(true);
+			expect(textOf(manager.peek("scanning").result)).toContain(
+				"reading the workspace's files before the js kernel runs it",
+			);
+			expect([...updates]).toEqual(["waiting for the js kernel to be ready"]);
 		} finally {
 			scanHeld.open();
 			await started;
