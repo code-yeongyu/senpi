@@ -38,16 +38,20 @@ describe("#7572 a run whose designated answerer is not connected does not hang",
 		const driver = await live().proven();
 		const log = new FrameLog(driver);
 		expect(
-			await driver.send({ type: "attach_session", sessionId: data.sessionId, durableSessionId: data.state.sessionId }),
+			await driver.send({
+				type: "attach_session",
+				sessionId: data.sessionId,
+				durableSessionId: data.state.sessionId,
+			}),
 		).toMatchObject({ success: true, data: { answerer: false } });
-		const ended = log.next(
-			(record) => record.type === "tool_execution_end" && record.sessionId === data.sessionId,
-		);
+		const ended = log.next((record) => record.type === "tool_execution_end" && record.sessionId === data.sessionId);
 		await driver.send({ type: "prompt", sessionId: data.sessionId, message: "go" });
 		const end = JSON.stringify(await ended);
 		expect(end).toContain("designated answerer is not connected");
 		expect(end).not.toContain(PROBE_TEXT);
-		expect(log.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "select")).toBe(false);
+		expect(log.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "select")).toBe(
+			false,
+		);
 	});
 
 	it("keeps a raised prompt answerable when the key comes back before the grace bound", async () => {
@@ -71,9 +75,7 @@ describe("#7572 a run whose designated answerer is not connected does not hang",
 				answerKey: data.answerKey,
 			}),
 		).toMatchObject({ success: true, data: { answerer: true } });
-		const ended = log.next(
-			(record) => record.type === "tool_execution_end" && record.sessionId === data.sessionId,
-		);
+		const ended = log.next((record) => record.type === "tool_execution_end" && record.sessionId === data.sessionId);
 		back.socket.write(
 			`${JSON.stringify({ type: "extension_ui_response", sessionId: data.sessionId, id: dialog.id, value: "Allow once" })}\n`,
 		);

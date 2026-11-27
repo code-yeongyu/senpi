@@ -103,6 +103,7 @@ export async function retainHost(
 				queueMicrotask(() => this.emit("exit", 0));
 				break;
 			case "cancel_ui":
+			case "answerer_presence":
 			case "cancel_grant":
 			case "cancel_secret":
 			case "subscription_limits":
