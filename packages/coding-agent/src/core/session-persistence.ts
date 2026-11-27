@@ -6,9 +6,9 @@
  */
 export type SessionPersistence = "file" | "none";
 
-export const SESSION_NOT_PERSISTED = "session_not_persisted";
+const SESSION_NOT_PERSISTED = "session_not_persisted";
 
-export class SessionNotPersistedError extends Error {
+class SessionNotPersistedError extends Error {
 	readonly code = SESSION_NOT_PERSISTED;
 
 	constructor(operation: string) {

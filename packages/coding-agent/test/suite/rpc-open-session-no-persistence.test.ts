@@ -24,14 +24,46 @@ async function tree(root: string): Promise<string[]> {
 	return listed.sort();
 }
 
+/** Every file under `root` whose bytes hold `marker`. */
+async function filesHolding(root: string, marker: string): Promise<string[]> {
+	const entries = await readdir(root, { recursive: true, withFileTypes: true });
+	const holding = await Promise.all(
+		entries
+			.filter((entry) => entry.isFile())
+			.map(async (entry) => {
+				const path = join(entry.parentPath, entry.name);
+				return (await readFile(path, "utf8")).includes(marker) ? relative(root, path) : undefined;
+			}),
+	);
+	return holding.filter((path) => path !== undefined);
+}
+
+/**
+ * The keys a host diagnostic line may carry (`core/session-log.ts`). This is the privacy contract a memory-only session
+ * relies on: its lines name its id and lifecycle stages, never its content (senpi#7567).
+ */
+const SESSION_LOG_KEYS = new Set(
+	"ts level event action attemptId disposition stage error mode count willRetry deferAdmission delivered restored cause accepted skipped rejectionCause reason durationMs kind retryable phase op bytes generation requestId tokens tokensBefore tokensAfter contextWindow attempt aborted sessionId role provider model source actor from to duringTurn persistDefault extension handlerEvent queuedId ageMs seat until shared toolCallId parentToolCallId toolName thresholdMs elapsedMs queueDepth queueHead".split(
+		" ",
+	),
+);
+
+async function sessionLogLines(agentDir: string): Promise<string[]> {
+	const text = await readFile(join(agentDir, "logs", "session.log"), "utf8").catch(() => "");
+	return text.split("\n").filter((line) => line.length > 0);
+}
+
 /** The wire carries JSON: `persistence` is sent as a client would, typed or not. */
 function wire(command: Record<string, unknown>): RpcCommand {
 	return JSON.parse(JSON.stringify(command)) as RpcCommand;
 }
 
+/** A string no file may hold once a memory-only session that saw it has closed. */
+const MARKER = "senpi7567-content-marker-q9z";
+
 function fauxThatAnswers() {
 	const faux = fauxProvider({ api: "faux-ephemeral", provider: "faux-ephemeral" });
-	faux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage("answered")));
+	faux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage(`answered ${MARKER}`)));
 	return faux;
 }
 
@@ -46,13 +78,18 @@ function sessionRows(record: Record<string, unknown> | undefined): Array<Record<
  * creates host-wide state (its credential and model stores, the kill guard, the host log), so a test compares what a
  * SECOND session leaves against the first's (senpi#7567).
  */
-async function ephemeralLifecycle(host: Awaited<ReturnType<typeof contextHost>>) {
+async function ephemeralLifecycle(host: Awaited<ReturnType<typeof contextHost>>, marker = "warm") {
 	const opened = responseData(
 		await host.send("conn-a", wire({ type: "open_session", cwd: host.cwd, persistence: "none" })),
 	);
 	const sessionId = String(opened.sessionId);
-	await host.prompt("conn-a", sessionId, "hello");
-	const bash = await host.send("conn-a", { type: "bash", sessionId, command: "echo hi", excludeFromContext: true });
+	await host.prompt("conn-a", sessionId, `hello ${marker}`);
+	const bash = await host.send("conn-a", {
+		type: "bash",
+		sessionId,
+		command: `echo ${marker}`,
+		excludeFromContext: true,
+	});
 	const state = responseData(await host.send("conn-a", { type: "get_state", sessionId }));
 	const row = sessionRows(await host.send("conn-a", { type: "list_sessions" })).find(
 		(listed) => listed.sessionId === sessionId,
@@ -66,12 +103,18 @@ it("writes nothing anywhere for a session opened with persistence none: not at o
 	await using host = await contextHost({ faux: fauxThatAnswers() });
 	await ephemeralLifecycle(host);
 	const before = await tree(host.scratch);
+	const logBefore = await sessionLogLines(host.agentDir);
 
 	// when
-	const { opened, bash, state, row, closed } = await ephemeralLifecycle(host);
+	const { opened, bash, state, row, closed } = await ephemeralLifecycle(host, MARKER);
 
 	// then
-	expect(responseData(bash).output).toContain("hi");
+	expect(responseData(bash).output).toContain(MARKER);
+	expect(await filesHolding(host.scratch, MARKER)).toEqual([]);
+	const gained = (await sessionLogLines(host.agentDir)).slice(logBefore.length);
+	expect(gained.length).toBeGreaterThan(0);
+	for (const line of gained)
+		expect(Object.keys(JSON.parse(line)).filter((key) => !SESSION_LOG_KEYS.has(key))).toEqual([]);
 	expect(state.sessionFile ?? null).toBeNull();
 	expect(opened.sessionPath ?? null).toBeNull();
 	expect(row?.persistence).toBe("none");
@@ -79,7 +122,7 @@ it("writes nothing anywhere for a session opened with persistence none: not at o
 	expect(await tree(host.scratch)).toEqual(before);
 	expect(before.filter((path) => path.startsWith("agent/sessions") || path.includes(".jsonl"))).toEqual([]);
 	expect(await host.list("conn-a")).toEqual([]);
-}, 120_000);
+});
 
 it("refuses a persistence value it does not know as an invalid launch profile and opens nothing", async () => {
 	await using host = await contextHost();
@@ -90,7 +133,7 @@ it("refuses a persistence value it does not know as an invalid launch profile an
 	expect(bogus).toMatch(/^invalid_launch_profile: .*persistence/);
 	expect(notString).toMatch(/^invalid_launch_profile: .*persistence/);
 	expect(await host.list("conn-a")).toEqual([]);
-}, 120_000);
+});
 
 it("refuses persistence none together with a sessionPath or retain_on_disconnect", async () => {
 	await using host = await contextHost();
@@ -105,7 +148,7 @@ it("refuses persistence none together with a sessionPath or retain_on_disconnect
 	expect(withPath).toMatch(/^invalid_launch_profile: .*sessionPath/);
 	expect(retained).toMatch(/^invalid_launch_profile: .*retain_on_disconnect/);
 	expect(await tree(host.scratch)).toEqual(before);
-}, 120_000);
+});
 
 it("advertises session_persistence_none in get_protocol_info", async () => {
 	await using host = await contextHost();
@@ -113,7 +156,7 @@ it("advertises session_persistence_none in get_protocol_info", async () => {
 	const info = responseData(await host.send("conn-a", { type: "get_protocol_info" }));
 
 	expect(info.capabilities).toContain("session_persistence_none");
-}, 120_000);
+});
 
 it("marks a memory-only session's list_sessions row persistence none, and only that one", async () => {
 	await using host = await contextHost();
@@ -126,7 +169,7 @@ it("marks a memory-only session's list_sessions row persistence none, and only t
 
 	expect(rows.find((row) => row.sessionId === ephemeral.sessionId)?.persistence).toBe("none");
 	expect(rows.find((row) => row.sessionId === persisted.sessionId)).not.toHaveProperty("persistence");
-}, 120_000);
+});
 
 it("tells the controller why a memory-only session ended: not_persisted at a handoff, distinct from a close and a stop", async () => {
 	// given
@@ -155,7 +198,7 @@ it("tells the controller why a memory-only session ended: not_persisted at a han
 	expect((await clientClose).reason).toBe("client_close");
 	expect(await handoff).toEqual({ type: "session_closed", sessionId: handedOver, reason: "not_persisted" });
 	expect((await stop).reason).toBe("host_shutdown");
-}, 120_000);
+});
 
 it("keeps a durableSessionId of a memory-only session out of find_session and out of any file", async () => {
 	// given
@@ -176,7 +219,7 @@ it("keeps a durableSessionId of a memory-only session out of find_session and ou
 	expect(reopened?.success).toBe(false);
 	expect(String(reopened?.error)).toContain("session_id_in_use");
 	expect(await tree(host.scratch)).toEqual(before);
-}, 120_000);
+});
 
 it("keeps a replaced session in memory: new_session stays unpersisted and switch_session to a file is refused", async () => {
 	// given
@@ -205,4 +248,4 @@ it("keeps a replaced session in memory: new_session stays unpersisted and switch
 	expect(String(switched?.error)).toContain("session_not_persisted");
 	expect(state.sessionFile ?? null).toBeNull();
 	expect(await tree(host.scratch)).toEqual(before);
-}, 120_000);
+});

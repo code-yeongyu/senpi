@@ -25,7 +25,7 @@ it("refuses bash with tools_disabled for a session opened with no tools, and run
 	expect(bash).toMatchObject({ success: false, errorCode: "tools_disabled" });
 	expect(String(bash?.error)).toMatch(/^tools_disabled: /);
 	expect(existsSync(marker)).toBe(false);
-}, 120_000);
+});
 
 it("gives a session opened with no tools an empty active tool set, while a plain session keeps bash", async () => {
 	await using host = await contextHost();
@@ -38,7 +38,7 @@ it("gives a session opened with no tools an empty active tool set, while a plain
 
 	expect(host.activeTools(String(none.sessionId))).toEqual([]);
 	expect(responseData(bash).output).toContain("hi");
-}, 120_000);
+});
 
 it("advertises session_tools_none_enforced in get_protocol_info", async () => {
 	await using host = await contextHost();
@@ -46,4 +46,4 @@ it("advertises session_tools_none_enforced in get_protocol_info", async () => {
 	const info = responseData(await host.send("conn-a", { type: "get_protocol_info" }));
 
 	expect(info.capabilities).toContain("session_tools_none_enforced");
-}, 120_000);
+});

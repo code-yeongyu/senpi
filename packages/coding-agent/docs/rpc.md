@@ -3126,7 +3126,8 @@ other value is refused with `invalid_launch_profile`. A memory-only session:
 
 - creates and appends no file at any point (open, prompt, `bash`, close): no transcript, no holder record, no writer
   claim, no tool media, no recovery generation, no retained or handover-parked record. `get_state.sessionFile` and
-  the open's `sessionPath` are absent.
+  the open's `sessionPath` are absent. It writes nothing except content-free lines in the host's diagnostic log
+  (`<agentDir>/logs/session.log`), which name its session id and lifecycle stages and never its messages or output.
 - is listed by `list_sessions` while it is live, with `persistence: "none"` on its row, so a client that shows the
   user's sessions leaves it out. `find_session` never finds it.
 - ends when its last attachment closes. `retain_on_disconnect: true` and a `sessionPath` are refused with
