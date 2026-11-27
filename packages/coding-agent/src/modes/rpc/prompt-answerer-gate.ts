@@ -86,8 +86,13 @@ export function answererGate(host: RouterContext, command: RpcCommand): RpcRespo
 	});
 }
 
-/** The key has been checked: nothing after the gate (a session, a worker, a log) receives it. */
+/**
+ * An answer's key has been checked: nothing after the gate (a session, a worker, a log) receives it. `attach_session`
+ * keeps its key, which the router itself reads and never forwards.
+ */
 export function withoutAnswerKey<C extends RpcCommand>(command: C): C {
+	const type: unknown = Reflect.get(command, "type");
+	if (type !== "extension_ui_response" && type !== "extension_ui_progress") return command;
 	if (!("answerKey" in command)) return command;
 	const copy = { ...command };
 	Reflect.deleteProperty(copy, "answerKey");

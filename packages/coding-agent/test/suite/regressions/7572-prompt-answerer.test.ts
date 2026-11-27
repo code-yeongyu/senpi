@@ -115,7 +115,7 @@ describe("#7572 only the designated answerer resolves a session's prompts", () =
 
 		const opener = await host.proven();
 		const log = new FrameLog(opener);
-		const session = await open(opener, { permissionPreset: "ask" });
+		const session = await open(opener, { permissionPreset: "ask", designatedAnswerer: true });
 		const prompt = (title: string) => (record: WireRecord) =>
 			record.type === "extension_ui_request" &&
 			record.method === "select" &&

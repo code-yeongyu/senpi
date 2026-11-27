@@ -17,7 +17,7 @@ export const RPC_ERROR_PROMPT_ANSWERER_REQUIRED = "prompt_answerer_required";
  * Whether a run asks for a designated answerer when its `open_session` does not say (`designatedAnswerer`). The one
  * place the cutover default lives.
  */
-export const DESIGNATED_ANSWERER_BY_DEFAULT = true;
+export const DESIGNATED_ANSWERER_BY_DEFAULT = false;
 
 /** The answerer of a host with no per-connection identity (stdio): its one client opened every run. */
 const SOLE_CLIENT = "\u0000sole-client";

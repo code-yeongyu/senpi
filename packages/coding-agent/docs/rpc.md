@@ -4282,8 +4282,10 @@ Hosts that do this advertise `open_session_header_cwd`. A host without it opens 
 
 #### attach_session
 
-`attach_session { sessionId, durableSessionId, expectedHostInstance?, telemetry? }` attaches the current connection
-only to the live session selected by both routing and durable identity. A vanished or non-open target
+`attach_session { sessionId, durableSessionId, expectedHostInstance?, telemetry?, answerKey? }` attaches the current connection
+only to the live session selected by both routing and durable identity. The answer carries `answerer: true` when this
+connection now answers the run's prompts: with `answerKey`, the run's key from its `open_session` reply, the caller
+becomes an answerer (see "Designated answerer"); without it, or with a wrong key, `answerer` is `false`. A vanished or non-open target
 returns `unknown_session`; a recycled routing id or mismatching host instance returns
 `session_identity_mismatch`. A draining or shutting-down host refuses before admission with
 `session_busy_lifecycle` and `errorData: { reason: "host_draining" }`; a caller without a connection
@@ -8453,6 +8455,35 @@ carrying the frame's `id`:
 session has that id); on a terminal `unknown_request`, `question_incomplete` or `invalid_response`. A single-session stdio
 connection answers every response it resolves the same way, and ignores one that matches none of its
 requests. A client may still fire and forget: the reply is an ordinary `response` record.
+
+#### Designated answerer (`prompt_answerer`)
+
+On a multi-session host that advertises `prompt_answerer`, only a run's designated answerer resolves its dialogs
+and questions (`extension_ui_response`, `extension_ui_progress`). Any other answer is refused before the session or
+its worker sees it, with `error: "prompt_answerer_required"`, and the request stays pending.
+
+- An `open_session` that creates a run answers `answerer: true` and `answerKey`, a random 32-byte key encoded as
+  base64url, sent once in that reply only. The opener's connection answers the run while it stays attached.
+- `attach_session { answerKey }` makes another connection an answerer (a reconnect after a dropped socket presents
+  it too); one answer may instead carry `answerKey` itself, which is meant for a relay or a routed connection. Every
+  open and attach reply says `answerer: true|false`.
+- The host keeps only the key's SHA-256 digest, in memory. The key is never written to a file, the environment,
+  argv, a log, a list row, `get_state`, an error or a message to a worker isolate, and the host strips it from an
+  answer before dispatch. A client must keep it the same way: a process the session's own tools start can read any
+  file, environment variable or argument of the user.
+- `open_session.designatedAnswerer: false` opens a run that takes answers from any attached client, as before.
+  Without it the host's default applies.
+- A run the host reopens on its own (a handover restore) has no answerer: no key survives a generation change, so
+  none of its prompts can be answered until a client closes and reopens it.
+- Secret inputs keep their own raiser route and are not checked here.
+
+What this protects: the prompts of a **live** run, against every client but the one that opened it, including a
+program that run itself started with the user's RPC keys. It does not bind the session across runs. Whoever opens a
+session that is not running becomes that new run's answerer, so a client that expects to answer and receives
+`answerer: false` should tell the person instead of driving the session. Closing, releasing, unloading or replacing a
+run is not limited to its answerer. What it cannot stop: a same-user process that can read the opener's or the host's
+memory (ptrace allowed, root, a debugger entitlement), or that changes the client's own files or the user's shell
+configuration so that the next opener is a program it controls.
 
 ```json
 {"type": "extension_ui_response", "id": "answer-1", "uiRequestId": "uuid-1", "value": "Allow"}
