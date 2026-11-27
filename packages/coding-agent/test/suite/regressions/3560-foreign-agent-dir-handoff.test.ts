@@ -128,7 +128,7 @@ describe.skipIf(process.platform === "win32")("a handoff from another agent dire
 		expect(signals.sentTo(live.pid)).toEqual([]);
 		expect(processAlive(live.pid)).toBe(true);
 		expect((await probeSandboxHost(qa, { socket, timeoutMs: 10_000 }))?.instanceId).toBe(instanceId);
-	}, 240_000);
+	});
 
 	it("still hands off when the caller names the same agent dir through a symlink", async () => {
 		const live = await startLiveHost("f3e");
