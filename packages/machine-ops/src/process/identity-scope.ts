@@ -33,7 +33,7 @@ export class ScopeState {
 		if (this.quote) {
 			if (this.escaped) this.escaped = false;
 			else if (c === "\\") this.escaped = true;
-			else if (c === this.quote) return this.closeString();
+			else if (c === this.quote || c === "\n" || c === "\r") return this.closeString(c);
 			if (this.raw.length < KEPT_RAW) this.raw += c;
 			else this.overflow = true;
 			return;
@@ -75,19 +75,24 @@ export class ScopeState {
 		this.overflow = false;
 	}
 
-	private closeString(): void {
+	private closeString(closer: string): void {
 		const value = this.overflow ? undefined : decodeString(this.raw, this.quote);
 		const top = this.stack.at(-1);
 		if (this.field === undefined) this.pendingKey = value ?? "_";
 		else if (this.field === "kind" && top) top.human = value === "human";
-		this.previous = this.quote;
+		this.previous = closer;
 		this.quote = "";
 		this.field = undefined;
 	}
 
-	render(): string {
+	/** Text that leaves the record parser in this state. Only the innermost `depth` objects are
+	 * written: a window that closes fewer braces than that cannot reach the outer ones. */
+	render(depth: number): string {
 		const name = (key: string) => (KEPT_NAMES.has(key) ? key : "_");
-		let out = this.stack.map((s) => `{${s.version ? '"v":1,' : ""}${s.human ? '"kind":"human",' : ""}`).join("");
+		let out = this.stack
+			.slice(-depth)
+			.map((s) => `{${s.version ? '"v":1,' : ""}${s.human ? '"kind":"human",' : ""}`)
+			.join("");
 		if (this.quote) {
 			const kept = this.overflow ? "" : this.raw;
 			if (this.field === undefined) out += this.quote + kept;

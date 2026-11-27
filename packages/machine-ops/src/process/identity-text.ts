@@ -14,11 +14,15 @@ export interface Span {
 	start: number;
 	end: number;
 	replacement: string;
+	/** Quote of a value masked fail-safe; a stream discards its continuation to that quote. */
+	until?: string;
 }
 /** Human-record candidates whose object the visible text has not closed: a stream holds them
  * and releases them masked when it has to release them undecided. */
 export interface Undecided {
 	open: Span[];
+	/** The text ends at a secret key name the parser did not read as a key: mask what follows. */
+	awaiting?: "colon" | "value";
 }
 interface ObjectScope {
 	human: boolean;
@@ -26,7 +30,7 @@ interface ObjectScope {
 	candidates: Span[];
 }
 
-const NAME = "(?:signing|sealing)(?:_private_key|privatekey)?";
+export const NAME = "(?:signing|sealing)(?:_private_key|privatekey)?";
 export const MAX_GAP = 64;
 const TOKEN = /tvk1:[a-z\d_=-]+|AGE-SECRET-KEY-1[a-z\d]+/gi;
 // A JSON/Python key, YAML `name: value`, `name=value`, `export NAME="value"` or `name<TAB>value`.
@@ -37,7 +41,7 @@ const NESTED_DEPTH = 8;
 /** One escape level of view per raw text: every backslash run collapses to the character it
  * escapes (`\uXXXX` decoded), so a name or value nested in any number of JSON strings, or a
  * key spelled with escapes, reads as plain text. `at[i]` is the raw offset of view char i. */
-function normalize(text: string): { view: string; at?: Int32Array } {
+export function normalize(text: string): { view: string; at?: Int32Array } {
 	if (!text.includes("\\")) return { view: text };
 	const at = new Int32Array(text.length + 1);
 	const parts: string[] = [];
@@ -69,12 +73,34 @@ function normalize(text: string): { view: string; at?: Int32Array } {
 	return { view: parts.join(""), at: at.subarray(0, n + 1) };
 }
 
-function stringEnd(text: string, start: number): number {
+/** A string ends at its quote or at a raw line break, which no JSON or Python string literal holds:
+ * one stray quote cannot keep the rest of a log inside a string. */
+export function stringEnd(text: string, start: number): number {
 	for (let i = start + 1; i < text.length; i++) {
 		if (text[i] === "\\") i++;
-		else if (text[i] === text[start]) return i;
+		else if (text[i] === text[start] || text[i] === "\n" || text[i] === "\r") return i;
 	}
 	return text.length;
+}
+
+// A quoted secret key name, each letter literal or \\u-escaped, with its colon and the quote of a value.
+const spelled = (key: string) => [...key].map((c) => `(?:${c}|\\\\u00${c.charCodeAt(0).toString(16)})`).join("");
+const KEY_NAME = `(?<!\\\\)(["'])(?:${spelled("secretKey")}|${spelled("sealedKey")})\\1\\s*`;
+const KEY_TEXT = new RegExp(`${KEY_NAME}:\\s*(["'])`, "gi");
+const KEY_TEXT_END = new RegExp(`${KEY_NAME}(:\\s*)?$`, "i");
+
+/** Fail-safe: where the text spells a secret key but the parser was not at a key there, its
+ * state is in doubt (a stray quote earlier), so the value after that key is masked. */
+function doubtfulKeys(text: string, starts: Set<number>, undecided?: Undecided): Span[] {
+	const found: Span[] = [];
+	for (const m of text.matchAll(KEY_TEXT)) {
+		if (starts.has(m.index)) continue;
+		const quote = m.index + m[0].length - 1;
+		found.push({ start: quote + 1, end: stringEnd(text, quote), replacement: IDENTITY_MASK, until: text[quote] });
+	}
+	const end = KEY_TEXT_END.exec(text);
+	if (undecided && end && !starts.has(end.index)) undecided.awaiting = end[2] ? "value" : "colon";
+	return found;
 }
 
 export const decodeString = (raw: string, quote: string): string => {
@@ -122,6 +148,7 @@ function nestedSpans(text: string, start: number, end: number, depth: number, un
 function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 	const found: Span[] = [];
 	const stack: ObjectScope[] = [];
+	const starts = new Set<number>();
 	const finish = () => {
 		const scope = stack.pop();
 		if (scope?.human && scope.version) found.push(...scope.candidates);
@@ -139,6 +166,7 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 		if (c !== '"' && c !== "'") continue;
 		// An apostrophe in a diagnostic prefix is not a string literal.
 		if (c === "'" && i > 0 && /[\w]/.test(text.charAt(i - 1))) continue;
+		starts.add(i);
 		const end = stringEnd(text, i);
 		const field = decodeString(text.slice(i + 1, end), c);
 		found.push(...nestedSpans(text, i + 1, end, depth, end === text.length ? undecided : undefined));
@@ -152,6 +180,7 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 		const scope = stack.at(-1);
 		if (field === "v" && scope) scope.version = text[v] === "1" && !/[\d.eE]/.test(text.charAt(v + 1));
 		if (text[v] === '"' || text[v] === "'") {
+			starts.add(v);
 			const close = stringEnd(text, v);
 			const span = { start: v + 1, end: close, replacement: IDENTITY_MASK };
 			if (scope && field === "kind") scope.human = decodeString(text.slice(v + 1, close), text[v]) === "human";
@@ -164,6 +193,7 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 	}
 	if (undecided) for (const scope of stack) undecided.open.push(...scope.candidates);
 	else while (stack.length) finish();
+	found.push(...doubtfulKeys(text, starts, depth === 0 ? undecided : undefined));
 	return found;
 }
 
@@ -214,68 +244,4 @@ export function splice(text: string, changes: Span[]): string {
 		offset = end;
 	}
 	return out + text.slice(offset);
-}
-
-const TAIL = 1024;
-const NAMES = [
-	"signing",
-	"sealing",
-	"signing_private_key",
-	"sealing_private_key",
-	"signingprivatekey",
-	"sealingprivatekey",
-];
-const PRIVATE_TAIL = new RegExp(
-	`(?<!\\w)${NAME}(["']?\\s{0,${MAX_GAP}}[:=\\t]?\\s{0,${MAX_GAP}}["']?)([a-z\\d+/_=-]{1,128}|\\[[\\d,\\s]{0,1024})?$`,
-	"i",
-);
-const TOKEN_TAIL = /(?:tvk1:[a-z\d_=-]|age-secret-key-1[a-z\d])[a-z\d_=-]*$/i;
-
-/** Where the undecided tail of `text` starts: a partial escape, a token prefix, a private
- * name with its separator and an unterminated value, or a partial human-record key. `value`
- * is the start of an unterminated private value, which an ending stream masks. */
-const HUMAN_KEYS = ["secretKey", "sealedKey"];
-
-/** Start of a quoted human-record key name still being written. A whole key and the gap after it
- * are public and released; the stream's parser state keeps the record awaiting its value. */
-function humanKeyTail(text: string, floor: number): number | undefined {
-	const from = Math.max(floor, text.length - 128);
-	const { view, at } = normalize(text.slice(from));
-	const partial = /["']([A-Za-z]{0,9})$/.exec(view);
-	if (!partial || !HUMAN_KEYS.some((k) => k.startsWith(partial[1]))) return undefined;
-	return from + (at ? at[partial.index] : partial.index);
-}
-
-export function undecidedTail(text: string, floor: number): { start: number; value?: number; keep?: boolean } {
-	let from = Math.max(floor, text.length - TAIL);
-	while (from > floor && text.charCodeAt(from - 1) === 92) from--;
-	const tail = text.slice(from);
-	const { view, at } = normalize(tail);
-	const raw = (v: number) => from + (at ? at[v] : v);
-	let start = text.length;
-	let value: number | undefined;
-	const escape = /\\+(?:u[\da-f]{0,4})?$/i.exec(tail);
-	if (escape) start = from + escape.index;
-	const humanKey = humanKeyTail(text, floor);
-	if (humanKey !== undefined) start = Math.min(start, humanKey);
-	// An idle pause may release a public name prefix, never a key or an escape still being decided.
-	const keep = humanKey !== undefined || !!escape;
-	// A token already past its prefix is masked now; the stream discards the rest of its body.
-	if (!escape && TOKEN_TAIL.test(view)) return { start, keep };
-	const lower = view.slice(-24).toLowerCase();
-	for (let i = 0; i < lower.length; i++) {
-		const rest = lower.slice(i);
-		const boundary = !/\w/.test(view.charAt(view.length - rest.length - 1));
-		const token = ["tvk1:", "age-secret-key-1"].some((p) => p.startsWith(rest));
-		if (boundary && (token || NAMES.some((p) => p.startsWith(rest)))) {
-			start = Math.min(start, raw(view.length - rest.length));
-			break;
-		}
-	}
-	const field = PRIVATE_TAIL.exec(view);
-	if (field) {
-		start = Math.min(start, raw(field.index));
-		if (/[:=\t]/.test(field[1] ?? "") && field[2]) value = raw(view.length - field[2].length);
-	}
-	return { start, value, keep };
 }

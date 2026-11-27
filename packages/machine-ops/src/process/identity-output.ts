@@ -5,9 +5,16 @@ import {
 	mayHoldIdentity,
 	type Span,
 	splice,
+	stringEnd,
 	type Undecided,
-	undecidedTail,
 } from "./identity-text.ts";
+import { undecidedTail } from "./identity-tail.ts";
+
+const closers = (text: string): number => {
+	let n = 0;
+	for (let i = text.indexOf("}"); i >= 0; i = text.indexOf("}", i + 1)) n++;
+	return n;
+};
 import { ScopeState } from "./identity-scope.ts";
 
 const HISTORY = 65536;
@@ -27,7 +34,10 @@ export class IdentityOutputStream {
 	private recent = "";
 	private readonly recentStart = new ScopeState();
 	private humanHeld = false;
-	private discardToken: RegExp | undefined;
+	// The rest of a value already masked at the end of a release, still arriving.
+	private discard: { token: RegExp } | { quote: string; escaped: boolean } | undefined;
+	// A secret key the parser could not place was released: mask the value that follows it.
+	private awaiting: "colon" | "value" | undefined;
 
 	push(text: string): string {
 		return this.release(text, false);
@@ -60,22 +70,24 @@ export class IdentityOutputStream {
 
 	private release(text: string, end: boolean, idle = false): string {
 		let buf = this.pending + text;
-		if (this.discardToken) {
-			buf = buf.slice(buf.match(this.discardToken)?.[0].length ?? 0);
+		if (this.discard) {
+			buf = buf.slice(this.skipDiscarded(buf));
 			if (!buf && !end) {
 				this.pending = "";
 				return "";
 			}
-			this.discardToken = undefined;
+			this.discard = undefined;
 		}
 		// Discriminators of a human record can precede its credential in released output. Either
 		// window is parsed from its recorded start state, never from wherever the cut fell.
 		const wide = this.humanHeld || /secretkey|sealedkey|\\u/i.test(this.recent + buf);
-		const context = wide ? this.historyStart.render() + this.history : this.recentStart.render() + this.recent;
+		const [start, window] = wide ? [this.historyStart, this.history] : [this.recentStart, this.recent];
+		const context = start.render(closers(window + buf) + 1) + window;
 		const all = context + buf;
 		const base = context.length;
 		const undecided: Undecided = { open: [] };
 		const found = context || mayHoldIdentity(buf) ? identitySpans(all, undecided) : [];
+		found.push(...this.valueAfterDoubtfulKey(buf, base));
 		const tail = undecidedTail(all, 0);
 		// An idle pause releases a public name or token prefix, never a human-record key awaiting its value.
 		let hold = end || (idle && tail.value === undefined && !tail.keep) ? all.length : Math.max(base, tail.start);
@@ -93,18 +105,50 @@ export class IdentityOutputStream {
 				.filter((s) => s.end > base && s.start < hold)
 				.map((s) => ({ ...s, start: Math.max(s.start, base) - base, end: Math.min(s.end, hold) - base })),
 		);
-		// A token that runs to the end of the released text continues into the next chunk.
-		const token = found.find(
-			(s) =>
-				s.end === all.length &&
-				s.replacement === IDENTITY_MASK &&
-				/^(?:tvk1:|age-)/i.test(all.slice(s.start, s.start + 5)),
-		);
-		if (!end && hold === all.length && token)
-			this.discardToken = /^tvk1:/i.test(all.slice(token.start, token.start + 5)) ? /^[a-z\d_=-]*/i : /^[a-z\d]*/i;
+		// A masked token or value that runs to the end of the released text continues in the next chunk.
+		const running = found.find((s) => s.end === all.length && s.replacement === IDENTITY_MASK);
+		if (!end && hold === all.length && running) {
+			const body = all.slice(running.start);
+			if (running.until) this.discard = { quote: running.until, escaped: /(?:^|[^\\])(?:\\\\)*\\$/.test(body) };
+			else if (/^(?:tvk1:|age-)/i.test(all.slice(running.start, running.start + 5)))
+				this.discard = { token: /^tvk1:/i.test(body) ? /^[a-z\d_=-]*/i : /^[a-z\d]*/i };
+		}
+		if (hold === all.length && undecided.awaiting) this.awaiting = undecided.awaiting;
 		this.pending = all.slice(hold);
 		this.remember(released);
 		return out;
+	}
+
+	/** Length of the leading part of `buf` that continues a value already masked. */
+	private skipDiscarded(buf: string): number {
+		const discard = this.discard;
+		if (!discard) return 0;
+		if ("token" in discard) return buf.match(discard.token)?.[0].length ?? 0;
+		for (let i = 0; i < buf.length; i++) {
+			const c = buf[i];
+			if (discard.escaped) discard.escaped = false;
+			else if (c === "\\") discard.escaped = true;
+			else if (c === discard.quote || c === "\n" || c === "\r") return i;
+		}
+		return buf.length;
+	}
+
+	/** Fail-safe for a secret key the record parser could not place: the first value after it
+	 * is masked, across any gap and any number of releases. */
+	private valueAfterDoubtfulKey(buf: string, base: number): Span[] {
+		if (!this.awaiting) return [];
+		let i = 0;
+		for (; i < buf.length; i++) {
+			const c = buf[i];
+			if (this.awaiting === "colon" && c === ":") this.awaiting = "value";
+			else if (!/\s/.test(c)) break;
+		}
+		if (i === buf.length) return [];
+		const quote = buf[i];
+		const value = this.awaiting === "value" && (quote === '"' || quote === "'");
+		this.awaiting = undefined;
+		if (!value) return [];
+		return [{ start: base + i + 1, end: base + stringEnd(buf, i), replacement: IDENTITY_MASK, until: quote }];
 	}
 
 	private remember(released: string): void {
