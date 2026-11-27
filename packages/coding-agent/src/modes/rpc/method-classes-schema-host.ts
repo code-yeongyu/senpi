@@ -19,6 +19,7 @@ import {
 	SessionContext,
 	SessionEnv,
 	SessionKind,
+	SessionPersona,
 	Str,
 	Strings,
 	TelemetryConsent,
@@ -59,6 +60,7 @@ const openProperties = {
 	promptSurface: Opt(literals("terminal", "app", "chat")),
 	browserEngine: Opt(literals("connected", "builtin", "none")),
 	retryFallback: Opt(RetryFallback),
+	persona: Opt(SessionPersona),
 	env: Opt(SessionEnv),
 	telemetry: Opt(TelemetryDeclaration),
 };

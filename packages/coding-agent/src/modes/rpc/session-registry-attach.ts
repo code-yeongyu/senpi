@@ -9,6 +9,7 @@
  */
 import { recordOpenerRefusal, refusesApprovals } from "../../core/opener-approvals.ts";
 import { clientNamedPreset, withClientPreset } from "../../core/permission-mode.ts";
+import { attachPersonaMismatch } from "../../core/session-persona.ts";
 import type { SessionPathOwner, SessionPathReservations } from "./host-reservations.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
 import {
@@ -111,6 +112,13 @@ export async function attachToOpenSession(
 		});
 	}
 	const [handle, entry] = existing;
+	const personaMismatch = attachPersonaMismatch(profile.persona, entry.profile.persona);
+	if (personaMismatch !== undefined)
+		throw new RpcSessionRegistryError(
+			"session_path_in_use",
+			"the session runs under another persona",
+			personaMismatch,
+		);
 	if (options?.unattached === true) {
 		// A restore that finds the session already open has nothing to add: no client, no attachment.
 		if (!entry.durableSessionId) throw new RpcSessionRegistryError("session_path_in_use");

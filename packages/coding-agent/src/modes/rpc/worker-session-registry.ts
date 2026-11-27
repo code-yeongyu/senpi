@@ -1,6 +1,7 @@
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { refusesApprovals, replacementLaunchProfile } from "../../core/opener-approvals.ts";
 import { clientNamedPreset, withClientPreset } from "../../core/permission-mode.ts";
+import { attachPersonaMismatch } from "../../core/session-persona.ts";
 import { outsideCommand } from "./command-authority.ts";
 import type { SessionPathReservations as DaemonPathReservations } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
@@ -230,6 +231,13 @@ export class WorkerSessionRegistry {
 				{
 					reason: "approvals_label_unsupported",
 				},
+			);
+		const personaMismatch = attachPersonaMismatch(requested.persona, entry.profile.persona);
+		if (personaMismatch !== undefined)
+			throw new RpcSessionRegistryError(
+				"session_path_in_use",
+				"the session runs under another persona",
+				personaMismatch,
 			);
 		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
 		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {

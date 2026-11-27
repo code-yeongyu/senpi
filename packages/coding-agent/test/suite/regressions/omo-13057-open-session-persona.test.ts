@@ -197,6 +197,40 @@ describe("open_session.persona (oh-my-openagent#13057)", () => {
 		expect((same?.data as { attached?: boolean } | undefined)?.attached).toBe(true);
 	});
 
+	it("a session replaced in place (new_session, switch_session) keeps its persona", async () => {
+		const host = await personaHost();
+		const other = join(host.cwd, "other.jsonl");
+		const persona = { appendSystemPrompt: "SYNTHETIC-PERSONA", excludeTools: ["write"] };
+		const sessionId = await host.open({ persona });
+
+		expect(await host.send({ type: "new_session", sessionId })).toMatchObject({ success: true });
+		const afterNew = host.session(sessionId);
+		expect(afterNew.getActiveToolNames()).not.toContain("write");
+		expect(afterNew.systemPrompt).toContain("SYNTHETIC-PERSONA");
+
+		expect(await host.send({ type: "switch_session", sessionId, sessionPath: other })).toMatchObject({
+			success: true,
+		});
+		const afterSwitch = host.session(sessionId);
+		expect(afterSwitch.getActiveToolNames()).not.toContain("write");
+		expect(afterSwitch.systemPrompt).toContain("SYNTHETIC-PERSONA");
+	});
+
+	it("a claim that names a persona never takes a session parked without it; the same claim without one does (control)", async () => {
+		const host = await personaHost();
+		expect(await host.send({ type: "park_session", cwd: host.cwd })).toMatchObject({ success: true });
+
+		const withPersona = await host.send({
+			type: "claim_session",
+			cwd: host.cwd,
+			persona: { excludeTools: ["write"] },
+		});
+		const without = await host.send({ type: "claim_session", cwd: host.cwd });
+
+		expect(withPersona?.data).toMatchObject({ claimed: false });
+		expect(without?.data).toHaveProperty("sessionId");
+	});
+
 	it.each([
 		["a non-object", "deny"],
 		["an unknown key", { excludeTools: ["write"], allowEverything: true }],

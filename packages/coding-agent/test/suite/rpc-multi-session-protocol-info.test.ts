@@ -95,6 +95,7 @@ describe("multi-session RPC protocol info", () => {
 					"host_tools", // senpi#5045: sessions attach show_html_page through the SDK, so an app may serve it.
 					"session_env",
 					"retry_fallback_profile",
+					"session_persona",
 					"telemetry_consent", // senpi#7446: each session's telemetry follows its own callers' answers.
 					"permission_preset_accept_edits",
 					"permission_preset_auto",

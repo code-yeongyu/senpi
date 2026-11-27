@@ -107,6 +107,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
+import { withSessionPersona } from "./core/session-persona.ts";
 import { assertValidSessionId, SessionManager, sessionFileNameId } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
@@ -1096,6 +1097,7 @@ export function createCliRuntimeFactory(
 				noContextFiles: parsed.noContextFiles,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
+				appendSystemPromptText: launchProfile?.persona?.appendSystemPrompt,
 				extensionFactories,
 			},
 		});
@@ -1151,7 +1153,7 @@ export function createCliRuntimeFactory(
 			launchProfile === undefined
 				? parsed
 				: {
-						...parsed,
+						...withSessionPersona(parsed, launchProfile.persona),
 						...(launchProfile.creationModel === undefined
 							? {}
 							: {

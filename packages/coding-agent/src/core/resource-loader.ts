@@ -418,6 +418,8 @@ export interface DefaultResourceLoaderOptions {
 	noContextFiles?: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
+	/** Appended after `appendSystemPrompt` as literal text, never read as a file (a session's own persona). */
+	appendSystemPromptText?: string;
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -459,6 +461,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private noContextFiles: boolean;
 	private systemPromptSource?: string;
 	private appendSystemPromptSource?: string[];
+	private appendSystemPromptText?: string;
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	private skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -551,6 +554,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noContextFiles = options.noContextFiles ?? false;
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
+		this.appendSystemPromptText = options.appendSystemPromptText;
 		this.extensionsOverride = options.extensionsOverride;
 		this.skillsOverride = options.skillsOverride;
 		this.promptsOverride = options.promptsOverride;
@@ -894,7 +898,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.systemPrompt = resolvePromptInput(this.systemPromptSource, "system prompt");
 		this.appendSystemPrompt = (this.appendSystemPromptSource ?? [])
 			.map((source) => resolvePromptInput(source, "append system prompt"))
-			.filter((source): source is string => source !== undefined);
+			.filter((source): source is string => source !== undefined)
+			.concat(this.appendSystemPromptText === undefined ? [] : [this.appendSystemPromptText]);
 		this.systemPromptSourcePath =
 			this.systemPromptSource && existsSync(this.systemPromptSource)
 				? resolvePath(this.systemPromptSource)
