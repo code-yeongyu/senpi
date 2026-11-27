@@ -77,6 +77,11 @@ export interface SessionAdmission {
 	readonly check: Awaited<ReturnType<typeof checkSessionHolders>>;
 	/** This process holds the start claim; otherwise a live process that is still starting holds it. */
 	readonly claimed: boolean;
+	/**
+	 * Another live process holds the claim: the claim was read and refused, not lost to an error. A failed holder lookup
+	 * then does not stay advisory, since a live holder is already known.
+	 */
+	readonly heldElsewhere: boolean;
 	/** Claims again, after a take-over stopped the holders; false while another live process holds the claim. */
 	retake(): Promise<boolean>;
 	/** Lets the claim go when the session is not opened here; a hold taken for the session has dropped it already. */
@@ -101,12 +106,19 @@ export async function admitSessionHolders(
 		// A file without a session header is a new session: nobody else can hold it.
 		claimed = sessionId === undefined || (await claimSessionStart(path, sessionId));
 	} catch {
-		return { check: { lookupFailed: true }, claimed: false, retake: async () => false, release: async () => {} };
+		return {
+			check: { lookupFailed: true },
+			claimed: false,
+			heldElsewhere: false,
+			retake: async () => false,
+			release: async () => {},
+		};
 	}
 	const id = sessionId;
 	return {
 		check: await lookup(sessionFile),
 		claimed,
+		heldElsewhere: !claimed,
 		retake: async () => id === undefined || (await claimSessionStart(path, id)),
 		release: async () => {
 			if (id !== undefined) await dropStartClaim(id);

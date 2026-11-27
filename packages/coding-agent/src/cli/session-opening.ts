@@ -81,6 +81,9 @@ async function decideAdmission(
 ): Promise<StartupAdmission> {
 	const { check } = admission;
 	if ("lookupFailed" in check) {
+		// Advisory only while no live holder is known (senpi#5756): a start that already lost the claim to a live one
+		// is refused, unless that start ended meanwhile and the claim is free again (senpi#5988).
+		if (admission.heldElsewhere && !(await admission.retake())) return stillHeld(io);
 		io.err(chalk.yellow(`Warning: ${SESSION_HOLDER_LOOKUP_FAILED}`));
 		return "open";
 	}

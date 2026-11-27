@@ -9179,12 +9179,9 @@ export class InteractiveMode {
 	): Promise<{ cancelled: boolean }> {
 		const holderCheck = admission.check;
 		const stillOpen = "Not resumed: the session is still open in another process; quit it there, then /resume again.";
-		if (
-			"holders" in holderCheck &&
-			holderCheck.holders.length === 0 &&
-			!admission.claimed &&
-			!(await admission.retake())
-		) {
+		const knownHeld =
+			"holders" in holderCheck ? holderCheck.holders.length === 0 && !admission.claimed : admission.heldElsewhere;
+		if (knownHeld && !(await admission.retake())) {
 			this.showWarning(stillOpen);
 			return { cancelled: true };
 		}
