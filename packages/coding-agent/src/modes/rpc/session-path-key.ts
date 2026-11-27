@@ -1,5 +1,5 @@
 import { automountTriggerPathSync, withResolutionDeadline } from "@code-yeongyu/senpi-machine-ops";
-import { access } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { RpcSessionRegistryError } from "./session-registry-types.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -60,6 +60,33 @@ export async function removedSessionDirectories(sessionFiles: readonly string[])
 /** The "transcript directory is gone" test over a set {@link removedSessionDirectories} answered. */
 export function sessionDirectoryRemovedIn(removed: ReadonlySet<string>): (sessionFile: string) => boolean {
 	return (sessionFile) => removed.has(dirname(sessionFile));
+}
+
+/**
+ * {@link canonicalSessionPath} off the host thread (senpi#4565): the same key, with every check bounded by the
+ * resolution deadline. A component that does not answer is treated as missing, so a hung mount yields the given
+ * spelling's key instead of a parked host.
+ */
+export async function canonicalSessionPathAsync(path: string): Promise<string> {
+	const absolutePath = resolve(path);
+	const missing: string[] = [];
+	let existing = absolutePath;
+	const present = async (candidate: string): Promise<boolean> =>
+		automountTriggerPathSync(candidate) === undefined &&
+		(await withResolutionDeadline(
+			access(candidate).then(
+				() => true,
+				() => false,
+			),
+		)) === true;
+	while (!(await present(existing))) {
+		const parent = dirname(existing);
+		if (parent === existing) return absolutePath;
+		missing.unshift(basename(existing));
+		existing = parent;
+	}
+	const real = await withResolutionDeadline(realpath(existing).catch(() => undefined));
+	return typeof real === "string" ? join(real, ...missing) : absolutePath;
 }
 
 /**
