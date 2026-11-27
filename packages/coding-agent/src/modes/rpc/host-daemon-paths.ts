@@ -58,7 +58,6 @@ export {
 	generationPaths,
 	HostDaemonStateError,
 	type HostGenerationPaths,
-	makeEndpointSubdirectory,
 } from "./host-generation-paths.ts";
 
 /** The layout this build writes. A directory without the marker predates it and is never touched. */

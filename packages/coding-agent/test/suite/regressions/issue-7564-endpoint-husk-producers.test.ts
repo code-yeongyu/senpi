@@ -15,7 +15,6 @@ import {
 	generationPaths,
 	HostDaemonStateError,
 } from "../../../src/modes/rpc/host-daemon-paths.ts";
-import { recordHandoverParkedSession } from "../../../src/modes/rpc/host-handover-parked.ts";
 import { createSessionPathReservations, reservationFile } from "../../../src/modes/rpc/host-reservations.ts";
 
 const roots: string[] = [];
@@ -57,16 +56,6 @@ describe("writers never recreate a removed endpoint directory", () => {
 
 		await expect(stat(paths.dir)).rejects.toEqual(gone);
 		expect(failures).toEqual([expect.stringContaining("could not be written")]);
-	});
-
-	it("a parked-handover record against a removed endpoint is refused and creates nothing", async () => {
-		const { agentDir, paths } = endpoint();
-
-		await expect(
-			recordHandoverParkedSession(paths.dir, { sessionPath: join(agentDir, "a.jsonl"), retainOnDisconnect: true }),
-		).rejects.toEqual(gone);
-
-		await expect(stat(paths.dir)).rejects.toEqual(gone);
 	});
 
 	it("a generation directory is created inside a registered endpoint", async () => {

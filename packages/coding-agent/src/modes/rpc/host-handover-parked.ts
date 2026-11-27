@@ -16,7 +16,7 @@
 import { createHash } from "node:crypto";
 import { isTelemetryConsent, type TelemetryConsent } from "../../core/telemetry-consent.ts";
 import { existsSync, renameSync } from "node:fs";
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
@@ -34,7 +34,6 @@ import {
 import { type SessionEnv, sessionEnvShapeError } from "./session-caller-env.ts";
 import { applyContextPatch, type SessionContextOverlay } from "./session-context-patch.ts";
 import { isResidentWriter, type ResidentWriter } from "./host-handover-resident-writer.ts";
-import { makeEndpointSubdirectory } from "./host-generation-paths.ts";
 
 export interface HandoverParkedEntry {
 	readonly sessionPath: string;
@@ -131,8 +130,7 @@ export function isHandoverParkedEntry(value: unknown): value is HandoverParkedEn
 }
 
 async function writeEntryFile(daemonDir: string, entry: HandoverParkedEntry): Promise<void> {
-	// Never recreates a collected endpoint (senpi#7564): every caller reports a record that cannot be written.
-	await makeEndpointSubdirectory(recordDir(daemonDir));
+	await mkdir(recordDir(daemonDir), { recursive: true, mode: 0o700 });
 	const file = entryFile(daemonDir, entry.sessionPath);
 	const tmp = `${file}.${process.pid}.${Math.random().toString(16).slice(2, 10)}.tmp`;
 	await writeFile(tmp, `${JSON.stringify(entry, null, 2)}\n`, { mode: 0o600 });

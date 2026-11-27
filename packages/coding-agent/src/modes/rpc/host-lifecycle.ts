@@ -17,8 +17,8 @@ import {
 	createHostDaemonPaths,
 	generationPaths,
 	HostDaemonStateError,
-	makeEndpointSubdirectory,
 } from "./host-daemon-paths.ts";
+import { makeGenerationDirectory } from "./host-generation-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import {
@@ -100,7 +100,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// A direct launch registers its own endpoint; an ensured one finds it registered. Neither recreates a collected
 	// endpoint directory (senpi#7564): a generation that cannot be made inside a registered endpoint fails startup.
 	if (told === undefined || told.trim() === "") await createDaemonDirectories(paths);
-	const created = await makeEndpointSubdirectory(generation.dir).catch((cause: unknown) => {
+	const created = await makeGenerationDirectory(generation).catch((cause: unknown) => {
 		throw new HostDaemonStateError(generation.dir, cause);
 	});
 	let startupRegistered = false;

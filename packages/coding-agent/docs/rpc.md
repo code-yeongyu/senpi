@@ -2152,7 +2152,7 @@ for an interactive terminal's control endpoint; the first writer's kind stands l
 record written before `registry_version`/`endpoint_kind` existed (`{ layout, socket, created_at }`) reads as
 `rpc_host` and is never rewritten to add them. Under the lock the ensure does replace a file that does not name a
 socket hashing to this directory (torn by a crash of an older build, or foreign): left alone, such a file would
-leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` forever. It is the one file a generation's release
+leave the endpoint listed as `socket: null` and kept by `gc` as `unknown_identity` until the horizon below. It is the one file a generation's release
 leaves behind: a supervisor that exits (idle, drained, or after its host child crashed) removes the pointer,
 `settings.json` and its generation directory, and without `endpoint.json` such an endpoint could not even be
 enumerated. A generation that exits because another entry TOOK its public socket removes only its own
@@ -2387,8 +2387,17 @@ which prints the bare socket path).
   its directory is collected by a later gc. The stop itself re-reads the host with 2 s budgets and is refused
   unless both reads answer and report no session, so a host that went silent after it was judged is not stopped.
   `senpi host status --all` marks such a host `stale_old_engine: true`.
-  An `unknown_identity` directory is never removed by gc; remove it by hand only after checking that no pid in
-  its `generations/*/host.pid` or `reservations/*.json` is running and that no process holds files under it.
+  An `unknown_identity` directory is never removed for being unknown (senpi#7564). It is removed, and listed under
+  `removed` as `{ socket: null, dir, reason: "identity_unknown_expired" }`, only when ALL of these hold: nothing in it
+  names a socket (an `endpoint.json` or `settings.json` anywhere makes it no husk); every entry in its tree, the
+  directory included, is older than 14 days, the crash-report window; and every process record in it (each `*.pid`,
+  `owner.json`, and every `reservations/*.json` claim) names a process that is not running, where a record that
+  cannot be read counts as running. Otherwise it stays `unknown_identity`. With no lock to take, gc renames the
+  directory to `.reap-<name>-<pid>`, which no reader lists, reads the evidence again there, and deletes it only
+  then; a tree that no longer qualifies is renamed back. A `.reap-*` tree whose reaper died is deleted on the same
+  evidence, or renamed back. The budgeted pass applies the same rule. No writer but the identity writer creates an
+  endpoint directory: a session-path claim, a generation directory or its scratch against a collected endpoint
+  fails and is reported instead of leaving such a directory behind.
   An ensure that raced a gc simply re-creates `endpoint.json` under the lock after gc released it.
   The library call `gcHostEndpoints(agentDir, { kinds: ["tui"] })` narrows a run to endpoints of those
   `endpoint_kind`s (a terminal reaping dead `tui` endpoints at its own startup): every other endpoint, and

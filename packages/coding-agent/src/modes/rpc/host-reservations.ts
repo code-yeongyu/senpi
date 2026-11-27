@@ -40,8 +40,8 @@ import {
 	HOST_DAEMON_DIR_ENV,
 	type HostDaemonDirectory,
 	hostDaemonDirectoryPaths,
-	makeEndpointSubdirectory,
 } from "./host-daemon-paths.ts";
+import { makeEndpointSubdirectory } from "./host-generation-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { generationHeartbeatStopped } from "./host-stalled-evidence.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";

@@ -3,7 +3,7 @@
  * reports. Split out of `host-daemon-paths.ts` (senpi#2566), which re-exports every name here.
  */
 import { chmod, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { HostDaemonDirectory } from "./host-daemon-paths.ts";
 
 const DIRECTORY_MODE = 0o700;
@@ -81,10 +81,20 @@ export async function makeEndpointSubdirectory(directory: string): Promise<boole
 	);
 }
 
+/**
+ * `generations/` and then the generation's own directory, inside an endpoint directory that must exist (an ensure that
+ * repaired `endpoint.json` after gc collected the endpoint finds no `generations/` yet); `true` when this call created
+ * the generation's directory.
+ */
+export async function makeGenerationDirectory(generation: HostGenerationPaths): Promise<boolean> {
+	await makeEndpointSubdirectory(dirname(generation.dir));
+	return makeEndpointSubdirectory(generation.dir);
+}
+
 /** Creates one generation's private directory inside its registered endpoint. Same failure shape as the daemon directory itself. */
 export async function createGenerationDirectory(generation: HostGenerationPaths): Promise<void> {
 	try {
-		await makeEndpointSubdirectory(generation.dir);
+		await makeGenerationDirectory(generation);
 		await makeEndpointSubdirectory(generation.scratchDir);
 		await chmod(generation.dir, DIRECTORY_MODE);
 	} catch (cause) {
