@@ -1,5 +1,5 @@
-import { readFileSync, rmdirSync, unlinkSync } from "node:fs";
-import { mkdir, stat, utimes } from "node:fs/promises";
+import { readFileSync, unlinkSync } from "node:fs";
+import { mkdir, rmdir, stat, utimes } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
 	breakStaleLock,
@@ -48,9 +48,10 @@ function ownsClaimSync(claim: OwnClaim): boolean {
 	}
 }
 
-function removeDirIfEmpty(dir: string): void {
+/** Removes a holders directory once nothing is left in it; one another process just wrote to stays. */
+export async function removeEmptyDir(dir: string): Promise<void> {
 	try {
-		rmdirSync(dir);
+		await rmdir(dir);
 	} catch (error) {
 		const code = errorCode(error);
 		if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
@@ -76,7 +77,7 @@ export async function dropStartClaim(sessionId: string): Promise<"none" | "dropp
 	clearInterval(claim.refresh);
 	if ((await readLeaseText(claim.path)) !== claim.raw) return "lost";
 	await unlinkIfPresent(claim.path);
-	removeDirIfEmpty(dirname(claim.path));
+	await removeEmptyDir(dirname(claim.path));
 	return "dropped";
 }
 

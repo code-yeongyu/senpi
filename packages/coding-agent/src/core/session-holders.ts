@@ -1,25 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	renameSync,
-	rmdirSync,
-	statSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { existsSync, mkdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
-import {
-	breakStaleLock,
-	errorCode,
-	publishExclusive,
-	readLeaseText,
-	reclaimLockState,
-	unlinkIfPresent,
-} from "./extensions/builtin/terminal/lease-file.ts";
+import { errorCode } from "./extensions/builtin/terminal/lease-file.ts";
 import { ownProcessStartedAtMs, processBootAtMs } from "./extensions/builtin/terminal/process-identity.ts";
 import {
 	SessionHeldError,
@@ -29,6 +12,7 @@ import {
 	SessionMovingError,
 } from "./session-hold-errors.ts";
 import { type HolderGeneration, liveHolders, type SessionHolderProbes } from "./session-holder-records.ts";
+import { activeMover, underMoveLock } from "./session-move-lock.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
 import { dropStartClaim, startClaimant, takeStartClaim } from "./session-start-claim.ts";
 import { advanceSessionFence } from "./session-write-fence.ts";
@@ -53,11 +37,7 @@ export {
  */
 
 const HOLDERS_DIR = "session-holders";
-const MOVE_LOCK = "move.lock";
-// A move rewrites one file and a few sidecars; a lock older than this belongs to a mover that died.
-const MOVE_LOCK_STALE_MS = 30_000;
 const DEFAULT_MOVE_LOCK_WAIT_MS = 5_000;
-const MOVE_LOCK_RETRY_MS = 100;
 
 export interface SessionHold {
 	release(): void;
@@ -95,6 +75,7 @@ function unlinkIfPresentSync(path: string): void {
 	}
 }
 
+// `release()` is synchronous (it also runs at exit), so the holder side keeps a synchronous removal.
 function removeDirIfEmpty(dir: string): void {
 	try {
 		rmdirSync(dir);
@@ -113,42 +94,6 @@ function installExitCleanup(): void {
 	process.once("exit", () => {
 		for (const record of holderRecordRefCounts.keys()) unlinkIfPresentSync(record);
 	});
-}
-
-function pidAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return errorCode(error) === "EPERM";
-	}
-}
-
-function activeMover(lock: string): { readonly pid: number | undefined } | undefined {
-	let raw: string;
-	let ageMs: number;
-	try {
-		raw = readFileSync(lock, "utf8");
-		ageMs = Date.now() - statSync(lock).mtimeMs;
-	} catch (error) {
-		if (errorCode(error) === "ENOENT") return undefined;
-		throw error;
-	}
-	if (ageMs > MOVE_LOCK_STALE_MS) return undefined;
-	const pid = parsePid(raw);
-	if (pid === undefined) return { pid };
-	return pid === process.pid || pidAlive(pid) ? { pid } : undefined;
-}
-
-function parsePid(raw: string): number | undefined {
-	try {
-		const parsed: unknown = JSON.parse(raw);
-		if (typeof parsed !== "object" || parsed === null || !("pid" in parsed)) return undefined;
-		return typeof parsed.pid === "number" ? parsed.pid : undefined;
-	} catch (error) {
-		if (error instanceof SyntaxError) return undefined;
-		throw error;
-	}
 }
 
 /**
@@ -188,7 +133,7 @@ export async function holdSessionFile(
 		unlinkIfPresentSync(record);
 		removeDirIfEmpty(dir);
 	};
-	const mover = activeMover(join(dir, MOVE_LOCK));
+	const mover = await activeMover(dir);
 	if (mover !== undefined) {
 		release();
 		throw new SessionMovingError(sessionFile, mover.pid);
@@ -256,48 +201,6 @@ export async function claimSessionStart(sessionFile: string, sessionId: string):
 	return takeStartClaim(holdersDir(sessionFile, sessionId), sessionId, await identityRecord(process.cwd()));
 }
 
-// A concurrent mover that finishes removes the emptied lock directory. A recursive mkdir that saw the directory
-// exist and stats it after that removal fails with ENOENT (senpi#5618): the directory is merely gone again, so the
-// publish fails once more and the next call here recreates it. Returns whether this mkdir hit that ENOENT. Only one
-// in a row is tolerated: a second means the path can never be created (a dangling symlink), which fails fast. Who
-// moves is still decided by the exclusive lock alone.
-async function createLockDir(dir: string, tolerateEnoent: boolean): Promise<boolean> {
-	try {
-		await mkdir(dir, { recursive: true });
-		return false;
-	} catch (error) {
-		if (!tolerateEnoent || errorCode(error) !== "ENOENT") throw error;
-		return true;
-	}
-}
-
-async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): Promise<string> {
-	const mine = await identityRecord();
-	const deadline = Date.now() + waitMs;
-	let lockDirVanished = false;
-	while (true) {
-		try {
-			await publishExclusive(lock, mine);
-			return mine;
-		} catch (error) {
-			const code = errorCode(error);
-			if (code === "ENOENT") {
-				lockDirVanished = await createLockDir(dirname(lock), !lockDirVanished);
-				continue;
-			}
-			if (code !== "EEXIST") throw error;
-		}
-		const state = await reclaimLockState(lock);
-		if (state.state === "stale") {
-			await breakStaleLock(lock, state.raw);
-			continue;
-		}
-		if (state.state === "free") continue;
-		if (Date.now() >= deadline) throw new SessionMovingError(sessionFile, state.holder?.pid);
-		await new Promise((resolve) => setTimeout(resolve, MOVE_LOCK_RETRY_MS));
-	}
-}
-
 /**
  * Runs `move` holding the session's move lock, after proving no live process holds the session.
  * Waits up to `waitMs` for a concurrent move to finish, then fails with `SessionMovingError`.
@@ -309,19 +212,5 @@ export async function withSessionMoveLock<T>(
 	options: { readonly waitMs?: number } = {},
 ): Promise<T> {
 	const dir = holdersDir(sessionFile, sessionId);
-	const lock = join(dir, MOVE_LOCK);
-	const mine = await takeMoveLock(sessionFile, lock, options.waitMs ?? DEFAULT_MOVE_LOCK_WAIT_MS);
-	try {
-		// Another process's start claim blocks a move; this process's own (a rebind right after admission) does not.
-		const claimant = await startClaimant(dir);
-		const holders = [
-			...(await liveHolders(dir)),
-			...(claimant === undefined || claimant.pid === process.pid ? [] : [claimant]),
-		];
-		if (holders.length > 0) throw new SessionHeldError(sessionFile, holders);
-		return await move();
-	} finally {
-		if ((await readLeaseText(lock)) === mine) await unlinkIfPresent(lock);
-		removeDirIfEmpty(dir);
-	}
+	return underMoveLock(sessionFile, dir, await identityRecord(), move, options.waitMs ?? DEFAULT_MOVE_LOCK_WAIT_MS);
 }
