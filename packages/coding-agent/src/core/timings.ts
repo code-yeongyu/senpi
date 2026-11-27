@@ -20,6 +20,19 @@ export type TimingLabel = "main" | "extensions" | "reload" | "tui" | "switch";
 
 const timingNamespaces = new Map<TimingLabel, TimingNamespace>();
 
+/** The last phase `time()` closed, on the `performance.now()` clock; read by the RPC startup stall notice (senpi#7556). */
+export interface TimedPhase {
+	readonly label: string;
+	readonly atMs: number;
+}
+
+let lastPhase: TimedPhase | undefined;
+
+/** Recorded with or without PI_TIMING, so a stalled startup can always name the phase it last finished. */
+export function lastTimedPhase(): TimedPhase | undefined {
+	return lastPhase;
+}
+
 // `performance.now()` rather than `Date.now()`: the phases now being hunted are 20-60ms, and a
 // whole-millisecond clock cannot tell a 20ms mark from a 29ms one. Rounding happens at print time.
 function now(): number {
@@ -32,8 +45,9 @@ export function resetTimings(namespace: TimingLabel = "main"): void {
 }
 
 export function time(label: string, namespace: TimingLabel = "main"): void {
-	if (!ENABLED) return;
 	const now = performance.now();
+	lastPhase = { label: namespace === "main" ? label : `${namespace}:${label}`, atMs: now };
+	if (!ENABLED) return;
 
 	if (!timingNamespaces.has(namespace)) {
 		resetTimings(namespace);
