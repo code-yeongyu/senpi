@@ -172,7 +172,13 @@ export class ExternalAdmission {
 			return { kind: "already_admitted", turn_epoch };
 		}
 		if (!this.gate().can_admit) return { kind: "held_draft", turn_epoch };
-		if (input.expected_turn_id !== undefined && input.expected_turn_id !== turn_epoch) {
+		// While a delivery start has not begun its run, the turn it opens is already the one its admission was answered
+		// with (senpi#7478), so a steer naming it is meant for that run, as one naming the current epoch always was.
+		if (
+			input.expected_turn_id !== undefined &&
+			input.expected_turn_id !== turn_epoch &&
+			input.expected_turn_id !== this.pendingStartTurn()
+		) {
 			return { kind: "turn_conflict", turn_epoch };
 		}
 		const message = deliveryMessage(input, stamp);
@@ -186,14 +192,17 @@ export class ExternalAdmission {
 				if (this.pending.get(id) === "start") this.pending.set(id, "followUp");
 			});
 			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
-			return holds.length > 0 ? { kind: "held", holds: [...holds], turn_epoch } : { kind: "started", turn_epoch };
+			if (holds.length > 0) return { kind: "held", holds: [...holds], turn_epoch };
+			// The start is not awaited: its run raises the epoch when it begins, so the answer names that run (senpi#7478).
+			return { kind: "started", turn_epoch: turn_epoch + 1 };
 		}
 		// Input meant to start a turn that finds a delivery start whose run has not begun joins that start, as a prompt
 		// joins a pending prompt start: the run takes the steering queue before its first provider request (omo#14972).
-		if (input.whenIdle !== "queue" && this.startPending()) {
+		const startTurn = this.pendingStartTurn();
+		if (input.whenIdle !== "queue" && startTurn !== undefined) {
 			this.pending.set(id, "steer");
 			this.port.enqueue(message, "steer");
-			return { kind: "steered", turn_epoch };
+			return { kind: "steered", turn_epoch: startTurn };
 		}
 		if (input.deliverAs === "steer" && this.isBusy()) {
 			if (input.expected_turn_id === undefined) return { kind: "turn_conflict", turn_epoch };
@@ -265,10 +274,11 @@ export class ExternalAdmission {
 		if (this.inputHolds.size === 0) for (const listener of this.settledListeners) listener();
 	}
 
-	private startPending(): boolean {
-		if (this.startIssuedAt !== this.turnEpochValue) return false;
-		for (const lane of this.pending.values()) if (lane === "start") return true;
-		return false;
+	/** The turn a delivery start that has not begun its run will open; `undefined` when no such start is pending. */
+	private pendingStartTurn(): number | undefined {
+		if (this.startIssuedAt !== this.turnEpochValue) return undefined;
+		for (const lane of this.pending.values()) if (lane === "start") return this.turnEpochValue + 1;
+		return undefined;
 	}
 
 	private isBusy(): boolean {

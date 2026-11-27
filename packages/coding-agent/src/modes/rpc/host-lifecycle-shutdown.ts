@@ -7,6 +7,7 @@ import type { ChildProcess } from "node:child_process";
 import { rm } from "node:fs/promises";
 import type { Server } from "node:net";
 import type { HostAdmission } from "./host-admission.ts";
+import { type ChildPresence, type ChildPresenceProbe, signalProvenChild } from "./host-child-identity.ts";
 import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostDaemonPaths, HostGenerationPaths } from "./host-daemon-paths.ts";
 import { releaseGeneration } from "./host-daemon-registration.ts";
@@ -42,6 +43,8 @@ export interface SupervisorState {
 	publicSocketIdentity: SocketFileIdentity | undefined;
 	/** Another generation's entry replaced the public socket this one bound: its registration is the replacer's now. */
 	endpointReplaced: boolean;
+	/** The child's pid no longer names it although no exit was observed: it is never signalled again (senpi#7525). */
+	childGone: boolean;
 }
 
 export interface SupervisorShutdown {
@@ -52,6 +55,8 @@ export interface SupervisorShutdown {
 	readonly server: Server;
 	readonly internalDir: string | undefined;
 	readonly child: ChildProcess;
+	/** Proves the child's pid before every signal (senpi#7525). */
+	readonly identity: ChildPresenceProbe;
 	readonly activity: SupervisorActivity;
 	readonly drain: SupervisorDrain;
 	readonly admission: HostAdmission;
@@ -114,7 +119,7 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
 		supervisorLog(`shutdown failed for host child pid ${child.pid ?? "unknown"}: ${errorMessage(cause)}`);
 		exitCode = 1;
 		try {
-			if (!childStopStarted) await reapChildAfterFailure(child);
+			if (!childStopStarted) await reapChildAfterFailure(context);
 			await state.childExitRecorded;
 		} catch (reapCause) {
 			supervisorLog(
@@ -136,14 +141,17 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
  * SIGTERM, then SIGKILL after `CHILD_STOP_TIMEOUT_MS` - or, for a child that is alive but stalled, after
  * the bounded stall wait. The intent is on record BEFORE the signal, layered over any outer sender's
  * intent for this generation so the record names who started it, and names a stall-wait escalation.
+ * Every signal goes only to a pid proven to be this live child; a child proven gone ends the stop with no
+ * signal at all, its exit unobserved (senpi#7525).
  */
 async function stopChild(context: SupervisorShutdown, reason: string): Promise<void> {
-	const { child, generation } = context;
+	const { child, generation, identity } = context;
 	const pid = child.pid;
-	if (childExited(child) || pid === undefined) return;
+	if (childEnded(context) || pid === undefined) return;
 	let termAttempted = false;
 	let killAttempted = false;
 	try {
+		if (provenGone(context, await identity.presence())) return;
 		const outer = await readStopIntent(generation).catch((cause) => {
 			supervisorLog(`cannot read child stop intent: ${errorMessage(cause)}`);
 			return undefined;
@@ -157,7 +165,7 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 		await writeStopIntent(generation, intent, supervisorLog);
 		const signalledAt = Date.now();
 		termAttempted = true;
-		signalChild(pid, "SIGTERM");
+		if (provenGone(context, await signalProvenChild(child, identity, "SIGTERM"))) return;
 		if (await waitForChildExit(child, CHILD_STOP_TIMEOUT_MS)) return;
 		const stallWaitMs = await waitOutStalledChild({
 			child,
@@ -171,7 +179,7 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 			await writeStopIntent(generation, escalated, supervisorLog);
 		}
 		killAttempted = true;
-		signalChild(pid, "SIGKILL");
+		if (provenGone(context, await signalProvenChild(child, identity, "SIGKILL"))) return;
 		// SIGKILL cannot be ignored; the bound is only a circuit breaker for an uninterruptible kernel wait.
 		if (!(await waitForChildExit(child, CHILD_KILL_EXIT_TIMEOUT_MS)))
 			throw new Error(`host child pid ${pid} exit unobserved ${CHILD_KILL_EXIT_TIMEOUT_MS}ms after SIGKILL`);
@@ -180,7 +188,7 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 		// the final bound: never restart it or enlarge the normal caller's shutdown budget.
 		if (!killAttempted) {
 			try {
-				await reapChildAfterFailure(child, termAttempted);
+				await reapChildAfterFailure(context, termAttempted);
 			} catch (reapCause) {
 				// Log only the recovery error here: performShutdown logs the original
 				// failure once when this rethrow reaches it, so logging it here too
@@ -194,25 +202,32 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 	}
 }
 
-async function reapChildAfterFailure(child: ChildProcess, termAttempted = false): Promise<void> {
-	const pid = child.pid;
-	if (childExited(child) || pid === undefined) return;
-	if (!termAttempted) {
-		signalChild(pid, "SIGTERM");
-		if (await waitForChildExit(child, CHILD_STOP_TIMEOUT_MS)) return;
-	}
-	signalChild(pid, "SIGKILL");
-	if (!(await waitForChildExit(child, CHILD_KILL_EXIT_TIMEOUT_MS)))
-		throw new Error(`host child pid ${pid} exit unobserved ${CHILD_KILL_EXIT_TIMEOUT_MS}ms after recovery SIGKILL`);
+function childEnded(context: SupervisorShutdown): boolean {
+	return childExited(context.child) || context.state.childGone;
 }
 
-function signalChild(pid: number, signal: NodeJS.Signals): boolean {
-	try {
-		process.kill(pid, signal);
-		return true;
-	} catch {
-		return false;
+/** A `gone` observation ends the stop: nothing is left to signal, and the pid may already name another process. */
+function provenGone(context: SupervisorShutdown, presence: ChildPresence): boolean {
+	if (childExited(context.child)) return true;
+	if (presence !== "gone") return false;
+	context.state.childGone = true;
+	supervisorLog(
+		`host child pid ${context.child.pid ?? "unknown"} is gone and its exit was never observed; sending no signal`,
+	);
+	return true;
+}
+
+async function reapChildAfterFailure(context: SupervisorShutdown, termAttempted = false): Promise<void> {
+	const { child, identity } = context;
+	const pid = child.pid;
+	if (childEnded(context) || pid === undefined) return;
+	if (!termAttempted) {
+		if (provenGone(context, await signalProvenChild(child, identity, "SIGTERM"))) return;
+		if (await waitForChildExit(child, CHILD_STOP_TIMEOUT_MS)) return;
 	}
+	if (provenGone(context, await signalProvenChild(child, identity, "SIGKILL"))) return;
+	if (!(await waitForChildExit(child, CHILD_KILL_EXIT_TIMEOUT_MS)))
+		throw new Error(`host child pid ${pid} exit unobserved ${CHILD_KILL_EXIT_TIMEOUT_MS}ms after recovery SIGKILL`);
 }
 
 export function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {

@@ -556,7 +556,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				transformHeaders: async (requestHeaders) => {
 					const headers = mergeProviderAttributionHeaders(
 						model,
-						settingsManager,
+						sessionRef.current?.attributionPermitted() === true,
 						options?.sessionId,
 						requestHeaders,
 					);

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Order is load-bearing: the sandbox environment is restored before any module reads it,
 // then read-only metadata can answer before provider registration. Normal runs still
-// set up process identity and providers before loading the full CLI.
+// set up process identity and providers before loading the full CLI. First of all, the OSC 7577 token leaves the
+// startup environment by an in-place exec, which re-runs everything evaluated before it (senpi#7493).
+import "../program-resume-startup.ts";
 import "./sandbox-env-setup.ts";
 // The coordinated-start stub reads its hand-off from the restored environment and releases its filler pipes
 // before the private descriptor table is adopted, so no filler release can close an adopted channel (senpi#4602).

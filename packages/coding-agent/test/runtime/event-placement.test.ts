@@ -19,6 +19,7 @@ describe("every extension event has a placement (RT11)", () => {
 				"session_extensions_removed",
 				"tool_activated",
 				"tool_call",
+				"tool_call_ready",
 				"tool_execution_end",
 				"tool_execution_start",
 				"tool_execution_update",
