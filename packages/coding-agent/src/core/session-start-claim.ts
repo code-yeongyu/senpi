@@ -31,8 +31,9 @@ const START_CLAIM_STALE_MS = 5 * 60_000;
 // A live claimant keeps its claim fresh while its start is still loading, so only a stopped process lets it expire.
 const START_CLAIM_REFRESH_MS = 60_000;
 // A claim whose pid is alive but whose start time cannot be read may belong to a process that reused the pid of an
-// ended claimant. Its own claimant would have refreshed it; one not refreshed for two intervals has none.
-const UNPROVEN_CLAIM_STALE_MS = 2 * START_CLAIM_REFRESH_MS;
+// ended claimant. Its own claimant would have refreshed it; one not refreshed for three intervals has none (a margin
+// of two missed refreshes for a claimant whose event loop stalls).
+const UNPROVEN_CLAIM_STALE_MS = 3 * START_CLAIM_REFRESH_MS;
 
 interface OwnClaim {
 	readonly path: string;

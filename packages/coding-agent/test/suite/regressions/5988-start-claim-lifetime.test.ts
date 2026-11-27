@@ -97,7 +97,7 @@ it.skipIf(process.platform === "win32").each(["before", "after"] as const)(
 );
 
 // A pid an ended start left behind may now belong to another process whose start time cannot be read (unproven): its
-// own claimant would refresh the claim, so one left unrefreshed for two refresh intervals has none.
+// own claimant would refresh the claim, so one left unrefreshed for three refresh intervals has none.
 it("an unprovable claim that stopped being refreshed no longer keeps others out", async () => {
 	const first = start();
 	const admitted = await first.next();
@@ -106,7 +106,7 @@ it("an unprovable claim that stopped being refreshed no longer keeps others out"
 	const unprovable = { readProcessStartMs: async () => undefined, markUnproven: true };
 	expect(await startClaimant(dir, unprovable)).toMatchObject({ pid: admitted?.pid, unproven: true });
 
-	const unrefreshed = new Date(Date.now() - 3 * 60_000);
+	const unrefreshed = new Date(Date.now() - 4 * 60_000);
 	await utimes(claimFile(), unrefreshed, unrefreshed);
 
 	expect(await startClaimant(dir, unprovable)).toBeUndefined();
