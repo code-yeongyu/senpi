@@ -143,6 +143,12 @@ const STARTUP_EVENT_LEAVES = new Set(
 		),
 );
 
+// senpi#7525: a supervisor signals its host child, and ends a generation whose exit it never observed, only on proof
+// that the child's pid still names that child (its parent, not a zombie, its start). That adds exactly this leaf,
+// importing only Node builtins and process-identity, process-start-identity, host-stop-intent and host-supervisor-log,
+// all already in the graph. Measured: 80 modules, 7,805 source / 7,638 built bytes, 144 code lines.
+const CHILD_IDENTITY_LEAVES = new Set(["packages/coding-agent/dist/modes/rpc/host-child-identity.js"]);
+
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
 	return [
@@ -162,8 +168,9 @@ describe("RPC host supervisor import graph", () => {
 		const privateFdLeaves = modules.filter((url) => PRIVATE_FD_LEAVES.has(url)).length;
 		const endpointBindLeaves = modules.filter((url) => ENDPOINT_BIND_LEAVES.has(url)).length;
 		const startupEventLeaves = modules.filter((url) => STARTUP_EVENT_LEAVES.has(url)).length;
+		const childIdentityLeaves = modules.filter((url) => CHILD_IDENTITY_LEAVES.has(url)).length;
 		console.info(
-			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves}, private fd ${privateFdLeaves}, startup events ${startupEventLeaves}, endpoint bind ${endpointBindLeaves})`,
+			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves}, private fd ${privateFdLeaves}, startup events ${startupEventLeaves}, endpoint bind ${endpointBindLeaves}, child identity ${childIdentityLeaves})`,
 		);
 
 		const core = modules.filter((url) => url.startsWith("packages/coding-agent/dist/core/"));
@@ -178,7 +185,8 @@ describe("RPC host supervisor import graph", () => {
 				publicAuthLeaves -
 				privateFdLeaves -
 				startupEventLeaves -
-				endpointBindLeaves,
+				endpointBindLeaves -
+				childIdentityLeaves,
 		).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 
