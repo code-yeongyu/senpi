@@ -104,7 +104,7 @@ exports[`engine-forwarded command output (senpi#7450 parity baseline) > host > s
 {
   "status": 3,
   "stderr": "",
-  "stdout": "{"reachable":false,"lifecycle":null,"socket":"<TMP>/agent/rpc/rpc.sock","pid":null,"processStartTime":null,"instanceId":null,"generation":null,"engineVersion":null,"capabilities":[],"launchProfile":null,"runtimeBuildId":null,"handover":null,"sessions":{"total":0,"interactive":0,"worker":0,"retained":0,"foreign_attached":0,"foreign_retained":0},"zombies":null,"rss_mb":null,"host_rss_mb":null,"host_footprint_mb":null,"open_fds":null,"memory_pressure":null,"path_identity_resolver":null,"env_keys":[],"generations":[],"pointer":{"state":"missing","instanceId":null,"candidates":[]},"crashes":0,"shard":null,"session_rows":[],"claims_live":0,"claims":[]}
+  "stdout": "{"reachable":false,"refusal":null,"lifecycle":null,"socket":"<TMP>/agent/rpc/rpc.sock","pid":null,"processStartTime":null,"instanceId":null,"generation":null,"engineVersion":null,"capabilities":[],"launchProfile":null,"runtimeBuildId":null,"handover":null,"sessions":{"total":0,"interactive":0,"worker":0,"retained":0,"foreign_attached":0,"foreign_retained":0},"zombies":null,"rss_mb":null,"host_rss_mb":null,"host_footprint_mb":null,"open_fds":null,"memory_pressure":null,"path_identity_resolver":null,"env_keys":[],"generations":[],"pointer":{"state":"missing","instanceId":null,"candidates":[]},"crashes":0,"shard":null,"session_rows":[],"claims_live":0,"claims":[]}
 ",
 }
 `;
