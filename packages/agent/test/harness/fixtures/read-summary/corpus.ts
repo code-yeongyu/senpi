@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { sha256 } from "./scorer.ts";
@@ -6,7 +7,7 @@ import { sha256 } from "./scorer.ts";
 export const pins = {
 	senpi: { root: "/tmp/ulw-plan-20260912/senpi", sha: "6a072f5994ce1df5f7dff12337bec9470707bebf" },
 	omo: { root: "/tmp/ulw-plan-20260912/omo", sha: "c6c22332f291422751c299fb3ecd7590033b0dc2" },
-	omp: { root: "/Users/yeongyu/local-workspaces/oh-my-pi", sha: "f97fa5c95010b62ac34c7357f9a1cae6975e12d6" },
+	omp: { root: "~/local-workspaces/oh-my-pi", sha: "f97fa5c95010b62ac34c7357f9a1cae6975e12d6" },
 } as const;
 export const languages = ["ts", "tsx", "js", "python", "go", "rust", "json", "markdown"] as const;
 const relative = z.string().refine((path) => !path.startsWith("/") && !path.split("/").includes(".."));
@@ -32,12 +33,18 @@ const schema = z
 	})
 	.passthrough();
 
+/** The manifest records absolute roots; a root under the home dir is compared as `~/...`, the form the pins use. */
+function homeRelative(root: string | undefined): string | undefined {
+	const home = homedir();
+	return root?.startsWith(`${home}/`) ? `~${root.slice(home.length)}` : root;
+}
+
 export function loadCorpus(input: string, expectedHash: string) {
 	const bytes = readFileSync(join(input, "corpus.json"));
 	if (sha256(bytes) !== expectedHash) throw new Error("stale_corpus_manifest");
 	const corpus = schema.parse(JSON.parse(bytes.toString("utf8")));
 	for (const [name, pin] of Object.entries(pins)) {
-		if (corpus.roots[name]?.sha !== pin.sha || corpus.roots[name]?.root !== pin.root)
+		if (corpus.roots[name]?.sha !== pin.sha || homeRelative(corpus.roots[name]?.root) !== pin.root)
 			throw new Error("reference_pin_drift");
 	}
 	const keys = corpus.inventory.map((row) => `${row.repo}/${row.path}`);
