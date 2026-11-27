@@ -8,7 +8,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { parkedEntryFromProfile } from "../../../src/modes/rpc/host-handover-parked-open.ts";
-import type { DelegatedHost } from "../rpc-delegated-host-support.ts";
+import { ASK_COMMAND, type DelegatedHost } from "../rpc-delegated-host-support.ts";
 import { FrameLog, PROBE_TEXT, permissionHost, probeTurns } from "../rpc-delegated-permission-support.ts";
 import type { Peer, WireRecord } from "../rpc-delegated-peer.ts";
 
@@ -68,14 +68,28 @@ describe("#7572 a designated-answerer run across a host handover", () => {
 			success: true,
 			data: { answerer: false, answererUnavailable: "host_handover" },
 		});
-		const dialog = await promptAndAwaitDialog(client, log, run.sessionId);
+		// No answerer may answer this run, so a permission ask is refused at once and raises no dialog (no hang).
+		const refusedCall = log.next(
+			(record) => record.type === "tool_execution_end" && record.sessionId === run.sessionId,
+		);
+		await client.send({ type: "prompt", sessionId: run.sessionId, message: "go" });
+		const refused = JSON.stringify(await refusedCall);
+		expect(refused).toContain("designated answerer is not connected");
+		expect(refused).not.toContain(PROBE_TEXT);
+		// Any other dialog of the run still waits, and every answer to it is refused, the old opener's key included.
+		const asked = log.next(
+			(record) =>
+				record.type === "extension_ui_request" && record.sessionId === run.sessionId && record.title === "Question",
+		);
+		void client.send({ type: "prompt", sessionId: run.sessionId, message: `/${ASK_COMMAND}` }).catch(() => {});
+		const dialog = await asked;
 		for (const answerKey of [undefined, run.first.answerKey])
 			expect(
 				await client.send({
 					type: "extension_ui_response",
 					sessionId: run.sessionId,
-					id: dialog.id,
-					value: "Allow once",
+					uiRequestId: dialog.id,
+					value: "x",
 					...(answerKey === undefined ? {} : { answerKey }),
 				}),
 			).toMatchObject({
