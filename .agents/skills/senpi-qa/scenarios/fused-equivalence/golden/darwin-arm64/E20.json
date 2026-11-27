@@ -5525,13 +5525,6 @@
       "type": "extension_ui_request",
       "id": "<uuid:23>",
       "method": "setStatus",
-      "statusKey": "eval-cells",
-      "statusText": "↗ js · a cell that never finishes (<elapsed>)"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:24>",
-      "method": "setStatus",
       "statusKey": "eval-cells"
      },
      {
@@ -5728,8 +5721,8 @@
        "type": "custom",
        "customType": "work-custody",
        "data": {
-        "id": "<uuid:25>",
-        "key": "delivery:senpi-codemode:notification:<uuid:26>",
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
         "kind": "background",
         "state": "open",
         "sessionId": "<uuid:16>"
@@ -5816,11 +5809,11 @@
        "type": "custom",
        "customType": "work-custody",
        "data": {
-        "id": "<uuid:25>",
-        "key": "delivery:senpi-codemode:notification:<uuid:26>",
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
         "kind": "background",
         "state": "queued",
-        "ticketId": "<uuid:27>",
+        "ticketId": "<uuid:26>",
         "sessionId": "<uuid:16>"
        },
        "id": "<id:20>",
@@ -5834,11 +5827,11 @@
        "type": "custom",
        "customType": "work-custody",
        "data": {
-        "id": "<uuid:25>",
-        "key": "delivery:senpi-codemode:notification:<uuid:26>",
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
         "kind": "background",
         "state": "queued",
-        "ticketId": "<uuid:27>",
+        "ticketId": "<uuid:26>",
         "payload": {
          "message": {
           "customType": "senpi-codemode:notification",
@@ -5891,7 +5884,7 @@
          "human": []
         },
         "holds": [],
-        "runId": "<uuid:28>",
+        "runId": "<uuid:27>",
         "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
@@ -5929,13 +5922,13 @@
         "human": []
        },
        "holds": [],
-       "runId": "<uuid:28>",
+       "runId": "<uuid:27>",
        "observedAt": "<ts:lifecycle.observedAt:13>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:29>",
+      "id": "<uuid:28>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -5945,11 +5938,11 @@
        "type": "custom",
        "customType": "work-custody",
        "data": {
-        "id": "<uuid:25>",
-        "key": "delivery:senpi-codemode:notification:<uuid:26>",
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
         "kind": "background",
         "state": "consumed",
-        "ticketId": "<uuid:27>",
+        "ticketId": "<uuid:26>",
         "payload": {
          "message": {
           "customType": "senpi-codemode:notification",
@@ -5958,7 +5951,7 @@
          },
          "deliverAs": "steer"
         },
-        "runId": "<uuid:28>",
+        "runId": "<uuid:27>",
         "transcriptEntryId": "<id:25>",
         "sessionId": "<uuid:16>"
        },
@@ -5975,7 +5968,7 @@
        "content": "<system-reminder>Detached eval cell call_doomed (js) was killed at the 3s hard limit.\n(no output)\nThe JavaScript worker was not restarted; variables from earlier cells are kept.</system-reminder>",
        "display": false,
        "details": {
-        "ticketId": "<uuid:27>"
+        "ticketId": "<uuid:26>"
        },
        "id": "<id:25>",
        "parentId": "<id:23>",
@@ -5984,7 +5977,7 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:28>"
+      "runId": "<uuid:27>"
      },
      {
       "type": "turn_start"
@@ -5997,7 +5990,7 @@
        "content": "<system-reminder>Detached eval cell call_doomed (js) was killed at the 3s hard limit.\n(no output)\nThe JavaScript worker was not restarted; variables from earlier cells are kept.</system-reminder>",
        "display": false,
        "details": {
-        "ticketId": "<uuid:27>"
+        "ticketId": "<uuid:26>"
        },
        "timestamp": "<ts:message.timestamp:19>"
       }
@@ -6010,7 +6003,7 @@
        "content": "<system-reminder>Detached eval cell call_doomed (js) was killed at the 3s hard limit.\n(no output)\nThe JavaScript worker was not restarted; variables from earlier cells are kept.</system-reminder>",
        "display": false,
        "details": {
-        "ticketId": "<uuid:27>"
+        "ticketId": "<uuid:26>"
        },
        "timestamp": "<ts:message.timestamp:20>"
       }
@@ -6040,7 +6033,7 @@
         "human": []
        },
        "holds": [],
-       "runId": "<uuid:28>",
+       "runId": "<uuid:27>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:5>"
@@ -6166,7 +6159,7 @@
         "human": []
        },
        "holds": [],
-       "runId": "<uuid:28>",
+       "runId": "<uuid:27>",
        "observedAt": "<ts:lifecycle.observedAt:15>"
       }
      },
@@ -6314,7 +6307,7 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:30>",
+      "id": "<uuid:29>",
       "method": "setStatus",
       "statusKey": "goal"
      },
@@ -6327,7 +6320,7 @@
         "content": "<system-reminder>Detached eval cell call_doomed (js) was killed at the 3s hard limit.\n(no output)\nThe JavaScript worker was not restarted; variables from earlier cells are kept.</system-reminder>",
         "display": false,
         "details": {
-         "ticketId": "<uuid:27>"
+         "ticketId": "<uuid:26>"
         },
         "timestamp": "<ts:messages.timestamp:7>"
        },
@@ -6383,11 +6376,11 @@
        "type": "custom",
        "customType": "work-custody",
        "data": {
-        "id": "<uuid:25>",
-        "key": "delivery:senpi-codemode:notification:<uuid:26>",
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
         "kind": "background",
         "state": "settled",
-        "ticketId": "<uuid:27>",
+        "ticketId": "<uuid:26>",
         "payload": {
          "message": {
           "customType": "senpi-codemode:notification",
@@ -6396,7 +6389,7 @@
          },
          "deliverAs": "steer"
         },
-        "runId": "<uuid:28>",
+        "runId": "<uuid:27>",
         "transcriptEntryId": "<id:25>",
         "sessionId": "<uuid:16>"
        },
@@ -6429,7 +6422,7 @@
          "human": []
         },
         "holds": [],
-        "runId": "<uuid:28>",
+        "runId": "<uuid:27>",
         "completionId": "<uuid:16>:2",
         "completion": {
          "kind": "reply",
@@ -6477,7 +6470,7 @@
         "human": []
        },
        "holds": [],
-       "runId": "<uuid:28>",
+       "runId": "<uuid:27>",
        "completionId": "<uuid:16>:2",
        "completion": {
         "kind": "reply",
@@ -6488,61 +6481,61 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:31>",
+      "id": "<uuid:30>",
       "method": "setStatus",
       "statusKey": "anthropic-web-search"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:32>",
+      "id": "<uuid:31>",
       "method": "setWidget",
       "widgetKey": "anthropic-web-search"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:33>",
+      "id": "<uuid:32>",
       "method": "setStatus",
       "statusKey": "openai-web-search"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:34>",
+      "id": "<uuid:33>",
       "method": "setWidget",
       "widgetKey": "openai-web-search"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:35>",
+      "id": "<uuid:34>",
       "method": "setStatus",
       "statusKey": "monitors"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:36>",
+      "id": "<uuid:35>",
       "method": "setStatus",
       "statusKey": "pi-websearch"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:37>",
+      "id": "<uuid:36>",
       "method": "setWidget",
       "widgetKey": "pi-websearch"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:38>",
+      "id": "<uuid:37>",
       "method": "setStatus",
       "statusKey": "pi-webfetch"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:39>",
+      "id": "<uuid:38>",
       "method": "setWidget",
       "widgetKey": "pi-webfetch"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:40>",
+      "id": "<uuid:39>",
       "method": "setStatus",
       "statusKey": "loop"
      }

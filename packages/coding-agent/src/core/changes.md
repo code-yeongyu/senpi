@@ -1,3 +1,83 @@
+## 2026-11-26 - An internal builtin loads with the builtins that require it (senpi#1146)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: builtin selection moves to `core/builtin-extension-selection.ts` (`selectActiveBuiltinIds`). A registry builtin marked `internal` is never matched against `enabledBuiltinExtensions` / `disabledBuiltinExtensions`; the final extension set gets it at assembly (`placeRequiredInternalBuiltins`, in both the plain and the project-trust branch of `loadFinalExtensionSet`) exactly when a builtin in that set, selected by settings or by a `builtin:<name>` path, lists it in `requires`; it is loaded once and placed right after the leading run of builtins the registry lists before it (the guards and policy; loop-guard keeps the first veto), ahead of every other extension in the set (a later builtin, a bundled, inline or path extension), any of which may publish liveness at session start.
+
+### Why
+
+- The session liveness watcher (`session-liveness`) is an internal dependency of the herdr pane report and the todo widget. A builtin allowlist written before it existed, or a denylist naming it, dropped it, leaving the pane report at its initial state and the todo widget drawing every item active.
+
+### Why an extension could not handle it
+
+- Which builtins load is decided by the resource loader before any extension runs; an extension cannot make another builtin load past the user's builtin selection.
+
+### Expected merge conflict zones
+
+- LOW: `getActiveBuiltinExtensionIds` (now a call into `builtin-extension-selection.ts`), the two final-assembly branches of `loadFinalExtensionSet`, and the new `placeRequiredInternalBuiltins`.
+
+## 2026-11-25 - Session telemetry is decided per caller on a shared host (senpi#7446)
+
+### What changed
+
+- `packages/coding-agent/src/core/telemetry-consent.ts` (new): the one rule. Effective permission = the host's own setting permits AND every caller of the session granted. `SessionTelemetryCallers` holds a session's standing answer and each attached caller's live answer and answers a `TelemetryCallersVerdict` per use: `events` needs every caller's grant, `attribution` is removed only by a decline. `openingCallersVerdict` gives a new session its opener's verdict.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSession.setTelemetryCallers`, `telemetryPermitted()` (events) and `attributionPermitted()` (headers), read at each use; the extension context reads it through `getTelemetryPermitted`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.telemetryConsent` (the wire opener's answer); the runtime applies the callers' permit to its session and to every replacement, and takes live changes through `setTelemetryCallers`.
+- `packages/coding-agent/src/core/provider-attribution.ts`, `packages/coding-agent/src/core/sdk.ts`: provider attribution headers (app identity only) read `AgentSession.attributionPermitted()` per request: the host's install-telemetry setting still decides for an unanswered caller, and any caller's decline or revoke removes them.
+
+### Why
+
+- A host process is shared: Desktop and CLI callers attach to the same engine. With policy taken from the host process alone, Desktop could neither grant telemetry on a host it started disabled nor keep its own requests out of an enabled CLI host, and a process-wide switch would change independent CLI sessions.
+
+### Why an extension could not handle it
+
+- The callers of a session are known only to the host's router, and provider attribution is applied inside the session's stream function; an extension sees neither.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` around `setBrowserEngine` and the extension context actions; `sdk.ts` at `mergeProviderAttributionHeaders`; `agent-session-runtime.ts` constructor and `apply`.
+
+## 2026-11-25 - A peer delivery the engine-turn cap stops is answered held with the cap, and Resume continues a capped session (senpi#7138)
+
+### What changed
+
+- `packages/coding-agent/src/core/engine-turn-limit.ts`: `EngineTurnCap` (`{ reason, count }`, the `engine-paused` reason and count) and `engineTurnCapOf(stop)`, the mapping `_stopEngineTurn` inlined before.
+- `packages/coding-agent/src/core/agent-session.ts`: `_engineTurnStopNow(released)` is the one computation of the bound a new engine turn would meet; `_stopEngineTurn` uses it, as do the new `engineTurnCap` getter (the cap pausing automatic turns now) and `_peerDeliveryCap()` (the cap a peer delivery's turn would meet, outside the resume window when the delivery releases an unattended hold, exactly as `_stopEngineTurn` counts it). The external admission port gains `cappedBy`. `_resumeOnce` answers `not_paused` only when no cap applies either: a capped session with nothing held resumes with one turn (`_resumeAfterStop(onQueued, "engine_turn_cap")`), answering `engineTurnCap`; `mode: "release"` answers `resumed: false, reason: "engine_turn_cap"`. `ResumeSessionAnswer` gains the reason and `engineTurnCap`.
+- `packages/coding-agent/src/core/external-admission.ts`: an idle start with no hold that `cappedBy()` names is answered `{ kind: "held", engine_turn_cap }` instead of `started`; it still goes to `start`, which records the message without a turn. Its pending lane is `capped`, not `start`: it is not busy and no later delivery joins it as the turn it opens (senpi#7478 joins pending starts), and `answeredCapped(message)` tells the runtime the answer was decided.
+- `packages/coding-agent/src/core/agent-session.ts` (review): a delivery `answeredCapped` neither waits for session work nor parks behind a compaction and is always recorded as refused, so a cap that stops applying before its start runs cannot turn the `held` answer into a turn. A resume a peer asks for (`unlessStopped`) answers `engine_turn_cap` like `release`, since only a person lifts the cap. `engineTurnCap` is undefined while a run is active: the cap stops only the turn after the last allowed one.
+- `packages/coding-agent/src/core/stop-resume-directive.ts`: `ResumeCause` adds `engine_turn_cap`, whose hidden directive says automatic turns were paused; as a `session-resumed` message without `resumeCause: "interrupted"` it resets the engine-turn count. `packages/coding-agent/src/core/run-resume-turn.ts` takes `ResumeCause`.
+
+### Why
+
+- The admission answered `started` from the busy and hold checks alone, and the cap was applied later inside `_deliverCustomMessage`, so a delivery behind `cap-per-resume-window` was answered `started` with no provider call; the cap is not a hold, so `paused` stayed false and `resume_session` answered `not_paused` (senpi#7138).
+
+### Why an extension could not handle it
+
+- The admission answer, the engine-turn bound and Resume all live in the session runtime's own delivery and resume paths; an extension sees none of them before they are decided.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_resumeOnce` (the `not_paused` guard, the release branch, the capped resume), `_stopEngineTurn` and the `externalAdmission` port literal.
+- LOW: `external-admission.ts` idle start branch; `engine-turn-limit.ts` after `EngineTurnStop`; `stop-resume-directive.ts` head of `stopResumeDirective`.
+
+## 2026-11-23 - A call with no tool_call handler still fires tool_call_ready (senpi#7232)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `preflightToolCall()` builds the `tool_call` event once; with no `tool_call` handler registered it returns `runner.emitToolCallReady(event, signal)` instead of `undefined`, so `tool_call_ready` observers see every call about to run, and an abort during their wait blocks the call.
+
+### Why
+
+- Codemode holds a model `write` or `edit` call's file from `tool_call_ready`, the point the final path is known; a session with no `tool_call` handler skipped the dispatch and with it the event.
+
+### Why an extension could not handle it
+
+- Whether the `tool_call` dispatch runs is decided here, before any extension is asked.
+
+### Expected merge conflict zones
+
+- LOW: the no-handler branch at the end of `preflightToolCall()` (the event moved above it, one return changed).
+
 ## 2026-11-24 - Conditional logout through the runtime stores (senpi#7406)
 
 ### What changed

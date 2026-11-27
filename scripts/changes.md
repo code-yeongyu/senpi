@@ -1,3 +1,21 @@
+## 2026-11-25 - The Windows zip is written without Info-ZIP when it is absent (senpi#7473)
+
+### What changed
+
+- `scripts/build-binaries.sh`: `zip_current_dir` writes `pi-windows-*.zip`. Where `zip` is installed (the release runners) it still runs `zip -r <archive> .`. Without `zip` it uses the bsdtar Windows ships as `%SystemRoot%\System32\tar.exe` (`tar -a -c -f`), naming the entries so they carry no `./` prefix, and it fails with a named error when neither is present.
+
+### Why
+
+- On a Windows runner, the only way to get `zip` was to install it from the Chocolatey community feed. On main at 58c99669b0 the feed answered with 504s after about 3.3 min per attempt, and the `Compiled extensions (Windows)` job hit its time limit and was cancelled. bsdtar writes the same archive for its consumers: the same entries, including directory entries and dotfiles, and the same sizes and CRCs.
+
+### Why an extension could not handle it
+
+- This is release and CI build tooling. Extensions do not run while binaries are archived.
+
+### Expected merge conflict zones
+
+- LOW: the "Create archives" block of `scripts/build-binaries.sh`.
+
 ## 2026-11-21 - The release ships the committed model catalog and never regenerates it (senpi#2287)
 
 ### What changed

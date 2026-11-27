@@ -1,3 +1,5 @@
+import type { EngineTurnCap } from "../../core/engine-turn-limit.ts";
+
 /** Answers to a user Stop's pause and its resume: held human input, run holds, and resume_session (senpi#3811). */
 export type RpcPauseResponse =
 	| {
@@ -23,12 +25,13 @@ export type RpcPauseResponse =
 			success: true;
 			data?: {
 				resumed: boolean;
-				reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped";
+				reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped" | "engine_turn_cap";
 				parentSessionId?: string;
 				pauseSeq: number;
 				turnStarted: boolean;
 				deliveredNotices: number;
 				deliveredHeldInputs: number;
 				replayed?: boolean;
+				engineTurnCap?: EngineTurnCap;
 			};
 	  };

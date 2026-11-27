@@ -6526,9 +6526,21 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_ENTRY_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_BOOKKEEPING_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/lifecycle-delivery.ts#lifecycleDeliveryEntries": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-history.ts#foldedSlots": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
 		"packages/coding-agent/src/core/lifecycle-history.ts#lifecycleHistory": {
 			"class": "constant",
@@ -6983,10 +6995,6 @@
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
 		},
-		"packages/coding-agent/src/core/session-manager.ts#LIFECYCLE_ENTRY_TYPES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
 		"packages/coding-agent/src/core/session-manager.ts#SETUP_ENTRY_TYPES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -7335,6 +7343,10 @@
 			"class": "per-copy-safe",
 			"reason": "install-once guard or handle for a hook this copy installs; holds no A1-A3 asset"
 		},
+		"packages/coding-agent/src/core/startup-stall-notice.ts#realClock": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/subscription-limits/limit-store.ts#subscriptionLimits": {
 			"class": "per-copy-safe",
 			"reason": "observed subscription-limit store; a split only delays one copy learning a limit, not A1-A3 (design 3.3)"
@@ -7358,6 +7370,10 @@
 		"packages/coding-agent/src/core/timings.ts#ENABLED": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/timings.ts#lastPhase": {
+			"class": "per-copy-safe",
+			"reason": "last startup phase this copy's time() closed, read through this copy's module API; a split only hides one copy's phase from the other, holds no A1-A3 asset"
 		},
 		"packages/coding-agent/src/core/timings.ts#timingNamespaces": {
 			"class": "per-copy-safe",
@@ -9182,6 +9198,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#SessionPersona": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#TelemetryConsent": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
@@ -9999,6 +10019,10 @@
 		"packages/machine-ops/src/files/mutation-queue.ts#fileMutationQueue": {
 			"class": "realm-registry",
 			"reason": "file-mutation-queue/v1: any copy's edit, write, patch or remote-hand operation on one file must queue, and the stuck-holder diagnostics see every copy (design 3.2, 3.3)"
+		},
+		"packages/machine-ops/src/files/privacy-protected.ts#DARWIN_PROTECTED_FOLDERS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/machine-ops/src/files/realpath-without-open.ts#MISSING_PATH_CODES": {
 			"class": "constant",
@@ -11789,6 +11813,14 @@
 		"packages/senpi-codemode/src/bridge/reserved.ts#SCOPE_MONITOR_OP": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#ownClaims": {
+			"class": "per-copy-safe",
+			"reason": "the session start claims this copy took and their refresh timers; the claim files themselves coordinate processes"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#UNPROVEN_CLAIM_STALE_MS": {
+			"class": "constant",
+			"reason": "numeric constant computed from another constant at load; never written"
 		}
 	}
 }
