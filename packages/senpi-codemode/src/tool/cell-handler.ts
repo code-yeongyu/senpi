@@ -25,6 +25,7 @@ import { CellResultBuilder, type CellState } from "./cell-runtime.ts";
 import type { EvalImageResizer } from "./image.ts";
 import { type ResolvedToolReply, runNestedTool } from "./nested-tool-call.ts";
 import type { CellToolUpdateSink } from "./nested-tool-output.ts";
+import { ScopedWatches } from "./scoped-watches.ts";
 import { upsertStatusEvent } from "./status-events.ts";
 import { isCoreWidgetName } from "./tool-widgets.ts";
 import type { EvalKernel, EvalStatusEvent, EvalToolDetails } from "./types.ts";
@@ -55,6 +56,8 @@ export class CellHandler {
 	readonly #runtime: CellBridgeRuntime;
 	readonly #resultBuilder: CellResultBuilder;
 	readonly #dispatchContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
+	readonly #scopedWatches = new ScopedWatches();
+	#settledOk = false;
 
 	constructor(kernel: EvalKernel, state: CellState, runtime: CellBridgeRuntime) {
 		this.#kernel = kernel;
@@ -87,7 +90,7 @@ export class CellHandler {
 				this.#resultBuilder.setPhase(message.title);
 				return;
 			case "status":
-				this.#recordStatus(message.event);
+				if (!this.#scopedWatches.observe(message.event)) this.#recordStatus(message.event);
 				return;
 			case "log":
 				this.#resultBuilder.push(`${message.message}\n`);
@@ -115,11 +118,24 @@ export class CellHandler {
 	}
 
 	async finalize(result: Extract<KernelToHostMessage, { type: "result" }>): Promise<AgentToolResult<EvalToolDetails>> {
+		this.#settledOk = result.ok;
+		await this.stopScopedWatches();
 		return await this.#resultBuilder.finalize(result);
 	}
 
 	async finalizeCancellation(error: Error): Promise<AgentToolResult<EvalToolDetails>> {
+		await this.stopScopedWatches();
 		return await this.#resultBuilder.finalizeCancellation(error);
+	}
+
+	/**
+	 * A cell that ends without an ok result (error, stop, timeout) cannot close its scoped watches itself, so the host
+	 * does (senpi#7381). An ok cell already closed them, or moved them on deliberately. Stopping twice is a no-op.
+	 */
+	async stopScopedWatches(): Promise<void> {
+		if (this.#settledOk) return;
+		for (const failure of await this.#scopedWatches.stopHeld(this.#runtime.executeTool))
+			this.#resultBuilder.push(`${failure}\n`);
 	}
 
 	async flushOutput(): Promise<void> {

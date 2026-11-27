@@ -107,6 +107,50 @@ describe("JavaScript kernel last-expression capture", () => {
 		});
 	});
 
+	// senpi#7381: a block holding `await using` followed by a statement on the same line was wrapped as `return { ... }`.
+	it("runs a block with await using followed by a statement on the same line", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				'var usingEvents = []; { await using x = { async [Symbol.asyncDispose]() { usingEvents.push("closed"); } }; usingEvents.push("used"); } usingEvents',
+			);
+
+			expect(parseJavaScriptResult(run.result)).toEqual(["used", "closed"]);
+		});
+	});
+
+	it("runs a cell that is one block statement holding a using declaration", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const block = await runJavaScriptCell(
+				kernel,
+				'globalThis.usingBlock = []; { using x = { [Symbol.dispose]() { usingBlock.push("closed"); } }; usingBlock.push("used"); }',
+			);
+			const after = await runJavaScriptCell(kernel, "usingBlock");
+
+			expect(block.result.ok).toBe(true);
+			expect(parseJavaScriptResult(after.result)).toEqual(["used", "closed"]);
+		});
+	});
+
+	it("disposes bare top-level using declarations when the cell ends and keeps using as a name", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const bare = await runJavaScriptCell(
+				kernel,
+				[
+					"globalThis.bareUsing = [];",
+					'using syncRes = { [Symbol.dispose]() { bareUsing.push("sync"); } }',
+					'await using asyncRes = { async [Symbol.asyncDispose]() { bareUsing.push("async"); } }',
+				].join("\n"),
+			);
+			const after = await runJavaScriptCell(kernel, "bareUsing");
+			const name = await runJavaScriptCell(kernel, "const using = 40;\nusing + 2");
+
+			expect(bare.result.ok).toBe(true);
+			expect(parseJavaScriptResult(after.result)).toEqual(["async", "sync"]);
+			expect(parseJavaScriptResult(name.result)).toBe(42);
+		});
+	});
+
 	it("keeps a genuine top-level return as the cell value", async () => {
 		await withJavaScriptKernel(async (kernel) => {
 			const run = await runJavaScriptCell(kernel, "if (true) return 42;\n0");

@@ -7,7 +7,7 @@ describe("ensureHost lock scope", () => {
 	it("#given the ensureHost body #when the endpoint lock is taken #then the tmpdir reap is ordered before acquisition", async () => {
 		const source = await readFile(hostEnsureSource, "utf8");
 		const body = source.slice(source.indexOf("export async function ensureHost("));
-		const reapAt = body.indexOf("reapOrphanedInternalHostDirs()");
+		const reapAt = body.indexOf("reapOrphanedInternalHostDirs(");
 		const acquireAt = body.indexOf("acquireOwnershipSafeLock(");
 
 		expect(reapAt).toBeGreaterThan(-1);

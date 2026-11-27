@@ -42,6 +42,8 @@ export interface EvalPromptOptions {
 	readonly kernelPreludes?: readonly KernelPreludeContribution[];
 	/** Tools withheld from the model's direct list and reachable only as `tool.<name>(...)` in a cell (senpi#6886). */
 	readonly evalOnlyTools?: readonly string[];
+	/** `jsCells`: document TypeScript cells and the Bun-only `scope()` helper (senpi#7381); absent leaves the text as it was. */
+	readonly jsCells?: { readonly typescript: boolean; readonly scope: boolean };
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
@@ -109,6 +111,8 @@ export function buildEvalPrompt(
 		styleDefault: style === "default",
 		hostLine: options.hostLine ?? "",
 		jsBun: options.jsRuntime?.name === "bun",
+		jsTypescript: enabled.js && options.jsCells?.typescript === true,
+		jsScope: enabled.js && options.jsCells?.scope === true && options.jsRuntime?.name === "bun",
 		jsVersion: options.jsRuntime?.version ?? "",
 		// pinnedDisplayPath: the test-only checkout pin (senpi#5067); the path itself unless SENPI_TEST_WORKSTATION pins it.
 		bunSkillPath: options.bunSkillPath === undefined ? "" : pinnedDisplayPath(options.bunSkillPath),

@@ -7,6 +7,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
 import { HostAdmission } from "./host-admission.ts";
+import { HostChildIdentity, watchChildLiveness } from "./host-child-identity.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
@@ -133,6 +134,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		publicSocketOwned: false,
 		publicSocketIdentity: undefined,
 		endpointReplaced: false,
+		childGone: false,
 	};
 	const owner = new SupervisorOwner(generation.dir);
 	const activity = new SupervisorActivity({
@@ -168,10 +170,36 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		publicSocket,
 	});
 	const childStartedAt = Date.now();
+	// Read before the loop turns: until this process reaps it, the pid can only name this child.
+	const identity = new HostChildIdentity(child.pid);
 	await hostChildSpawned(child, generation.dir, hop.supervisorStart?.time);
 	// Nothing is ever written; the pipe exists purely so its EOF is a reliable
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
+	// An exit nobody observes must still end this generation, without a signal to a pid that is no longer the
+	// child (oh-my-openagent#14725, senpi#7525).
+	watchers.push(
+		watchChildLiveness({
+			child,
+			identity,
+			lifetime: child.stdio[HOST_CHILD_WATCH_FD],
+			settled: () => state.shuttingDown,
+			onGone: () => {
+				state.childGone = true;
+				state.childExitRecorded = noteChildExit({
+					daemonDir: paths.dir,
+					generation,
+					instanceId,
+					code: null,
+					signal: null,
+					childStartedAt,
+				});
+				void state.childExitRecorded.then(() =>
+					shutdown("rpc host child is gone and its exit was never observed", 1),
+				);
+			},
+		}),
+	);
 	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart.
 	if (child.pid !== undefined)
 		void recordChildPid(
@@ -194,7 +222,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				? { shutdown: { reason, supervisor: supervisorSender(instanceId) } }
 				: {}),
 		});
-		if (state.shuttingDown) return;
+		if (state.shuttingDown || state.childGone) return;
 		const verdict = classifyChildExit(code, signal);
 		void state.childExitRecorded.then(() => shutdown(verdict.reason, verdict.exitCode));
 	});
@@ -206,6 +234,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		() => admission.stop(),
 		{ file: generation.childDrainRequestFile, sender: supervisorSender(instanceId) },
 		(drainingForMs) => recordDrainOverdue(paths.dir, instanceId, drainingForMs),
+		identity,
 	);
 	const server = createPublicProxy({
 		internalSocket,
@@ -239,6 +268,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		server,
 		internalDir: internal.dir,
 		child,
+		identity,
 		activity,
 		drain,
 		admission,
