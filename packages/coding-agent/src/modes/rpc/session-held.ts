@@ -54,8 +54,24 @@ const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 	"host_response",
 ]);
 
+/** Runs one snapshot command; undefined when it fails. */
+export type SnapshotRunner = (
+	command: string,
+	args: readonly string[],
+	options: { readonly timeout: number; readonly env?: NodeJS.ProcessEnv },
+) => Promise<string | undefined>;
+
+const runSnapshot: SnapshotRunner = (command, args, options) =>
+	new Promise((resolve) => {
+		execFile(command, [...args], { ...options, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout) =>
+			resolve(error ? undefined : stdout),
+		);
+	});
+
 /** One bounded identity snapshot for all foreign PIDs, never one subprocess per lease. */
-function readProcessStarts(): Promise<ReadonlyMap<number, number> | undefined> {
+export async function readProcessStarts(
+	run: SnapshotRunner = runSnapshot,
+): Promise<ReadonlyMap<number, number> | undefined> {
 	const windows = process.platform === "win32";
 	const command = windows ? "powershell.exe" : "ps";
 	const args = windows
@@ -66,29 +82,19 @@ function readProcessStarts(): Promise<ReadonlyMap<number, number> | undefined> {
 				'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { if ($null -ne $_.CreationDate) { "{0} {1}" -f $_.ProcessId, $_.CreationDate.ToUniversalTime().ToString("o") } }',
 			]
 		: ["-axo", "pid=,lstart="];
-	return new Promise((resolve) => {
-		execFile(
-			command,
-			args,
-			{
-				timeout: windows ? 5_000 : 1_000,
-				maxBuffer: 4 * 1024 * 1024,
-				windowsHide: true,
-				...(windows ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C" } }),
-			},
-			(error, stdout) => {
-				if (error) return resolve(undefined);
-				const starts = new Map<number, number>();
-				for (const line of stdout.split("\n")) {
-					const row = /^\s*(\d+)\s+(.+)$/.exec(line);
-					if (!row) continue;
-					const start = processStartTimeMs(row[2]);
-					if (start !== undefined) starts.set(Number(row[1]), start);
-				}
-				resolve(starts);
-			},
-		);
+	const stdout = await run(command, args, {
+		timeout: windows ? 5_000 : 1_000,
+		...(windows ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C" } }),
 	});
+	if (stdout === undefined) return undefined;
+	const starts = new Map<number, number>();
+	for (const line of stdout.split("\n")) {
+		const row = /^\s*(\d+)\s+(.+)$/.exec(line);
+		if (!row) continue;
+		const start = processStartTimeMs(row[2]);
+		if (start !== undefined) starts.set(Number(row[1]), start);
+	}
+	return starts;
 }
 
 /** Fresh leases at each boundary; daemon identity resolution is lazy and scoped to one command. */
