@@ -4283,15 +4283,15 @@
 			"class": "per-copy-safe",
 			"reason": "counter or id sequence for this copy's own objects; a split cannot collide across them"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#OPEN_ENDED_WAKE_SOURCES": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#OPEN_ENDED_WAKE_SOURCES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#REPRESENTED_WAKE_SOURCES": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#REPRESENTED_WAKE_SOURCES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#WAKE_SOURCE_LABELS": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#WAKE_SOURCE_LABELS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
