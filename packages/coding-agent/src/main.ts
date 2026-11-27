@@ -125,6 +125,7 @@ import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { takePresenterAccountAuthority } from "./presenter-authority-slot.ts";
+import { takeProgramResumeToken } from "./core/program-resume-token.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
@@ -1243,6 +1244,8 @@ export function createCliRuntimeFactory(
 export async function main(args: string[], options?: MainOptions) {
 	// First statement: seals the slot before any extension or resource path can load code (D11, senpi#4249).
 	const presenterAccountAuthority = takePresenterAccountAuthority();
+	// Before anything can start a child that would inherit the OSC 7577 token (senpi#7493).
+	const programResumeToken = await takeProgramResumeToken();
 	resetTimings();
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.
@@ -1778,6 +1781,7 @@ export async function main(args: string[], options?: MainOptions) {
 			chrome: parsed.grokNeo ? "grok" : undefined,
 			tuiMode: parsed.tuiMode,
 			initialThemeSetting: parsed.useTheme,
+			programResumeToken,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();
