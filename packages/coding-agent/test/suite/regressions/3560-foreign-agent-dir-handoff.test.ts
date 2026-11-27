@@ -7,12 +7,12 @@
 // A's default socket. A handoff from agent dir B is refused `foreign_agent_dir` and the host keeps
 // serving, unsignalled; a handoff from A itself (even through a symlinked path) still happens.
 import { realpathSync } from "node:fs";
-import { mkdir, rm, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, mkdir, rm, symlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnsuredHost, ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import { signalGeneration } from "../../../src/modes/rpc/host-stop.ts";
 import {
 	GENERATION_HOST_ARGS,
@@ -24,6 +24,7 @@ import {
 } from "../../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { reapProcessesUnder, waitForPidGone } from "../../helpers/spawned-host-reaper.ts";
+import { probeSandboxHost } from "../../helpers/rpc-sandbox-host.ts";
 
 /** When set, every `get_protocol_info` answer this process reads loses `agentDir`: a host from before the field. */
 const probe = vi.hoisted(() => ({ stripAgentDir: false }));
@@ -81,7 +82,9 @@ describe.skipIf(process.platform === "win32")("a handoff from another agent dire
 		expect(detail).toContain(realpathSync(foreign.agentDir));
 		expect(signals.sentTo(live.pid)).toEqual([]);
 		expect(processAlive(live.pid)).toBe(true);
-		expect((await probeHost({ socket: live.socket, timeoutMs: 10_000 }))?.instanceId).toBe(live.instanceId);
+		expect((await probeSandboxHost(live.qa, { socket: live.socket, timeoutMs: 10_000 }))?.instanceId).toBe(
+			live.instanceId,
+		);
 	}, 240_000);
 
 	it("is refused for a host that does not advertise its agent dir when its registration proves it", async () => {
@@ -95,7 +98,36 @@ describe.skipIf(process.platform === "win32")("a handoff from another agent dire
 		expect(result).toMatchObject({ action: "refuse", reason: "foreign_agent_dir" });
 		expect(result.action === "refuse" ? result.detail : undefined).toContain(realpathSync(live.qa.agentDir));
 		expect(signals.sentTo(live.pid)).toEqual([]);
-		expect((await probeHost({ socket: live.socket, timeoutMs: 10_000 }))?.instanceId).toBe(live.instanceId);
+		expect((await probeSandboxHost(live.qa, { socket: live.socket, timeoutMs: 10_000 }))?.instanceId).toBe(
+			live.instanceId,
+		);
+	}, 240_000);
+
+	// omo#15197: local files only ever add a refusal. A caller that arranges them gets no further than the dial,
+	// whose authenticated answer decides.
+	it("is refused when a foreign caller copies the host's registration under its own agent dir", async () => {
+		const qa = scratch("f3f");
+		writeRpcModelsJson(qa.agentDir, "http://127.0.0.1:1");
+		await mkdir(join(qa.agentDir, "rpc"), { recursive: true, mode: 0o700 });
+		const socket = join(qa.root, "elsewhere.sock");
+		const ensured = await ensureOn(qa, socket);
+		ensured.release();
+		const instanceId = (await probeSandboxHost(qa, { socket, timeoutMs: 10_000 }))?.instanceId;
+		if (instanceId === undefined) throw new Error("the host did not report an instanceId");
+		const live = { qa, socket, pid: ensured.pid, instanceId };
+		const foreign = scratch("f3g");
+		const theirs = createHostDaemonPaths({ socket, agentDir: qa.agentDir }).dir;
+		const ours = createHostDaemonPaths({ socket, agentDir: foreign.agentDir }).dir;
+		await mkdir(dirname(ours), { recursive: true });
+		await cp(theirs, ours, { recursive: true });
+		const signals = watchSignals();
+
+		const result = await handoffFrom(foreign.agentDir, live);
+
+		expect(result).toMatchObject({ action: "refuse", reason: "host_identity_unproven", upgradeable: false });
+		expect(signals.sentTo(live.pid)).toEqual([]);
+		expect(processAlive(live.pid)).toBe(true);
+		expect((await probeSandboxHost(qa, { socket, timeoutMs: 10_000 }))?.instanceId).toBe(instanceId);
 	}, 240_000);
 
 	it("still hands off when the caller names the same agent dir through a symlink", async () => {
@@ -108,7 +140,9 @@ describe.skipIf(process.platform === "win32")("a handoff from another agent dire
 		if (result.action !== "handoff") throw new Error(`handoff refused: ${JSON.stringify(result)}`);
 		expect(result.pid).not.toBe(live.pid);
 		expect(await waitForPidGone(live.pid, 60_000)).toBe(true);
-		expect((await probeHost({ socket: live.socket, timeoutMs: 10_000 }))?.instanceId).toBe(result.instanceId);
+		expect((await probeSandboxHost(live.qa, { socket: live.socket, timeoutMs: 10_000 }))?.instanceId).toBe(
+			result.instanceId,
+		);
 	}, 240_000);
 });
 
@@ -127,7 +161,7 @@ async function startLiveHost(label: string): Promise<LiveHost> {
 	await mkdir(join(qa.agentDir, "rpc"), { recursive: true, mode: 0o700 });
 	const ensured = await ensureOn(qa, socket);
 	ensured.release();
-	const instanceId = (await probeHost({ socket, timeoutMs: 10_000 }))?.instanceId;
+	const instanceId = (await probeSandboxHost(qa, { socket, timeoutMs: 10_000 }))?.instanceId;
 	if (instanceId === undefined) throw new Error("the live host did not report an instanceId");
 	return { qa, socket, pid: ensured.pid, instanceId };
 }

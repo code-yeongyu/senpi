@@ -20,7 +20,7 @@ import { daemonEnvironment, daemonEnvOverrides } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
-import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
+import { foreignAgentDirRefusal, localForeignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { BEGIN_HANDOVER_COMMAND } from "./host-handover-wire.ts";
 import { defaultHostLaunch } from "./host-launch.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
@@ -32,7 +32,7 @@ import {
 	identityPayload,
 	refusal,
 } from "./host-outcome.ts";
-import { probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal, probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
 import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
 import { startupEnvelope } from "./host-startup-policy.ts";
 import { RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./runtime-build-id.ts";
@@ -58,7 +58,23 @@ export async function idleHandoverOutcome(
 	if (process.platform === "win32") {
 		return refusal("refuse", undefined, { reason: "upgrade_unsupported", socket, operationId: terms.operationId });
 	}
-	const before = await probeProtocolInfo(socket, PROBE_TIMEOUT_MS);
+	const local = await localForeignAgentDirRefusal(socket, target.agentDir);
+	if (local)
+		return refusal("refuse", undefined, {
+			reason: local.reason,
+			socket,
+			operationId: terms.operationId,
+			detail: local.detail,
+		});
+	const probed = await probeOrIdentityRefusal(() => probeProtocolInfo(socket, PROBE_TIMEOUT_MS));
+	if (isIdentityRefusal(probed))
+		return refusal("refuse", undefined, {
+			reason: probed.refused,
+			socket,
+			operationId: terms.operationId,
+			detail: probed.detail,
+		});
+	const before = probed;
 	const refuse = (reason: string, extra: Record<string, unknown> = {}) =>
 		refusal("refuse", before, { reason, socket, operationId: terms.operationId, ...extra });
 	const foreign = before === undefined ? undefined : await foreignAgentDirRefusal(socket, target.agentDir, before);

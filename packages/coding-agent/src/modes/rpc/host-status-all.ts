@@ -143,6 +143,7 @@ async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, 
 	const current = generations.find((generation) => generation.current);
 	return {
 		reachable: false,
+		refusal: null,
 		lifecycle: null,
 		pid: null,
 		processStartTime: null,

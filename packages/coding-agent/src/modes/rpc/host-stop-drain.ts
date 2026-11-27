@@ -34,8 +34,9 @@ import {
 } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { provenLegacyOwner } from "./host-legacy.ts";
-import { probeProtocolInfo } from "./host-probe.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal, probeProtocolInfo } from "./host-probe.ts";
 import { readDrainWatch, writeDrainRequest } from "./host-stop-intent.ts";
+import type { RpcEndpointAuthErrorCode } from "./rpc-auth-proof.ts";
 
 export interface DrainHostOptions {
 	readonly socket: string;
@@ -54,7 +55,9 @@ export type DrainHostResult =
 			/** Present when the caller waited: whether the generation's process exited within `waitMs`. */
 			readonly exited?: boolean;
 	  }
-	| { readonly action: "refuse"; readonly reason: "unknown_owner" | "drain_unsupported" };
+	| { readonly action: "refuse"; readonly reason: "unknown_owner" | "drain_unsupported" }
+	/** The host answered but could not be proven: it is never signalled (omo#15197). */
+	| { readonly action: "refuse"; readonly reason: RpcEndpointAuthErrorCode; readonly detail: string };
 
 const EXIT_POLL_MS = 100;
 
@@ -82,7 +85,8 @@ export async function drainHost(paths: HostDaemonPaths, options: DrainHostOption
 	if (named !== undefined && owner === undefined) return { action: "refuse", reason: "unknown_owner" };
 	const pid = owner?.pid ?? (await provenLegacyOwner(paths, options.socket))?.pid;
 	if (pid === undefined) return { action: "refuse", reason: "unknown_owner" };
-	const host = await probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000);
+	const host = await probeOrIdentityRefusal(() => probeProtocolInfo(options.socket, options.timeoutMs ?? 10_000));
+	if (isIdentityRefusal(host)) return { action: "refuse", reason: host.refused, detail: host.detail };
 	// SIGUSR1 terminates a process that installed no handler for it: only a POSIX host that advertises
 	// the drain, and that is the generation being asked, is signalled.
 	const answersAsTarget = named === undefined || host?.instanceId === named;
