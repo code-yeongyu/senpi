@@ -47,7 +47,7 @@ export function readWorkCustody(value: unknown): WorkCustodyRecord | undefined {
 			return undefined;
 	}
 	const payload = readPayload(value.payload);
-	const record: WorkCustodyRecord = {
+	return {
 		id: value.id,
 		key: value.key,
 		kind: value.kind,
@@ -62,24 +62,6 @@ export function readWorkCustody(value: unknown): WorkCustodyRecord | undefined {
 		...(typeof value.transcriptEntryId === "string" ? { transcriptEntryId: value.transcriptEntryId } : {}),
 		...(typeof value.noticeId === "string" ? { noticeId: value.noticeId } : {}),
 		...(value.delivery === "failed" || value.delivery === "retired" ? { delivery: value.delivery } : {}),
-	};
-	return custodyIsOpen(record) ? record : closedCustody(record);
-}
-
-/**
- * What a closed record keeps (senpi#7603). Closed states are terminal and nothing reads a closed record's payload,
- * items or run, so a closed record keeps only what identifies it and answers its ticket's admission, in memory and
- * in the journal. An older journal that wrote the payload into its closing records restores to the same record.
- */
-export function closedCustody(record: WorkCustodyRecord): WorkCustodyRecord {
-	const { id, key, kind, state, ticketId, noticeId } = record;
-	return {
-		id,
-		key,
-		kind,
-		state,
-		...(ticketId === undefined ? {} : { ticketId }),
-		...(noticeId === undefined ? {} : { noticeId }),
 	};
 }
 

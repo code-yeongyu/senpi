@@ -65,21 +65,19 @@ function fixture(entries: readonly SessionEntry[] = []) {
 	const events: SessionLifecycleEvent[] = [];
 	const order: string[] = [];
 	let fail = false;
-	const ledger = new LifecycleLedger(
-		{
-			sessionId: "ordering",
-			append: (record) => {
-				order.push("append");
-				if (fail) throw new Error("refused");
-				records.push(record);
-			},
-			emit: (event) => {
-				order.push("emit");
-				events.push(event);
-			},
-		},
+	const ledger = new LifecycleLedger({
+		sessionId: "ordering",
 		entries,
-	);
+		append: (record) => {
+			order.push("append");
+			if (fail) throw new Error("refused");
+			records.push(record);
+		},
+		emit: (event) => {
+			order.push("emit");
+			events.push(event);
+		},
+	});
 	ledger.releaseRestoreBarrier();
 	const update = (input: Partial<Parameters<LifecycleLedger["update"]>[0]> = {}) =>
 		ledger.update({ state: "running", waits, holds: [], ...input });
@@ -218,14 +216,12 @@ it("restores with a fresh owner before the barrier and ignores both durable acti
 	expect(readLifecycleRecord(tainted)).not.toHaveProperty("activity");
 	expect(readLifecycleRecord(tainted)).not.toHaveProperty("activityRevision");
 	const records: LifecycleRecord[] = [];
-	const restored = new LifecycleLedger(
-		{
-			sessionId: "ordering",
-			append: (r) => records.push(r),
-			emit: () => {},
-		},
-		[entry(tainted)],
-	);
+	const restored = new LifecycleLedger({
+		sessionId: "ordering",
+		entries: [entry(tainted)],
+		append: (r) => records.push(r),
+		emit: () => {},
+	});
 	expect(restored.snapshot).toMatchObject({ seq: old.seq, restoring: true, activityRevision: { revision: 0 } });
 	expect(restored.snapshot.activityRevision?.instanceId).not.toBe(old.activityRevision?.instanceId);
 	expect(restored.snapshot.activity).toBeUndefined();

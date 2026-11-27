@@ -20,6 +20,9 @@ const startedAtMs = Date.parse("2026-10-24T00:00:00.000Z");
 it("keeps a child's own named waits through the same reader as the lifecycle record", () => {
 	const manager = SessionManager.inMemory();
 	const store = {
+		get entries() {
+			return manager.getEntries();
+		},
 		append: (report: unknown) => {
 			manager.appendCustomEntry("child-lifecycle", report);
 		},
@@ -42,7 +45,7 @@ it("keeps a child's own named waits through the same reader as the lifecycle rec
 		],
 		human: [],
 	};
-	const children = new LifecycleChildren(store, manager.getEntries());
+	const children = new LifecycleChildren(store);
 	children.report({
 		taskId: "t-1",
 		childSessionId: "child",
@@ -52,7 +55,7 @@ it("keeps a child's own named waits through the same reader as the lifecycle rec
 		waitingOn,
 	});
 	expect(children.reports[0]?.waitingOn).toEqual(waitingOn);
-	expect(new LifecycleChildren(store, manager.getEntries()).reports[0]?.waitingOn).toEqual(waitingOn);
+	expect(new LifecycleChildren(store).reports[0]?.waitingOn).toEqual(waitingOn);
 });
 
 it("names terminal monitors by their stable monitorId so runtime id churn does not republish", () => {
