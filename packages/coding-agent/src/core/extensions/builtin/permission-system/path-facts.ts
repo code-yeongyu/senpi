@@ -57,6 +57,16 @@ export class PathFacts {
 		return this.#read("stat", path) as BigIntStats;
 	}
 
+	/** Whether `stat` answers (symlinks followed), like an `access(F_OK)` check; a pending fact answers false. */
+	exists(path: string): boolean {
+		try {
+			this.stat(path);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	readlink(path: string): string {
 		return this.#read("readlink", path) as string;
 	}
@@ -133,12 +143,21 @@ async function boundedFact(io: Promise<unknown>, deadlineMs: number): Promise<Fa
  * conservative one, since every unfetched fact reads as an I/O error.
  */
 export async function decideWithPathFacts<T>(decide: (facts: PathFacts) => T, facts = new PathFacts()): Promise<T> {
-	let answer = decide(facts);
+	// A reader may rethrow a pending fact (a probe whose every error blocks the call): that run is retried too.
+	const run = (): { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown } => {
+		try {
+			return { ok: true, value: decide(facts) };
+		} catch (error) {
+			return { ok: false, error };
+		}
+	};
+	let answer = run();
 	for (let round = 0; facts.incomplete && round < MAX_FACT_ROUNDS; round += 1) {
 		await facts.fetchMissing();
-		answer = decide(facts);
+		answer = run();
 	}
-	return answer;
+	if (!answer.ok) throw answer.error;
+	return answer.value;
 }
 
 /** The pending-fact code {@link PathFacts} readers throw; never an answer about the path itself. */

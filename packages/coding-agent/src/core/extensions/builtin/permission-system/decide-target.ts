@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { isPresetRule } from "./config.ts";
-import { currentPathFacts } from "./path-facts.ts";
+import { currentPathFacts, type PathFacts } from "./path-facts.ts";
 import { evaluate, evaluateExternalSpelling, evaluateWithIdentity, type IdentityMatcher } from "./evaluate.ts";
 import { type IdentityInput, PATH_PERMISSIONS } from "./identity-decision.ts";
 import type { PermissionPresetName, Rule, Ruleset } from "./types.ts";
@@ -12,6 +12,8 @@ export interface DecisionOptions {
 	readonly ruleAliases?: readonly string[] | undefined;
 	readonly originalPaths?: readonly string[] | undefined;
 	readonly identity?: IdentityInput | undefined;
+	/** The call's path facts, fetched off the host thread; absent, every path probe reads as pending (senpi#4565). */
+	readonly facts?: PathFacts | undefined;
 }
 
 export interface Decision {

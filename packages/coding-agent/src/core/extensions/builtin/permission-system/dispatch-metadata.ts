@@ -15,12 +15,12 @@ export function getDispatchIdentity(parameters: object, input: Record<string, un
 	return identities.get(parameters)?.(input);
 }
 
-export function prepareMcpDispatchApproval(
+export async function prepareMcpDispatchApproval(
 	pi: Pick<ExtensionAPI, "getAllTools">,
 	event: ToolCallEvent,
 	ctx: ExtensionContext,
 	authorizer: DispatchAuthorizer,
-): (() => void) | undefined {
+): Promise<(() => void) | undefined> {
 	// Other tools retain their existing preflight path, including calls while
 	// the extension runtime is still starting and cannot list tools (#2617).
 	if (!event.toolName.startsWith("mcp_")) return undefined;
@@ -28,5 +28,6 @@ export function prepareMcpDispatchApproval(
 	const identity = tool === undefined ? undefined : getDispatchIdentity(tool.parameters, event.input);
 	if (identity === undefined) return undefined;
 	const request = { ...event, identity };
+	await authorizer.prepare?.(request, ctx);
 	return prepareDispatchApproval(ctx.sessionManager, request, authorizer.policy(request, ctx));
 }

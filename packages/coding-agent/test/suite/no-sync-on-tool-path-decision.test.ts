@@ -21,6 +21,16 @@ const DECISION_FILES = [
 	`${builtin}/terminal/file-monitor-source.ts`,
 	`${builtin}/terminal/file-monitor-check.ts`,
 ] as const;
+/**
+ * Probes the decision path reaches that never take a path from a call or a session, keyed by (file, function): a new
+ * probe in the same file under another function still fails.
+ */
+const NOT_CALLER_PATHS: ReadonlyMap<string, string> = new Map([
+	["src/config.ts assetDirIn", "the install's own shipped asset directories (bundled-resource roots of a read)"],
+	["src/config.ts findNodePackageDir", "the install's own package directory"],
+	["src/config.ts resolveShippedAssetDir", "the install's own shipped asset directories"],
+	["src/utils/fs-watch.ts canonicalWatchPath", "win32 only: the 8.3 short-name guard of a native watch"],
+]);
 const PATH_PROBES = /^(lstat|stat|readdir|readlink|realpath|exists|access|open|opendir)Sync$|^realpathSync\.native$/;
 
 const describeFinding = (finding: SessionPathFinding): string =>
@@ -31,9 +41,12 @@ describe("no synchronous path probe on the tool-call decision path", () => {
 
 	beforeAll(() => {
 		probes = auditSessionPath({ packageRoot, roots: [...DECISION_FILES] }).filter(
-			(finding) => finding.kind === "sync-fs" && PATH_PROBES.test(finding.callee.replace(/^fs\./, "")),
+			(finding) =>
+				finding.kind === "sync-fs" &&
+				PATH_PROBES.test(finding.callee.replace(/^fs\./, "")) &&
+				!NOT_CALLER_PATHS.has(`${finding.file} ${finding.symbol}`),
 		);
-	});
+	}, 180_000);
 
 	it("reaches none, in the decision files or the shared helpers they call", () => {
 		// Given the call graph rooted at the permission parsers, the decision and the monitor registration
