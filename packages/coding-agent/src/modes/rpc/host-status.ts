@@ -27,6 +27,11 @@ import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
 
 const STATUS_PROBE_TIMEOUT_MS = 10_000;
+/**
+ * A stopping host's listing comes from its supervisor's link to the child, which a live child answers within
+ * milliseconds; only a hung child reaches this bound, and `status` must not spend a second full budget on it.
+ */
+const STOPPING_LISTING_TIMEOUT_MS = 2_000;
 
 /**
  * Sessions the host reports. `foreign_*` is the same count from the point of view of a client that
@@ -167,9 +172,11 @@ async function probeHostStatusInKeyRoot(
 	const registered = await readHostRegistration(paths);
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;
 	// A socket that did not answer who it is will not answer what it holds: asking again would only
-	// spend a second budget on a hung endpoint. A draining host still answers its listing (senpi#7132).
+	// spend a second budget on a hung endpoint. A draining host still answers its listing (senpi#7132), on a short
+	// budget: its supervisor answers protocol probes itself even when the child behind it hangs.
+	const listingMs = host?.lifecycle === "stopping" ? Math.min(timeoutMs, STOPPING_LISTING_TIMEOUT_MS) : timeoutMs;
 	const listing: readonly HostSessionRow[] =
-		host === undefined ? [] : ((await readSessionListing(options.socket, includeWorkers, timeoutMs)) ?? []);
+		host === undefined ? [] : ((await readSessionListing(options.socket, includeWorkers, listingMs)) ?? []);
 	const claims = await readClaimRows(paths, generations);
 	const report: HostStatusReport = {
 		reachable: host !== undefined,

@@ -2247,7 +2247,8 @@ which prints the bare socket path).
   socket therefore includes both `"reachable": false` and `"lifecycle": null`; `null` is not `"ready"`.
   `status --all` carries the same field and values on each endpoint row. A stopping host still answers
   `list_sessions` (its supervisor reads the listing over its own link to the host), so a draining host's
-  `sessions` are what it still holds; a listing that is not answered reads as empty counts here.
+  `sessions` are what it still holds. That listing is given at most 2 s: a live host answers over a link its
+  supervisor already holds, so only a hung one runs into the bound, and its listing reads as empty counts here.
   `sessions` is what `list_sessions`
   reports under the same flag, so `worker` stays `0` without `--include-workers`; `foreign_*` is the same
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
@@ -2394,9 +2395,11 @@ which prints the bare socket path).
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses `sessions_live` with exit 3 and prints the counts it refused on.
   A host that answers `get_protocol_info` (ready or stopping) but not its session count is refused
-  `sessions_unknown` with `sessions: null`: an unanswered count is never an empty host (senpi#7132). Only a
-  socket where nothing answers `get_protocol_info` counts as nobody serving it, and stays stoppable.
-  `--force` overrides after printing the same counts; `--drain` is always permitted, because it ends no work. It
+  `sessions_unknown`: an unanswered count is never an empty host (senpi#7132). Only a socket where nothing
+  answers `get_protocol_info` counts as nobody serving it, and stays stoppable. In every `host stop` answer -
+  refused, `stopped` or `drained`, `--force` included - `sessions` is `null` when the count went unanswered,
+  never zero counts.
+  `--force` overrides after printing the same counts (or `null`); `--drain` is always permitted, because it ends no work. It
   asks through the generation's drain request (SIGUSR1 only for a generation from before it), `--instance <id>`
   names a generation other than the current one, and `--wait-ms <n>` waits for it to exit and adds `exited` to
   the answer; both need `--drain`.
