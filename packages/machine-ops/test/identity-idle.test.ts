@@ -57,10 +57,29 @@ const families: Record<string, Family> = {
 		IDLE,
 		'"}\n',
 	],
+	"H discriminators after the key, idle between": (g, k) => [
+		`{"note":"${"x".repeat(g)}","${k}":`,
+		IDLE,
+		`"${secret}",`,
+		IDLE,
+		'"kind":"human",',
+		IDLE,
+		'"v":1}\n',
+	],
+	"I nested in an array in an object": (g, k) => [
+		`{"list":[{"kind":"human","v":1,"note":"${"x".repeat(g)}","${k}":`,
+		IDLE,
+		`"${secret}"}]}\n`,
+	],
+	"J a second record after a first one": (g, k) => [
+		`${header}"${k}":"${secret}"}\n${header}"note":"${"x".repeat(g)}","${k}":`,
+		IDLE,
+		`"${secret}"}\n`,
+	],
 };
 const gaps = [0, 64, 120, 127, 128, 129, 140, 200, 400, 4000, 70000];
 const keys = { secretKey: "secretKey", sealedKey: "sealedKey", "a unicode-escaped key": "secret\\u004bey" };
-const spaces = { spaces: " ", "CR/LF": "\r\n" };
+const spaces = { spaces: " ", "CR/LF": "\r\n", "LF and indentation": "\n  " };
 
 describe("idle flushes never release a human-record key before its value", () => {
 	const rows = Object.entries(families).flatMap(([family, build]) =>
@@ -116,6 +135,80 @@ describe("idle flushes never release a human-record key before its value", () =>
 		];
 		const out = stream(parts);
 		expect(out).toBe(`${header}"secretKey":"[REDACTED]"}\n{"kind":"machine","v":1,"secretKey":"public-label"}\n`);
+	});
+
+	it("keeps a non-human record's key visible after a human record", () => {
+		for (const gap of gaps) {
+			const parts: Part[] = [
+				`${header}"secretKey":"${secret}"}\n{"kind":"machine","v":1,"note":"${"x".repeat(gap)}","secretKey":`,
+				IDLE,
+				'"public-label"}\n',
+			];
+			const out = stream(parts);
+			expect(out.includes("public-label") && !out.includes(secret.slice(0, 16))).toBe(true);
+			expect(out === redactIdentityText(whole(parts))).toBe(true);
+		}
+	});
+
+	// Past the 64 KiB context the window starts inside earlier output; it is parsed from the
+	// recorded state there, not re-parsed from the cut.
+	it.each([
+		["a long quoted value", '"'],
+		["a long apostrophe-quoted value", "'"],
+	])("decides a record after %s that has left the context", (_name, quote) => {
+		for (const size of [65536, 70000, 140000]) {
+			const parts: Part[] = [
+				`{"a":${quote}${'z\\"'.repeat(size / 3)}${quote}}{"kind":"human","v":1,"secretKey":`,
+				IDLE,
+				`"${secret}"}\n`,
+			];
+			const out = stream(parts);
+			expect(out.includes(secret.slice(0, 16))).toBe(false);
+			expect(out === redactIdentityText(whole(parts))).toBe(true);
+		}
+	});
+
+	// Review M2: a whole key and its gap are public; they stream out while the record stays
+	// awaiting its value, so a long gap costs linear time and holds nothing.
+	it("streams a megabyte of whitespace after a key and still masks the value", () => {
+		const line = `${" ".repeat(63)}\n`;
+		const run = (lines: number) => {
+			const s = new IdentityOutputStream();
+			const started = performance.now();
+			let shown = s.push(`${header}"secretKey":`);
+			let sent = shown.length;
+			for (let i = 0; i < lines; i++) {
+				shown += s.push(line) + s.flushIdle();
+				sent += line.length;
+				if (s.holding || shown.length !== sent) throw new Error(`held output after line ${i}`);
+			}
+			shown += s.push(`"${secret}"}\n`) + s.finish();
+			return { shown, ms: performance.now() - started };
+		};
+		const lines = 16384;
+		const { shown } = run(lines);
+		expect(shown).toBe(`${header}"secretKey":${line.repeat(lines)}"[REDACTED]"}\n`);
+		const best = (n: number) => Math.min(...[0, 1, 2].map(() => run(n).ms));
+		expect(best(lines) / best(lines / 2)).toBeLessThan(2.5);
+	});
+
+	it("ends the wait for a value when the record closes without one", () => {
+		const parts: Part[] = [
+			`${header}"secretKey":   `,
+			IDLE,
+			"}\n",
+			IDLE,
+			`"${secret}" is ordinary text\nREADY`,
+			IDLE,
+		];
+		const s = new IdentityOutputStream();
+		let shown = "";
+		for (const part of parts) {
+			shown += part === IDLE ? s.flushIdle() : s.push(part);
+			if (part === IDLE) expect(s.holding).toBe(false);
+		}
+		expect(shown).toBe(whole(parts));
+		expect(shown + s.finish()).toBe(redactIdentityText(whole(parts)));
 	});
 
 	it("shows a waiting prompt on idle and holds nothing after a closed record", () => {

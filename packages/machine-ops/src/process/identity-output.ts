@@ -1,16 +1,19 @@
 import {
 	IDENTITY_MASK,
 	identitySpans,
+	MAX_GAP,
 	mayHoldIdentity,
 	type Span,
 	splice,
 	type Undecided,
 	undecidedTail,
 } from "./identity-text.ts";
+import { ScopeState } from "./identity-scope.ts";
 
 const HISTORY = 65536;
 const HOLD = 65536;
-const RELEASE_CONTEXT = 128;
+// Covers a private name with both bounded separators, so a released name still meets its value.
+const RELEASE_CONTEXT = 4 * MAX_GAP;
 
 /** Hold only the tail that can still become a masked value, never retroactively redact bytes
  * already published. A human-record credential waits for its object to close, at most HOLD
@@ -18,9 +21,11 @@ const RELEASE_CONTEXT = 128;
  * each fd/PTY. latin1 maps every byte to one code unit, even for non-UTF8 PTYs. */
 export class IdentityOutputStream {
 	private pending = "";
-	private history: string[] = [];
-	private historySize = 0;
-	private truncated = false;
+	// Released text kept for context, each with the parser state at its first character.
+	private history = "";
+	private readonly historyStart = new ScopeState();
+	private recent = "";
+	private readonly recentStart = new ScopeState();
 	private humanHeld = false;
 	private discardToken: RegExp | undefined;
 
@@ -63,14 +68,13 @@ export class IdentityOutputStream {
 			}
 			this.discardToken = undefined;
 		}
-		// Discriminators of a human record can precede its credential in released output.
-		const history = this.history.join("");
-		// An idle flush can release part of a key name, so test the trigger across that boundary too.
-		const recent = history.slice(-RELEASE_CONTEXT);
-		const context = this.humanHeld || /secretkey|sealedkey|\\u/i.test(recent + buf) ? history : recent;
+		// Discriminators of a human record can precede its credential in released output. Either
+		// window is parsed from its recorded start state, never from wherever the cut fell.
+		const wide = this.humanHeld || /secretkey|sealedkey|\\u/i.test(this.recent + buf);
+		const context = wide ? this.historyStart.render() + this.history : this.recentStart.render() + this.recent;
 		const all = context + buf;
 		const base = context.length;
-		const undecided: Undecided = { open: [], orphan: [] };
+		const undecided: Undecided = { open: [] };
 		const found = context || mayHoldIdentity(buf) ? identitySpans(all, undecided) : [];
 		const tail = undecidedTail(all, 0);
 		// An idle pause releases a public name or token prefix, never a human-record key awaiting its value.
@@ -79,7 +83,7 @@ export class IdentityOutputStream {
 		const firstOpen = Math.min(...open.map((s) => s.start));
 		this.humanHeld = !end && open.length > 0 && all.length - firstOpen <= HOLD;
 		if (this.humanHeld) hold = Math.min(hold, firstOpen);
-		const masks: Span[] = [...found, ...open, ...(this.truncated ? undecided.orphan : [])];
+		const masks: Span[] = [...found, ...open];
 		if (end && tail.value !== undefined)
 			masks.push({ start: tail.value, end: all.length, replacement: IDENTITY_MASK });
 		const released = all.slice(base, hold);
@@ -105,17 +109,17 @@ export class IdentityOutputStream {
 
 	private remember(released: string): void {
 		if (!released) return;
-		this.history.push(released);
-		this.historySize += released.length;
-		while (this.history.length > 1 && this.historySize - (this.history[0]?.length ?? 0) >= HISTORY) {
-			this.historySize -= this.history.shift()?.length ?? 0;
-			this.truncated = true;
+		this.history += released;
+		if (this.history.length > HISTORY) {
+			const cut = this.history.length - HISTORY;
+			this.historyStart.feed(this.history.slice(0, cut));
+			this.history = this.history.slice(cut);
 		}
-		if (this.historySize > 2 * HISTORY) {
-			const kept = this.history.join("").slice(-HISTORY);
-			this.history = [kept];
-			this.historySize = kept.length;
-			this.truncated = true;
+		this.recent += released;
+		if (this.recent.length > RELEASE_CONTEXT) {
+			const cut = this.recent.length - RELEASE_CONTEXT;
+			this.recentStart.feed(this.recent.slice(0, cut));
+			this.recent = this.recent.slice(cut);
 		}
 	}
 }

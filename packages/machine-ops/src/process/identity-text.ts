@@ -15,12 +15,10 @@ export interface Span {
 	end: number;
 	replacement: string;
 }
-/** Human-record candidates whose object the visible text has not closed (`open`), or that
- * sit in no visible object at all (`orphan`). A stream holds the first and masks both
- * when it has to release them undecided. */
+/** Human-record candidates whose object the visible text has not closed: a stream holds them
+ * and releases them masked when it has to release them undecided. */
 export interface Undecided {
 	open: Span[];
-	orphan: Span[];
 }
 interface ObjectScope {
 	human: boolean;
@@ -29,7 +27,7 @@ interface ObjectScope {
 }
 
 const NAME = "(?:signing|sealing)(?:_private_key|privatekey)?";
-const MAX_GAP = 64;
+export const MAX_GAP = 64;
 const TOKEN = /tvk1:[a-z\d_=-]+|AGE-SECRET-KEY-1[a-z\d]+/gi;
 // A JSON/Python key, YAML `name: value`, `name=value`, `export NAME="value"` or `name<TAB>value`.
 const SEPARATOR = `["']?(?:\\s{0,${MAX_GAP}}[:=]|[ ]{0,${MAX_GAP}}\\t)\\s{0,${MAX_GAP}}["']?`;
@@ -79,7 +77,7 @@ function stringEnd(text: string, start: number): number {
 	return text.length;
 }
 
-const decodeString = (raw: string, quote: string): string => {
+export const decodeString = (raw: string, quote: string): string => {
 	if (quote !== '"' || !raw.includes("\\")) return raw;
 	try {
 		return JSON.parse(`"${raw}"`) as string;
@@ -109,7 +107,7 @@ function nestedSpans(text: string, start: number, end: number, depth: number, un
 		} else decoded += text[i++];
 		offsets.push(i);
 	}
-	const inner: Undecided | undefined = undecided && { open: [], orphan: [] };
+	const inner: Undecided | undefined = undecided && { open: [] };
 	const map = (s: Span): Span => ({
 		start: offsets[s.start],
 		end: offsets[s.end] ?? end,
@@ -158,8 +156,7 @@ function spans(text: string, depth: number, undecided?: Undecided): Span[] {
 			const span = { start: v + 1, end: close, replacement: IDENTITY_MASK };
 			if (scope && field === "kind") scope.human = decodeString(text.slice(v + 1, close), text[v]) === "human";
 			if (field === "secretKey" || field === "sealedKey") {
-				if (scope) scope.candidates.push(span);
-				else undecided?.orphan.push(span);
+				scope?.candidates.push(span);
 			}
 			found.push(...nestedSpans(text, v + 1, close, depth, close === text.length ? undecided : undefined));
 			i = close;
@@ -239,24 +236,14 @@ const TOKEN_TAIL = /(?:tvk1:[a-z\d_=-]|age-secret-key-1[a-z\d])[a-z\d_=-]*$/i;
  * is the start of an unterminated private value, which an ending stream masks. */
 const HUMAN_KEYS = ["secretKey", "sealedKey"];
 
-/** Start of a human-record key still awaiting its value: a quoted key prefix, or the whole key
- * followed by any whitespace, an optional colon and any whitespace. No gap length releases it. */
+/** Start of a quoted human-record key name still being written. A whole key and the gap after it
+ * are public and released; the stream's parser state keeps the record awaiting its value. */
 function humanKeyTail(text: string, floor: number): number | undefined {
-	let p = text.length;
-	while (p > floor && /\s/.test(text.charAt(p - 1))) p--;
-	const colon = text.charAt(p - 1) === ":";
-	if (colon) {
-		p--;
-		while (p > floor && /\s/.test(text.charAt(p - 1))) p--;
-	}
-	const from = Math.max(floor, p - 128);
-	const { view, at } = normalize(text.slice(from, p));
-	const raw = (v: number) => from + (at ? at[v] : v);
-	const whole = /["'](secretKey|sealedKey)["']$/.exec(view);
-	if (whole) return raw(whole.index);
-	if (colon || p < text.length) return undefined;
+	const from = Math.max(floor, text.length - 128);
+	const { view, at } = normalize(text.slice(from));
 	const partial = /["']([A-Za-z]{0,9})$/.exec(view);
-	return partial && HUMAN_KEYS.some((k) => k.startsWith(partial[1])) ? raw(partial.index) : undefined;
+	if (!partial || !HUMAN_KEYS.some((k) => k.startsWith(partial[1]))) return undefined;
+	return from + (at ? at[partial.index] : partial.index);
 }
 
 export function undecidedTail(text: string, floor: number): { start: number; value?: number; keep?: boolean } {

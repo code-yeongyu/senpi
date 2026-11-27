@@ -10008,6 +10008,14 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/machine-ops/src/process/identity-output.ts#RELEASE_CONTEXT": {
+			"class": "constant",
+			"reason": "number computed once at load from constants; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-scope.ts#KEPT_NAMES": {
+			"class": "constant",
+			"reason": "lookup set of record field names, filled once at load and only read"
+		},
 		"packages/machine-ops/src/process/identity-text.ts#HUMAN_KEYS": {
 			"class": "constant",
 			"reason": "lookup data literal of human-record key names; never written after load"
