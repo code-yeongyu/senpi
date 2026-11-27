@@ -1,3 +1,21 @@
+## 2026-11-25 - Engine-forwarded CLI commands render engine functions (senpi#7450)
+
+### What changed
+
+- `packages/coding-agent/src/cli/list-models.ts`: the listing (filter, sort, load error) comes from `listModelsOf` in `src/engine/models.ts`; the table and messages are unchanged.
+
+### Why
+
+- `engine.models.list` and `--list-models` must answer from one core (senpi#7450).
+
+### Why an extension could not handle it
+
+- `--list-models` is a built-in root flag handled before a session exists.
+
+### Expected merge conflict zones
+
+- LOW: the body of `listModels` before the column-width code.
+
 ## 2026-11-20 - An attaching start does not refuse the distribution's own extension (#7118, oh-my-openagent#14465)
 
 ### What changed

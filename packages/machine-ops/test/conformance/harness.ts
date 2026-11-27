@@ -18,6 +18,11 @@ export interface ConformanceTarget {
 	dispose?(ops: MachineOps): Promise<void>;
 	/** Skip process cases (no POSIX shell on this platform). Default: skipped on win32. */
 	skipProcess?: boolean;
+	/**
+	 * The implementation runs in this process and reads this process's environment, so a case may change it (HOME).
+	 * Default: false; an executor in another process keeps its own environment and skips those cases.
+	 */
+	inProcess?: boolean;
 }
 
 export interface Fixture {

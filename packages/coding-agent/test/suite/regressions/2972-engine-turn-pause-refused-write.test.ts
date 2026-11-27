@@ -113,8 +113,9 @@ describe("senpi#2972 engine-turn pause: a refused message follows the transcript
 		});
 		await drain(harness);
 
-		// then it started no turn, but it is persisted, kept in context, and no longer pending
-		expect(result.kind).toBe("started");
+		// then it started no turn and its answer says so (held behind the cap, senpi#7138), but it is persisted, kept in
+		// context, and no longer pending
+		expect(result).toMatchObject({ kind: "held", engine_turn_cap: { reason: "cap-per-message" } });
 		expect(harness.faux.getCallLog()).toHaveLength(2);
 		expect(harness.session.externalAdmission.list()).toEqual({ pending: [], emitted: ["d-1", "d-2"] });
 		expect(stateHas(harness, "DELIVERY d-2")).toBe(true);
