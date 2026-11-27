@@ -23,7 +23,7 @@ describe("package distribution entrypoints", () => {
 		expect(packageJson.exports["./rpc-entry"].import).toBe("./dist/rpc-entry.js");
 	});
 
-	// An embedder that rewrites argv or env before importing the CLI (omo's compiled entry) imports this first, so the
+	// An embedding program that rewrites argv or env before importing the CLI imports this first, so the
 	// OSC 7577 hand-off re-execs the launch it was given rather than the rewritten one (senpi#7493).
 	test("publishes the OSC 7577 hand-off as its own side-effect entry", () => {
 		expect(packageJson.exports["./program-resume-startup"]?.import).toBe("./dist/program-resume-startup.js");
@@ -33,7 +33,13 @@ describe("package distribution entrypoints", () => {
 	// the build compiles (tsconfig.build.json: rootDir ./src, outDir ./dist, test and experimental paths excluded), with
 	// its types beside it, inside what `files` ships. A renamed or moved source fails here, not at an embedder's import.
 	test("every export is built from a compiled source file and ships with its types", () => {
-		const excluded = ["src/experimental/", "src/cli/experimental/"];
+		// The paths the build leaves out, as tsconfig.build.json names them (directory entries under src/ only; its
+		// node_modules, dist and *.test.ts entries never name an export's source).
+		const buildConfig = JSON.parse(readFileSync(new URL("../tsconfig.build.json", import.meta.url), "utf8")) as {
+			exclude: string[];
+		};
+		const excluded = buildConfig.exclude.filter((path) => path.startsWith("src/")).map((path) => `${path}/`);
+		expect(excluded.length).toBeGreaterThan(0);
 		for (const [name, entry] of Object.entries(packageJson.exports)) {
 			const module = /^\.\/dist\/(.+)\.js$/.exec(entry.import ?? "")?.[1];
 			expect({ name, built: module !== undefined }).toEqual({ name, built: true });
