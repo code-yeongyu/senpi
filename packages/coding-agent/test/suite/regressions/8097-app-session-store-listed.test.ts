@@ -7,6 +7,7 @@ import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { createSessionManager } from "../../../src/main.ts";
 import { getDefaultSessionDir, getDefaultSessionDirPath, SessionManager } from "../../../src/core/session-manager.ts";
+import { liveSessionHolders } from "../../../src/core/session-holders.ts";
 import { allScopeSessions, currentScopeSessions } from "../../../src/modes/interactive/resume-rebind.ts";
 
 // omo-desktop-app#8097: the desktop keeps its sessions in its own store and registers that store in the
@@ -143,7 +144,13 @@ describe("desktop#8097: a terminal lists the sessions the desktop keeps in its o
 		expect(opened.getHomeSessionDir()).toBe(getDefaultSessionDirPath(project));
 		expect(ids(await currentScopeSessions(opened))).toEqual(["app-thread", "cli-own"]);
 		expect(dirname(opened.newSession() ?? "")).toBe(dirname(own));
-		expect(readdirSync(join(appStore, "omo-instance"))).toEqual(["app-thread.jsonl"]);
+		// No session file lands in the desktop's store. Admission's start claim (senpi#5988) does: lock state lives next to
+		// the session it guards, and this process never created the runtime whose hold would have dropped it.
+		const inStore = readdirSync(join(appStore, "omo-instance"));
+		expect(inStore.filter((name) => name !== "session-holders")).toEqual(["app-thread.jsonl"]);
+		expect(await liveSessionHolders(join(appStore, "omo-instance", "app-thread.jsonl"), "app-thread")).toEqual([
+			expect.objectContaining({ pid: process.pid }),
+		]);
 	});
 
 	it("ignores a registration whose version is not 1", async () => {
