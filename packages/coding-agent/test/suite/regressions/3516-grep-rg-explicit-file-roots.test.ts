@@ -9,6 +9,8 @@ import { createRgEngine, type RgEngineOptions } from "../../../src/core/tools/gr
 // #3516: the grep tool's second phase passes the selected files as explicit roots.
 // Each explicit file used to cost three rg processes (--files, NUL scan, search), all
 // spawned on the host loop. The rg launch count must not grow with the number of files.
+// senpi#7528: rg reads content only from descriptors the identity guard opened, so the
+// NUL scan runs in process and one launch carries at most 200 descriptors.
 
 const FILES = 20;
 const cleanups: Array<() => Promise<void>> = [];
@@ -54,7 +56,7 @@ describe("#3516 rg engine batches explicit file roots", () => {
 		};
 		const result = await engine.search(request);
 
-		expect(calls).toHaveLength(2);
+		expect(calls).toHaveLength(1);
 		expect(result.counts).toEqual({ matches: FILES * 2, files: FILES, exact: true });
 		expect(result.skippedBinary).toBe(1);
 		expect(result.filesSearched).toBe(FILES + 1);
@@ -74,7 +76,7 @@ describe("#3516 rg engine batches explicit file roots", () => {
 		const { calls, engine } = tracked();
 		const result = await engine.search({ pattern: "needle", paths: files, cwd: root, mode: "files", maxCount: 5 });
 
-		expect(calls).toHaveLength(2);
+		expect(calls).toHaveLength(1);
 		expect(result.fileCounts.map((file) => file.path)).toEqual([
 			"d00/f.ts",
 			"d01/f.ts",
@@ -86,7 +88,7 @@ describe("#3516 rg engine batches explicit file roots", () => {
 		expect(result.filesSearched).toBe(5);
 	});
 
-	it("grows capped directory batches so a sparse match costs logarithmic launches", async () => {
+	it("grows capped directory segments and sends each as 200-descriptor launches", async () => {
 		const root = await realpath(await mkdtemp(join(tmpdir(), "grep-3516-sparse-")));
 		cleanups.push(() => rm(root, { recursive: true, force: true }));
 		const total = 1700;
@@ -98,8 +100,9 @@ describe("#3516 rg engine batches explicit file roots", () => {
 		const { calls, engine } = tracked();
 		const result = await engine.search({ pattern: "needle", paths: [root], cwd: root, mode: "files", maxCount: 1 });
 
-		// 2 enumeration launches, then batches of 200, 200, 400, 800, 100 instead of 9 x 200.
-		expect(calls).toHaveLength(7);
+		// 1 enumeration launch, then capped segments of 200, 200, 400, 800, 100 files, each sent
+		// as 200-descriptor launches: 1 + 1 + 2 + 4 + 1.
+		expect(calls).toHaveLength(10);
 		expect(result.fileCounts.map((file) => file.path)).toEqual(["f1699.txt"]);
 		expect(result.filesSearched).toBe(total);
 		expect(result.limitReached).toBe(false);

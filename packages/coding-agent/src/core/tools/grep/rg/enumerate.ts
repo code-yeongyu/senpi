@@ -61,7 +61,6 @@ export async function enumerateCandidates({
 	run: RgRun;
 	check: () => void;
 	result: GrepEngineResult;
-	budget?: number | undefined;
 }): Promise<Candidate[]> {
 	const candidates = new Map<string, Omit<Candidate, "ordinal" | "binary">>();
 	for (const root of roots) {

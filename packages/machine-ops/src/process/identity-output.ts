@@ -10,6 +10,7 @@ import {
 
 const HISTORY = 65536;
 const HOLD = 65536;
+const RELEASE_CONTEXT = 128;
 
 /** Hold only the tail that can still become a masked value, never retroactively redact bytes
  * already published. A human-record credential waits for its object to close, at most HOLD
@@ -38,7 +39,17 @@ export class IdentityOutputStream {
 		return this.release("", true);
 	}
 
-	private release(text: string, end: boolean): string {
+	/** After a pause, release a held name or token prefix: alone it is public, and the
+	 * release context still masks a value that later completes it. */
+	flushIdle(): string {
+		return this.pending ? this.release("", false, true) : "";
+	}
+
+	get holding(): boolean {
+		return this.pending.length > 0;
+	}
+
+	private release(text: string, end: boolean, idle = false): string {
 		let buf = this.pending + text;
 		if (this.discardToken) {
 			buf = buf.slice(buf.match(this.discardToken)?.[0].length ?? 0);
@@ -49,13 +60,15 @@ export class IdentityOutputStream {
 			this.discardToken = undefined;
 		}
 		// Discriminators of a human record can precede its credential in released output.
-		const context = this.humanHeld || /secretkey|sealedkey|\\u/i.test(buf) ? this.history.join("") : "";
+		const history = this.history.join("");
+		const context =
+			this.humanHeld || /secretkey|sealedkey|\\u/i.test(buf) ? history : history.slice(-RELEASE_CONTEXT);
 		const all = context + buf;
 		const base = context.length;
 		const undecided: Undecided = { open: [], orphan: [] };
 		const found = context || mayHoldIdentity(buf) ? identitySpans(all, undecided) : [];
-		const tail = undecidedTail(all, base);
-		let hold = end ? all.length : tail.start;
+		const tail = undecidedTail(all, 0);
+		let hold = end || (idle && tail.value === undefined) ? all.length : Math.max(base, tail.start);
 		const open = undecided.open.filter((s) => s.start >= base);
 		const firstOpen = Math.min(...open.map((s) => s.start));
 		this.humanHeld = !end && open.length > 0 && all.length - firstOpen <= HOLD;
@@ -67,8 +80,8 @@ export class IdentityOutputStream {
 		const out = splice(
 			released,
 			masks
-				.filter((s) => s.start >= base && s.start < hold)
-				.map((s) => ({ ...s, start: s.start - base, end: Math.min(s.end, hold) - base })),
+				.filter((s) => s.end > base && s.start < hold)
+				.map((s) => ({ ...s, start: Math.max(s.start, base) - base, end: Math.min(s.end, hold) - base })),
 		);
 		// A token that runs to the end of the released text continues into the next chunk.
 		const token = found.find(

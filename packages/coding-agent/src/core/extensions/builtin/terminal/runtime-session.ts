@@ -77,11 +77,12 @@ export class TerminalRuntimeSession {
 			const text = this.identityOutput.push(this.decoder.decode(chunk, { stream: true }));
 			this.ingest(this.redactor ? this.redactor.push(text) : text);
 			const redactor = this.redactor;
-			if (redactor) {
+			if (redactor || this.identityOutput.holding) {
 				clearTimeout(this.redactionIdleTimer);
 				this.redactionIdleTimer = setTimeout(() => {
 					this.redactionIdleTimer = undefined;
-					this.ingest(redactor.flushIdle());
+					const idle = this.identityOutput.flushIdle();
+					this.ingest(redactor ? redactor.push(idle) + redactor.flushIdle() : idle);
 				}, 50);
 				this.redactionIdleTimer.unref?.();
 			}

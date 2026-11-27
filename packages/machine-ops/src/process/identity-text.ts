@@ -251,9 +251,9 @@ export function undecidedTail(text: string, floor: number): { start: number; val
 	const lower = view.slice(-24).toLowerCase();
 	for (let i = 0; i < lower.length; i++) {
 		const rest = lower.slice(i);
+		const boundary = !/\w/.test(view.charAt(view.length - rest.length - 1));
 		const token = ["tvk1:", "age-secret-key-1"].some((p) => p.startsWith(rest));
-		const name = NAMES.some((p) => p.startsWith(rest)) && !/\w/.test(view.charAt(view.length - rest.length - 1));
-		if (token || name) {
+		if (boundary && (token || NAMES.some((p) => p.startsWith(rest)))) {
 			start = Math.min(start, raw(view.length - rest.length));
 			break;
 		}
