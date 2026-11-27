@@ -1,4 +1,5 @@
 import type { CustomMessage } from "./messages.ts";
+import { isSessionControlDeliveryDetails, SESSION_CONTROL_DELIVERY_TYPE } from "./extensions/session-control-types.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 /** `items` holds each itemized notice's own payload by notice id; no later wake replaces one (senpi#3811). */
@@ -162,7 +163,14 @@ export class EngineTurnHoldNotices {
 	private remember(notice: HeldNotice): void {
 		const wake = this.wakes[notice.producer] ?? { noticeIds: [], items: new Map() };
 		wake.noticeIds.push(notice.noticeId);
-		if (notice.itemId !== undefined && notice.message) wake.items.set(notice.noticeId, notice.message);
+		// Peer messages are independent inputs, never successive snapshots of one wake source.
+		// Classify on read as well as on admission: older logs already contain each full message.
+		const peer =
+			notice.producer === SESSION_CONTROL_DELIVERY_TYPE &&
+			notice.message?.customType === SESSION_CONTROL_DELIVERY_TYPE &&
+			isSessionControlDeliveryDetails(notice.message.details) &&
+			notice.message.details.delivery_id.length > 0;
+		if ((notice.itemId !== undefined || peer) && notice.message) wake.items.set(notice.noticeId, notice.message);
 		else if (notice.message) wake.message = notice.message;
 		this.wakes[notice.producer] = wake;
 	}

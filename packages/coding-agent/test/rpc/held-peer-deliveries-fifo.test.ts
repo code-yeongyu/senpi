@@ -1,4 +1,4 @@
-import { once } from "node:events";
+import { on, once } from "node:events";
 import { readFileSync, watch } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -12,8 +12,8 @@ export default function(pi) {
   const f = fauxProvider({api:"fifo",provider:"fifo"});
   f.setResponses([ctx => {
     const markers = JSON.stringify(ctx.messages).match(/fifo-payload-[123]/g);
-    if (!markers) return fauxAssistantMessage([fauxToolCall("wait_gate", {})], {stopReason:"toolUse"});
-    writeFileSync("model-input.json", JSON.stringify(markers));
+    if (process.env.FIFO_PHASE === "interrupt") return fauxAssistantMessage([fauxToolCall("wait_gate", {})], {stopReason:"toolUse"});
+    writeFileSync("model-input.json", JSON.stringify(markers ?? []));
     return fauxAssistantMessage("received");
   }]);
   pi.registerProvider(f.provider);
@@ -23,13 +23,9 @@ export default function(pi) {
 async function afterFileAppears(cwd: string, name: string, action: () => Promise<void>) {
 	const watcher = watch(cwd);
 	try {
-		const observed = new Promise<void>((resolve) =>
-			watcher.on("change", (_, file) => {
-				if (file === name) resolve();
-			}),
-		);
+		const observed = on(watcher, "change", { signal: AbortSignal.timeout(10_000) });
 		await action();
-		await observed;
+		for await (const [, file] of observed) if (file === name) break;
 	} finally {
 		watcher.close();
 	}
@@ -46,7 +42,10 @@ it.each([false, true])(
 	async (restart) => {
 		const hosts: Awaited<ReturnType<typeof startWorkerHost>>[] = [];
 		async function start() {
-			const host = await startWorkerHost(extension, options);
+			const host = await startWorkerHost(extension, {
+				...options,
+				env: { FIFO_PHASE: hosts.length ? "resume" : "interrupt" },
+			});
 			hosts.push(host);
 			return host;
 		}
@@ -100,7 +99,10 @@ it.each([false, true])(
 				paused: true,
 				holds: expect.arrayContaining([expect.objectContaining({ key: "interrupted-run" })]),
 			});
-			const seq = (state?.pause as { pauseSeq: number }).pauseSeq;
+			const pause = state?.pause;
+			if (!pause || typeof pause !== "object" || !("pauseSeq" in pause) || typeof pause.pauseSeq !== "number")
+				throw new Error("reopened session omitted its pause sequence");
+			const seq = pause.pauseSeq;
 			await afterFileAppears(host.cwd, "model-input.json", async () => {
 				expect(
 					await host.request({ type: "resume_session", sessionId, expectedSeq: seq, unlessStopped: true }),
