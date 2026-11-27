@@ -77,6 +77,7 @@ export class RgGrepEngine implements GrepEngine {
 				run,
 				check,
 				result,
+				excludes: request.excludeEntry,
 				budget: this.batchBudget,
 			});
 			await searchSegments({ candidates, request, walk, matcher, run, check, result, budget: this.batchBudget });

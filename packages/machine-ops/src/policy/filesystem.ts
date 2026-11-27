@@ -17,14 +17,26 @@ export interface FilesystemPolicyRequest {
 /** A filesystem policy must explicitly allow or deny each request. */
 export type FilesystemPolicyDecision = { allow: true } | { allow: false; reason: string };
 
+/** True leaves the walked entry at `canonicalPath` out of a `find`, `ls` or `grep` result. */
+export type FilesystemEntryExclusion = (canonicalPath: string, toolName: string) => boolean;
+
 /** One registered filesystem access policy. `deniedRoots` is metadata; callers enforce `check`. */
 export interface FilesystemPolicy {
 	check(request: Readonly<FilesystemPolicyRequest>): FilesystemPolicyDecision | Promise<FilesystemPolicyDecision>;
+	/**
+	 * Asked for every entry a walk below an allowed root would return, before anything is counted from it, so the
+	 * result reads as if the entry did not exist. Synchronous because a walk asks it per entry.
+	 */
+	excludesEntry?: FilesystemEntryExclusion;
 	deniedRoots?: readonly string[];
 }
 
-/** Composed deny-wins checker. */
-export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest>) => Promise<FilesystemPolicyDecision>;
+/** Composed deny-wins checker; `excludesEntry` is present when any policy prunes walked entries. */
+export type FilesystemPolicyChecker = ((
+	request: Readonly<FilesystemPolicyRequest>,
+) => Promise<FilesystemPolicyDecision>) & {
+	readonly excludesEntry?: FilesystemEntryExclusion;
+};
 
 const ALLOW: FilesystemPolicyDecision = { allow: true };
 
@@ -101,11 +113,23 @@ async function canonicalizeUnderAutomount(absolutePath: string): Promise<string>
 export function composeFilesystemPolicies(policies: readonly FilesystemPolicy[]): FilesystemPolicyChecker | undefined {
 	if (policies.length === 0) return undefined;
 
-	return async (request) => {
+	const check = async (request: Readonly<FilesystemPolicyRequest>): Promise<FilesystemPolicyDecision> => {
 		for (const policy of policies) {
 			const decision = await policy.check(request);
 			if (!decision.allow) return decision;
 		}
 		return ALLOW;
 	};
+	const exclusions = policies.flatMap((policy) => (policy.excludesEntry ? [policy.excludesEntry.bind(policy)] : []));
+	if (exclusions.length === 0) return check;
+	// Any policy excluding wins, and one that throws excludes: a filter that failed has not cleared the entry.
+	const excludesEntry: FilesystemEntryExclusion = (canonicalPath, toolName) =>
+		exclusions.some((excludes) => {
+			try {
+				return excludes(canonicalPath, toolName);
+			} catch {
+				return true;
+			}
+		});
+	return Object.assign(check, { excludesEntry });
 }

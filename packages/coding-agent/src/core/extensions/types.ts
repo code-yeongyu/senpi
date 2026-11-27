@@ -537,14 +537,23 @@ export type FilesystemPolicyDecision = { allow: true } | { allow: false; reason:
  *
  * `deniedRoots` is metadata for future inherited process sandbox support. The
  * built-in file tools enforce `check`; they do not interpret the metadata.
+ *
+ * `excludesEntry` prunes a walk below a root `check` allowed: `find`, `ls` and `grep` ask it for every entry they
+ * would return (its canonical path), before counting anything from it, and leave out the entries it excludes. It
+ * is synchronous, and one that throws excludes the entry.
  */
 export interface FilesystemPolicy {
 	check(request: Readonly<FilesystemPolicyRequest>): FilesystemPolicyDecision | Promise<FilesystemPolicyDecision>;
+	excludesEntry?: (canonicalPath: string, toolName: string) => boolean;
 	deniedRoots?: readonly string[];
 }
 
-/** Composed deny-wins checker used by built-in tool executors. */
-export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest>) => Promise<FilesystemPolicyDecision>;
+/** Composed deny-wins checker used by built-in tool executors; `excludesEntry` is any policy's entry filter. */
+export type FilesystemPolicyChecker = ((
+	request: Readonly<FilesystemPolicyRequest>,
+) => Promise<FilesystemPolicyDecision>) & {
+	readonly excludesEntry?: (canonicalPath: string, toolName: string) => boolean;
+};
 
 /**
  * Context passed to extension event handlers.
