@@ -3,7 +3,7 @@
 import "./host-startup-beacon.ts";
 import "../../private-fds.ts";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
 import { HostAdmission } from "./host-admission.ts";
@@ -12,10 +12,12 @@ import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
 import {
+	createDaemonDirectories,
 	createGenerationDirectory,
 	createHostDaemonPaths,
 	generationPaths,
 	HostDaemonStateError,
+	makeEndpointSubdirectory,
 } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
@@ -95,7 +97,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const told = process.env[HOST_INSTANCE_ID_ENV];
 	const instanceId = told !== undefined && told.trim() !== "" ? told : randomUUID();
 	const generation = generationPaths(paths, instanceId);
-	const created = await mkdir(generation.dir, { recursive: true, mode: 0o700 }).catch((cause) => {
+	// A direct launch registers its own endpoint; an ensured one finds it registered. Neither recreates a collected
+	// endpoint directory (senpi#7564): a generation that cannot be made inside a registered endpoint fails startup.
+	if (told === undefined || told.trim() === "") await createDaemonDirectories(paths);
+	const created = await makeEndpointSubdirectory(generation.dir).catch((cause: unknown) => {
 		throw new HostDaemonStateError(generation.dir, cause);
 	});
 	let startupRegistered = false;
@@ -103,7 +108,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		async [Symbol.asyncDispose]() {
 			// An ensured directory is not ours to discard. Until shutdown owns a new one,
 			// every failed startup must remove it, including failures after child spawn.
-			if (created !== undefined && !startupRegistered) {
+			if (created && !startupRegistered) {
 				await rm(generation.dir, { recursive: true, force: true });
 			}
 		},

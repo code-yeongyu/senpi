@@ -25,7 +25,7 @@
  * the session parks or closes.
  */
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	processIsLive,
@@ -40,6 +40,7 @@ import {
 	HOST_DAEMON_DIR_ENV,
 	type HostDaemonDirectory,
 	hostDaemonDirectoryPaths,
+	makeEndpointSubdirectory,
 } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { generationHeartbeatStopped } from "./host-stalled-evidence.ts";
@@ -142,7 +143,8 @@ export function createSessionPathReservations(options: {
 			strict_transfer: true,
 		};
 		const file = reservationFile(dir, sessionPath);
-		await mkdir(dir, { recursive: true, mode: 0o700 });
+		// Never recreates a collected endpoint (senpi#7564): the claim then fails and is reported by its caller.
+		await makeEndpointSubdirectory(dir);
 		// Written aside and renamed in: a reader never sees half a claim.
 		const staging = `${file}.${pid}.tmp`;
 		await writeFile(staging, `${JSON.stringify(owner)}\n`, { mode: 0o600 });

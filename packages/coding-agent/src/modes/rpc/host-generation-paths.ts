@@ -65,10 +65,27 @@ export class HostDaemonStateError extends Error {
 	}
 }
 
-/** Creates one generation's private directory. Same failure shape as the daemon directory itself. */
+/**
+ * Creates `directory` inside an endpoint directory that must already exist; `true` when this call created it. Only the
+ * identity writer (`createDaemonDirectories`, `ensureEndpointIdentity`) creates an endpoint directory: any other writer
+ * that did would mint one nothing names, which no gc can lock and therefore none can remove (senpi#7564). A parent
+ * that is gone rejects with ENOENT, so the writer reports instead of resurrecting a collected endpoint.
+ */
+export async function makeEndpointSubdirectory(directory: string): Promise<boolean> {
+	return mkdir(directory, { mode: DIRECTORY_MODE }).then(
+		() => true,
+		(cause: unknown) => {
+			if (cause instanceof Error && "code" in cause && cause.code === "EEXIST") return false;
+			throw cause;
+		},
+	);
+}
+
+/** Creates one generation's private directory inside its registered endpoint. Same failure shape as the daemon directory itself. */
 export async function createGenerationDirectory(generation: HostGenerationPaths): Promise<void> {
 	try {
-		await mkdir(generation.scratchDir, { recursive: true, mode: DIRECTORY_MODE });
+		await makeEndpointSubdirectory(generation.dir);
+		await makeEndpointSubdirectory(generation.scratchDir);
 		await chmod(generation.dir, DIRECTORY_MODE);
 	} catch (cause) {
 		throw new HostDaemonStateError(generation.dir, cause);
