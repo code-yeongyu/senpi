@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "vitest";
@@ -26,9 +26,9 @@ const fdPath = (() => {
 })();
 
 /** A fake macOS home: protected folders at its top, plus a project that has its own folder named Music. */
-async function fakeHome(): Promise<string> {
-	const home = await realpath(await mkdtemp(join(tmpdir(), "privacy-walk-home-")));
-	dirs.push(home);
+async function fakeHome(at?: string): Promise<string> {
+	const home = at ?? (await realpath(await mkdtemp(join(tmpdir(), "privacy-walk-home-"))));
+	if (at === undefined) dirs.push(home);
 	for (const rel of ["Music/Music", "Downloads", "Library/Mobile Documents", "Pictures", "code/Music"]) {
 		await mkdir(join(home, rel), { recursive: true });
 	}
@@ -111,5 +111,75 @@ describe("a search from the home directory on macOS", () => {
 			glob.entries.map((entry) => entry.path),
 			[join(music, "Music", "library.txt")],
 		);
+	});
+});
+
+type Walk = (root: string, home: string) => Promise<string[]>;
+const walks: ReadonlyArray<readonly [string, Walk | undefined]> = [
+	[
+		"grep",
+		async (root, home) =>
+			(await localGrep(root, "needle", undefined, 1 << 20, signal(), privacyProtectedDirs("darwin", home))).matches
+				.map((match) => match.path)
+				.sort(),
+	],
+	[
+		"the walking glob",
+		async (root, home) => {
+			process.env.PATH = await mkdtemp(join(tmpdir(), "privacy-walk-no-fd-"));
+			dirs.push(process.env.PATH);
+			const result = await localGlob(
+				"*.txt",
+				root,
+				undefined,
+				signal(),
+				undefined,
+				privacyProtectedDirs("darwin", home),
+			);
+			return result.entries.map((entry) => entry.path).sort();
+		},
+	],
+	[
+		"the fd glob",
+		fdPath === undefined
+			? undefined
+			: async (root, home) => {
+					const result = await localGlob(
+						"*.txt",
+						root,
+						undefined,
+						signal(),
+						async () => fdPath,
+						privacyProtectedDirs("darwin", home),
+					);
+					return result.entries.map((entry) => entry.path).sort();
+				},
+	],
+];
+
+// The walk start and HOME are compared as the folders they name, not as text: a symlinked alias of either, or a HOME
+// spelled in another case than the disk (macOS volumes ignore case), still keeps every walk out of the protected folders.
+describe.each(walks)("%s reaching the home directory another way", (_name, walk) => {
+	it.skipIf(walk === undefined)("started from a symlink to the home directory", async () => {
+		const home = await fakeHome();
+		const alias = `${home}-alias`;
+		await symlink(home, alias, "dir");
+		dirs.push(alias);
+		assert.deepEqual(await walk?.(alias, home), reachable(alias));
+	});
+
+	it.skipIf(walk === undefined)("with HOME naming the home directory through a symlink", async () => {
+		const home = await fakeHome();
+		const alias = `${home}-alias`;
+		await symlink(home, alias, "dir");
+		dirs.push(alias);
+		assert.deepEqual(await walk?.(home, alias), reachable(home));
+	});
+
+	it.skipIf(walk === undefined)("started above a home directory HOME spells in another case", async () => {
+		const parent = await realpath(await mkdtemp(join(tmpdir(), "privacy-walk-parent-")));
+		dirs.push(parent);
+		const home = await fakeHome(join(parent, "Home"));
+		assert.deepEqual(await walk?.(parent, join(parent, "HOME")), reachable(home));
 	});
 });

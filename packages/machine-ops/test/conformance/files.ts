@@ -297,7 +297,8 @@ export function defineFileCases(runner: ConformanceRunner, target: ConformanceTa
 		);
 	});
 
-	if (process.platform === "darwin") {
+	// The case points HOME at the fixture root, which only an implementation running in this process can see.
+	if (process.platform === "darwin" && target.inProcess === true) {
 		describe("files.grep and files.glob on macOS", () => {
 			it(
 				"a search from the home directory never enters a privacy-protected folder (omo#15240)",

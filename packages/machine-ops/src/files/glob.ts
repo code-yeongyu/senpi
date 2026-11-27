@@ -65,8 +65,8 @@ function runFdGlob(
 ): Promise<GlobResult> {
 	return (async () => {
 		const args: string[] = ["--glob", "--color=never", "--hidden"];
-		// A leading '/' anchors an exclude to the search root; the folder's own name is escaped so it matches literally.
-		for (const excluded of guard.excluded) args.push("--exclude", `/${excluded.replace(/[*?[\]{}\\]/g, "\\$&")}`);
+		// A leading '/' anchors an exclude to the search root.
+		for (const excluded of guard.excluded) args.push("--exclude", `/${excluded}`);
 		// fd normally ignores .gitignore outside git repos, so keep --no-require-git there. Inside repos, use fd's
 		// default git-aware behavior so parent .gitignore rules stop at nested repo boundaries:
 		// https://github.com/earendil-works/pi/issues/5960
