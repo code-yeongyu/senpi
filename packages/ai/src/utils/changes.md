@@ -1,3 +1,129 @@
+## 2026-11-24 - ModelsError code stale_login (senpi#7406)
+
+### What changed
+
+- `packages/ai/src/utils/models-error.ts`: adds `stale_login` to `ModelsErrorCode`.
+
+### Why
+
+- A conditional logout refused because the stored sign-in is no longer the confirmed one needs a typed outcome.
+
+### Why an extension could not handle it
+
+- The error code union is core.
+
+### Expected merge conflict zones
+
+- LOW: the `ModelsErrorCode` union.
+
+## 2026-11-22 - Report transport activity before SDK parsing (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/utils/transport-activity-fetch.ts` wraps the streaming SDK fetch and reports each non-empty successful response body chunk before forwarding it.
+
+### Why
+
+- The OpenAI SDK discards SSE comments before the adapters receive parsed events.
+
+### Why an extension could not handle it
+
+- The SDK clients set their fetch functions inside the adapters.
+
+### Expected merge conflict zones
+
+- LOW: new utility shared by the OpenAI SDK adapters.
+
+## 2026-11-22 - A 408 or a reset connection retries on the same model (senpi#3251)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts` and `packages/ai/src/utils/retry-profile/classifiers.ts`: retry classification prefers the structured HTTP status for 408. For legacy Mistral errors, it reads only the anchored `Mistral API error (NNN):` prefix for the 408 signal. Other legacy errors retain their existing status and reason-phrase rules. `ECONNRESET` remains retryable.
+
+### Why
+
+- An empty-body gateway 408 and a reset socket can recover on the same model. An HTTP 400 that merely mentions 408 should still take the hard-error fallback path without spending a same-model retry.
+
+### Why an extension could not handle it
+
+- Retry classification lives in pi-ai.
+
+### Expected merge conflict zones
+
+- LOW: provider error classification in `retry.ts` and the default retry profile's call to it.
+
+## 2026-11-04 - A disabled-thinking rejection is terminal (senpi#5720)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `NON_QUOTA_NON_RETRYABLE_PATTERNS` gains the Kimi (`does not support disabled thinking`) and Anthropic (`"thinking.type.disabled" is not supported`) rejections.
+
+### Why
+
+- The same payload fails every time; a gateway wrapping the Kimi 400 in a 500 classified it retryable (code-yeongyu/oh-my-openagent#12316).
+
+### Why an extension could not handle it
+
+- Retry classification is shared by every retry caller in this package.
+
+### Expected merge conflict zones
+
+- LOW: the request-shape block of the pattern list.
+
+## 2026-11-14 - Tracker move for senpi#6663's missing-scope pattern entry
+
+### What changed
+
+- `packages/ai/src/utils/siwc-errors.ts`: records here (its nearest tracker) the change senpi#6663 made, which its fragment filed under `packages/ai/src/api/changes.md`: `isSiwcMissingResponsesScope` matches `api.responses.write` anywhere in the rest of the `Missing scopes:` line.
+
+### Why
+
+- senpi#6663 review: the tracker entry belongs in the file's nearest `changes.md`.
+
+### Why an extension could not handle it
+
+- Tracker bookkeeping only; no behavior change.
+
+### Expected merge conflict zones
+
+- None.
+
+## 2026-11-09 - OpenAI prompt-cache lanes: ChatGPT subscription is best-effort, long retention is 12 hours (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: the OpenAI Responses branch of `resolvePromptCacheLifetime()` maps `classifyOpenAIPromptCacheLane()` through a lane table: the ChatGPT subscription lane is `best-effort` (no TTL), GPT-5.6+ with `long` retention on a request that sends `prompt_cache_options.ttl: "12h"` is 43200 s (`PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS`, new export), other GPT-5.6+ OpenAI-operated rows stay 1800 s, the rest 300 s. The GPT-5.6+ id regex and the extended-cache predicate moved to `packages/ai/src/utils/openai-prompt-cache-lane.ts` (new), which detects the subscription by host: any `openai-codex-responses` model on `chatgpt.com` (whatever its provider id, closes #6296), and an `openai-responses` model on `api.openai.com` only with `compat.siwc`.
+
+### Why
+
+- OpenAI's 2026-10-20 change: the Responses API sells a 12-hour minimum lifetime (https://developers.openai.com/api/docs/guides/prompt-caching), and signed-in Codex / ChatGPT Work usage keeps its cache with no expiry. A fixed 30-minute TTL on the subscription lane made the handoff hint tell users their cache had expired and kept cache-keepalive pinging on plan usage.
+
+### Why an extension could not handle it
+
+- The lifetime resolver is the single source every cache consumer (handoff hint, keepalive, goal backstop, cache-aware timeouts) reads; an extension cannot change it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `openai-responses` / `openai-codex-responses` / `azure-openai-responses` case of `resolvePromptCacheLifetime()` and the constants at the top of `prompt-cache-ttl.ts`.
+
+## 2026-11-09 - Tool arguments decode JSON-encoded arrays and objects before conversion (senpi#6265)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: `validateToolArguments()` runs a schema-directed `decodeJsonEncodedStructures()` pass before `Value.Convert`. Where a property's schema declares an array or object and does not accept a string, a string value whose JSON text parses to that declared array or object is replaced by the parsed value, recursing through object properties, `additionalProperties` and array items. Strings the schema accepts, unions with an untyped member, and text that does not parse to the declared structure are left as they were, so a bare single value still takes the existing `Value.Convert` wrap.
+
+### Why
+
+- In a turn of parallel `generate_image` calls, the later calls carried `reference_image_paths` as the array's JSON text. `Value.Convert` wrapped that text into a one-element array, which passed validation, so the tool resolved the JSON text as a path and failed with ENOENT before any request (senpi#6265). The same path decoded every array- or object-typed tool parameter the same way.
+
+### Why an extension could not handle it
+
+- Argument validation and conversion run in the shared core before any tool's `execute` sees the parameters; per-tool `prepareArguments` shims would have to repeat the fix for every array-typed parameter, including MCP tools whose schemas no extension owns.
+
+### Expected merge conflict zones
+
+- LOW: the new helpers inserted above `getValidator`, and the one added call between `normalizeOptionalNulls` and `Value.Convert` in `validateToolArguments`.
+
 ## 2026-11-02 - Shared tri-state Anthropic long-cache retention decision (senpi#1248)
 
 ### What changed

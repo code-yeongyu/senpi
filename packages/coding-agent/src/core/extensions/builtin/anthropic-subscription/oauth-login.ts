@@ -36,6 +36,7 @@ import {
 	type ClaudeCliLoginResult,
 	startClaudeCliLogin,
 } from "./claude-cli-auth.ts";
+import { writeAccountLink } from "./claude-cli-account-link.ts";
 import { type ClaudeCliAuthStatus, logoutClaudeCli, readClaudeCliAuthStatus } from "./claude-cli-auth-status.ts";
 import {
 	type ClaudeCliConnectionTestInput,
@@ -393,15 +394,32 @@ export function createOAuthConfig(deps: {
 
 				const signedInAt = now();
 				const claimed: { slot?: ClaudeCliAccountSlot } = {};
+				let recordError: string | undefined;
 				await credentials.modify(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, async (stored) => {
 					const base = storedSubscription(stored) ?? current;
 					previous = base.accounts?.find((candidate) => candidate.name === name);
 					claimed.slot = signedInSlot(previous, name, dirId, status.profile, signedInAt);
 					written = claimed.slot;
+					// A rename uses this same lock. Publish the dir record before it can rename the slot.
+					try {
+						await writeAccountLink(agentDir(), {
+							dirId,
+							name,
+							signedInAt,
+							displayName: claimed.slot.displayName,
+						});
+					} catch (error) {
+						recordError = error instanceof Error ? error.message : String(error);
+					}
 					return withSlot(base, claimed.slot);
 				});
 				const slot = claimed.slot;
 				if (slot === undefined) throw new Error("Claude sign-in could not store its account");
+				if (recordError !== undefined) {
+					callbacks.onProgress?.(
+						`Signed in, but the account dir record could not be written (${recordError}); the next start writes it again`,
+					);
+				}
 				cancelled();
 				const model = connectionTestModel(cli.defaultModel?.());
 				callbacks.onProgress?.(`Testing the account with one turn on ${model}...`);
@@ -419,18 +437,18 @@ export function createOAuthConfig(deps: {
 				callbacks.onProgress?.(
 					check.outcome === "ok"
 						? `Connection test passed on ${model}`
-						: `Connection test failed on ${model} (${check.reason ?? "unknown"}); the account was kept. Retry from the account list.`,
+						: `Connection test failed on ${model}: ${check.status === undefined ? "" : `HTTP ${check.status}: `}${check.message ?? check.reason ?? "No provider response was retained"}; the account was kept. Retry from the account list.`,
 				);
 				// The slot stays written: the caller's commit merges onto it, so the account owns its dir throughout.
 				let tested: AccountSlot = slot;
 				const saved = await credentials.modify(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, async (stored) => {
 					const base = storedSubscription(stored) ?? withSlot(current, slot);
 					tested = base.accounts?.find((candidate) => candidate.name === name) ?? slot;
-					return withCheck(base, name, check);
+					return withCheck(base, name, check, dirId);
 				});
 				if (callbacks.signal !== undefined)
 					recordClaudeCliLoginOutcome(callbacks.signal, { account: { name }, check });
-				signedInCredential = withCheck(withSlot(storedSubscription(saved) ?? current, tested), name, check);
+				signedInCredential = withCheck(withSlot(storedSubscription(saved) ?? current, tested), name, check, dirId);
 			} catch (error) {
 				try {
 					await rollBack();

@@ -273,6 +273,8 @@ export function fakeExtensionContext(): ExtensionToolContext {
 	return {
 		tools: [],
 		executeTool: () => Promise.reject(new Error("fakeExtensionContext has no nested tool executor")),
+		reportToolResult: () => Promise.reject(new Error("fakeExtensionContext runs no tool_result handlers")),
+		issuedByModel: true,
 		ui: Object.create(null),
 		mode: "print",
 		hasUI: false,

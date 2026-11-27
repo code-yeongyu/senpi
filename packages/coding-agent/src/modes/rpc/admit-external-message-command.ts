@@ -12,16 +12,19 @@
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import { writtenDeliveryIds } from "../../core/external-admission.ts";
-import type { ConnectionOrigin } from "../../core/turn-origin.ts";
+import type { ConnectionOrigin, InputTurnMark } from "../../core/turn-origin.ts";
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
 import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
+import { RPC_ERROR_SESSION_CLOSING } from "./rpc-error-types.ts";
 
 /** The connection a delivery arrived on, as the host knows it. */
 export interface DeliveryPeer {
 	/** The remote device the connection speaks for (`ConnectionRoles.originOf`); absent on a plain local connection. */
 	readonly origin: RpcRemoteOrigin | undefined;
 	readonly connectionOrigin: ConnectionOrigin;
+	/** The origin the turn this delivery opens counts as (senpi#6342); the connection's origin when absent. */
+	readonly turnOrigin?: ConnectionOrigin;
 }
 
 export type AdmitExternalMessageAnswer =
@@ -39,6 +42,11 @@ function ledgerId(deliveryId: string, origin: RpcRemoteOrigin | undefined): stri
 	return origin === undefined
 		? `rpc:local/${deliveryId}`
 		: `device:${encodeURIComponent(origin.deviceId)}/${deliveryId}`;
+}
+
+/** The turn a delivery opens: a steer joins the running turn; anything else counts as the connection's turn origin. */
+function deliveryTurnMark(command: RpcAdmitExternalMessageCommand, peer: DeliveryPeer): InputTurnMark {
+	return command.deliverAs === "steer" ? "join" : (peer.turnOrigin ?? peer.connectionOrigin);
 }
 
 export function admitExternalMessage(
@@ -67,6 +75,9 @@ export function admitExternalMessage(
 			},
 		};
 	const admission = session.externalAdmission;
+	// A release or a graceful close ended admission (oh-my-openagent#14313): the sender keeps the delivery, typed.
+	if (admission.closed !== undefined)
+		return { ok: false, refusal: { message: admission.closed, errorCode: RPC_ERROR_SESSION_CLOSING } };
 	const answer = (kind: RpcAdmitExternalMessageReply["kind"], epoch: number): AdmitExternalMessageAnswer => ({
 		ok: true,
 		data: { kind, turnId: String(epoch) },
@@ -90,8 +101,9 @@ export function admitExternalMessage(
 		{
 			...(origin === undefined ? {} : { remoteOrigin: origin }),
 			...(chain.chainCount === undefined ? {} : { chainCount: chain.chainCount }),
-			turnMark: command.deliverAs === "steer" ? "join" : peer.connectionOrigin,
+			turnMark: deliveryTurnMark(command, peer),
 		},
 	);
-	return answer(result.kind, result.turn_epoch);
+	if (result.holds === undefined) return answer(result.kind, result.turn_epoch);
+	return { ok: true, data: { kind: result.kind, turnId: String(result.turn_epoch), holds: [...result.holds] } };
 }

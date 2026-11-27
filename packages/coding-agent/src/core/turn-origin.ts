@@ -1,9 +1,12 @@
-import type { SessionManager } from "./session-manager.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 
 /**
- * Who started a turn, for the delegated-default permission rule (remote approval-mode work):
- * - `local`: a local connection's or the TUI's own input;
- * - `delegated`: input that arrived on a delegated (remote device) connection;
+ * Who started a turn, for the remote approval-mode rule (senpi#6342: a turn follows the permission setting of the machine
+ * it runs on, and no origin outlives the turn it started):
+ * - `local`: this machine's own input, or input from a device the forwarder stated is the same account;
+ * - `delegated`: input from a device the forwarder did not state is the same account, or the one run such a device's
+ *   record started;
  * - `engine`: a turn no client record started (an extension's message, a goal or loop turn, restored input).
  * A steer joins the running turn (`join`) and never changes its origin.
  */
@@ -11,13 +14,48 @@ export type TurnOrigin = "local" | "delegated" | "engine";
 export type InputTurnMark = TurnOrigin | "join";
 export type ConnectionOrigin = "local" | "delegated";
 
-const DELEGATED_ORIGIN_ENTRY = "delegated_origin";
+const inputMarks = new WeakMap<object, { origin: InputTurnMark; personStarted: boolean }>();
+const currentOrigins = new WeakMap<object, { origin: TurnOrigin; personTurn?: object }>();
+const continuingTurns = new WeakSet<object>();
 
-type OriginSessionManager = Pick<SessionManager, "getEntries" | "appendCustomEntry">;
+/**
+ * The record being handled, for the work its own handling creates (senpi#6342). It lives in that record's async
+ * context, so no other record can change or clear it. The first run that record starts takes the origin and closes it,
+ * so later engine work that merely descends from that run (an extension's follow-up) does not inherit it.
+ *
+ * It is a realm registry (omo#12965): the RPC handler of one engine copy enters it, and the session that takes the
+ * input or starts the run may belong to another copy. The store and its mutable record never leave the closure.
+ */
+interface RecordScopes {
+	run<T>(origin: ConnectionOrigin, handle: () => Promise<T>): Promise<T>;
+	delegated(): boolean;
+	/** Reads whether an open delegated record starts this run, and closes the record. */
+	closeAtRunStart(): boolean;
+}
 
-const inputMarks = new WeakMap<object, InputTurnMark>();
-const currentOrigins = new WeakMap<object, TurnOrigin>();
-const delegatedSessions = new WeakSet<object>();
+const recordScope = realmRegistry(
+	"@code-yeongyu/senpi/turn-origin/v1",
+	(): RecordScopes => {
+		const scopes = new AsyncLocalStorage<{ readonly origin: ConnectionOrigin; open: boolean }>();
+		const delegated = () => {
+			const scope = scopes.getStore();
+			return scope?.open === true && scope.origin === "delegated";
+		};
+		return {
+			// Any origin other than "local" (one a newer copy defines) is treated as delegated: it fails closed.
+			run: (origin, handle) =>
+				scopes.run({ origin: origin === "local" ? "local" : "delegated", open: true }, handle),
+			delegated,
+			closeAtRunStart: () => {
+				const opened = delegated();
+				const scope = scopes.getStore();
+				if (scope !== undefined) scope.open = false;
+				return opened;
+			},
+		};
+	},
+	(value): value is RecordScopes => hasFunctions(value, ["run", "delegated", "closeAtRunStart"]),
+);
 
 /** The mark an input gets where it is created: explicit for client records, `local` for the TUI, else `engine`. */
 export function inputTurnMark(input: {
@@ -27,11 +65,12 @@ export function inputTurnMark(input: {
 }): InputTurnMark {
 	if (input.mode === "steer") return "join";
 	if (input.connectionOrigin !== undefined) return input.connectionOrigin;
+	if (recordIsDelegated()) return "delegated";
 	return input.source === undefined || input.source === "interactive" ? "local" : "engine";
 }
 
-export function markInputTurnOrigin(message: object, mark: InputTurnMark): void {
-	inputMarks.set(message, mark);
+export function markInputTurnOrigin(message: object, mark: InputTurnMark, personStarted = false): void {
+	inputMarks.set(message, { origin: mark, personStarted });
 }
 
 /** Carries `from`'s origin mark onto `to`, a copy of the same input: a copy without it would open or join a turn unmarked. */
@@ -45,40 +84,49 @@ export function hasInputTurnMark(message: object): boolean {
 	return inputMarks.has(message);
 }
 
-/** A run starts as engine work; the user message that opens a turn sets its origin, a steer keeps it. */
+/** Runs `handle`, and every async task it starts, as the record `origin` describes. */
+export function runInRecordScope<T>(origin: ConnectionOrigin, handle: () => Promise<T>): Promise<T> {
+	return recordScope.run(origin, handle);
+}
+
+/** Whether the work being created belongs to an open cross-account record's own handling. */
+export function recordIsDelegated(): boolean {
+	return recordScope.delegated() === true;
+}
+
+/**
+ * A run starts as engine work, or as delegated work when a cross-account record's own handling starts it; a retry keeps
+ * the turn it continues. The user message that opens a turn sets its origin, a steer keeps it.
+ */
 export function noteRunStart(sessionManager: object): void {
-	currentOrigins.set(sessionManager, "engine");
+	if (continuingTurns.delete(sessionManager)) return;
+	currentOrigins.set(sessionManager, { origin: recordScope.closeAtRunStart() === true ? "delegated" : "engine" });
+}
+
+/** The next retry or recovery run repeats this turn; its start consumes the continuation mark. */
+export function noteTurnContinuation(sessionManager: object): void {
+	continuingTurns.add(sessionManager);
+}
+
+export function endTurnContinuation(sessionManager: object): void {
+	continuingTurns.delete(sessionManager);
 }
 
 export function noteUserMessageStart(sessionManager: object, message: object): void {
 	const mark = inputMarks.get(message);
-	if (mark === "join") return;
-	currentOrigins.set(sessionManager, mark ?? "engine");
+	if (mark?.origin === "join") return;
+	currentOrigins.set(sessionManager, {
+		origin: mark?.origin ?? "engine",
+		personTurn: mark?.personStarted ? {} : undefined,
+	});
 }
 
-export function recordDelegatedOrigin(sessionManager: OriginSessionManager): void {
-	if (delegatedOriginOf(sessionManager)) return;
-	delegatedSessions.add(sessionManager);
-	sessionManager.appendCustomEntry(DELEGATED_ORIGIN_ENTRY, { delegatedOrigin: true }, { startupBookkeeping: true });
+/** A person's admitted message owns this identity; only an explicit continuation preserves it across run starts. */
+export function currentPersonTurn(sessionManager: object): object | undefined {
+	return currentOrigins.get(sessionManager)?.personTurn;
 }
 
-// How many entries a session's scan has already found free of the marker: each gated decision reads only new entries.
-const scannedEntries = new WeakMap<object, number>();
-
-function delegatedOriginOf(sessionManager: Pick<SessionManager, "getEntries">): boolean {
-	if (delegatedSessions.has(sessionManager)) return true;
-	const entries = sessionManager.getEntries();
-	const persisted = entries
-		.slice(scannedEntries.get(sessionManager) ?? 0)
-		.some((entry) => entry.type === "custom" && entry.customType === DELEGATED_ORIGIN_ENTRY);
-	if (persisted) delegatedSessions.add(sessionManager);
-	else scannedEntries.set(sessionManager, entries.length);
-	return persisted;
-}
-
-/** Whether the deciding turn counts as delegated-origin: a remote device started it, or nobody did on a remote-driven session. */
-export function decidingTurnIsDelegated(sessionManager: Pick<SessionManager, "getEntries">): boolean {
-	const origin = currentOrigins.get(sessionManager) ?? "engine";
-	if (origin === "delegated") return true;
-	return origin === "engine" && delegatedOriginOf(sessionManager);
+/** Whether the deciding turn counts as delegated-origin: a cross-account device started this turn or this run. */
+export function decidingTurnIsDelegated(sessionManager: object): boolean {
+	return currentOrigins.get(sessionManager)?.origin === "delegated";
 }

@@ -126,7 +126,7 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.js
 Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
 
 - Sign in with `/login anthropic-subscription` (see [Anthropic Subscription](#anthropic-subscription)). senpi has no Claude sign-in of its own: the bundled Claude Code CLI runs `claude auth login` and keeps the login in its own credential store.
-- The plain `anthropic` provider takes Anthropic API keys only. A Claude OAuth token (`sk-ant-oat...`) given to it as a key, through `/login anthropic`, `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN` or a `models.json` `apiKey`, is refused before any request is sent, with an error that points at `/login anthropic-subscription`. senpi does not send Claude subscription tokens to the Anthropic API directly and does not present itself as Claude Code.
+- The plain `anthropic` provider and custom `anthropic-messages` providers in `models.json` send whatever key they are given as an ordinary `x-api-key` header to their `baseUrl`, a Claude OAuth token (`sk-ant-oat...`) included. senpi does not present itself as Claude Code on that path (no Bearer auth, Claude Code betas, user agent or system block), so for a Claude Pro/Max subscription use `/login anthropic-subscription`.
 
 ### Anthropic Subscription
 

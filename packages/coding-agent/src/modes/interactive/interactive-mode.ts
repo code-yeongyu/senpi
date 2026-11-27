@@ -100,6 +100,11 @@ import { collectEntriesForBranchSummary } from "../../core/compaction/branch-sum
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
 import { subscribeProviderAccountEvents } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import {
+	getSessionClaudeAccountPin,
+	resolveClaudeAccountPin,
+} from "../../core/extensions/builtin/anthropic-subscription/account-command.ts";
+import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "../../core/extensions/builtin/anthropic-subscription/settings.ts";
 import { formatAccountFailoverNotice } from "./account-failover-notice.ts";
 import {
 	askUserAnswerDisplayText,
@@ -1318,7 +1323,18 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = this.chrome
 			? this.chrome.createFooter(this.session, this.footerDataProvider)
-			: new FooterComponent(this.session, this.footerDataProvider);
+			: new FooterComponent(this.session, this.footerDataProvider, {
+					// CLI > settings > stored pin, resolved per render so a
+					// mid-session /claude-account pin or settings change is
+					// picked up (senpi#5983); the stored pin stays the
+					// fallback inside accountFooterSuffix.
+					resolveAccountPin: (sessionId) =>
+						resolveClaudeAccountPin(
+							getSessionClaudeAccountPin(sessionId),
+							loadAnthropicSubscriptionProviderSettingsFromDisk(this.sessionManager.getCwd()).pinnedAccount,
+							undefined,
+						),
+				});
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
@@ -1848,7 +1864,7 @@ export class InteractiveMode {
 		// submit accepted earlier painted its echo above the history that startup appended afterwards.
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
-		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.hasComposerDraft());
 		adoptDefaultEditorActions(this.defaultEditor, this.editor);
 		const parkedSubmission = this.startupParkedSubmission;
 		this.startupParkedSubmission = undefined;
@@ -4238,7 +4254,8 @@ export class InteractiveMode {
 			session: this.session,
 			agentDir: this.session.agentDir,
 			surface: {
-				draftHold: () => (this.sessionControlHost.submissionInFlight() ? "draft" : this.composerHold()),
+				submissionInFlight: () => this.sessionControlHost.submissionInFlight(),
+				hasDraft: () => this.hasComposerDraft(),
 				blockingQuestion: () => this.askUserQuestion !== undefined,
 				pendingQuestionIds: () => [...this.pendingQuestions.keys()],
 				pendingQuestion: (requestId) => this.pendingQuestions.get(requestId)?.request,
@@ -4253,14 +4270,15 @@ export class InteractiveMode {
 				interruptTurn: async () => {
 					await this.abortAndFireQueuedMessages();
 				},
+				// After the close's answer is on its way: the quit path disposes the endpoint that sends it.
+				closeSession: () => setImmediate(() => void this.shutdown()),
 			},
 		};
 	}
 
-	/** What the user is composing, if anything: a held external delivery waits for it. */
-	private composerHold(): "attachment" | "draft" | undefined {
-		if (this.pendingImages.size > 0) return "attachment";
-		return this.editor.getText().trim() === "" ? undefined : "draft";
+	/** Whether the user is composing (non-blank text or pending images); a delivery never waits for it (senpi#7043). */
+	private hasComposerDraft(): boolean {
+		return this.pendingImages.size > 0 || this.editor.getText().trim() !== "";
 	}
 
 	/** Only the visible surface ticks; extension deadlines remain authoritative. */
@@ -7968,6 +7986,12 @@ export class InteractiveMode {
 		const created = create(done);
 		dispose = created.dispose;
 		this.disposeActiveSelector();
+		// A selector is usually taller than the editor and can push the last status row above the screen. The
+		// status its choice reports ("Model: ...") must then append a row: rewriting that row in place changes a
+		// row above the screen, which the renderer can only show by replaying the whole transcript
+		// (sisyphuslabs/doriterm#2745).
+		this.lastStatusSpacer = undefined;
+		this.lastStatusText = undefined;
 		this.activeSelectorToken = token;
 		this.activeSelectorDispose = dispose;
 		this.editorContainer.clear();
@@ -8533,7 +8557,7 @@ export class InteractiveMode {
 		}
 	}
 
-	private maybeSaveImplicitProjectTrustAfterReload(): boolean {
+	private async maybeSaveImplicitProjectTrustAfterReload(): Promise<boolean> {
 		const cwd = this.sessionManager.getCwd();
 		if (this.autoTrustOnReloadCwd !== cwd) {
 			return false;
@@ -8548,7 +8572,7 @@ export class InteractiveMode {
 				this.autoTrustOnReloadCwd = undefined;
 				return false;
 			}
-			trustStore.set(cwd, true);
+			await trustStore.set(cwd, true);
 			this.autoTrustOnReloadCwd = undefined;
 			return true;
 		} catch (error) {
@@ -8569,10 +8593,16 @@ export class InteractiveMode {
 				savedDecision,
 				projectTrusted: this.settingsManager.isProjectTrusted(),
 				onSelect: (selection) => {
-					trustStore.setMany(selection.updates);
 					done();
-					this.showStatus(
-						`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+					trustStore.setMany(selection.updates).then(
+						() =>
+							this.showStatus(
+								`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
+							),
+						(error: unknown) =>
+							this.showWarning(
+								`Could not save trust decision: ${error instanceof Error ? error.message : String(error)}`,
+							),
 					);
 				},
 				onCancel: () => {
@@ -8610,6 +8640,10 @@ export class InteractiveMode {
 					onFavoriteChange: async (favoriteIds, allModels) => {
 						await this.applyFavoriteSelection(favoriteIds, allModels, true, await favoritePatternSnapshot);
 					},
+				},
+				{
+					rowsBelow: (width) =>
+						this.widgetContainerBelow.render(width).length + this.footerContainer.render(width).length,
 				},
 			);
 			return {
@@ -9864,7 +9898,7 @@ export class InteractiveMode {
 				force: false,
 				showDiagnosticsWhenQuiet: true,
 			});
-			const savedImplicitProjectTrust = this.maybeSaveImplicitProjectTrustAfterReload();
+			const savedImplicitProjectTrust = await this.maybeSaveImplicitProjectTrustAfterReload();
 			const modelsJsonError = this.session.modelRuntime.getError();
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);

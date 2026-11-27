@@ -34,7 +34,7 @@ const ROUTE_RULES: Record<SharedSections, string> = {
 	full: `Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code, report the answer or findings - no edits, no fixes yet.
 - Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.
-- Change asks (implement, add, fix this error): build, or diagnose and fix minimally, at exactly the asked scope - the smallest path that fully satisfies an open-ended goal; name an ambiguity and resolve it from context when possible.
+- Change asks (implement, add, fix this error): build, or diagnose and fix at the cause, at exactly the asked scope - what fully satisfies an open-ended goal and nothing beyond it; name an ambiguity and resolve it from context when possible.
 
 Deliver the task at the scope asked - never quietly narrow, widen, or swap it. Make routine judgment calls yourself; ask only when different readings of the request would lead to materially different work.
 
@@ -42,7 +42,7 @@ Derive intent from the latest user turn alone: a new direction drops the stale p
 	diet: `Route by true intent, not surface form:
 - Information ask (explain, look into, investigate): read code, report answer/findings; no edits, no fixes yet.
 - Judgment ask (what do you think, review) / open-ended change (refactor, improve, clean up): assess, propose, wait for confirmation.
-- Change ask (implement, add, fix this error): build, or diagnose + minimal fix, exactly at asked scope = smallest path fully satisfying an open-ended goal; name ambiguity, resolve from context when possible.
+- Change ask (implement, add, fix this error): build, or diagnose + fix at the cause, exactly at asked scope = what fully satisfies an open-ended goal, nothing beyond; name ambiguity, resolve from context when possible.
 
 Deliver at asked scope; never quietly narrow, widen, swap. Routine calls: decide yourself; ask only when readings diverge into materially different work.
 

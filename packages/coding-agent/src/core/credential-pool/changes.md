@@ -1,3 +1,89 @@
+## 2026-11-22 - Stop re-probing a refused refresh grant (senpi#5351)
+
+### What changed
+- Generic pool rotation keeps a token-endpoint refusal with an explicit refused-grant code out of timed probes. Other auth failures retain their existing timer.
+
+### Why
+- Waiting cannot renew a grant the endpoint has declared invalid. The block belongs to that slot's material, not its siblings.
+
+### Why an extension could not handle it
+- The generic pool owns classification, persisted slot health and probe selection.
+
+### Expected merge conflict zones
+- `credential-pool/classify.ts` and the rotation health writer.
+
+## 2026-11-13 - A ChatGPT sign-in without Responses access fails the request instead of blocking the slot (senpi#6643)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: in the SIWC recovery switch, an `auth` recovery whose text names the missing scope `api.responses.write` (`isSiwcMissingResponsesScope`) returns `fail_request` instead of an `auth_error` block. Every other SIWC 401 still blocks as `auth_error`.
+
+### Why
+
+- That 401 is a verdict on the account's entitlement, not a rejected sign-in: a re-login cannot clear it, so the `auth_error` block only re-armed on each retry and replaced the provider's message with "No credential slots available".
+
+### Why an extension could not handle it
+
+- Slot health is decided by the credential-pool classifier inside the rotation stream; no extension hook sees the failure before it is persisted.
+
+### Expected merge conflict zones
+
+- LOW: the `case "auth"` arm of the SIWC switch in `classifyCredentialFailure`.
+
+## 2026-11-12 - A caller can wait for the block-log appends inside a directory (senpi#6488)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/block-log.ts`: `settledCredentialBlockLogsWithin(directory)` resolves once every append so far to a block log inside `directory` is on disk (lexical containment). `appendCredentialBlockLog` is unchanged and still not awaited by the session path.
+
+### Why
+
+- A test teardown that removed the temp tree holding a pool state file could race the not-awaited append creating `credential-pool-blocks.jsonl` and fail with ENOTEMPTY (senpi#6488). The coding-agent test removal guard joins these appends before an awaited `rm` of a tree.
+
+### Why an extension could not handle it
+
+- The append chain is private to the block-log module; only it knows which writes are still pending.
+
+### Expected merge conflict zones
+
+- None upstream: `core/credential-pool/` is fork-only. LOW against other block-log work: the end of `block-log.ts`.
+
+## 2026-11-09 - A 403 that refuses one model no longer blocks the credential slot (senpi#3972)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: in the 403 branch, a refusal scoped to one model the plan does not include now fails the request instead of blocking the slot, matched by the new `MODEL_SCOPED_REFUSAL_TEXT` patterns. Every pattern is anchored on plan/subscription entitlement wording, so an account-wide refusal that merely mentions a model ("Access to model gpt-x denied: your account is not enabled") still blocks the slot as `auth_error`. The same refusal arriving as 429 (z.ai error code 1311) also fails the request instead of taking a `rate_limit` cooldown; a structured limit code still outranks the prose.
+
+### Why
+
+- With the built-in z.ai provider, GLM-5.3 failed with "The provider rejected the credentials" / "No credential slots available" while GLM-5.2 worked with the same key: the refusal was model-level (the plan does not include GLM-5.3), but a 403 whose body mentions subscription, account or organization became `auth_error`, blocking the slot for every model on that provider until the re-probe (senpi#3972). The vendor's actual refusal reads "Your current subscription plan does not yet include access to GLM-5.3" — "yet" in the middle and no word "model" — so a model-word pattern cannot see it.
+
+### Why an extension could not handle it
+
+- Credential failure classification runs in the shared pool before any extension sees the error; no extension hook can un-block a slot the classifier already poisoned.
+
+### Expected merge conflict zones
+
+- LOW: the `MODEL_SCOPED_REFUSAL_TEXT` patterns and the added checks in the 403 and 429 branches of `classify.ts`.
+
+## 2026-11-09 - Export the model-block matcher (senpi#6254)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/model-scope.ts`: exports `modelBlockApplies(key, modelId)`, a wrapper around the existing private `applies` (unchanged), so session code matches model blocks exactly as the pool does.
+
+### Why
+
+- Session code had a second, divergent copy of this rule.
+
+### Why an extension could not handle it
+
+- The matcher is internal to the credential pool.
+
+### Expected merge conflict zones
+
+- LOW: the export list of `model-scope.ts`.
+
 ## 2026-10-30 - Select accounts by configured strategy (senpi#5068)
 
 ### What changed

@@ -1,10 +1,10 @@
 import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from "vitest";
 import * as cache from "../../src/core/extensions/builtin/mcp/catalog-cache.ts";
-import type { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import { HostMcpRegistry } from "../../src/core/extensions/builtin/mcp/host-registry.ts";
 import { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { SharedMcpLease } from "../../src/core/extensions/builtin/mcp/shared-lease.ts";
+import { waitForReconnect } from "./fixtures/reconnect.ts";
 import { attach, cleanupRoots, fakePi, makeRoot, setConfig } from "./fixtures/service-lifecycle.ts";
 import { sharingHttpFixture } from "./fixtures/sharing-http.ts";
 
@@ -43,10 +43,11 @@ async function pair(overrides: Record<string, unknown> = {}) {
 
 // senpi#1921: owner policy must not become physical transport identity.
 describe("shared MCP ownership boundaries", () => {
+	// senpi#7186: await both owners' transitions without a second deadline.
 	it.each(["ECONNRESET", "ECONNREFUSED", "UND_ERR_SOCKET"])("renews once for bundled fetch cause %s", async (code) => {
 		const { ac, bc, fixture } = await pair();
 		if (!(ac instanceof SharedMcpLease)) throw new Error("expected shared lease");
-		const recovered = Promise.all([recovery(ac), recovery(bc)]);
+		const recovered = Promise.all([waitForReconnect(ac), waitForReconnect(bc)]);
 		ac.shared.connection.client.onerror?.(
 			new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code }) }),
 		);
@@ -73,7 +74,7 @@ describe("shared MCP ownership boundaries", () => {
 		"reconnects once after %s transport loss and broadcasts both transitions to every owner",
 		async (kind) => {
 			const { ac, bc, fixture } = await pair();
-			const recovered = Promise.all([recovery(ac), recovery(bc)]);
+			const recovered = Promise.all([waitForReconnect(ac), waitForReconnect(bc)]);
 			if (kind === "abrupt") fixture.dropTransports();
 			else await fixture.endStreams();
 			await recovered;
@@ -232,33 +233,16 @@ describe("shared MCP ownership boundaries", () => {
 });
 
 function registered(service: McpService): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => {
-			off();
-			reject(new Error("registration missing"));
-		}, 5000);
+	return new Promise((resolve) => {
+		let registered = false;
 		const off = service.onMcpRegistrationChanged(() => {
-			clearTimeout(timer);
+			registered = true;
 			off();
 			resolve();
 		});
-	});
-}
-
-function recovery(connection: ServerConnection): Promise<void> {
-	return new Promise((resolve, reject) => {
-		let disconnected = false;
-		const timer = setTimeout(() => {
-			off();
-			reject(new Error("shared reconnect missing"));
-		}, 5000);
-		const off = connection.onStateChange((event) => {
-			if (event.state === "degraded") disconnected = true;
-			if (disconnected && event.state === "connected") {
-				clearTimeout(timer);
-				off();
-				resolve();
-			}
+		onTestFinished(off);
+		onTestFailed(() => {
+			if (!registered) throw new Error("MCP registration change missing");
 		});
 	});
 }

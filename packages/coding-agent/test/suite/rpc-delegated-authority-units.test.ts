@@ -43,8 +43,8 @@ describe("W5: the authority word", () => {
 		expect(changed).toEqual([true, true, false, true, false]);
 		expect(epochs).toEqual([1, 2, 3, 3, 4, 4]);
 		expect(readAuthority(buffer)).toEqual({ epoch: 4, retired: true, mask: 0, roles: [] });
-		expect(Atomics.load(new Int32Array(buffer), 0)).toBe(36);
-		expect(decodeWord(36).epoch).toBe(4);
+		expect(Atomics.load(new Int32Array(buffer), 0)).toBe(72);
+		expect(decodeWord(72).epoch).toBe(4);
 		expect(storeNarrowed(buffer, [IU, TP])).toBe(false);
 		expect(readAuthority(createAuthority(2, 0)).epoch).toBe(1);
 	});

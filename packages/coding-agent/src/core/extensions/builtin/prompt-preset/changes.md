@@ -1,3 +1,308 @@
+## 2026-11-24 - The startup header is set once (senpi#7411)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/index.ts`: the "Optimized system prompt applied: <preset>" header is set at `session_start` only; `model_select` still swaps the system prompt and returns `systemPromptName`, but no longer rewrites or clears the header.
+
+### Why
+
+- The header is the transcript's first row. Rewriting it on a model switch changed a row far above the screen, which the renderer can only show by clearing the scrollback and replaying the whole transcript (sisyphuslabs/doriterm#2745). The "Model: ..." status row already reports the switch and its preset.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own header handling.
+
+### Expected merge conflict zones
+
+- LOW: `refreshHeader` (now `setStartupHeader`) and the `model_select` handler in `index.ts`.
+
+## 2026-11-22 - The eval routing rule names the session's own tool for source edits (#7275, senpi#7232)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: the edits item of `eval-routing-decision` names the session's file-editing tools, not cell code, in every wording (claude short, claude full, kimi). The clause is marked `[[...]]` in the rule data and rendered by `renderExecutionToolingDirective`, which fills `{editTools}` from `resolveFileMutationRouting` (the set the File operations block already routes edits to: `apply_patch` when present, else the selected `edit`/`write`) and drops the clause when no editing tool is selected. Edits, side effects, deploys and approvals still run one at a time. A call fed by an unseen result is routed once, to a direct tool call: `eval-stay-direct` keeps "the result decides the next call" (its wording on main), and the routing rule no longer lists that call in its one-at-a-time sequence. `eval-stay-direct` opens with the same `[[...]]` span ("only for `edit` and `write` or when ..."), so the offered editing tools are direct calls in its closed list; both spans come from one `resolveFileMutationRouting` result. To pay for it, the routing rule drops "together" (claude full, kimi), the "via"/"with" before the tool names, and in claude short "before next", "deploys" (a side effect, still listed) and the colon after "when". The header carries dated notes.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/file-operations.ts`: `formatToolList` is exported so both blocks spell the tool list the same way.
+- Size (characters, both rules, with `edit` and `write` offered), main / this change: claude short 378 / 378, claude full 565 / 562, kimi 492 / 488. With only `apply_patch` both rules together are 10 characters shorter; with no editing tool both spans drop (62 to 63 shorter).
+- `test/suite/prompt-presets-execution-tooling.test.ts`: tool-profile cases ({eval, edit, write}, {eval, apply_patch}, {eval, write}, {eval}, no eval) assert that the backticked editing-tool names in each of `eval-routing-decision` and `eval-stay-direct` are exactly the offered ones and that no tool name outside the offered set appears. The per-preset cases compare against the directive rendered for the same tools.
+- `test/suite/prompt-presets-native-baseline.json`: the 54 eval-selected rows (`:terminal:1`, `:app:1`, `:chat:1`) of the 18 presets that render the section are recaptured (that fixture offers `apply_patch`, which the clause now names): claude-fable-5, claude-fable-5-1, claude-fable-5-2, claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-haiku-5-5, claude-opus-4-{8,7,6,5}, glm-5.2, glm-5.3, kimi-k3, kimi-k3-1, kimi-k2-{8,7,6}. `sourceCommit` is unchanged.
+- `test/suite/prompt-presets-shared-sections.test.ts`: the 30 `PRESET_ROWS` eval-selected hashes (claude-fable-5, -5-1, -5-2, claude-opus-5-5, claude-opus-5, claude-opus-4-{8,7,6,5}, glm-5.3) and the 12 `REQUEST_ROWS` eval variants (`eval-true`, `app-eval-true`, `search-eval-true` of claude-opus-5.5, claude-fable-5.1, claude-opus-4-7, glm-5.3) are recaptured. No row without eval changes, and no GPT, DeepSeek, Grok, Gemini or default row changes.
+
+### Why
+
+- senpi#7232, diagnosis category B (misframing): in a multi-harness build comparison, agents wrote their source files from eval cells (34 file writes in one run, every file in another). "Edits ... one at a time" gave a cadence and no destination, so one write per cell satisfied it.
+- Review findings, category A (wrong information): the first wording named `edit` and `write` whatever the session offered, so a session with only `apply_patch`, or with no editing tool, was told to use a tool it did not have.
+- Review findings, category A (wrong information): `eval-stay-direct`'s closed "only when" list omitted edits, so two predetermined edits that must both be made had no direct route even though the routing rule sends edits to the editing tools; a literal reader could not follow both rules.
+- Review findings, category B (misframing): dropping "the result decides the next call" from `eval-stay-direct` left result-fed calls with a cadence ("one at a time") and no destination, which still allowed one eval cell per call. The direct route is stated once, in the rule that names direct calls.
+
+### Why an extension could not handle it
+
+- The shared execution-tooling rules are this builtin's own data.
+
+### Expected merge conflict zones
+
+- LOW: the `eval-routing-decision` and `eval-stay-direct` entries of `EXECUTION_TOOLING_RULES` and the renderer below them, `formatToolList` in `file-operations.ts`, and the hash rows above in the two test files.
+
+## 2026-11-20 - Five sentence fixes in the Claude Opus 5.5 and Fable 5.2 cores (#7114, senpi#7113)
+
+### What changed
+
+- `claude-opus-5-5.ts`, `claude-fable-5-2.ts`: before ending a turn to wait on something outside the session, the model first does the work that shortens or removes the wait, then says in one line what it waits for (beside the blocked-work sentence).
+- Both cores: the latest user turn overrides earlier instructions only where they conflict; instructions it does not touch still hold (was "Derive intent from the latest user turn alone").
+- Both cores: the reply language is stated in Style (`REPLY_LANGUAGE_RULE`) on terminal and app, and the Handoff block keeps only the label rule (`languageRuleStatedElsewhere`). Chat already states the language in its Replies rule.
+- `claude-opus-5-5.ts`: renders the between-handoff progress sentence (`briefUpdatesBetweenHandoffs`) that Fable 5.1 and 5.2 already render, instead of "Between handoffs, work without narration".
+- `claude-fable-5-2.ts`: the last-paragraph check names "a question you could settle yourself" instead of every question.
+- `test/suite/prompt-presets-native-baseline.json`, `test/suite/prompt-presets-shared-sections.test.ts`: the Opus 5.5 and Fable 5.2 hashes are recaptured in each commit. No other preset's hash changes.
+
+Prompt tokens (`o200k_base`, whole rendered prompt with the baseline fixture tools, `sharedSections: "full"`):
+
+| Preset:surface | before | after | delta |
+|---|---|---|---|
+| claude-opus-5-5:terminal | 2,585 | 2,686 | +101 |
+| claude-opus-5-5:app | 2,611 | 2,711 | +100 |
+| claude-opus-5-5:chat | 2,424 | 2,489 | +65 |
+| claude-fable-5-2:terminal | 2,493 | 2,568 | +75 |
+| claude-fable-5-2:app | 2,519 | 2,593 | +74 |
+| claude-fable-5-2:chat | 2,302 | 2,371 | +69 |
+
+### Why
+
+- senpi#7113: each sentence produced avoidable behavior: turns ended on "waiting for X" with the wait-shortening work undone; earlier instructions were dropped; non-handoff replies drifted into English; Opus 5.5 was told to stay silent and to post status notes; Fable 5.2 counted the necessary question to the user as a defect.
+
+### Why an extension could not handle it
+
+- The cores are this builtin's own code.
+
+### Expected merge conflict zones
+
+- LOW: the Intent Gate, Scope and Style paragraphs of `claude-opus-5-5.ts` and `claude-fable-5-2.ts`, and their `buildHandoffSection` calls.
+
+## 2026-11-20 - gpt-6.2 core, second edition: goal first, plan after reading, the core owns the todo rules (#7110, senpi#7101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts` (new): the rule table moves out of `gpt-6.2.ts` and is rewritten. 37 rules in nine sections: Intent Gate, Goal and plan, Understand first, Keep going, When to involve the user, Code, Done means verified, Reporting, Limits.
+- What the core says now that it did not: work out the situation behind a request before acting (what it points at, memory, the instruction files, the conversation); open with what the user wants and what it is for, once per request, after the first look when the meaning sits in what the request points at (the "I read this as" line on the terminal, plain sentences on the app surface, none in chat); that understanding is the goal, and a registered goal is written from it; work larger than a few tool calls is planned in the todo tool one action per item, and the list is kept true (the tool keeps one item in progress, so the rule describes a cursor); what the user names is read in full by the session, and a subagent takes a side task only when the user, their instruction files or a workflow they started asks for one, or when the session can state it because it has looked; reports are tied to events (an item closes, a finding, a decision of the session's own, an obstacle) and an update never ends the turn; the user's instruction files count as standing authorization for commits and the other gated actions (a file that permits commits is enough).
+- Asking and choosing no longer overlap: the session asks when the outcome itself is unclear and the candidates call for materially different work, and chooses, as this user would, when the outcome is clear and only the way to it is open. A continuation prompt, reminder or notification the harness injects is not a new request.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts`: renders the table and carries the design note.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `presetFirstTurnPlanDefault` (`off` for every GPT preset, `force` otherwise) and `presetOwnsTodoRules` (`gpt-6.2`).
+- `test/suite/prompt-presets-contract.test.ts`, `test/suite/prompt-presets-gpt-6-2.test.ts`: the default per preset; the rule-table checks import the new module. `test/suite/prompt-presets-native-baseline.json`: the six `gpt-6.2` rows are recaptured. No other hash changes.
+- `.agents/skills/senpi-qa/scripts/scenarios/first-turn-plan-preset-qa.mjs` (new): drives the real CLI in RPC mode against the fake model server and asserts the first request per preset (forced `tool_choice`, the hidden reminder, `Task_Management`, the 6.2 sections and opener per surface).
+
+Token count of the rendered core (`o200k_base`; section headings plus every rule the surface renders with every tool present, no tool guidelines):
+
+| Surface | before | after |
+|---|---|---|
+| terminal | 1,558 | 2,126 |
+| app | 1,613 | 2,201 |
+| chat | 1,597 | 2,101 |
+
+A GPT-6.2 session no longer receives the first-turn reminder (108 tokens) or `Task_Management` (76 tokens).
+
+### Why
+
+- senpi#7101: nine GPT-6.2 sessions from one day wrote a todo list, and often registered a goal, before reading what the request pointed at; lists went stale for more than a hundred tool calls; 12 to 20 percent of turns carried text for the user; "read it all" was done through filtered slices. The first 6.2 core left the goal, the todo list and delegation to tool descriptions and shared blocks that disagree with each other.
+
+### Why an extension could not handle it
+
+- Preset resolution and the cores are this builtin's own code.
+
+### Expected merge conflict zones
+
+- Fork-only files. The rule table moved to a new file, so an open change to the rules in `gpt-6.2.ts` conflicts as a whole.
+
+## 2026-11-20 - The deepseek-v4-1-flash preset is one standalone core, a sibling of gpt-6.2 (#7109, senpi#7100)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash-rules.ts` (new): every sentence of the core as rule data (id, owning section, `requiresTool`, `surfaces`). 37 rules in nine sections: Intent Gate, Goal and plan, Understand first, Keep going, When to involve the user, Code, Done means verified, Reporting, Limits. The text is the gpt-6.2 second-edition rules (senpi#7101) as this preset's own copy, so a later edit to `gpt-6.2-rules.ts` does not reach it.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts`: rewritten. It renders each rule once under its section, drops a section whose rules are all bound to absent tools, appends only the tool guidelines, and uses the codex workstation dialect. The header carries the design note and the session measurements.
+- What left the prompt: the RFC 2119 keyword line and the `<critical>` block, the stop-condition line and its binding rule, the propose-then-wait rule for open-ended asks, the two-wave search cap, the four repairs carried from V4 Flash (directive authority, settled reading, missing info, todo discipline), the execution-tooling paragraph, the Test Discipline section and the handoff block on every surface.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `deepseek-v4-1-flash` joins the presets that plan after reading (`presetFirstTurnPlanDefault` returns `off`), the presets whose core owns the todo rules (`presetOwnsTodoRules`, so no `Task_Management` block follows it), and the presets without a handoff block (`presetHandoffCueKind` returns `none`, so the todo tool cues none).
+- Tests: `test/suite/prompt-presets-deepseek-v4-1-flash.test.ts` checks the rule table (each rule once under its section per surface, tool-bound rules gated per tool, an emptied section dropped, guidelines kept without a tool list, no rule text shared with the V4 presets, the emphasis budget, the workstation dialect); the id-routing tests are unchanged. `prompt-presets-contract.test.ts`, `todo-first-turn.test.ts`, `todo-handoff-cue.test.ts` and `prompt-presets-app-surface.test.ts` gain the preset's rows, with `deepseek-v4-flash-0731` as the control that keeps the forced todo and `Task_Management`. The cue-kind test now derives `none` from a rendered prompt that carries neither handoff block.
+- `test/suite/prompt-presets-native-baseline.json`: the six `deepseek-v4-1-flash` rows are recaptured. No other hash changes.
+- `.agents/skills/senpi-qa/scripts/scenarios/first-turn-plan-preset-qa.mjs`: four DeepSeek rows over chat completions; the system prompt is also read from chat-completions messages.
+
+Token count of the rendered preset (`o200k_base`, `buildPreset` with the second fixture of the native baseline: eight tools, one guideline, one context file, one skill):
+
+| Surface | before | after | change |
+|---|---|---|---|
+| terminal | 2,030 | 2,421 | +19.3% |
+| app | 2,064 | 2,496 | +20.9% |
+| chat | 1,914 | 2,396 | +25.2% |
+
+The 76-token `Task_Management` block is no longer appended after the preset, and the 108-token first-turn reminder is no longer sent on the first request.
+
+### Why
+
+- Ten working DeepSeek V4.1 Flash sessions on the compressed core (16,114 assistant messages) showed which of its instructions lost: every session opened with a text-less `todo` call before anything was read, `start` was 3 of 225 todo calls, and 72% of assistant messages were tool calls with no text (senpi#7100). The model follows the forced first call over "open every turn with one routing line", and follows "Between handoffs: work without narration" to the letter.
+- The maintainer's direction is that V4.1 Flash reacts to conflicting instructions the way the GPT family does. A cold audit of a draft that reworded eleven of the gpt-6.2 rules found no reason specific to DeepSeek for any of the eleven, so the conflicts it fixed were fixed in the gpt-6.2 text and this core copies the result.
+- The same sessions hold no trace that asks for the V4 Flash repairs, which were written against other weights.
+
+### Why an extension could not handle it
+
+- Preset resolution, the cores and the preset contract are this builtin's own code.
+
+### Expected merge conflict zones
+
+- Fork-only files. `deepseek-v4-1-flash.ts` is a full rewrite, so any open change to it conflicts as a whole. LOW in `contract.ts`: three set literals.
+
+## 2026-11-18 - The gpt-6.2 preset is one standalone core, about half the size (#6980, senpi#6979)
+
+### What changed
+
+- `gpt-6.2.ts`: rewritten. The preset no longer renders the `gpt-6-astra` core with five texts replaced; it owns one complete core. Every sentence is rule data in `GPT62_RULES` (id, owning section, `requiresTool`, `surfaces`), and `buildGpt62Core` renders each rule once under its section, then the tool guidelines. Sections: Intent Gate, Understand before you change, Keep going, When to involve the user, Code, Done means verified, Reporting, Limits.
+- What the new core says that the old one did not: read first and edit only when the mechanism and the reason the change works can be explained, then ask why the cause is there; a request still ambiguous after looking gets one question; every part of the request is accounted for; after three failed approaches stop editing, re-read, continue (no attempt cap); reporting is proactive and decided by what this user needs or ought to know; answer length and style follow the user's situation, in their language and tone, with exact terms kept and explained.
+- What left the 6.2 prompt: the stop-condition template and its binding rule (the terminal keeps a one-line "I read this as" opener), the proposal-then-confirm rule for open-ended asks, the four-slot handoff block on every surface, the bold capitalized Asynchronous Work section (one plain tool-bound paragraph, `background-runs`, replaces it), codex's Writing style list, the delegation, eval-routing, symbol-lookup and todo sentences (tool descriptions and Task_Management carry those), the code-review and formatting conventions, and the persona lines.
+- `gpt-6-astra.ts`: the text-replacement seam added for 6.2 (`Gpt6CoreText`, `GPT6_ASTRA_TEXT`, `buildGpt6FamilyPrompt`) is removed. The app and chat wordings are derived through `swap`, which throws when its anchor no longer matches (senpi#6966). Every rendered byte is unchanged.
+- `test/suite/prompt-presets-gpt-6-2.test.ts`: the replaced-text checks become rule-table checks (each rule once under its section per surface, tool-bound rules gated, guidelines kept without a tool list, no rule text shared with `gpt-6-astra`, the emphasis budget).
+- `test/suite/prompt-presets-app-surface.test.ts`: the surface contract knows presets without a handoff block (`BLOCKLESS_PRESETS`); for those no surface asks for one.
+- `test/suite/prompt-presets-native-baseline.json`: the six `gpt-6.2` rows are recaptured. No other hash changes.
+
+Token count of the rendered preset (`o200k_base`; the tool set an OmO session has, no tool guidelines, workstation block included):
+
+| Surface | before | after | change |
+|---|---|---|---|
+| terminal | 3,466 | 1,692 | -51.2% |
+| app | 3,505 | 1,747 | -50.2% |
+| chat | 3,390 | 1,731 | -48.9% |
+
+### Why
+
+- A maintainer review of the composed GPT-6.2 prompt (senpi#6979) asked for one prompt written for 6.2 instead of a core shared with GPT-6, and for it to be shorter. OpenAI's 6.2 guide describes a model that is concise by default, that proposes a next step and waits when intent is unclear, and that is sensitive to conflicting instructions; the old core stated when to stop in several places with different conditions and carried a mandatory block beside "no narration".
+
+### Why an extension could not handle it
+
+- Preset resolution and the cores are this builtin's own code.
+
+### Expected merge conflict zones
+
+- Fork-only files. `gpt-6.2.ts` is a full rewrite, so any open change to it conflicts as a whole.
+
+## 2026-11-18 - `hasGpt6AstraSignal` joins the model-id grammars (senpi#6975)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts`: `hasGpt6AstraSignal(value)` matches the Astra tier of any GPT-6 point release (`gpt-6-astra`, `gpt-6.2-astra`, `-fast` / `-ultrafast`, a colon effort decorator, Venice's dotless form); Sol, Luna, previews and dated snapshots stay out.
+
+### Why
+
+- The goal extension's audit-free continuation prompt needed family/version keying so a new Astra release cannot silently regress to the long audit prompt.
+
+### Why an extension could not handle it
+
+- Model-id grammar is owned by the preset matchers; duplicating it in the goal extension is the bug being fixed.
+
+### Expected merge conflict zones
+
+- LOW: one new pure function beside `hasGpt6FamilySignal` / `hasGpt62Signal`.
+
+## 2026-11-18 - GPT-6.2 Astra and Sol get their own gpt-6.2 preset (senpi#6962, senpi#6942)
+
+### What changed
+
+- `gpt-6.2.ts` (new): both 6.2 ids render one preset. It is the `gpt-6-astra` core with five texts replaced at the rule that owns each. The texts and their sources are listed below. The file header holds the design note and the contradiction audit.
+  - `## Writing`: codex's 6.2 "Writing style", with the apology paragraph left to `no-reflexive-apology`, reply-template labels kept, and the em dash written as " - ".
+  - `final-message-shape`: obstacles, unguided decisions, a self-contained final message.
+  - `initiative-bias`: no invented requirements.
+  - `steering`: follow-ups and corrections carried through.
+  - `unbounded-retry`: an earlier refusal does not decide a later request.
+- `gpt-6-astra.ts`: the core builder takes those five texts as a parameter (`buildGpt6FamilyPrompt`, `Gpt6CoreText`, `GPT6_ASTRA_TEXT`). The surface variants are derived per text instead of from module constants.
+- `matchers.ts` / `contract.ts`: `hasGpt62Signal` / `isGpt62Model` resolve `gpt-6.2` ahead of `isGpt6FamilyModel`. `settings.ts` gains `"gpt-6.2"`. `presets.ts` dispatches it.
+- `test/suite/prompt-presets-native-baseline.json`: six `gpt-6.2` rows. No existing hash changes, so every other preset renders the same bytes.
+
+### Why
+
+- OpenAI's GPT-6.2 guide and codex's byte-identical 6.2 template (models.json at 5916098d02) change the Writing style. They also add rules for obstacles, invented requirements, follow-ups and earlier refusals. Before this, both ids rendered the GPT-6 Astra core.
+
+### Why an extension could not handle it
+
+- Preset resolution and the cores are this builtin's own code.
+
+### Expected merge conflict zones
+
+- Fork-only files. The `resolvePresetName` head and the preset lists in `contract.ts` and `settings.ts`.
+
+## 2026-11-10 - Every core owns the code; the smallest-change rule is gone (senpi#6358)
+
+### What changed
+
+- The ownership rule from `dynamic-prompt/changes.md` (same date) is stated in every core that carried the smallest-change rule, in that core's own register, opening with the guide's sentence verbatim as senpi#6360 shipped it for Fable 5.2 (`claude-fable-5-2.ts` keeps that opening and gains the owner-behavior and defect sentences; its senpi#6356 regression stays as is): Scope paragraph of `claude-fable-5-1.ts`, `claude-fable-5-2.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `claude-haiku-5-5.ts`, `kimi-k3.ts`, `kimi-k3-1.ts` and `deepseek-v4-1-flash.ts`; Style paragraph of `claude-fable-5.ts`, `grok-4.6.ts`, `grok-4.7.ts` and `gpt-5.5.ts`; "Pragmatism & Scope" of `gpt-5.6.ts` ("The best change is usually the smallest correct change ... A bug fix is not surrounding cleanup" is replaced); "Scope and Recovery" of `gpt-6-astra.ts` ("in the smallest correct change" is replaced). Kept in each: the request sets the scope, no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code (the Claude 5.x and Kimi cores use senpi#6360's "Add no helpers ..." form), validate only at system boundaries, the test-sizing and surgical-edit sentences.
+- The same rule in other words is gone: `gpt-5.5.ts` "no drive-by refactors"; the change-ask route's "diagnose and fix minimally" in the Claude, Kimi and DeepSeek cores and `claude-fable-5.ts` (now "fix at the cause"); `grok-4.6.ts` / `grok-4.7.ts` "fix minimally from the error" (now "fix the error at its cause"), `grok-4.6.ts` "open-ended ones take the smallest path" (now "get what fully satisfies the goal and nothing beyond it"), `grok-4.7.ts` refactor route "make the smallest change" (now "make the change").
+- Pre-existing problems: the Kimi K3 / K3.1 Scope lead and the DeepSeek Scope paragraph say a defect in the code being changed is fixed now and a problem elsewhere is a follow-up (was "a pre-existing bug ... is a follow-up ... unless the requested behavior cannot work without it"). Every core's claim-audit sentence reads "Fix failures your change caused and any that sit in the code you changed; note other pre-existing failures separately" (`grok-4.5.ts` in the orchestrator's voice, `gpt-6-astra.ts` with "report").
+- `test/suite/prompt-presets-native-baseline.json`: all 204 hashes recaptured (every preset renders a changed sentence); `sourceCommit` unchanged as the generation suite asserts it.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (senpi#6358): the owner's ruling reverses the senpi#6314 decision to leave the Fable 5.2 guide's ownership sentence out; senpi#6360 applied it to Fable 5.2 alone, this entry extends it to every core.
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The Scope / Style / Pragmatism paragraphs, the change-ask route bullet and the claim-audit sentence in each listed preset.
+
+---
+
+## 2026-11-10 - Fable 5.2 uses the guide's codebase-ownership sentence (senpi#6360, fixes #6356)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: the Scope structure paragraph opens with the exact ownership sentence from "Say who owns the code" in Anthropic's Fable 5.2 prompting guide, replacing the whole smallest-change sentence at the owner's request. The standalone discipline against hypothetical helpers and internal defensive checks remains, and the paragraph's other sentences are unchanged. The header rationale and preset documentation now describe that choice.
+- The rendered-prompt regression checks the exact guide sentence and absence of the old opening. Only Fable 5.2's six Native baseline hashes and six corresponding shared-sections hashes are recaptured; every other preset and shared section is unchanged.
+
+### Why
+
+- Without ownership framing, the guide reports that Fable 5.2 acts as a guest: it adds parallel code, leaves duplicates in place, and only mentions nearby bugs. The owner's order replaces the smallest-change instruction with the guide's ownership framing.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension's own Fable 5.2 core text.
+
+### Expected merge conflict zones
+
+- LOW: the Fable 5.2 Scope structure paragraph, header comment, documentation line, and its baseline hash rows.
+
+## 2026-11-10 - Claude Fable 5.2 preset from the Fable 5.2 prompting guide (senpi#6314)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: new standalone preset, a copy of the tuned Fable 5.1 core changed at six sentences per Anthropic's "Prompting Claude Fable 5.2" guide: ordinary obstacles against deliberate blockers in Scope, two more text-only turn endings in the last-paragraph check, the retry hard limit scoped to repeating an undiagnosed failure, building on existing code instead of a parallel copy, cost-first delegation, and a plain-writing rule in place of the mannered-prose sentence.
+- `matchers.ts`, `contract.ts`, `presets.ts`, `settings.ts`: Fable 5.2 / Mythos 5.2 ids resolve to `claude-fable-5-2` before Fable 5.1 and the generic `fable-5` matcher; a dated Fable 5 id stays on Fable 5. The provisional `claude-fable-5-5` preset is removed.
+
+### Why
+
+- `claude-fable-5-2` fell through to the Fable 5 core, the oldest Fable prompt, with none of the 5.1 repairs or the 5.2 guide's findings.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the Fable matcher order in `contract.ts` and `matchers.ts`, and the `claude-fable-5-2` rows in `prompt-presets-native-baseline.json`.
+
+## 2026-11-09 - Haiku 5.5 search-grounding sentence renders for Anthropic-native search (senpi#6264)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-haiku-5-5.ts`: `buildSearchGroundingLine` renders the training-data-cutoff sentence when the builtin `web_search` tool is active OR `nativeSearchAvailable` is set (senpi#2935).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/index.ts`: the preset extension computes `nativeSearchAvailable` from the model (`supportsNativeAnthropicWebSearch(model) && isAnthropicWebSearchEnabled()`, the same two checks the `anthropic-web-search` extension uses) on `before_agent_start` and `model_select`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: `withDefaults` preserves the flag.
+
+### Why
+
+- A Haiku 5.5 session that can search only through Anthropic-native web search never got the grounding reminder, even though the model can search; the guide's nudge applies whenever the model can search, not only when the builtin tool is mounted.
+
+### Why an extension could not handle it
+
+- The preset is itself the extension that owns this prompt text; the fix is a gate change inside it, plus a builder seam for the native-search signal.
+
+### Expected merge conflict zones
+
+- LOW: the grounding gate in `claude-haiku-5-5.ts` and `eventOptionsToBuilderInput` in `index.ts` (the in-flight language fix #5516 touches the same preset file in nearby but non-overlapping lines).
+
 ## 2026-11-03 - Opus and Fable presets declare full shared sections (senpi#5665)
 
 ### What changed

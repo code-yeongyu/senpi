@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { removeSettledTempDir } from "../../../../../scripts/vitest-temp.ts";
 import { dirname } from "node:path";
 import { TUI } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -167,6 +168,8 @@ describe("MCP manager structured dispatch", () => {
 			vi.restoreAllMocks();
 			await cleanupRoots(cleanup);
 			expect(existsSync(dirname(root.agentDir))).toBe(false);
+			// The harness directory goes once its session's tool child has exited (senpi#3570), not inside cleanup().
+			await removeSettledTempDir(harness.tempDir);
 			expect(existsSync(harness.tempDir)).toBe(false);
 			console.info(
 				"owner-context cleanup: gate resumed; deadline cleared; command joined; mocks restored; TUI stopped; harness/provider disposed; service disposed; temporary roots removed",

@@ -21,7 +21,8 @@ import type {
 	FallbackRungRefusal,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
-import { releaseOnCredentialChange } from "./credential-recovery.ts";
+import { releaseOnCredentialChange, releaseOnLimitReset } from "./credential-recovery.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { type UsageLimitScopeProbe, UnusableEntries } from "./unusable.ts";
@@ -105,6 +106,10 @@ export class RetryFallbackController {
 		return this.unusable.releaseAccountHold(provider);
 	}
 
+	releaseAccountHoldShownServable(provider: string, usage: readonly AccountLimits[]): boolean {
+		return this.unusable.releaseAccountHoldShownServable(provider, usage);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.refusedProviders.clear();
@@ -181,6 +186,7 @@ export class RetryFallbackController {
 		const model = selector && this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
 		if (boundary === "turn") await releaseOnCredentialChange(state, model, this.deps, this.unusable);
+		releaseOnLimitReset(state, model, this.deps, this.unusable);
 		if (state.pinned || !this.deps.isAuthAvailable(model.provider)) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
 		if (
@@ -444,30 +450,43 @@ export class RetryFallbackController {
 		const recoveryRevision = prior
 			? prior.recoveryRevision
 			: await this.deps.recoveryRevision?.(current.model.provider);
+		const pin = pinAfterSwitch(prior, { from, fromProvider: current.model.provider, reason, limit });
+		// A new billing pin from a usage limit lasts until the reset the limit stated, when it named one (senpi#4085).
+		const pinnedUntil =
+			pin.pinnedByBilling && prior?.pinnedByBilling !== true
+				? (this.deps.cooldowns.statedResetAt(from) ?? this.unusable.accountResetAt(current.model.provider))
+				: prior?.pinnedUntil;
 		this.state = {
 			...(recoveryRevision === undefined ? {} : { recoveryRevision }),
 			chainKey: candidate.chainKey,
 			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
 			lastAppliedThinkingLevel: thinking,
-			...pinAfterSwitch(prior, { from, fromProvider: current.model.provider, reason, limit }),
+			...pin,
+			...(pinnedUntil === undefined ? {} : { pinnedUntil }),
 		};
 		const scope = limit === undefined ? {} : { limit };
 		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason, ...scope });
 		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason, ...scope });
 	}
 
-	/** The chain governing `current`, when fallback is enabled; a model's own chain wins over an active one. */
+	/**
+	 * The chain governing `current`, when fallback is enabled. An active episode's chain wins over the
+	 * rung's own chain, so the walk continues down the chain it started on: Opus 5.5 -> Fable 5.2 -> Kimi
+	 * never detours through Fable's own chain, and a Fable session that reached Opus 5.5 never takes
+	 * Opus 5.5's chain off Anthropic (senpi#6699). Outside an episode the model's own chain governs.
+	 */
 	private managedChainKey(current: { model: Model<Api>; thinkingLevel?: ThinkingLevel }): string | undefined {
 		if (!this.deps.getSettings().modelFallback) return undefined;
 		const chains = this.canonicalChains();
-		const chainKey =
-			resolveChainKey(
-				current.model,
-				current.thinkingLevel,
-				chains,
-				fastSiblingOption(this.deps.registry, current.model),
-			) ?? this.state?.chainKey;
-		return chainKey && chains[chainKey] ? chainKey : undefined;
+		const active = this.state?.chainKey;
+		if (active && chains[active]) return active;
+		const own = resolveChainKey(
+			current.model,
+			current.thinkingLevel,
+			chains,
+			fastSiblingOption(this.deps.registry, current.model),
+		);
+		return own && chains[own] ? own : undefined;
 	}
 
 	private nextCandidate(

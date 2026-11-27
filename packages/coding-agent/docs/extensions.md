@@ -139,7 +139,7 @@ Use quick-set in non-TUI modes; the no-argument menu requires interactive UI. Pa
 
 Senpi ships built-in extensions that inject provider-native server tools when the active model supports them. These run as ordinary extensions internally but are always loaded and require no user configuration beyond having valid credentials.
 
-**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
+**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. `generate_image` itself is eval-only like `bash` (`exposure: "eval"`): whenever an `eval` tool is registered it is withheld from the model's direct tool list and called as `tool.generate_image({ prompt: "..." })` inside a cell; without an eval tool it is an ordinary direct tool. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
 
 **openai-web-search** injects the OpenAI Responses `web_search_preview` server tool following the same pattern: credential-gated, stripped on unsupported endpoints, arbitrated against its client-side counterpart.
 
@@ -350,6 +350,7 @@ user sends prompt ────────────────────�
   │   │   LLM responds, may call tools:            │       │
   │   │     ├─► tool_execution_start               │       │
   │   │     ├─► tool_call (can block)              │       │
+  │   │     ├─► tool_call_ready (final arguments)  │       │
   │   │     ├─► tool_execution_update              │       │
   │   │     ├─► tool_result (can modify)           │       │
   │   │     └─► tool_execution_end                 │       │
@@ -492,6 +493,12 @@ fence. Human input and `resume_session` release fences together with the user's 
 journaled terminal. Later wakes tagged with the run are admitted again, fences for other runs stay, and releasing a
 run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
 emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
+
+`ctx.registerRunBackgroundJob({ kind, id, description?, stop })` records a background job under the turn running at
+that moment (outside a turn it records nothing), and returns the release to call once the job ended on its own. An RPC
+`interrupt` with `background: "stop"` calls `stop(turnId)` for each job that turn recorded and names it in its answer;
+`stop` ends the job without waking the session and rejects with the reason it could not. The terminal builtin records
+every background bash session this way.
 
 #### held_wakes_released
 
@@ -1075,6 +1082,16 @@ pi.on("before_provider_request", (event, ctx) => {
 
 This is mainly useful for debugging provider serialization and cache behavior.
 
+`before_provider_request`, `provider_stream_event` and `after_provider_response` handlers can declare the providers whose requests or streams they read or change:
+
+```typescript
+pi.on("before_provider_request", (event) => ({ ...event.payload, metadata: { tag: "x" } }), {
+  providers: ["anthropic"],
+});
+```
+
+The declaration does not filter dispatch: the handler still receives every event. A device serving a hosted session advertises it, so the hosted side knows which providers' calls need that device's hooks. A handler without `providers` counts as touching every provider. The value must be a non-empty array of provider ids; anything else throws at registration, also for a handler whose `runs` side does not register it. Every other event ignores `providers`.
+
 #### after_provider_response
 
 Fired after an HTTP response is received and before its stream body is consumed. Handlers run in extension load order.
@@ -1218,6 +1235,16 @@ pi.on("tool_call", (event) => {
   if (isToolCallEventType<"my_tool", MyToolInput>("my_tool", event)) {
     event.input.action;  // typed
   }
+});
+```
+
+#### tool_call_ready
+
+Fired once for each call about to run, before the tool executes: after its whole `tool_call` chain let it run, or at once when no `tool_call` handler is registered. `event.input` is a deep copy of the arguments the tool runs with, after the `tool_call` handlers' changes, so an observer sees a path a handler redirected. Observe only: what a handler returns or changes is ignored. Not fired for a blocked call. The call waits for these handlers; Stop (the turn's abort) ends that wait and the call does not run. On a split session it fires where the call runs, not where a forwarded `tool_call` handler is served. The event type is exported as `ToolCallReadyEvent`.
+
+```typescript
+pi.on("tool_call_ready", (event) => {
+  if (event.toolName === "write") reserve(event.toolCallId, event.input.path);
 });
 ```
 
@@ -1431,6 +1458,10 @@ const note = ctx.sessionManager.reduceHistory(latestNote);
 Optional read-only getter for the absolute path to the current session's authoritative goal-store file. The host resolves it from the session manager and `ctx.cwd`; reading it performs no file creation. Persisted sessions honor session-directory overrides, while in-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Do not derive it from `getSessionFile()`.
 
 Shell tools and eval kernels expose this value as `PI_GOAL_STORE_FILE` and `ctx.cwd` as `PI_SESSION_CWD`. Hand-built contexts and older hosts may omit the getter, in which case `PI_GOAL_STORE_FILE` is unset.
+
+### ctx.telemetryPermitted
+
+Optional read-only getter: whether telemetry attributed to this session may be collected or delivered right now. It is `true` only while the host's own setting permits telemetry AND every caller of the session granted it (see `telemetry_consent` in `docs/rpc.md`). A classic launch has no caller but the host, so the host's setting alone decides. The value changes while the session runs, so read it when an event is collected and again before delivering anything buffered; drop what it no longer permits. A runner with no session answers `false`; hand-built contexts and older hosts may omit the getter, which a reader treats as `false`.
 
 ### ctx.onUserActivity()
 
@@ -1885,8 +1916,8 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 | Method | Returns | Behaviour |
 |---|---|---|
 | `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. An endpoint lives for one extension generation: a reload disposes the endpoints the retiring generation registered (also one whose registration finishes after the reload began, which answers `failed`), so register again from `session_start` with reason `reload`. Repeated failures of `drain` show one notice until a pass succeeds. |
-| `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
-| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
+| `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while input the user submitted is still on its way into the runtime. A draft still in the composer never holds a delivery (senpi#7043). |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch, holds? }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake), `held` (with `holds`: the session is idle under a person's Stop, an interrupted run or a parent's run hold, which a peer cannot release; the delivery is kept as a held notice and starts once that hold is released; an `unattended` hold alone is released by the delivery, senpi#6490) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
 | `relocationOffered()` | `boolean` | Whether the session's host offers continuing it on another computer right now. The builtin relocation tools are active only while it is `true`. |
@@ -2332,6 +2363,10 @@ From a command handler, send the text before the handler returns: messages anoth
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
+### pi.isLoopRemote()
+
+`true` when this extension runs on a hand whose agent loop runs on another machine (a hosted loop). There, `pi.sendMessage()` and `pi.sendUserMessage()` from work that outlives the call that started it (a background command, a watch, a detached task) reach that loop as durable wakes, and so does a `ctx.ui.notify()` made outside any call. The loop delivers each one as a local session would, and applies its own delivery checks (its mode, its model). A notifier that normally waits for `session_start` before it sends anything should send on a hand without one, because a hand never gets `session_start` for builtins. Everywhere else it is `false`.
+
 ### pi.appendEntry(customType, data?, options?)
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
@@ -2559,6 +2594,18 @@ pi.registerShortcut("ctrl+shift+p", {
 });
 ```
 
+### pi.registerDeviceMachine(machine)
+
+Register the operation layer of the device this session's tools run on (a `ToolMachine`, for example from `createToolMachine({ ops })`). Only tools named in `OMO_TOOLS_VIA_DAEMON` use it, today `bash`, and the bash tool reads it when a command runs. With the flag on and no machine registered, bash fails with `DeviceUnavailableError` and never runs locally.
+
+One registration per session: a second one, from any extension, throws `DeviceMachineConflictError` (`code: "device_machine_conflict"`, with `registeredBy` and `attemptedBy`). A registration made by an extension whose factory then throws is discarded with the rest of that load. If another extension registers a device machine while this load's registration is still staged (for example from an event fired during this factory), the conflict is found when the load commits: the factory cannot catch it, and the extension fails to load as a whole with `DeviceMachineConflictError`.
+
+```typescript
+import { createToolMachine } from "@code-yeongyu/senpi";
+
+pi.registerDeviceMachine(createToolMachine({ ops: myDeviceOps }));
+```
+
 ### pi.registerFlag(name, options)
 
 Register a CLI flag.
@@ -2586,6 +2633,16 @@ pi.on("tool_call", () => {
     // Nothing will prompt for permission in this session.
   }
 });
+```
+
+### pi.engine
+
+The engine this extension is running in: the same exports `import * as engine from "@code-yeongyu/senpi"` gives when the loader serves that specifier. Read the running engine's exports here when your extension is bundled or loaded in a way where its own import of that specifier could evaluate a second copy of the engine. The property is read-only and gives nothing an import does not.
+
+```typescript
+export default function (pi: ExtensionAPI) {
+  const { createAgentSession } = pi.engine;
+}
 ```
 
 ### pi.getSubscriptionLimits()
@@ -3447,6 +3504,12 @@ Add these fields to `pi.registerTool(...)`:
 **Important:** You cannot register a tool named `tool_search` yourself; it is a reserved name.
 
 A tool can run other tools with `ctx.executeTool(name, args, { signal, onUpdate })`. Nested calls go through argument validation and the `tool_call` and `tool_result` handlers like model-issued calls; their events carry `parentToolCallId` and ids of the form `<calling id>/<n>`. They do not appear in the transcript: a bounded record is kept as `nestedCalls` on the calling tool's result, and their usage counts toward the session cost.
+
+A tool that already did the work itself can still run the `tool_result` handlers for it with `ctx.reportToolResult({ toolName, input, content, details?, isError? })`. No tool runs and no `tool_call` handler is asked; the event carries `parentToolCallId` and an id of the form `<calling id>/reported-<n>`. It resolves to `{ toolCallId, result, failures }`: `result` is what the handlers changed (undefined when none changed anything), and `failures` lists the handlers that threw, timed out or were interrupted, which never rejects the call. Code mode uses it for the files an `eval` cell wrote without calling `write` or `edit`.
+
+`ctx.issuedByModel` says whether the model issued the running call, either through the agent loop or through a provider's exec channel (Cursor), so its result joins the transcript. On a hand (brain/hand split), a call the brain's agent loop dispatched counts too. It is `false` for a call made through `ctx.executeTool()` or `pi.executeTool()`.
+
+`ctx.promptSurface` is the prompt surface (`"terminal"`, `"app"` or `"chat"`) of the session the running call belongs to, which says what that session's host does with a result. On a hand it is the brain session's, sent with the call. It is absent when the runtime knows none.
 
 #### Prompt Cache Warning
 

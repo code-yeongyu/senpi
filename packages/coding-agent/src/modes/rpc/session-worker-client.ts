@@ -1,3 +1,4 @@
+import type { TelemetryCallersVerdict } from "../../core/telemetry-consent.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
@@ -146,6 +147,12 @@ export class SessionWorkerClient {
 		if (result.type !== "result") throw new Error("Invalid worker browser_engine response");
 	}
 
+	/** The callers' half of the worker session's telemetry decision (senpi#7446), as the host recomputes it. */
+	async setTelemetryCallers(verdict: TelemetryCallersVerdict): Promise<void> {
+		const result = await this.request({ type: "telemetry_callers", verdict });
+		if (result.type !== "result") throw new Error("Invalid worker telemetry_callers response");
+	}
+
 	/** Moves the worker's live session to another permission preset (a later `open_session.permissionPreset`). */
 	async setPermissionPreset(preset: string): Promise<void> {
 		const result = await this.request({ type: "permission_preset", preset });
@@ -283,6 +290,14 @@ export class SessionWorkerClient {
 		return this.exited;
 	}
 
+	/**
+	 * Ends this worker because the host cannot prove it runs the stricter telemetry policy its callers now require
+	 * (senpi#7446). A stopped worker collects and delivers nothing, which is the deny-safe outcome.
+	 */
+	failClosed(reason: string): void {
+		this.fail(reason);
+	}
+
 	quarantine(): void {
 		this.intake?.permits.close();
 		this.stopped = true;
@@ -304,6 +319,8 @@ export class SessionWorkerClient {
 	}
 
 	private receive(message: SessionWorkerToHost): void {
+		// A message from the worker is progress: the no-progress deadline restarts (senpi#6452).
+		this.requests.noteProgress();
 		if (this.stopped) {
 			if ("signal" in message && message.signal) acknowledge(message.signal, false);
 			return;
@@ -567,7 +584,11 @@ export class SessionWorkerClient {
 	private fail(error: string): void {
 		if (this.stopped) return;
 		this.acceptance?.retire("worker_failed");
-		this.callbacks.failure(error);
+		try {
+			this.callbacks.failure(error);
+		} catch {
+			// A failure report that itself fails (a closed stderr) must never keep this worker running (senpi#7446).
+		}
 		this.terminalFailure = error;
 		if (this.writer && this.sessionId) {
 			this.writer.enqueue(this.sessionId, { type: "session_error", error });

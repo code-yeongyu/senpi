@@ -8,7 +8,6 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 	ExtensionHandler,
-	ModelSelectEvent,
 } from "../../types.ts";
 import { resolveActivePresetName } from "./active-preset.ts";
 import { resolvePreset } from "./presets.ts";
@@ -57,10 +56,6 @@ function getSettings(ctx: ExtensionContext): ReturnType<typeof loadPromptPresetS
 	return loadPromptPresetSettings(SettingsManager.create(ctx.cwd));
 }
 
-function getPresetName(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): string | undefined {
-	return resolveActivePresetName(ctx, event?.model ?? ctx.model);
-}
-
 function hasUserSystemPrompt(options: SystemPromptOptionsLike | undefined): boolean {
 	return Boolean(options?.customPrompt);
 }
@@ -70,8 +65,14 @@ function withUserAppends(presetPrompt: string, options: SystemPromptOptionsLike 
 	return append ? `${presetPrompt}\n\n${append}` : presetPrompt;
 }
 
-function refreshHeader(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): void {
-	const presetName = getPresetName(ctx, event);
+/**
+ * The header is the first row of the transcript, so it is set once at session start and never rewritten:
+ * a model switch would otherwise change a row far above the screen, and the renderer can only show that by
+ * clearing the scrollback and replaying the whole transcript (sisyphuslabs/doriterm#2745). The switch is
+ * announced by the model status row instead.
+ */
+function setStartupHeader(ctx: ExtensionContext): void {
+	const presetName = resolveActivePresetName(ctx, ctx.model);
 	if (!presetName) {
 		ctx.ui.setHeader(undefined);
 		return;
@@ -115,11 +116,10 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
 	pi.on("session_start", async (_event, ctx) => {
-		refreshHeader(ctx);
+		setStartupHeader(ctx);
 	});
 
 	pi.on("model_select", async (event, ctx) => {
-		refreshHeader(ctx, event);
 		// Returning null resets to the base prompt, which already carries the
 		// user's custom prompt and appends.
 		if (hasUserSystemPrompt(event.systemPromptOptions)) {

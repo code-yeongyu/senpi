@@ -40,6 +40,10 @@ export interface EvalPromptOptions {
 	readonly maxDetachedCells?: number;
 	/** Active tools' kernel globals; each documentation line joins the prelude helper list. */
 	readonly kernelPreludes?: readonly KernelPreludeContribution[];
+	/** Tools withheld from the model's direct list and reachable only as `tool.<name>(...)` in a cell (senpi#6886). */
+	readonly evalOnlyTools?: readonly string[];
+	/** `jsCells`: document TypeScript cells and the Bun-only `scope()` helper (senpi#7381); absent leaves the text as it was. */
+	readonly jsCells?: { readonly typescript: boolean; readonly scope: boolean };
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
@@ -107,12 +111,15 @@ export function buildEvalPrompt(
 		styleDefault: style === "default",
 		hostLine: options.hostLine ?? "",
 		jsBun: options.jsRuntime?.name === "bun",
+		jsTypescript: enabled.js && options.jsCells?.typescript === true,
+		jsScope: enabled.js && options.jsCells?.scope === true && options.jsRuntime?.name === "bun",
 		jsVersion: options.jsRuntime?.version ?? "",
 		// pinnedDisplayPath: the test-only checkout pin (senpi#5067); the path itself unless SENPI_TEST_WORKSTATION pins it.
 		bunSkillPath: options.bunSkillPath === undefined ? "" : pinnedDisplayPath(options.bunSkillPath),
 		runBudgetSeconds: String(options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS),
 		maxDetachedCells: String(options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS),
 		kernelPreludeDocs: (options.kernelPreludes ?? []).map((prelude) => prelude.documentation).join("\n"),
+		evalOnlyTools: (options.evalOnlyTools ?? []).join(", "),
 	};
 	const rendered = renderTemplate(EVAL_PROMPT_TEMPLATE, context)
 		.replace(/\n{3,}/g, "\n\n")

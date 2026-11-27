@@ -125,7 +125,8 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 
 		expect(session.getActiveToolNames()).toEqual([
 			"apply_patch",
-			// generate_image is search-exposed: a by-name call activates it (senpi#1682).
+			// generate_image is eval-exposed (senpi#6269): this session registers no eval tool, so it is direct.
+			"generate_image",
 			"todo",
 			"web_search",
 			"webfetch",

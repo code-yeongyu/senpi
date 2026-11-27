@@ -28,7 +28,9 @@ const root = realpathSync(mkdtempSync(join(tmpdir(), "s3110-bench-")));
 const agentDir = join(root, "agent");
 const sessionDir = join(root, "sessions");
 const cwd = join(root, "project");
-for (const dir of [agentDir, sessionDir, cwd]) mkdirSync(dir, { recursive: true });
+// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+mkdirSync(agentDir, { recursive: true, mode: 0o700 });
+for (const dir of [sessionDir, cwd]) mkdirSync(dir, { recursive: true });
 writeFileSync(join(cwd, "README.md"), "bench\n");
 writeFileSync(join(agentDir, "trust.json"), `${JSON.stringify({ [cwd]: true })}\n`);
 const files = values("file").map((file) => {

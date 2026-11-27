@@ -1,6 +1,7 @@
 import { TURN_RETRY_SUPPRESSION_PREFIX } from "@earendil-works/pi-ai/auth/pool/failover";
 import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
 import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
+import { hasRefusedGrant } from "./auth-reprobe.ts";
 import { type CredentialAction, type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 
 /**
@@ -14,6 +15,7 @@ export type RunSlot = {
 	name: string;
 	blockedUntil?: number;
 	blockReason?: string;
+	refusedGrant?: true;
 	failureCount?: number;
 	lease?: { id: string; expiresAt: number };
 	pinned?: boolean;
@@ -56,7 +58,7 @@ export type RunCredentialFailoverOptions<TEvent, TSlot extends RunSlot> = {
 	 */
 	errorFromEvent?: (event: TEvent) => unknown | undefined;
 	/** Persisted BEFORE a replacement slot is selected so a crash never forgets a block. */
-	persistBlock: (slot: TSlot, block: CredentialBlock) => void | Promise<void>;
+	persistBlock: (slot: TSlot, block: CredentialBlock, error?: unknown) => void | Promise<void>;
 	onRotate?: (event: CredentialFailoverEvent<TSlot>) => void | Promise<void>;
 	onSuccess?: (slot: TSlot) => void | Promise<void>;
 	/**
@@ -97,8 +99,11 @@ export class CredentialFailoverError extends Error {
 	}
 }
 
-export function isAvailable(slot: Pick<RunSlot, "blockReason" | "blockedUntil">, now: number): boolean {
-	if (slot.blockReason === "account_disabled") return false;
+export function isAvailable(
+	slot: Pick<RunSlot, "blockReason" | "blockedUntil" | "refusedGrant">,
+	now: number,
+): boolean {
+	if (slot.blockReason === "account_disabled" || hasRefusedGrant(slot)) return false;
 	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) return false;
 	// A live lease marks the one caller admitted to run the half-open probe.
 	// listSlots excludes that lease for later callers; the holder must remain runnable.
@@ -349,7 +354,7 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 				}
 
 				unsettled = undefined;
-				await options.persistBlock(slot, action.block);
+				await options.persistBlock(slot, action.block, error);
 				attempted.add(slot.name);
 				const failure = new CredentialFailoverError(action, error);
 				lastError = failure;

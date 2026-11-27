@@ -169,7 +169,11 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 	const explicitKeys = new Set<string>();
 	const tombstones = new Set<string>();
 
-	const expandEntries = (entries: readonly string[], keySelector: string, sessionProvider: string): string[] =>
+	// Two entries can name one rung (`k3` and `kimi-k3` both reach Kimi Code's `k3`); the first keeps its place.
+	const expandEntries = (entries: readonly string[], keySelector: string, sessionProvider: string): string[] => [
+		...new Set(expandEach(entries, keySelector, sessionProvider)),
+	];
+	const expandEach = (entries: readonly string[], keySelector: string, sessionProvider: string): string[] =>
 		entries.flatMap((entry) => {
 			const bare = parseBareSelector(entry);
 			if (bare) {

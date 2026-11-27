@@ -2,11 +2,10 @@
  * List available models with optional fuzzy search
  */
 
-import type { Api, Model } from "@earendil-works/pi-ai";
-import { fuzzyFilter } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { formatNoModelsAvailableMessage } from "../core/auth-guidance.ts";
 import type { ModelRuntime } from "../core/model-runtime.ts";
+import { listModelsOf } from "../engine/models.ts";
 
 /**
  * Format a number as human-readable (e.g., 200000 -> "200K", 1000000 -> "1M")
@@ -31,36 +30,23 @@ export async function listModels(
 	searchPattern?: string,
 	signal?: AbortSignal,
 ): Promise<void> {
-	const loadError = modelRuntime.getError();
-	if (loadError) {
-		console.error(chalk.yellow(`Warning: errors loading models.json:\n${loadError}`));
+	const { value: listing } = listModelsOf(modelRuntime, searchPattern ? { pattern: searchPattern } : {});
+	if (listing.loadError) {
+		console.error(chalk.yellow(`Warning: errors loading models.json:\n${listing.loadError}`));
 	}
 
 	if (signal?.aborted) return;
-	const models = [...modelRuntime.getModels()];
 
-	if (models.length === 0) {
+	if (listing.available === 0) {
 		console.log(formatNoModelsAvailableMessage());
 		return;
 	}
 
-	// Apply fuzzy filter if search pattern provided
-	let filteredModels: Model<Api>[] = models;
-	if (searchPattern) {
-		filteredModels = fuzzyFilter(models, searchPattern, (m) => `${m.provider} ${m.id}`);
-	}
-
+	const filteredModels = listing.models;
 	if (filteredModels.length === 0) {
 		console.log(`No models matching "${searchPattern}"`);
 		return;
 	}
-
-	// Sort by provider, then by model id
-	filteredModels.sort((a, b) => {
-		const providerCmp = a.provider.localeCompare(b.provider);
-		if (providerCmp !== 0) return providerCmp;
-		return a.id.localeCompare(b.id);
-	});
 
 	// Calculate column widths
 	const rows = filteredModels.map((m) => ({

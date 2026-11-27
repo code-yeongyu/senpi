@@ -37,6 +37,7 @@ host-handoff.ts, host-successor.ts, host-stop.ts, host-probe.ts, host-launch.ts
 host-daemon-paths.ts, host-daemon-state.ts, host-daemon-registration.ts
                           Per-socket daemon directory, pointer pidfile, generations (I3)
 host-pointer-election.ts  An absent pointer goes back to the ONE proven live generation (link, never replace; senpi#1911)
+host-unit-placement.ts    A generation's supervisor in its own `systemd-run --user --scope` unit (Linux, senpi#7099); the unit/cgroup status reports
 host-launch-spec.ts       `--launch-spec` parse + trust proof; host-daemon-env.ts = env allowlist
 host-runner.ts            The `senpi host` requests -> { payload, exitCode }
 host-session-runner.ts    Short-lived attached clients for `senpi host session`; host-session-ref.ts resolves a
@@ -58,7 +59,8 @@ effect-ledger.ts, effect-record.ts
                           status stream delivers after the causing record)
 host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on three-part evidence
 host-gc-pass.ts, host-gc-pass-marker.ts   The budgeted gc pass ensure schedules after returning (`gc-last-run.json`)
-host-ensure-{start,stop,client,types}.ts, host-internal-dir-reaper.ts, host-bind-alias-reaper.ts, host-ensure-liveness.ts   ensureHost's start + readiness gate, the recorded stop path, client identity, options, tmpdir reapers (hop dirs, killed hosts' bind aliases), stall refusal
+host-ensure-{start,stop,client,types}.ts, host-internal-dir-reaper.ts, host-bind-alias-reaper.ts, host-ensure-liveness.ts   ensureHost's start + readiness gate, the recorded stop path, client identity, options, reapers (hop dirs in the daemon and temp dirs, killed hosts' bind aliases), stall refusal
+host-internal-hop-guard.ts  A supervised host re-binds its vanished hop entry, or drains when it cannot (senpi#7452)
 host-observers.ts, host-zero-session-trim.ts  Host self-observation: stall watchdog, memory sampler, zero-session + busy-host trim (`host_trimmed`)
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit (orchestration only)
 host-lifecycle-{launch,proxy,activity,drain,shutdown,scratch,stall-wait}.ts, host-cli-entry.ts, host-supervisor-log.ts
@@ -92,6 +94,7 @@ changes.md                Fork-specific RPC behavior record
 - Pending work is rejected on disconnect or child exit; preserve request/response correlation.
 - Child stderr is emitted and embedded raw; treat diagnostics as secret-bearing.
 - Documented lazy boundaries (the root rule allows inline `import()` only at documented ones): `host-reservations.ts` (`claim()`, on the takeover of an unprovable claim) and `host-generations.ts` (the prune of an ended generation's unproven claims) load `core/session-write-fence.ts` on first use, so the lifecycle supervisor, which imports both modules, keeps the fence module and its synchronous read out of its startup graph (`test/supervisor-import-graph.test.ts`).
+- `host-lifecycle-launch.ts` `loadHostChildTrustHandOff` loads `engine-trust/adopted.ts`, then `engine-trust/hand-off.ts` only after an adoption (senpi#6312). A static import of the hand-off measured 179 supervisor modules (95 of them zod) instead of 79; a static import of `host-spawn-environment.ts` reaches the forbidden `@earendil-works/pi-ai` barrel through `host-daemon-env.ts`.
 - `host-lifecycle-launch.ts` loads `mcp-presenter-bootstrap.ts` only when fd 4 is supplied. A static import measured 67 modules (56 after allowed leaves, versus the unchanged ceiling of 55) in `test/supervisor-import-graph.test.ts`. Preserve this opt-in lazy boundary and its terminal catch: bootstrap loss must close only the presenter channel, never the shared supervisor or slot-3 lifetime channel.
 
 ### Shared-daemon invariants (I1-I4)

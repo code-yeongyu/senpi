@@ -2,7 +2,8 @@
  * The authority word of a host-mode delegated connection (omo-relay-daemon#307).
  *
  * One `Int32Array(SharedArrayBuffer(8))` per incarnation of a delegated socket: index 0 packs
- * `epoch << 3 | retired << 2 | mask` (mask bit 0 = interactive_user, bit 1 = task_parent), index 1 is the incarnation,
+ * `epoch << 4 | retired << 3 | mask` (mask bit 0 = interactive_user, bit 1 = task_parent, bit 2 = peer_agent), index 1 is
+ * the incarnation,
  * stamped once before the buffer is shared. The host thread is the only writer, and every write is monotone within a
  * word: mask bits are only cleared, retired is only set, the epoch only grows and changes only on a real transition.
  * Host and worker threads read the same memory with one `Atomics.load` per command, so the load at a command's first
@@ -11,12 +12,13 @@
  * This module has no package imports on purpose: worker-thread tests load it directly.
  */
 
-/** The two roles a word can carry, in bit order. */
-const WORD_ROLES = ["interactive_user", "task_parent"] as const;
-const RETIRED_BIT = 4;
-const EPOCH_SHIFT = 3;
-/** The epoch field holds 29 bits; within one incarnation it never passes 4, so this bound is an invariant check. */
-const EPOCH_LIMIT = 2 ** 29;
+/** The roles a word can carry, in bit order. */
+const WORD_ROLES = ["interactive_user", "task_parent", "peer_agent"] as const;
+const MASK_BITS = 7;
+const RETIRED_BIT = 8;
+const EPOCH_SHIFT = 4;
+/** The epoch field holds 28 bits; within one incarnation it never passes 4, so this bound is an invariant check. */
+const EPOCH_LIMIT = 2 ** 28;
 
 /** The largest incarnation slot [1] holds unchanged. */
 export const INCARNATION_MAX = 0x7fffffff;
@@ -42,7 +44,7 @@ export function rolesOfMask(mask: number): string[] {
 }
 
 export function decodeWord(word: number): AuthorityState {
-	const mask = word & 3;
+	const mask = word & MASK_BITS;
 	return { epoch: word >>> EPOCH_SHIFT, retired: (word & RETIRED_BIT) !== 0, mask, roles: rolesOfMask(mask) };
 }
 
@@ -57,7 +59,7 @@ export function createAuthority(incarnation: number, mask: number): SharedArrayB
 		throw new Error("authority_incarnation_invalid");
 	const buffer = new SharedArrayBuffer(8);
 	const view = new Int32Array(buffer);
-	view[0] = packWord(1, false, mask & 3);
+	view[0] = packWord(1, false, mask & MASK_BITS);
 	view[1] = incarnation;
 	return buffer;
 }

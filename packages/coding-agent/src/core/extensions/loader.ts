@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
-import type { Provider } from "@earendil-works/pi-ai";
+import type { Provider, ProviderId } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
@@ -78,6 +78,7 @@ import type {
 	FilesystemPolicy,
 	LazyToolActivator,
 	LoadExtensionsResult,
+	ProviderHookOptions,
 	MarkdownTransformer,
 	MemoryReporter,
 	MessageRenderer,
@@ -96,7 +97,8 @@ import type {
 	SessionKind,
 	ToolDefinition,
 } from "./types.ts";
-import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./types.ts";
+import type { ToolMachine } from "../tools/machine.ts";
+import { DEFAULT_EXTENSION_SESSION_PROFILE, DeviceMachineConflictError, EMPTY_SESSION_CONTEXT } from "./types.ts";
 
 /** Per-session extension inputs a caller may name; every absent one takes its classic default. */
 export interface ExtensionSessionOptions {
@@ -118,6 +120,25 @@ function assertExtensionSide(extension: Extension, runs: unknown, registration: 
 	if (runs === "brain" || runs === "hand") return;
 	throw new Error(
 		`Extension "${extension.path}" declared runs: ${JSON.stringify(runs)} for ${registration}; runs must be "brain" or "hand".`,
+	);
+}
+
+/** The events whose handlers may declare `{ providers }` (CK21). */
+const PROVIDER_HOOK_EVENTS: readonly string[] = [
+	"before_provider_request",
+	"provider_stream_event",
+	"after_provider_response",
+];
+
+function declaredProviders(extension: Extension, providers: unknown, registration: string): readonly ProviderId[] {
+	if (
+		Array.isArray(providers) &&
+		providers.length > 0 &&
+		providers.every((provider) => typeof provider === "string" && provider !== "")
+	)
+		return Object.freeze([...(providers as ProviderId[])]);
+	throw new Error(
+		`Extension "${extension.path}" declared providers: ${JSON.stringify(providers)} for ${registration}; providers must be a non-empty array of provider ids.`,
 	);
 }
 
@@ -301,6 +322,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	};
 
 	const runtime: ExtensionRuntime = {
+		deviceMachine: undefined,
+		isLoopRemote: () => false,
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
@@ -451,11 +474,13 @@ function createExtensionAPI(
 		}
 		runtime.assertActive();
 	};
+	let deviceMachineStaged = false;
 	const applyRuntimeChange = (change: () => void) => {
 		if (state === "loading") pendingRuntimeChanges.push(change);
 		else change();
 	};
 	const clearPending = () => {
+		deviceMachineStaged = false;
 		pendingFlagValues.clear();
 		pendingRuntimeChanges.length = 0;
 		loadingUnsubscribers.length = 0;
@@ -465,19 +490,25 @@ function createExtensionAPI(
 		cwd,
 		sessionKind: session.sessionKind,
 		sessionContext: session.sessionContext,
+		get engine() {
+			return _bundledPiCodingAgent;
+		},
 
 		// Registration methods - write to extension
 		on(
 			event: string,
 			handler: HandlerFn,
-			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions,
+			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions & ProviderHookOptions,
 		): () => void {
 			assertActive();
 			const runs = options?.runs;
-			if (runs !== undefined) {
-				assertExtensionSide(extension, runs, `"${event}"`);
-				if (session.side !== undefined && runs !== session.side) return () => {};
-			}
+			if (runs !== undefined) assertExtensionSide(extension, runs, `"${event}"`);
+			// Checked on every side, also for a handler this side does not register: a malformed declaration always throws.
+			const providers =
+				PROVIDER_HOOK_EVENTS.includes(event) && options?.providers !== undefined
+					? declaredProviders(extension, options.providers, `"${event}"`)
+					: undefined;
+			if (runs !== undefined && session.side !== undefined && runs !== session.side) return () => {};
 			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => {
 				// A child event can run inside its parent's task-tool async scope.
 				// Bind the host context here, preserving registered-handler metadata.
@@ -493,6 +524,10 @@ function createExtensionAPI(
 			if (runs !== undefined) {
 				extension.handlerSides ??= new WeakMap();
 				extension.handlerSides.set(registeredHandler, runs);
+			}
+			if (providers !== undefined) {
+				extension.handlerProviders ??= new WeakMap();
+				extension.handlerProviders.set(registeredHandler, providers);
 			}
 			if (event === "before_agent_start" && options?.previewSafe === true) {
 				extension.previewSafeHandlers ??= new WeakSet();
@@ -515,6 +550,19 @@ function createExtensionAPI(
 				handlers.splice(handlerIndex, 1);
 				if (handlers.length === 0) extension.handlers.delete(event);
 			};
+		},
+
+		registerDeviceMachine(machine: ToolMachine): void {
+			assertActive();
+			if (runtime.deviceMachine !== undefined) {
+				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
+			}
+			if (deviceMachineStaged) throw new DeviceMachineConflictError(extension.path, extension.path);
+			deviceMachineStaged = true;
+			// Staged like provider registrations: a factory that throws after registering leaves no device behind.
+			applyRuntimeChange(() => {
+				runtime.deviceMachine = { machine, extensionPath: extension.path };
+			});
 		},
 
 		registerTool(tool: ToolDefinition): void {
@@ -766,6 +814,8 @@ function createExtensionAPI(
 			runtime.sendUserMessage(content, options);
 		},
 
+		isLoopRemote: () => runtime.isLoopRemote(),
+
 		appendEntry(customType: string, data?: unknown, options?: AppendEntryOptions): void {
 			assertActive();
 			runtime.appendEntry(customType, data, options);
@@ -981,6 +1031,11 @@ function createExtensionAPI(
 		commit: () => {
 			if (state !== "loading") return;
 			runtime.assertActive();
+			// Checked before anything is applied: another extension may have registered a device machine while this load's
+			// registration was staged (from an event fired during this factory). The load then fails whole, nothing half-applied.
+			if (deviceMachineStaged && runtime.deviceMachine !== undefined) {
+				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
+			}
 			for (const [name, value] of pendingFlagValues) {
 				if (!runtime.flagValues.has(name)) runtime.flagValues.set(name, value);
 			}

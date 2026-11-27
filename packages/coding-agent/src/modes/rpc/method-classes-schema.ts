@@ -25,6 +25,7 @@ import {
 	rpcMessageLengthError,
 	sessionContextError,
 	sessionRetryFallbackError,
+	sessionTelemetryError,
 } from "./rpc-input-validation.ts";
 import { sessionEnvShapeError } from "./session-caller-env.ts";
 
@@ -78,12 +79,22 @@ function refuse(reason: string): RpcInboundValidation {
 function fieldBoundsError(record: Record<string, unknown>): string | undefined {
 	const payload = rpcCommandPayloadError(record) ?? rpcMessageLengthError(record);
 	if (payload !== undefined) return payload;
-	if (record.type === "open_session" || record.type === "warm") {
+	if (
+		record.type === "open_session" ||
+		record.type === "warm" ||
+		record.type === "park_session" ||
+		record.type === "claim_session"
+	) {
 		const context = sessionContextError(record.context);
 		if (context !== undefined) return context;
 	}
-	if (record.type === "open_session")
-		return sessionRetryFallbackError(record.retryFallback) ?? sessionEnvShapeError(record.env);
+	if (record.type === "open_session" || record.type === "claim_session")
+		return (
+			sessionRetryFallbackError(record.retryFallback) ??
+			sessionEnvShapeError(record.env) ??
+			sessionTelemetryError(record.telemetry)
+		);
+	if (record.type === "attach_session") return sessionTelemetryError(record.telemetry);
 	if (record.type === "set_retry_fallback") return sessionRetryFallbackError(record.retryFallback);
 	return undefined;
 }

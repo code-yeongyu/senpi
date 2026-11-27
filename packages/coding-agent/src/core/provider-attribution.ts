@@ -1,7 +1,5 @@
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai/compat";
 import { APP_NAME } from "../config.ts";
-import type { SettingsManager } from "./settings-manager.ts";
-import { isInstallTelemetryEnabled } from "./telemetry.ts";
 
 const OPENROUTER_HOST = "openrouter.ai";
 const NVIDIA_NIM_HOST = "integrate.api.nvidia.com";
@@ -36,9 +34,9 @@ function isCloudflareModel(model: Model<Api>): boolean {
 
 function getDefaultAttributionHeaders(
 	model: Model<Api>,
-	settingsManager: SettingsManager,
+	telemetryPermitted: boolean,
 ): Record<string, string> | undefined {
-	if (!isInstallTelemetryEnabled(settingsManager)) {
+	if (!telemetryPermitted) {
 		return undefined;
 	}
 
@@ -77,15 +75,16 @@ function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Re
 	return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
 }
 
+/** `telemetryPermitted` is the session's decision from `telemetry-consent.ts` (senpi#7446), read per request. */
 export function mergeProviderAttributionHeaders(
 	model: Model<Api>,
-	settingsManager: SettingsManager,
+	telemetryPermitted: boolean,
 	sessionId: string | undefined,
 	...headerSources: Array<ProviderHeaders | undefined>
 ): ProviderHeaders | undefined {
 	const merged: ProviderHeaders = {
 		...getSessionHeaders(model, sessionId),
-		...getDefaultAttributionHeaders(model, settingsManager),
+		...getDefaultAttributionHeaders(model, telemetryPermitted),
 	};
 
 	for (const headers of headerSources) {

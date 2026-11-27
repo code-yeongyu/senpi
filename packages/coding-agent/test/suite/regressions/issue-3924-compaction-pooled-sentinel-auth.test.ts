@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -126,9 +127,9 @@ beforeEach(() => {
 	});
 });
 
-afterEach(() => {
+afterEach(async () => {
 	vi.restoreAllMocks();
-	rmSync(dir, { recursive: true, force: true });
+	await rm(dir, { recursive: true, force: true });
 });
 
 async function pooledRegistry(

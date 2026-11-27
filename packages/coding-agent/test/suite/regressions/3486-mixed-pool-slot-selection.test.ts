@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
@@ -34,7 +35,7 @@ describe("a mixed pool never hands a session the slot of the other kind (senpi#3
 		dir = mkdtempSync(join(tmpdir(), "senpi-3486-mixed-"));
 		repository = new CredentialSlotRepository(join(dir, "credential-pool-state.json"));
 	});
-	afterEach(() => rmSync(dir, { recursive: true, force: true }));
+	afterEach(() => rm(dir, { recursive: true, force: true }));
 
 	const sources = () => ({ providerId: "openrouter", credential: mixed(), env: () => undefined, repository });
 

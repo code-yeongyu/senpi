@@ -1,3 +1,24 @@
+## 2026-11-22 - Resample DeepSeek DSML leaks and reset TTSR recovery on user continues (senpi#4621)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/token-grammar.ts` recognizes the exact DeepSeek DSML opening and closing markers across stream chunks.
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/control-leak.ts` routes unquoted DSML in assistant streams to the existing bounded resample path and keeps ignoring DSML markup in tool arguments.
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/follow-up-limit.ts` recognizes the engine's durable user-directed continue entries as fresh correction boundaries.
+
+### Why
+
+- The DSML envelope went unrecognized, so a repeating leak received a collapse nudge instead of a resample.
+- A manual `.` continue has no plain user-message entry, so the previous nudge could exhaust every subsequent manual turn before it got a recovery attempt.
+
+### Why an extension could not handle it
+
+- The TTSR builtin owns token classification and its follow-up budget. It can fix both without a core change.
+
+### Expected merge conflict zones
+
+- Low: TTSR's token parser, control-leak detector, and persisted follow-up limit.
+
 ## 2026-10-22 — Markup that spells a special token is not a leak (senpi#3880)
 
 ### What changed

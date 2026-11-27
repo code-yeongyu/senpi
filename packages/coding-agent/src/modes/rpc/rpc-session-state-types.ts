@@ -6,6 +6,7 @@ import type { QueuedInput } from "../../core/agent-session.ts";
 import type { HoldKind } from "../../core/engine-turn-hold.ts";
 import type { PermissionMode } from "../../core/permission-mode.ts";
 import type { ProviderOrigin } from "../../core/provider-origin.ts";
+import type { RetryWait } from "../../core/retry-wait.ts";
 
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage } from "../../core/extensions/types.ts";
@@ -35,6 +36,11 @@ export interface RpcAuthProvider {
 	keyHint?: string;
 	/** Where the provider is defined, so a client can name the file or extension to edit (senpi#4328). */
 	origin?: ProviderOrigin;
+	/**
+	 * Random, non-secret id of the stored sign-in, new on every sign-in (senpi#4099); absent when none is stored or
+	 * it predates the id. Send it as `logout` `expectedLoginId` to sign out only this sign-in (senpi#7406).
+	 */
+	loginId?: string;
 }
 
 /**
@@ -89,7 +95,7 @@ export interface RpcProviderAccount {
 	orgName?: string;
 	subscriptionType?: string;
 	/** The sign-in connection test's last result. */
-	check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
+	check?: { model: string; outcome: "ok" | "failed"; reason?: string; message?: string; status?: number; at: number };
 	/** `needs_sign_in`: the account must sign in again before it is used. */
 	signIn?: "signed_in" | "needs_sign_in";
 	/** Actual session-local selection, not a prediction from account order or pin. */
@@ -223,6 +229,7 @@ export interface RpcSessionState extends Partial<PermissionMode> {
 	usageTotals: UsageTotals;
 	contextUsage?: ContextUsage;
 	retryAttempt: number;
+	retryWait?: RetryWait;
 	isBashRunning: boolean;
 	/** Open question prompts awaiting an answer. Absent when none are pending. */
 	pendingQuestions?: RpcQuestionUiRequest[];

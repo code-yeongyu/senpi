@@ -11,7 +11,10 @@ export interface JavaScriptKernelHarnessOptions {
 	readonly localRoots?: JavaScriptKernelOptions["localRoots"];
 	readonly artifactsDir?: string;
 	readonly sessionEnv?: JavaScriptKernelOptions["sessionEnv"];
+	readonly inheritedEnv?: JavaScriptKernelOptions["inheritedEnv"];
 	readonly workerEntryUrl?: JavaScriptKernelOptions["workerEntryUrl"];
+	readonly typescriptCells?: boolean;
+	readonly scopeHelper?: boolean;
 }
 
 export async function withJavaScriptKernel<T>(
@@ -25,7 +28,10 @@ export async function withJavaScriptKernel<T>(
 		...(options.localRoots === undefined ? {} : { localRoots: options.localRoots }),
 		...(options.artifactsDir === undefined ? {} : { artifactsDir: options.artifactsDir }),
 		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
+		...(options.inheritedEnv === undefined ? {} : { inheritedEnv: options.inheritedEnv }),
 		...(options.workerEntryUrl === undefined ? {} : { workerEntryUrl: options.workerEntryUrl }),
+		...(options.typescriptCells === undefined ? {} : { typescriptCells: options.typescriptCells }),
+		...(options.scopeHelper === undefined ? {} : { scopeHelper: options.scopeHelper }),
 	});
 	try {
 		return await run(kernel);

@@ -9,6 +9,7 @@ import {
 	Opt,
 	OptBool,
 	OptId,
+	OptNum,
 	OptPath,
 	OptStr,
 	PathStr,
@@ -20,10 +21,16 @@ import {
 	SessionKind,
 	Str,
 	Strings,
+	TelemetryConsent,
+	TelemetryDeclaration,
 	ThinkingLevel,
 } from "./method-classes-schema-fields.ts";
+import { MOVE_INLINE_MAX_BYTES, MOVE_INLINE_MAX_FILES } from "./session-move-wire.ts";
 
 const move = <const P extends TProperties>(properties: P) => command("move_session", properties);
+
+/** A repository identity as `move_session` op `identity` answers it and op `prepare` takes it back (senpi#6435). */
+const RepositoryIdentity = Type.Object({ rootCommits: Strings, originUrl: OptPath });
 
 const uiResponseFrame = {
 	secret: OptBool,
@@ -33,45 +40,76 @@ const uiResponseFrame = {
 	answerId: OptId,
 };
 
+const openProperties = {
+	retry: Opt(Type.Literal(true)),
+	attended: Opt(Type.Literal(false)),
+	spawnedBy: Opt(Type.Object({ parentSessionId: Id, rootSessionId: Id, taskId: Id })),
+	expectedHostInstance: OptId,
+	sessionPath: OptPath,
+	cwd: OptPath,
+	provider: OptId,
+	modelId: OptId,
+	thinkingLevel: Opt(ThinkingLevel),
+	permissionPreset: OptId,
+	retain_on_disconnect: OptBool,
+	kind: Opt(SessionKind),
+	context: Opt(SessionContext),
+	auto_title: OptBool,
+	durableSessionId: OptId,
+	promptSurface: Opt(literals("terminal", "app", "chat")),
+	browserEngine: Opt(literals("connected", "builtin", "none")),
+	retryFallback: Opt(RetryFallback),
+	env: Opt(SessionEnv),
+	telemetry: Opt(TelemetryDeclaration),
+};
+
+/** One file of a move's inline bundle (senpi#6267); its bytes are bounded by the cap on the whole bundle. */
+const MoveInlineFile = Type.Object({
+	path: PathStr,
+	sha256: Id,
+	base64: Type.String({ maxLength: Math.ceil(MOVE_INLINE_MAX_BYTES / 3) * 4 }),
+});
+/** The open an import asks for takes `open_session`'s fields, except the session file the import itself names. */
+const { sessionPath: _sessionPath, cwd: _cwd, ...moveImportOpenProperties } = openProperties;
+
 export const HOST_RECORD_SCHEMAS = {
 	get_protocol_info: command("get_protocol_info", {
 		auth: Opt(Type.Object({ client_nonce: Id })),
 		observe: OptBool,
 	}),
-	open_session: command("open_session", {
-		retry: Opt(Type.Literal(true)),
-		attended: Opt(Type.Literal(false)),
-		spawnedBy: Opt(Type.Object({ parentSessionId: Id, rootSessionId: Id, taskId: Id })),
-		expectedHostInstance: OptId,
-		sessionPath: OptPath,
-		cwd: OptPath,
-		provider: OptId,
-		modelId: OptId,
-		thinkingLevel: Opt(ThinkingLevel),
-		permissionPreset: OptId,
-		retain_on_disconnect: OptBool,
-		kind: Opt(SessionKind),
-		context: Opt(SessionContext),
-		auto_title: OptBool,
-		durableSessionId: OptId,
-		promptSurface: Opt(literals("terminal", "app", "chat")),
-		browserEngine: Opt(literals("connected", "builtin", "none")),
-		retryFallback: Opt(RetryFallback),
-		env: Opt(SessionEnv),
-	}),
+	open_session: command("open_session", openProperties),
+	claim_session: command("claim_session", { ...openProperties, cwd: PathStr }),
+	park_session: command("park_session", { cwd: PathStr, kind: Opt(SessionKind), context: Opt(SessionContext) }),
 	close_session: command("close_session", { sessionId: Id }),
 	move_session: Type.Union([
-		move({ op: Type.Literal("prepare"), moveId: Id }),
+		move({ op: Type.Literal("prepare"), moveId: Id, cwd: OptPath, repository: Opt(RepositoryIdentity) }),
 		move({ op: Type.Literal("cancel"), moveId: Id }),
-		move({ op: Type.Literal("status"), moveId: Id, sessionPath: OptPath }),
+		move({ op: Type.Literal("identity"), sessionPath: PathStr }),
+		move({ op: Type.Literal("identity"), cwd: PathStr }),
+		move({
+			op: Type.Literal("status"),
+			moveId: Id,
+			sessionPath: OptPath,
+			landing: Opt(Type.Object({ cwd: PathStr, sessionFileName: Id, sessionDir: OptPath })),
+		}),
 		move({
 			op: Type.Literal("export"),
 			sessionPath: PathStr,
 			moveId: Id,
 			target: Id,
 			droppedUserMessages: Opt(Strings),
+			inline: Opt(Type.Literal(true)),
+			inlineMaxBytes: OptNum,
 		}),
-		move({ op: Type.Literal("import"), bundleDir: PathStr, cwd: PathStr, from: OptId }),
+		move({
+			op: Type.Literal("import"),
+			cwd: PathStr,
+			from: OptId,
+			bundleDir: OptPath,
+			files: Opt(Type.Array(MoveInlineFile, { maxItems: MOVE_INLINE_MAX_FILES })),
+			sessionDir: OptPath,
+			open: Opt(Type.Union([Type.Literal(true), Type.Object(moveImportOpenProperties)])),
+		}),
 		move({ op: Type.Literal("finish"), sessionPath: PathStr, moveId: Id, answer: Type.Unknown() }),
 		move({ op: Type.Literal("revoke"), sessionPath: PathStr, moveId: Id }),
 		move({ op: Type.Literal("copy"), sessionPath: PathStr, sessionId: Id, sessionDir: OptPath }),
@@ -91,8 +129,12 @@ export const HOST_RECORD_SCHEMAS = {
 		clearQueue: OptBool,
 		children: Opt(literals("refuse", "detach")),
 		force: OptBool,
+		deliveries: Opt(Type.Literal("refuse")),
+		graceful: OptBool,
+		waitMs: Opt(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
 	}),
 	detach_connection: command("detach_connection", {}),
+	find_session: command("find_session", { durableSessionId: Id }),
 	get_subscription_limits: command("get_subscription_limits", { observe: OptBool }),
 	list_sessions: command("list_sessions", { include_workers: OptBool, observe: OptBool }),
 	subscribe_sessions: command("subscribe_sessions", {
@@ -120,7 +162,9 @@ export const HOST_RECORD_SCHEMAS = {
 		retry: Opt(Type.Literal(true)),
 		takeover: Opt(Type.Literal(true)),
 		holder: OptId,
+		telemetry: Opt(TelemetryDeclaration),
 	}),
+	set_telemetry_consent: command("set_telemetry_consent", { sessionId: Id, consent: TelemetryConsent }),
 	release_attachment: command("release_attachment", { sessionId: Id }),
 	list_hands: command("list_hands", { sessionId: OptId }),
 	select_hand: command("select_hand", { sessionId: Id, device: Type.Union([Id, Type.Null()]) }),

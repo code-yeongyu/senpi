@@ -214,6 +214,8 @@ export const RPC_METHOD_CLASS = {
 	navigate_tree: "drive",
 	set_label: "drive",
 	set_session_name: "drive",
+	set_session_archived: "drive",
+	set_session_settled: "drive",
 	// drive only for this turn's level; otherwise it remembers the model's level in the device-wide settings
 	set_thinking_level: { classify: thinkingLevelClass, version: 1 },
 	// drive only for this session's model; otherwise it persists the default model in the device-wide settings
@@ -240,12 +242,16 @@ export const RPC_METHOD_CLASS = {
 	// thread by id; device_admin when the record names a host path, a permission preset or a tool environment
 	new_session: { classify: newSessionClass, version: 1 },
 	open_session: { classify: openSessionClass, version: 2 },
+	// Both commands require a cwd; claim has the same device authority as a cwd-naming open.
+	claim_session: "device_admin",
+	park_session: "device_admin",
 	resume_session: "thread",
 	fork: "thread",
 	clone: "thread",
 	close_session: "thread",
 	unload_session: "thread",
 	set_session_context: "thread",
+	set_telemetry_consent: "thread",
 	attach_session: "thread",
 	// device_admin
 	// Moves where the session's tools run (onto another machine): it changes what the agent can reach.
@@ -258,6 +264,8 @@ export const RPC_METHOD_CLASS = {
 	reload: "device_admin",
 	check_reload_veto: "device_admin",
 	resolve_path: "device_admin",
+	// Answers a session file's path and its folder, which is what makes a path-naming open_session device_admin.
+	find_session: "device_admin",
 	login_start: "device_admin",
 	login_cancel: "device_admin",
 	login_api_key: "device_admin",
@@ -287,6 +295,17 @@ export const RPC_METHOD_CLASS = {
 	// reads a file from the session's cwd; writes one into it
 	get_project_settings: "device_admin",
 	set_project_setting: "device_admin",
+	// reads or replaces an instruction file in the session's cwd (AGENTS.md, CLAUDE.md, .omo/rules/**)
+	read_project_file: "device_admin",
+	write_project_file: "device_admin",
+	// reads or edits the session folder's project MCP file, or the file of a skill the engine lists inside that folder
+	get_project_mcp_servers: "device_admin",
+	set_project_mcp_servers: "device_admin",
+	read_project_skill_file: "device_admin",
+	write_project_skill_file: "device_admin",
+	// reads or edits the file of a user-global skill the engine lists; a write from another device needs this device's approval
+	read_user_skill_file: "device_admin",
+	write_user_skill_file: "device_admin",
 	// switch_session opens (and appends to) the named session file; import_jsonl reads any host file into a session
 	// both write what the model reads as engine work: an assistant reply it never gave, a custom context message
 	// (append_session_entry classes the same entries appended directly as device_admin)

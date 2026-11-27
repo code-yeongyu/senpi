@@ -12,6 +12,11 @@ import { isTransportFailureText } from "./transient-network.ts";
  */
 export class SelectorCooldowns {
 	private readonly expiresAtBySelector = new Map<string, number>();
+	/**
+	 * The same deadline on the wall clock. The monotonic clock stops while the machine sleeps, so a limit that
+	 * reset during a sleep would stay held for its whole length again after waking (senpi#4085).
+	 */
+	private readonly wallExpiresAtBySelector = new Map<string, number>();
 	/** Wall-clock end of a suppression whose length the provider stated (a reset or retry-after), not a default. */
 	private readonly statedResetAtBySelector = new Map<string, number>();
 	private readonly now: () => number;
@@ -27,6 +32,7 @@ export class SelectorCooldowns {
 	note(baseSelector: string, failure: { retryAfterMs?: number; errorMessage?: string }): void {
 		const { ms, stated } = this.durationFor(failure);
 		this.expiresAtBySelector.set(baseSelector, this.now() + ms);
+		this.wallExpiresAtBySelector.set(baseSelector, this.wallNow() + ms);
 		if (stated) this.statedResetAtBySelector.set(baseSelector, this.wallNow() + ms);
 		else this.statedResetAtBySelector.delete(baseSelector);
 	}
@@ -34,7 +40,8 @@ export class SelectorCooldowns {
 	isSuppressed(baseSelector: string): boolean {
 		const expiresAt = this.expiresAtBySelector.get(baseSelector);
 		if (expiresAt === undefined) return false;
-		if (this.now() < expiresAt) return true;
+		if (this.now() < expiresAt && this.wallNow() < (this.wallExpiresAtBySelector.get(baseSelector) ?? Infinity))
+			return true;
 		this.clear(baseSelector);
 		return false;
 	}
@@ -46,6 +53,7 @@ export class SelectorCooldowns {
 
 	clear(baseSelector: string): void {
 		this.expiresAtBySelector.delete(baseSelector);
+		this.wallExpiresAtBySelector.delete(baseSelector);
 		this.statedResetAtBySelector.delete(baseSelector);
 	}
 
@@ -58,8 +66,14 @@ export class SelectorCooldowns {
 		}
 	}
 
+	/** The wall clock the stated resets are read on. */
+	wallClock(): number {
+		return this.wallNow();
+	}
+
 	clearAll(): void {
 		this.expiresAtBySelector.clear();
+		this.wallExpiresAtBySelector.clear();
 		this.statedResetAtBySelector.clear();
 	}
 

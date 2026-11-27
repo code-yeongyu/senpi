@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { isBunBinary, VERSION } from "../../config.ts";
 import {
 	KILL_GUARD_BASH_ENV,
@@ -154,9 +155,72 @@ function judgeEntry(): string | undefined {
 	return fileURLToPath(new URL("./kill-guard-check.js", here));
 }
 
-const installed = new Map<string, KillGuardRuntime>();
-/** Each holder's runtime, in activation order: the most recently activated remaining holder's runtime is active. */
-const holders = new Map<object, KillGuardRuntime>();
+/**
+ * The installed runtimes, one per agent dir, and each holder's runtime in activation order: the most recently activated
+ * remaining holder's runtime is active. A realm registry (omo#12965): every engine copy's sessions activate and release
+ * here, so a holder in one copy and a holder in another see one active runtime. Records another copy built are read
+ * structurally (`isKillGuardRuntime`).
+ */
+interface KillGuardRuntimes {
+	/** The record installed for `agentDir`, or the one `make(first)` builds (`first`: any installed record). */
+	activate(holder: object, agentDir: string, make: (first: unknown) => unknown): unknown;
+	release(holder: object): void;
+	active(): unknown;
+}
+
+const killGuardRuntimes = realmRegistry(
+	"@code-yeongyu/senpi/kill-guard/v1",
+	(): KillGuardRuntimes => {
+		const installed = new Map<string, unknown>();
+		const holders = new Map<object, unknown>();
+		return {
+			activate: (holder, agentDir, make) => {
+				let runtime = installed.get(agentDir);
+				if (runtime === undefined) {
+					runtime = make([...installed.values()][0]);
+					installed.set(agentDir, runtime);
+				}
+				holders.delete(holder);
+				holders.set(holder, runtime);
+				return runtime;
+			},
+			release: (holder) => {
+				holders.delete(holder);
+			},
+			active: () => {
+				let active: unknown;
+				for (const runtime of holders.values()) active = runtime;
+				return active;
+			},
+		};
+	},
+	(value): value is KillGuardRuntimes => hasFunctions(value, ["activate", "release", "active"]),
+);
+/**
+ * The record each of this copy's holders uses, in activation order: the shared record, or this copy's own when the
+ * shared one is unreadable. An unreadable active record falls back to the newest of these, so the guard stays on.
+ */
+const ownRecords = new Map<object, KillGuardRuntime>();
+/** This copy's own record per agent dir, built only when the shared record for that dir is unreadable. */
+const localRuntimes = new Map<string, KillGuardRuntime>();
+
+const isNumberArray = (value: unknown): value is readonly number[] =>
+	Array.isArray(value) && value.every((entry) => typeof entry === "number");
+
+/** A runtime record another copy may have built: every field present with its type. */
+function isKillGuardRuntime(value: unknown): value is KillGuardRuntime {
+	if (typeof value !== "object" || value === null) return false;
+	const field = (name: keyof KillGuardRuntime): unknown => Reflect.get(value, name);
+	const entry = field("entry");
+	return (
+		typeof field("dir") === "string" &&
+		typeof field("bashEnv") === "string" &&
+		typeof field("exec") === "string" &&
+		(entry === undefined || typeof entry === "string") &&
+		typeof field("agentPid") === "number" &&
+		isNumberArray(field("protectedPids"))
+	);
+}
 
 export interface ActivateKillGuardRuntimeOptions {
 	/** Whoever keeps the runtime active (one per session); the runtime stays active until every holder releases. */
@@ -165,27 +229,43 @@ export interface ActivateKillGuardRuntimeOptions {
 	/** Read once per process: the protected set does not change while the agent runs. */
 	readonly protectedPids: () => readonly number[];
 	readonly platform?: NodeJS.Platform;
+	/** Told when the shared record for this agent dir is unreadable and this copy's own record is used instead. */
+	readonly warn?: (message: string) => void;
+}
+
+function buildRuntime(agentDir: string, protectedPids: readonly number[]): KillGuardRuntime {
+	const dir = installKillGuardShims(join(agentDir, "kill-guard"), VERSION);
+	return Object.freeze({
+		dir,
+		bashEnv: join(dir, KILL_GUARD_BASH_ENV),
+		exec: process.execPath,
+		entry: judgeEntry(),
+		agentPid: process.pid,
+		protectedPids,
+	});
 }
 
 /** Installs (once per agent dir) and activates the runtime layer for this process; `undefined` on Windows. */
 export function activateKillGuardRuntime(options: ActivateKillGuardRuntimeOptions): KillGuardRuntime | undefined {
 	if ((options.platform ?? process.platform) === "win32") return undefined;
-	let runtime = installed.get(options.agentDir);
-	if (runtime === undefined) {
-		const dir = installKillGuardShims(join(options.agentDir, "kill-guard"), VERSION);
-		runtime = {
-			dir,
-			bashEnv: join(dir, KILL_GUARD_BASH_ENV),
-			exec: process.execPath,
-			entry: judgeEntry(),
-			agentPid: process.pid,
-			protectedPids: [...installed.values()][0]?.protectedPids ?? options.protectedPids(),
-		};
-		installed.set(options.agentDir, runtime);
+	const shared = killGuardRuntimes.activate(options.holder, options.agentDir, (first) => {
+		const firstPids = typeof first === "object" && first !== null ? Reflect.get(first, "protectedPids") : undefined;
+		return buildRuntime(options.agentDir, isNumberArray(firstPids) ? firstPids : options.protectedPids());
+	});
+	ownRecords.delete(options.holder);
+	if (isKillGuardRuntime(shared)) {
+		ownRecords.set(options.holder, shared);
+		return shared;
 	}
-	holders.delete(options.holder);
-	holders.set(options.holder, runtime);
-	return runtime;
+	// The guard stays on: an unreadable shared record never reads as "no runtime".
+	let local = localRuntimes.get(options.agentDir);
+	if (local === undefined) {
+		local = buildRuntime(options.agentDir, options.protectedPids());
+		localRuntimes.set(options.agentDir, local);
+	}
+	ownRecords.set(options.holder, local);
+	options.warn?.(`[senpi:kill-guard] shared record unreadable; local record in use for ${options.agentDir}`);
+	return local;
 }
 
 /**
@@ -193,13 +273,16 @@ export function activateKillGuardRuntime(options: ActivateKillGuardRuntimeOption
  * runtime layer stops reaching new processes once none is left.
  */
 export function releaseKillGuardRuntime(holder: object): void {
-	holders.delete(holder);
+	ownRecords.delete(holder);
+	killGuardRuntimes.release(holder);
 }
 
 function activeKillGuardRuntime(): KillGuardRuntime | undefined {
-	let active: KillGuardRuntime | undefined;
-	for (const runtime of holders.values()) active = runtime;
-	return active;
+	const active: unknown = killGuardRuntimes.active();
+	if (active === undefined || isKillGuardRuntime(active)) return active;
+	let own: KillGuardRuntime | undefined;
+	for (const record of ownRecords.values()) own = record;
+	return own;
 }
 
 export function withKillGuardRuntime(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

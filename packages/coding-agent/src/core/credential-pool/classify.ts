@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
-import { siwcRecoveryFromDiagnostic } from "@earendil-works/pi-ai/utils/siwc-errors";
+import { isSiwcMissingResponsesScope, siwcRecoveryFromDiagnostic } from "@earendil-works/pi-ai/utils/siwc-errors";
 import { rateLimitModelFamily } from "./model-scope.ts";
 import { usageLimitResetMs } from "./reset-time.ts";
 import { isAccountUsageLimitText } from "./usage-limit.ts";
@@ -33,17 +33,25 @@ export const RETRY_SAME_MAX_ATTEMPTS = 2;
 export const ACCOUNT_POOL_REFUSAL_NOTE = "No request was sent: the account pool refused it locally.";
 
 export type CredentialBlock =
-	| { reason: "auth_error" }
+	| { reason: "auth_error"; refusedGrant?: true }
 	| { reason: "account_disabled" }
 	| {
 			reason: "rate_limit";
 			cooldownMs: number;
 			retryAfterWasCapped: boolean;
+			/** Where the wait came from, for the local block log (senpi#3216). */
+			resetSource?: RateLimitResetSource;
 			/** SIWC quota pause: cooldown is a probe policy, not the provider's reset time. */
 			usageLimit?: true;
 			/** Set when the limit names the one model family it binds ("Fable limit"). */
 			modelFamily?: string;
 	  };
+
+/**
+ * `retry_after`: the server's Retry-After header (the adapter's marker); `reset_field`: a reset time the provider's
+ * structured diagnostic carried; `reset_prose`: a wait or reset time read from the response text; `default_backoff`: none.
+ */
+export type RateLimitResetSource = "retry_after" | "reset_field" | "reset_prose" | "default_backoff";
 
 export type CredentialAction =
 	| { kind: "failover"; block: CredentialBlock }
@@ -253,14 +261,24 @@ function oauthBodyErrorCode(message: string): string | undefined {
  * names a client or request fault outranks both. A refresh that failed in any other way (TLS
  * interception, a captive portal's HTML, a WAF page, a moved endpoint) is not a verdict on the login.
  */
-function isRefusedGrant(refresh: ModelsError): boolean {
+function refreshAuthBlock(refresh: ModelsError): Extract<CredentialBlock, { reason: "auth_error" }> | undefined {
 	const cause: unknown = refresh.cause;
-	if (!(cause instanceof OAuthTokenEndpointError)) return false;
+	if (!(cause instanceof OAuthTokenEndpointError)) return undefined;
 	const code = cause.oauthError ?? oauthBodyErrorCode(cause.message);
-	if (code !== undefined && CLIENT_FAULT_CODES.has(code)) return false;
-	if (cause.credentialRefused || cause.status === 401) return true;
-	if (code !== undefined && REFUSED_GRANT_CODES.has(code)) return [400, 403, 404].includes(cause.status);
-	return cause.status === 400 && REFUSED_GRANT_TOKEN.test(cause.message);
+	if (code !== undefined && CLIENT_FAULT_CODES.has(code)) return undefined;
+	if (code !== undefined && REFUSED_GRANT_CODES.has(code) && [400, 401, 403, 404].includes(cause.status)) {
+		return { reason: "auth_error", refusedGrant: true };
+	}
+	// An unidentified rejection (including a prose match) can move the request to a sibling,
+	// but it is not evidence that the grant itself can never recover.
+	if (
+		cause.credentialRefused ||
+		cause.status === 401 ||
+		(cause.status === 400 && REFUSED_GRANT_TOKEN.test(cause.message))
+	) {
+		return { reason: "auth_error" };
+	}
+	return undefined;
 }
 
 /**
@@ -300,6 +318,43 @@ function isOverflowText(text: string): boolean {
  * outage only destroys prompt-cache locality; everything else fails the
  * request so the model fallback chain above keeps owning it.
  */
+const JSON_BODY = /\{\s*"[^"]+"\s*:/;
+
+/** The wait a rate-limited response names, and which part of the response named it. */
+function rateLimitHint(
+	codedThrottle: boolean,
+	codedReset: number | undefined,
+	text: string,
+	status: number | undefined,
+	usageLimit: boolean,
+	diagnosticRetryAfterMs: number | undefined,
+	nowMs: number,
+): { hint: number | undefined; resetSource: RateLimitResetSource } {
+	const sourced = (
+		hint: number | undefined,
+		source: RateLimitResetSource,
+	): { hint: number | undefined; resetSource: RateLimitResetSource } =>
+		hint === undefined ? { hint, resetSource: "default_backoff" } : { hint, resetSource: source };
+	if (codedThrottle) return sourced(parseRetryAfterMsMarker(text), "retry_after");
+	if (codedReset !== undefined) return sourced(codedReset, "reset_field");
+	const retryAfter = extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs);
+	// The adapter writes a Retry-After header into the text as a marker; a JSON body carries reset fields; anything
+	// else the extractor read is prose.
+	if (retryAfter !== undefined) {
+		if (parseRetryAfterMsMarker(text) !== undefined) return sourced(retryAfter, "retry_after");
+		return sourced(retryAfter, JSON_BODY.test(text) ? "reset_field" : "reset_prose");
+	}
+	if (!usageLimit) return sourced(undefined, "default_backoff");
+	if (diagnosticRetryAfterMs !== undefined) return sourced(diagnosticRetryAfterMs, "reset_field");
+	return sourced(usageLimitResetMs(text, nowMs), JSON_BODY.test(text) ? "reset_field" : "reset_prose");
+}
+
+/** The provider's answer as one text, the same text the classifier reads. */
+export function credentialFailureText(error: unknown): string {
+	const normalized = normalizeProviderError(error);
+	return normalized.messageCarriesBody ? normalized.message : `${normalized.message} ${normalized.body ?? ""}`;
+}
+
 export function classifyCredentialFailure(
 	error: unknown,
 	context: { failureCount?: number; cooldownBaseMs?: number; cooldownCapMs?: number; nowMs?: number } = {},
@@ -332,6 +387,9 @@ export function classifyCredentialFailure(
 		case "account_disabled":
 			return { kind: "failover", block: { reason: "account_disabled" } };
 		case "auth":
+			// An account without Responses access is not a rejected sign-in: a re-login cannot clear it, so
+			// the turn fails with the provider's message and the slot stays as it was (senpi#6643).
+			if (isSiwcMissingResponsesScope(text)) return { kind: "fail_request" };
 			return { kind: "failover", block: { reason: "auth_error" } };
 		case "request":
 			return { kind: "fail_request" };
@@ -365,7 +423,8 @@ export function classifyCredentialFailure(
 	const statusFault = status === 408 || status === 429 || (status !== undefined && status >= 500 && status < 600);
 	const refresh = failedRefresh(error);
 	if (refresh !== undefined) {
-		if (!statusFault && isRefusedGrant(refresh)) return { kind: "failover", block: { reason: "auth_error" } };
+		const block = statusFault ? undefined : refreshAuthBlock(refresh);
+		if (block !== undefined) return { kind: "failover", block };
 		// Any other failed refresh is not a verdict on this account, so no branch below may block it; a
 		// network fault still retries the same account as it does for a model request (senpi#2081).
 		return isRefreshNetworkFault(refresh, text)
@@ -417,12 +476,15 @@ export function classifyCredentialFailure(
 		const codedResetMs =
 			codedLimit?.kind === "spent" && codedLimit.resetsAt !== undefined ? codedLimit.resetsAt - nowMs : undefined;
 		const codedReset = codedResetMs !== undefined && codedResetMs > 0 ? codedResetMs : undefined;
-		const hint =
-			codedLimit?.kind === "throttle"
-				? parseRetryAfterMsMarker(text)
-				: (codedReset ??
-					extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
-					(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined));
+		const { hint, resetSource } = rateLimitHint(
+			codedLimit?.kind === "throttle",
+			codedReset,
+			text,
+			status,
+			usageLimit,
+			normalized.retryAfterMs,
+			nowMs,
+		);
 		const modelFamily = rateLimitModelFamily(text);
 		const policy = { baseMs: context.cooldownBaseMs, capMs: context.cooldownCapMs };
 		return {
@@ -435,6 +497,7 @@ export function classifyCredentialFailure(
 				...(usageLimit && hint !== undefined && hint > 0
 					? usageLimitCooldown(hint, policy)
 					: rateLimitCooldown(failureCount, hint, policy)),
+				resetSource,
 				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};

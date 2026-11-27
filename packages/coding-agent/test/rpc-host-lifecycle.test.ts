@@ -286,7 +286,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 			expect(await endpointLive(qa.socket)).toBe(false);
 			// Scoped to THIS supervisor: the internal directories live in one shared tmpdir, so any
 			// other host running concurrently (another suite, another checkout) owns its own.
-			expect(listInternalSocketDirs(ensured.pid)).toEqual([]);
+			expect(listInternalSocketDirs(qa, ensured.pid)).toEqual([]);
 		},
 		LIFECYCLE_CASE_TIMEOUT_MS,
 	);
@@ -428,7 +428,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 			const entry = currentManaged();
 			const internalHosts = await waitForChildPids(ensured.pid);
 			expect(internalHosts.length).toBeGreaterThan(0);
-			const leakedDirs = listInternalSocketDirs(ensured.pid);
+			const leakedDirs = listInternalSocketDirs(qa, ensured.pid);
 			// The internal host serves a filesystem socket from its own tmp directory on POSIX, so a running
 			// supervisor must own at least one. win32 serves a NAMED PIPE instead: there is no directory to
 			// create, so the only honest expectation there is that none exists - and the reap assertions
@@ -439,7 +439,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 			terminateSupervisor(ensured.pid, "SIGKILL");
 			await waitForPidsGone(internalHosts, 10_000);
 			expect(internalHosts.filter(processAlive)).toEqual([]);
-			expect(leakedDirs.filter((dir) => existsSync(join(tmpdir(), dir)))).toEqual([]);
+			expect(leakedDirs.filter((dir) => existsSync(dir))).toEqual([]);
 			expect(await endpointLive(qa.socket)).toBe(false);
 			// Win32 endpoint close and metadata unlink are separate operations; wait on the
 			// identity-aware lifecycle helper instead of asserting the pidfile atomically.
@@ -711,7 +711,8 @@ function scratch(label: string): Scratch {
 	const agentDir = join(root, "agent");
 	const sessionDir = join(root, "sessions");
 	const cwd = join(root, "work");
-	mkdirSync(agentDir, { recursive: true });
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
 	mkdirSync(sessionDir, { recursive: true });
 	mkdirSync(cwd, { recursive: true });
 	return {
@@ -725,22 +726,32 @@ function scratch(label: string): Scratch {
 }
 
 /**
- * The private internal-socket directories owned by ONE supervisor. The directories all live in the
- * shared tmpdir, so "everything that appeared during this test" would also count the hosts other
- * suites (or another checkout) started meanwhile; each directory's `.owner` names its supervisor.
+ * The private internal-socket directories owned by ONE supervisor: in the endpoint's daemon directory (senpi#7452) or,
+ * when that is too deep for sun_path, in the shared tmpdir, where "everything that appeared during this test" would
+ * also count the hosts other suites (or another checkout) started meanwhile; each directory's `.owner` names its
+ * supervisor.
  */
-function listInternalSocketDirs(ownerPid: number): string[] {
-	return readdirSync(tmpdir())
-		.filter((name) => name.startsWith("senpi-rpc-host-internal-"))
-		.filter((name) => {
-			try {
-				const owner = JSON.parse(readFileSync(join(tmpdir(), name, ".owner"), "utf8")) as { pid?: unknown };
-				return owner.pid === ownerPid;
-			} catch {
-				// A directory whose owner cannot be read is not this supervisor's to claim.
-				return false;
-			}
-		});
+function listInternalSocketDirs(qa: Scratch, ownerPid: number): string[] {
+	return [daemonPaths(qa).dir, tmpdir()].flatMap((root) => {
+		let names: string[];
+		try {
+			names = readdirSync(root);
+		} catch {
+			return [];
+		}
+		return names
+			.filter((name) => name.startsWith("senpi-rpc-host-internal-"))
+			.filter((name) => {
+				try {
+					const owner = JSON.parse(readFileSync(join(root, name, ".owner"), "utf8")) as { pid?: unknown };
+					return owner.pid === ownerPid;
+				} catch {
+					// A directory whose owner cannot be read is not this supervisor's to claim.
+					return false;
+				}
+			})
+			.map((name) => join(root, name));
+	});
 }
 
 /** Direct children of `pid`. `pgrep` is POSIX-only, so Windows queries CIM. */

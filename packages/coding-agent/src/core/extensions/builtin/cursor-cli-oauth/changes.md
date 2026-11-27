@@ -1,5 +1,24 @@
 # cursor-cli-oauth extension changes
 
+## 2026-11-09 - Hide the console window for cursor-agent probes on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/executable.ts`: `VersionProbeOptions` gains optional `windowsHide`, and `probeCursorAgentVersion` passes `windowsHide: true`.
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models-probe.ts`: the `cursor-agent models` spawn now passes `windowsHide: true`.
+
+### Why
+
+- `cursor-agent` is a console-subsystem exe on Windows; the `--version` and `models` probes flashed a console window on every run.
+
+### Why an extension could not handle it
+
+- The spawns are the lane's own transport code, not a replaceable extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line each in two lane files, plus one optional type field.
+
 ## 2026-11-05 - A refused account pool carries a typed diagnostic (senpi#4092)
 
 ### What changed

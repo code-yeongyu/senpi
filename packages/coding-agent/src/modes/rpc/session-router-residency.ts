@@ -7,6 +7,7 @@
  * from its session file, so `list_sessions` (and the relay that mirrors it) lists the session again
  * without anyone re-opening it by hand.
  */
+import { refusesApprovals, replacementLaunchProfile } from "../../core/opener-approvals.ts";
 import { clearHandoverParkedSession, recordHandoverParkedSession } from "./host-handover-parked.ts";
 import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
 import { currentResidentWriter } from "./host-handover-resident-writer.ts";
@@ -21,13 +22,16 @@ const reportRecordFailure = (sessionId: string) => (cause: unknown) => {
 /**
  * Writes the record entry of a retained session under `sessionPath`, stamped with this host instance, and drops
  * the entry it was recorded under before when the session has since moved to another transcript (senpi#6190).
- * `resident` stamps the writing process: the session is open here. A park writes it unstamped.
+ * `resident` stamps the writing process: the session is open here. A park writes it unstamped. `live` records that the
+ * session was loaded when this host let it go (senpi#7020): every resident stamp is, and so is a handoff or clean-stop
+ * park; an idle-sweep park and an unload are not.
  */
 export async function recordRetainedSession(
 	host: RouterContext,
 	retained: RpcSessionEntry,
 	sessionPath: string,
 	resident: boolean,
+	live: boolean = resident,
 ): Promise<void> {
 	const dir = host.handoverParkedDir;
 	if (dir === undefined) return;
@@ -42,12 +46,29 @@ export async function recordRetainedSession(
 				contextOverlay: retained.contextOverlay,
 				...(durableSessionId !== undefined ? { durableSessionId } : {}),
 			},
-			retained.profile,
+			recoveryProfile(retained),
 			Object.keys(host.defaults.hostContext ?? {}),
 		),
 		parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
-		...(resident ? { residentWriter: currentResidentWriter() } : {}),
+		...(resident ? { residentWriter: await currentResidentWriter() } : {}),
+		...(live ? { live: true as const } : {}),
 	});
+}
+
+/**
+ * The profile a restart reopens the session from. The opener's approvals label belongs to the session it opened: once
+ * the live runtime has replaced it (`new_session`, `switch_session`, `fork`, `clone`) the runtime's profile drops the
+ * label, and so does the record, or a restart would label the replacement and make it refuse. A worker entry is
+ * read from its snapshot, whose session id differs from the one the entry opened once the worker replaced it.
+ */
+function recoveryProfile(retained: RpcSessionEntry): RpcSessionEntry["profile"] {
+	const replaced =
+		retained.runtime !== undefined
+			? !refusesApprovals(retained.runtime.launchProfile?.sessionContext)
+			: // A worker's host-side entry keeps the id it opened; its snapshot names the session it runs now.
+				retained.worker?.snapshot !== undefined &&
+				retained.worker.snapshot.state.sessionId !== retained.durableSessionId;
+	return replaced ? (replacementLaunchProfile(retained.profile) ?? retained.profile) : retained.profile;
 }
 
 /** The session path a live entry writes now; a replacement moves it before the registry's metadata catches up. */

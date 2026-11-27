@@ -1,7 +1,7 @@
 import type { Socket } from "node:net";
 import type { Duplex, Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import { type HostAdmission, hostStoppingResponse } from "./host-admission.ts";
+import { type HostAdmission, hostStoppingResponse, hostUnavailableResponse } from "./host-admission.ts";
 import { MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 import { launchProofRecordRefusal, RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 import type { PublicRpcConnection } from "./rpc-public-auth.ts";
@@ -18,6 +18,8 @@ export function proxyWithAdmission(
 	auth?: PublicRpcConnection,
 	/** The client proved the launch credential at admission (the Windows public secret): say so to the host first. */
 	launchProven = false,
+	/** Why there is no hop to the host although it is not stopping: every request is refused with it. */
+	hopFailure?: string,
 ): void {
 	const reply = (chunk: string | Buffer): Promise<void> =>
 		write(client, auth ? auth.response(chunk.toString()) : chunk);
@@ -90,6 +92,8 @@ export function proxyWithAdmission(
 						data: admission.protocol(),
 					}),
 				);
+			} else if (!internal && hopFailure !== undefined) {
+				await reply(serializeJsonLine(hostUnavailableResponse(request?.id, String(request?.type ?? "parse"), hopFailure)));
 			} else if (admission.stopping && (request?.type === "open_session" || !internal)) {
 				await reply(
 					serializeJsonLine(hostStoppingResponse(request?.id, String(request?.type ?? "parse"), admission)),

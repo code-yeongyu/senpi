@@ -49,6 +49,19 @@ describe("inbound record schemas are exhaustive (senpi#4324)", () => {
 	});
 });
 
+describe("set_session_settled, the Done flag", () => {
+	it("is a drive command whose by mirrors the desktop's ThreadSettledBy", () => {
+		expect(RPC_METHOD_CLASS.set_session_settled).toBe("drive");
+		const settle = { type: "set_session_settled", sessionId: "s", settled: true };
+		expect(validateRpcInboundRecord({ ...settle, by: { kind: "pr-merged", pullRequestNumber: 3 } })).toEqual(
+			ACCEPTED,
+		);
+		expect(validateRpcInboundRecord({ ...settle, by: { kind: "inactivity", days: 0 } })).toEqual(ACCEPTED);
+		expect(refused({ ...settle, by: { kind: "goal-complete" } })).toContain("/by");
+		expect(refused({ ...settle, by: { kind: "inactivity" } })).toContain("/by");
+	});
+});
+
 describe("inbound record bounds (senpi#4324)", () => {
 	it("refuses each bound class past its limit, naming the field", () => {
 		const id = "s".repeat(RPC_INBOUND_LIMITS.identifierCharacters + 1);
@@ -213,7 +226,8 @@ describe("K8: every record local clients send today is accepted (X14 corpus)", (
 		}
 		const answerRecords = ["extension_ui_progress", "extension_ui_response", "host_response"];
 		expect([...Object.keys(TODAY), ...answerRecords].sort()).toEqual(Object.keys(RPC_METHOD_CLASS).sort());
-		expect(serial).toBe(121);
+		// senpi#6429 adds find_session and senpi#7446 set_telemetry_consent to the table, so the corpus runs two records more.
+		expect(serial).toBe(135);
 		// X14 probes set_retry_fallback with an empty profile only to reach the host's "single-session only" refusal;
 		// the one path that accepts the method refuses that profile with the same check (connection-handler.ts).
 		const emptyProfile = corpusRequest("set_retry_fallback", TODAY.set_retry_fallback, opened, tmp).record;
@@ -261,7 +275,7 @@ describe("K8: every record local clients send today is accepted (X14 corpus)", (
 				},
 			],
 		]);
-		expect(Object.keys(outcomes)).toHaveLength(122);
+		expect(Object.keys(outcomes)).toHaveLength(136);
 		const page = { type: "get_recovery_page", sessionId: NO_ID, token: "t", admissionId: "a", componentRef: "c" };
 		expect(validateRpcInboundRecord({ ...page, requestId: "r", cursor: "k" })).toEqual(ACCEPTED);
 		const wellFormed = { ...emptyProfile, retryFallback: { modelFallback: true, fallbackChains: { main: ["p/m"] } } };

@@ -8,6 +8,7 @@ import {
 	type Model,
 	PROMPT_CACHE_TTL_LONG_SECONDS,
 	PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS,
+	PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS,
 	PROMPT_CACHE_TTL_SHORT_SECONDS,
 	resolvePromptCacheLifetime,
 	resolvePromptCacheTtlSeconds,
@@ -88,22 +89,18 @@ describe("OpenAI GPT-5.6+ prompt-cache lifetime (#2090)", () => {
 		["openai", "gpt-6-sol"],
 		["openai", "gpt-6-astra-fast"],
 		["openai", "gpt-5.6-terra"],
-		["chatgpt-subscription", "gpt-6-astra"],
-		["chatgpt-subscription", "gpt-5.6-sol"],
 		["azure-openai-responses", "gpt-6-sol"],
 	] as const)("resolves %s/%s to the documented 30 minutes", (provider, id) => {
 		const model = catalogModel(provider, id);
 
 		expect(resolvePromptCacheLifetime(model)).toEqual({ kind: "ttl", ttlSeconds: 1800 });
 		expect(resolvePromptCacheTtlSeconds(model)).toBe(1800);
-		expect(resolvePromptCacheTtlSeconds(model, { PI_CACHE_RETENTION: "long" })).toBe(1800);
 	});
 
 	it.each([
 		["openai", "gpt-5.5"],
 		["openai", "gpt-5.4-mini"],
 		["openai", "o3"],
-		["chatgpt-subscription", "gpt-5.5"],
 		["azure-openai-responses", "gpt-5.5"],
 	] as const)("keeps the short lifetime for pre-5.6 model %s/%s", (provider, id) => {
 		expect(resolvePromptCacheTtlSeconds(catalogModel(provider, id))).toBe(300);
@@ -131,6 +128,100 @@ describe("OpenAI GPT-5.6+ prompt-cache lifetime (#2090)", () => {
 		expect(
 			resolvePromptCacheTtlSeconds(createModel("openai-responses", { id: "gpt-6-sol", provider: "proxy" })),
 		).toBe(300);
+	});
+});
+
+// code-yeongyu/senpi#6290: OpenAI's 2026-10-20 cache change. The Responses API sells a 12-hour lifetime, and
+// signed-in ChatGPT (Codex / Work) usage keeps its cache with no expiry.
+describe("OpenAI 12-hour API cache and the ChatGPT subscription cache (#6290)", () => {
+	it.each([
+		["openai", "gpt-6-sol"],
+		["openai", "gpt-6.1-sol"],
+		["openai", "gpt-5.6-terra"],
+	] as const)("resolves long retention on API-key %s/%s to the 12-hour lifetime it buys", (provider, id) => {
+		const model = catalogModel(provider, id);
+
+		expect(PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS).toBe(43_200);
+		expect(resolvePromptCacheLifetime({ ...model, cacheRetention: "long" })).toEqual({
+			kind: "ttl",
+			ttlSeconds: 43_200,
+		});
+		expect(resolvePromptCacheTtlSeconds(model, { PI_CACHE_RETENTION: "long" })).toBe(43_200);
+	});
+
+	it("keeps long retention at 30 minutes where the request cannot send the 12-hour option", () => {
+		// Azure's adapter sends no prompt_cache_options; an explicit compat opt-out sends nothing either.
+		const azure = { ...catalogModel("azure-openai-responses", "gpt-6-sol"), cacheRetention: "long" as const };
+		const optedOut = {
+			...catalogModel("openai", "gpt-6-sol"),
+			cacheRetention: "long" as const,
+			compat: { supportsExplicitPromptCacheMode: true, supportsLongCacheRetention: false },
+		} as Model<Api>;
+
+		expect(resolvePromptCacheTtlSeconds(azure)).toBe(1800);
+		expect(resolvePromptCacheTtlSeconds(optedOut)).toBe(1800);
+	});
+
+	it.each([
+		["chatgpt-subscription", "gpt-6-sol"],
+		["chatgpt-subscription", "gpt-6.1-sol"],
+		["chatgpt-subscription", "gpt-5.5"],
+	] as const)("classifies the signed-in %s/%s cache as best-effort with no TTL", (provider, id) => {
+		const model = catalogModel(provider, id);
+
+		expect(resolvePromptCacheLifetime(model)).toEqual({ kind: "best-effort" });
+		expect(resolvePromptCacheTtlSeconds(model)).toBeUndefined();
+		expect(resolvePromptCacheTtlSeconds(model, { PI_CACHE_RETENTION: "long" })).toBeUndefined();
+	});
+
+	it("classifies the Sign in with ChatGPT route and the legacy provider id the same way", () => {
+		const siwc = createModel("openai-responses", {
+			id: "gpt-6-sol",
+			provider: "chatgpt-subscription",
+			baseUrl: "https://api.openai.com/v1",
+			compat: { siwc: true },
+		});
+		const legacyId = createModel("openai-codex-responses", {
+			id: "gpt-6-sol",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+		});
+
+		expect(resolvePromptCacheLifetime(siwc)).toEqual({ kind: "best-effort" });
+		expect(resolvePromptCacheLifetime(legacyId)).toEqual({ kind: "best-effort" });
+	});
+
+	// senpi#6296: the Codex backend serves only signed-in usage, so its host alone decides the lane.
+	it("classifies a models.json provider of any id on the Codex backend host as the subscription", () => {
+		const custom = createModel("openai-codex-responses", {
+			id: "gpt-6-sol",
+			provider: "my-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+		});
+		const apiKeyOnApiHost = createModel("openai-responses", {
+			id: "gpt-6-sol",
+			provider: "chatgpt-subscription",
+			baseUrl: "https://api.openai.com/v1",
+		});
+
+		expect(resolvePromptCacheLifetime(custom)).toEqual({ kind: "best-effort" });
+		expect(resolvePromptCacheLifetime(apiKeyOnApiHost)).toEqual({ kind: "ttl", ttlSeconds: 1800 });
+	});
+
+	it("lets disabled retention win on the subscription lane", () => {
+		const model = { ...catalogModel("chatgpt-subscription", "gpt-6-sol"), cacheRetention: "none" as const };
+
+		expect(resolvePromptCacheLifetime(model)).toEqual({ kind: "none" });
+	});
+
+	it("keeps a Codex-protocol gateway that is not ChatGPT on its documented lifetime", () => {
+		const gateway = createModel("openai-codex-responses", {
+			id: "gpt-6-sol",
+			provider: "chatgpt-subscription",
+			baseUrl: "https://codex-proxy.example.com/backend-api",
+		});
+
+		expect(resolvePromptCacheLifetime(gateway)).toEqual({ kind: "ttl", ttlSeconds: 1800 });
 	});
 });
 

@@ -4,7 +4,7 @@ export type PromptPresetName =
 	| "auto"
 	| "claude-fable-5"
 	| "claude-fable-5-1"
-	| "claude-fable-5-5"
+	| "claude-fable-5-2"
 	| "claude-opus-5-5"
 	| "claude-opus-5"
 	| "claude-sonnet-5-5"
@@ -34,7 +34,8 @@ export type PromptPresetName =
 	| "gpt-5.4"
 	| "gpt-5.5"
 	| "gpt-5.6"
-	| "gpt-6-astra";
+	| "gpt-6-astra"
+	| "gpt-6.2";
 
 export interface PromptPresetSettings {
 	promptPreset: PromptPresetName;
@@ -46,7 +47,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"auto",
 	"claude-fable-5",
 	"claude-fable-5-1",
-	"claude-fable-5-5",
+	"claude-fable-5-2",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",
@@ -77,6 +78,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"gpt-5.5",
 	"gpt-5.6",
 	"gpt-6-astra",
+	"gpt-6.2",
 ]);
 
 export function parsePromptPreset(value: string | undefined): PromptPresetName | undefined {

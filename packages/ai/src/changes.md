@@ -1,3 +1,170 @@
+## 2026-11-24 - Models.logout honours expectedLoginId (senpi#7406)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `logout` routes the slot and whole-entry removals through the login comparison and rethrows `stale_login` unwrapped instead of as an `auth` store failure.
+
+### Why
+
+- Callers must tell "the sign-in changed, nothing happened" apart from a storage failure.
+
+### Why an extension could not handle it
+
+- `Models.logout` is the core removal path every surface uses.
+
+### Expected merge conflict zones
+
+- LOW: the `logout` body in `models.ts`.
+
+## 2026-11-22 - Document structured status in retry decisions (senpi#3251)
+
+### What changed
+
+- `packages/ai/src/provider-diagnostic.ts`: the contract now states that a structured 408 makes an otherwise non-terminal failure eligible for same-model retry. The SDK guide documents the same behavior.
+
+### Why
+
+- The diagnostic preserves the status used by the existing retry policy; it no longer serves only as descriptive metadata.
+
+### Why an extension could not handle it
+
+- The contract belongs with the shared `ProviderDiagnostic` type in `packages/ai/src/provider-diagnostic.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the type documentation in `packages/ai/src/provider-diagnostic.ts`.
+
+## 2026-11-22 - Carry a local sign-in requirement on assistant errors (senpi#5722)
+
+### What changed
+
+- `packages/ai/src/types.ts` accepts a `sign_in_required` error cause containing local account labels.
+
+### Why
+
+- Clients need to distinguish a required sign-in from a provider rejecting a request.
+
+### Why an extension could not handle it
+
+- The assistant message contract is shared across providers and the agent.
+
+### Expected merge conflict zones
+
+- LOW: the optional `AssistantMessage.errorCause` union.
+
+## 2026-11-17 - Root export of the OAuth refresh (custody CK18, senpi#5865)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `refreshOAuthCredential` and `OAuthRefreshRequest` from `auth/oauth-refresh.ts`.
+
+### Why
+
+`AuthStorage.refreshOAuthCredential` in the coding-agent package delegates to it, so a refresh started there and one started by request-time resolution take the same per-account refresh lock (#5837).
+
+### Why an extension could not handle it
+
+The package root's export list is the public contract; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `auth/` export block in `index.ts`.
+
+## 2026-11-18 - GPT-6.2 ids in the map-less effort inference (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `GPT_6_NO_NONE_EFFORT_MODEL_IDS`, `XHIGH_MODEL_IDS` and `OPENAI_MAX_MODEL_IDS` gain `gpt-6.2-astra` and `gpt-6.2-sol`.
+
+### Why
+
+- A custom provider or gateway row for either id without a `thinkingLevelMap` would otherwise lose `xhigh` and `max` and keep `off` selectable, which sends `reasoning.effort: none`. Both models reject that value.
+
+### Why an extension could not handle it
+
+- The inference runs inside the core thinking-level resolution that every provider row goes through. An extension can only supply an explicit map for its own rows.
+
+### Expected merge conflict zones
+
+- LOW: the three id lists.
+
+## 2026-11-11 - Provider strict mode and scope are one registry per realm (omo#12965)
+
+### What changed
+
+- `packages/ai/src/provider-scope-registry.ts` (new): the browser-neutral lookup of the realm's `provider-scope/v1` registry (`lookupProviderScopeRegistry`, never creates one) and the structural check of a scope object another pi-ai copy may have placed.
+- `packages/ai/src/node/provider-scope.ts`: creates that registry through `@earendil-works/pi-realm-registry`. The `AsyncLocalStorage` and both strict modes live in its closure. `activeProviderScope`, `runWithProviderScope` and `bindToProviderScope` go through it. A scope whose members another copy shaped differently refuses: the lookups read it as a closed scope, and `activeProviderScope()` throws an error whose `code` is `PI_PROVIDER_SCOPE_UNREADABLE` instead of reading it as no scope. It no longer installs scope accessors.
+- `packages/ai/src/api-registry.ts`, `packages/ai/src/images-api-registry.ts`: strict mode and the active scope are read from the registry at call time; with no registry in the realm they keep the module-local strict mode and no scope. A strict mode that is not a boolean reads as on. `getApiProviderAtEvaluation` is the non-throwing lookup for registration that runs while a module evaluates.
+- `packages/ai/src/api-registry.ts`, `packages/ai/src/images-api-registry.ts`: `installProviderScopeAccessor` and `installImagesProviderScopeAccessor` are removed. They installed a per-copy lookup of the active scope; the registry is that lookup now, and a per-copy one would split it again. Their only callers were in `node/provider-scope.ts`.
+- `packages/ai/src/compat.ts`: `registerBuiltInApiProviders()` uses `getApiProviderAtEvaluation` for its two lookups, so a pi-ai copy evaluated while the realm's strict mode is on still loads. Every runtime lookup keeps strict mode.
+
+### Why
+
+- A process can hold more than one copy of pi-ai in one realm (the bundled engine next to the SDK graph a plugin imports). Strict mode and the scope were module state, so a second copy resolved providers from its global registry while the first one refused.
+
+### Why an extension could not handle it
+
+- The state belongs to pi-ai's registries; an extension cannot make two copies of a module share module state.
+
+### Expected merge conflict zones
+
+- MEDIUM: the scope lookup at the top of `api-registry.ts` and `images-api-registry.ts`, and `registerBuiltInApiProviders()` in `compat.ts`.
+
+## 2026-11-10 - Export the shared Ultrafast documented-model list (senpi#2978)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports `ULTRAFAST_DOCUMENTED_MODEL_IDS` from `./api/openai-responses-shared.ts` so the selection warning in coding-agent reads the same list as the pricing adapters.
+
+### Why
+
+- The warning policy lives in another package and needs the same single list (senpi#2978 item 2).
+
+### Why an extension could not handle it
+
+- The list is a package export, not extension behavior.
+
+### Expected merge conflict zones
+
+- LOW: the one added export line only.
+
+## 2026-11-10 - Cursor capability row for Claude Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/ai/src/cursor/capability-table.ts`: `claude-fable-5-2` takes the same served shape as `claude-fable-5-1` (300k default context, 1M max, thinking/context/effort parameters, low..max levels) until a live AvailableModels capture lists it.
+
+### Why
+
+- Without a row a Cursor-served Fable 5.2 would fall to the 256k default with no effort or thinking controls.
+
+### Why an extension could not handle it
+
+- The capability table is the provider's own static data, read before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the post-2026-10-18 family block of `CURSOR_MODEL_CAPABILITIES`.
+
+## 2026-11-09 - Export the OpenAI 12-hour prompt-cache TTL constant (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS`.
+- `packages/ai/src/openai-responses-compat.ts`: the `supportsLongCacheRetention` doc names `"12h"` on GPT-5.6+.
+
+### Why
+
+- Callers that read the lifetime can compare against the new 12-hour lane.
+
+### Why an extension could not handle it
+
+- Package root exports.
+
+### Expected merge conflict zones
+
+- LOW: one export line and one doc comment.
+
 ## 2026-11-05 - Login forwards the reauthorized account name (part of #5003)
 
 ### What changed

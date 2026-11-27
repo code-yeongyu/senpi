@@ -1,6 +1,6 @@
 import type { AgentToolResult, ToolDefinition } from "@code-yeongyu/senpi";
 import type { TUnsafe } from "typebox";
-import { resolveAdvertiseHelpers, resolveSandbox } from "../config/feature-settings.ts";
+import { resolveAdvertiseHelpers, resolveJsCells, resolveSandbox } from "../config/feature-settings.ts";
 import {
 	DEFAULT_FOREGROUND_WINDOW_SECONDS,
 	defaultCodemodeSettings,
@@ -54,6 +54,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		hardLimitSeconds: options.hardLimitSeconds ?? defaultEvalDeadlineSeconds.hardLimitSeconds,
 	};
 	const sandbox = resolveSandbox(options.settings ?? defaultCodemodeSettings).enabled;
+	const jsCells = resolveJsCells(options.settings ?? defaultCodemodeSettings);
 	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines, { sandbox });
 	const prompt = buildEvalPrompt(options.enabledLanguages, {
 		spawns: options.spawns ?? false,
@@ -67,6 +68,8 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		...(options.runtimes?.js === undefined ? {} : { jsRuntime: options.runtimes.js }),
 		...(options.bunSkillPath === undefined ? {} : { bunSkillPath: options.bunSkillPath }),
 		...(options.promptKernelPreludes === undefined ? {} : { kernelPreludes: options.promptKernelPreludes }),
+		...(options.evalOnlyTools === undefined ? {} : { evalOnlyTools: options.evalOnlyTools }),
+		...(jsCells.typescript || jsCells.scope ? { jsCells } : {}),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
 	registerEvalArgumentValidator(parameters, languages);

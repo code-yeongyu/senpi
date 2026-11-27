@@ -40,6 +40,10 @@ import type {
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { extractChatGptSubscriptionAccountId } from "../utils/chatgpt-subscription-auth.ts";
 import {
+	isSharedSubscriptionItemLimitMessage,
+	sharedSubscriptionItemLimitMessage,
+} from "./subscription-sharing-items.ts";
+import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
 	formatThrownValue,
@@ -82,6 +86,7 @@ import {
 	processResponsesStream,
 	resolveResponsesDeferredToolsMode,
 	resolveResponsesToolPlacement,
+	ULTRAFAST_DOCUMENTED_MODEL_IDS,
 } from "./openai-responses-shared.ts";
 import {
 	applyExtraBody,
@@ -482,6 +487,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					});
 					const info = await parseErrorResponse(fakeResponse, response.headers);
 					let errorMessage = info.friendlyMessage || info.message;
+					if (fakeResponse.status === 400 && isSharedSubscriptionItemLimitMessage(errorMessage)) {
+						errorMessage = sharedSubscriptionItemLimitMessage(model.provider, errorMessage);
+					}
 					if (response.status === 429) {
 						const hintMs = extract429RetryAfterMs({
 							status: response.status,
@@ -683,7 +691,7 @@ function getServiceTierCostMultiplier(
 	// The 2x / 6x figures are the purchased-credit and API rates; the openai-responses lane keeps those.
 	switch (serviceTier) {
 		case "ultrafast":
-			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 8 : 1;
+			return ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.upstreamModelId ?? model.id) ? 8 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -760,7 +768,12 @@ async function processStream(
 	sentServiceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast",
 ): Promise<void> {
 	await processResponsesStream(
-		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent),
+		mapCodexEvents(
+			parseSSE(response, options?.signal, options?.onTransportActivity),
+			output,
+			model,
+			options?.onProviderStreamEvent,
+		),
 		output,
 		stream,
 		model,
@@ -876,6 +889,9 @@ async function* mapCodexEvents(
 			const message = getCodexEventErrorMessage(event);
 			let errorText =
 				describeChatGptUsageLimitEvent(event) ?? `Codex error: ${message || code || JSON.stringify(event)}`;
+			if (isSharedSubscriptionItemLimitMessage(errorText)) {
+				errorText = sharedSubscriptionItemLimitMessage(model.provider, errorText);
+			}
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
@@ -892,6 +908,9 @@ async function* mapCodexEvents(
 			let errorText =
 				describeChatGptUsageLimitEvent({ ...event, error: getCodexEventError(event) }) ??
 				(message || "Codex response failed");
+			if (isSharedSubscriptionItemLimitMessage(errorText)) {
+				errorText = sharedSubscriptionItemLimitMessage(model.provider, errorText);
+			}
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
@@ -928,7 +947,11 @@ function normalizeCodexStatus(status: unknown): CodexResponseStatus | undefined 
 // SSE Parsing
 // ============================================================================
 
-async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
+async function* parseSSE(
+	response: Response,
+	signal?: AbortSignal,
+	onActivity?: () => void,
+): AsyncGenerator<Record<string, unknown>> {
 	if (!response.body) return;
 
 	const reader = response.body.getReader();
@@ -948,6 +971,7 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
+			if (!done && value.byteLength > 0) onActivity?.();
 			buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
 			// Treat EOF as terminating the residual SSE frame.
 			if (done && buffer.trim()) buffer += "\n\n";
