@@ -79,6 +79,13 @@ export function copyInputTurnMark(from: object, to: object): void {
 	if (mark !== undefined) inputMarks.set(to, mark);
 }
 
+/** Whether two inputs would open their turns with the same origin: one turn may carry both (senpi#7588). */
+export function sameInputTurnMark(a: object, b: object): boolean {
+	const first = inputMarks.get(a);
+	const second = inputMarks.get(b);
+	return first?.origin === second?.origin && first?.personStarted === second?.personStarted;
+}
+
 /** Whether a message carries an origin mark: a user message always opens a turn's origin, any other only when marked. */
 export function hasInputTurnMark(message: object): boolean {
 	return inputMarks.has(message);

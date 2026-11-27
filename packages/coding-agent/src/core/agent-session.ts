@@ -8767,6 +8767,11 @@ export class AgentSession {
 		return this._engineTurnHold.noticeCount;
 	}
 
+	/** Distinct peer deliveries held while paused (senpi#7588): `admit_external_message` refuses past the cap. */
+	get heldPeerDeliveryCount(): number {
+		return this._engineTurnHold.peerDeliveryCount;
+	}
+
 	get holds() {
 		return this._engineTurnHold.holds;
 	}
