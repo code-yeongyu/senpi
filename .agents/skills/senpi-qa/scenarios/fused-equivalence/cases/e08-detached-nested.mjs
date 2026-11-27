@@ -1,6 +1,6 @@
 // E08 (plan §6.4, G4 + the P0-04a fixture design): detached nested completion() and agent(). O1-O7.
 //
-// An eval cell holds on a fake-server barrier until it detaches (the project's codemode.json sets a 1 s detach point and
+// An eval cell holds on a fake-server barrier until it detaches (the project's codemode.json sets a 5 s detach point and
 // turns status ticks off), and the turn ends. The case then releases the barrier: the detached cell calls completion()
 // (a model request, O1), agent() and agent({handle:true}) (the fixture `task` tool, deterministic ids), and settles;
 // its one notification wakes the session for one more model turn (O6, O7).
