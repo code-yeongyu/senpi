@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createWriteStream, type WriteStream } from "node:fs";
-import { open, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
+import { openToolFile } from "@code-yeongyu/senpi-machine-ops";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -70,7 +71,7 @@ function endStream(stream: WriteStream): Promise<void> {
 }
 
 async function readTempFile(path: string, maxBytes: number) {
-	const file = await open(path, "r");
+	const file = await openToolFile(path);
 	try {
 		const size = (await file.stat()).size;
 		if (size <= maxBytes) {

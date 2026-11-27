@@ -60,6 +60,7 @@ export function createToolChildRuntime(options: ToolChildRuntimeOptions): ToolCh
 			: undefined;
 	const dispatcher = createToolDispatcher({
 		runtime: options.toolRuntime,
+		cwd: options.cwd,
 		...(options.notify === undefined ? {} : { notify: options.notify }),
 		hostCalls,
 		...(options.onModuleStuck === undefined ? {} : { onModuleStuck: options.onModuleStuck }),

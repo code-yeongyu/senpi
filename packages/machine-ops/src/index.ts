@@ -7,6 +7,14 @@ export {
 	withResolutionDeadline,
 } from "./files/bounded-realpath.ts";
 export { type FdResolver, globToRegExp } from "./files/glob.ts";
+export { identityWalk } from "./files/identity-walk.ts";
+export {
+	checkIdentityAccess,
+	identityFilesForNativeSearch,
+	openToolFile,
+	readToolText,
+	withDeviceIdentityDirectory,
+} from "./files/identity-access.ts";
 export {
 	acquireFileMutationLock,
 	FileLockedByStuckModuleError,
@@ -28,6 +36,8 @@ export {
 	type FilesystemPolicyRequest,
 } from "./policy/filesystem.ts";
 export { curatedEnv, defaultShell } from "./process/exec.ts";
+export { IdentityOutputStream } from "./process/identity-output.ts";
+export { IDENTITY_MASK, isPrivateField, isSecretBytes, redactIdentityText } from "./process/identity-text.ts";
 export type { HeldExit, HeldTerminal, HolderLink, HolderSpawnRequest } from "./process/holder-link.ts";
 export { RUNTIME_ENV, SCOPE_ENV, SWEEP_LADDER } from "./process/scopes.ts";
 export { waitForChildProcess, type WaitForChildProcessOptions } from "./process/wait-child.ts";

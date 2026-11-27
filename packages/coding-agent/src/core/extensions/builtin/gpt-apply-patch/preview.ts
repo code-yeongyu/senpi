@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { openToolFile } from "@code-yeongyu/senpi-machine-ops";
 import { createUnifiedPatch } from "../../../tools/unified-diff.ts";
 import { parsePatch } from "./parser.ts";
 import { createPatchDiff } from "./patch-diff.ts";
@@ -22,7 +22,13 @@ export type PatchFileSnapshot = {
 
 export async function readPatchFileSnapshot(absolutePath: string): Promise<PatchFileSnapshot> {
 	try {
-		const bytes = await readFile(absolutePath);
+		const file = await openToolFile(absolutePath);
+		let bytes: Buffer;
+		try {
+			bytes = await file.readFile();
+		} finally {
+			await file.close();
+		}
 		if (bytes.includes(0)) return { exists: true, content: "", binary: true, bytes };
 		try {
 			return {

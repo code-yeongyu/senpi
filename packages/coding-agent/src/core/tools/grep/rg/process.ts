@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from "node:child_process";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { createInterface } from "node:readline";
 import { signalSpawnedChild } from "../../../../utils/child-signal.ts";
 import { GrepEngineError } from "../engine.ts";
@@ -7,7 +7,7 @@ import { parseRgEvent, type RgEvent } from "./json-rows.ts";
 
 export interface RgEngineOptions {
 	/** Process and clock seams keep cancellation and ordered-deadline tests event-driven. */
-	spawn?: (command: string, args: string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
+	spawn?: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 	now?: () => number;
 	/** Batches per-file arguments under this many command-line characters instead of the platform budget. */
 	batchBudget?: number;
@@ -18,6 +18,7 @@ export type RgRun = (
 	cwd: string,
 	onEvent?: (event: RgEvent) => void,
 	input?: Buffer,
+	descriptors?: readonly number[],
 ) => Promise<Buffer>;
 
 export class SearchTimeout extends Error {}
@@ -58,7 +59,7 @@ export function createRgRunner({
 	signal?: AbortSignal;
 	check: () => void;
 }): RgRun {
-	return async (args, cwd, onEvent, input) => {
+	return async (args, cwd, onEvent, input, descriptors) => {
 		check();
 		const overflow = commandLineOverflow(args);
 		if (overflow)
@@ -67,7 +68,16 @@ export function createRgRunner({
 				`Cannot run ripgrep: ${overflow}. Search fewer paths at once.`,
 			);
 		return new Promise<Buffer>((resolveRun, reject) => {
-			const child = launch(executable, args, { cwd, stdio: "pipe" });
+			const child = launch(executable, ["--no-config", ...args], {
+				cwd,
+				stdio: descriptors ? ["pipe", "pipe", "pipe", ...descriptors] : "pipe",
+			});
+			const { stdin, stdout, stderr: errors } = child;
+			if (!stdin || !stdout || !errors) {
+				child.kill();
+				reject(new Error("missing ripgrep pipes"));
+				return;
+			}
 			const chunks: Buffer[] = [];
 			let stderr = "";
 			let failure: Error | undefined;
@@ -86,7 +96,7 @@ export function createRgRunner({
 				Math.max(0, deadline - now()),
 			);
 			signal?.addEventListener("abort", onAbort, { once: true });
-			const lines = onEvent ? createInterface({ input: child.stdout }) : undefined;
+			const lines = onEvent ? createInterface({ input: stdout }) : undefined;
 			lines?.on("line", (line) => {
 				if (failure) return;
 				try {
@@ -96,14 +106,14 @@ export function createRgRunner({
 					stop();
 				}
 			});
-			if (!onEvent) child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-			child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+			if (!onEvent) stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+			errors.setEncoding("utf8").on("data", (chunk: string) => {
 				stderr += chunk;
 			});
 			child.on("error", (error) => {
 				failure = new GrepEngineError("ENGINE_UNAVAILABLE", `Failed to run ripgrep: ${error.message}`);
 			});
-			child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+			stdin.on("error", (error: NodeJS.ErrnoException) => {
 				// rg can stop reading stdin at -m before the prefix has finished writing.
 				if (error.code === "EPIPE") return;
 				failure = new GrepEngineError("ENGINE_UNAVAILABLE", `Failed to write ripgrep input: ${error.message}`);
@@ -120,7 +130,7 @@ export function createRgRunner({
 					reject(rgError(stderr.trim() || `ripgrep exited with code ${code}`));
 				else resolveRun(Buffer.concat(chunks));
 			});
-			if (input !== undefined) child.stdin.end(input);
+			if (input !== undefined) stdin.end(input);
 			if (signal?.aborted) onAbort();
 		});
 	};

@@ -1,4 +1,5 @@
 import { type GrepEngine, GrepEngineError } from "./engine.ts";
+import { identityFilesForNativeSearch, identityWalk } from "@code-yeongyu/senpi-machine-ops";
 import type { NativeGrepLoaderOptions } from "./native-loader.ts";
 
 export type GrepEngineSelectorOptions = NativeGrepLoaderOptions;
@@ -43,7 +44,24 @@ async function loadNativeEngine(options: GrepEngineSelectorOptions, env: NodeJS.
 		throw new GrepEngineError("ENGINE_UNAVAILABLE", `${loaded.diagnostic.message} ${loaded.diagnostic.cause}`);
 	}
 	const { createNativeEngine } = await import("./native-engine.ts");
-	return createNativeEngine(loaded.native);
+	const guarded = loaded.native.grepGuarded;
+	if (!guarded)
+		throw new GrepEngineError(
+			"ENGINE_UNAVAILABLE",
+			"The installed native grep does not enforce protected file access",
+		);
+	return createNativeEngine({
+		...loaded.native,
+		grep: async (options, signal) => {
+			const policies = await Promise.all(options.paths.map(identityWalk));
+			return guarded(
+				options,
+				await identityFilesForNativeSearch(),
+				[...new Set(policies.flatMap((p) => p.dirs))],
+				signal,
+			);
+		},
+	});
 }
 
 export function resetGrepEngineForTests(): void {

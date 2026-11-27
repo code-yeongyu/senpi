@@ -18,6 +18,8 @@ import { kernelToolInvokerStorage } from "../extensions/kernel-tools-context.ts"
 import type { ExtensionToolContext, ToolChildJob, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
 import { childBashOperations } from "./child-bash-operations.ts";
+import { identityUpdateFilter, redactIdentityOutput } from "./identity-output.ts";
+import { checkToolIdentityPath } from "./identity-read.ts";
 import { type InProcessRun, runModuleInProcess, type StuckModuleNotice } from "./in-process-module.ts";
 import { OffloadError } from "./offload.ts";
 
@@ -92,6 +94,7 @@ export type ToolChildRunner = (job: ToolChildModuleJob, signal: AbortSignal | un
 
 export interface ToolDispatcherOptions {
 	runtime: ToolRuntimeKind;
+	cwd?: string;
 	notify?: ToolDispatchNotify;
 	childRunner?: ToolChildRunner;
 	childKindRunner?: ToolChildKindRunner;
@@ -118,7 +121,7 @@ export interface ToolDispatcher {
 	dispose(): Promise<void>;
 }
 
-type InProcessDispatchOptions = Pick<ToolDispatcherOptions, "hostCalls" | "stuckGraceMs" | "onModuleStuck">;
+type InProcessDispatchOptions = Pick<ToolDispatcherOptions, "cwd" | "hostCalls" | "stuckGraceMs" | "onModuleStuck">;
 
 /**
  * Placement of one call: only a definition that opted into `"child"` while the
@@ -147,7 +150,14 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 	async run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
 		this.#executing++;
 		try {
-			return await this.dispatch(call);
+			if (call.definition.name === "read" || call.definition.name === "grep")
+				await checkToolIdentityPath(call.definition.name, call.params, this.cwd ?? process.cwd());
+			const update = call.onUpdate;
+			const filter = identityUpdateFilter();
+			const result = await this.dispatch(update ? { ...call, onUpdate: (frame) => update(filter(frame)) } : call);
+			return redactIdentityOutput(result);
+		} catch (error) {
+			throw redactIdentityOutput(error);
 		} finally {
 			this.#executing--;
 		}
@@ -168,9 +178,11 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 	private readonly observers = new Set<ToolDispatchObserver>();
 	private readonly pinNotified = new Set<string>();
 	private readonly notifySink: ToolDispatchNotify | undefined;
+	private readonly cwd: string | undefined;
 
-	constructor(notify?: ToolDispatchNotify) {
+	constructor(notify?: ToolDispatchNotify, cwd?: string) {
 		this.notifySink = notify;
+		this.cwd = cwd;
 	}
 
 	onDispatched(observer: ToolDispatchObserver): () => void {
@@ -223,7 +235,7 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 	#disposed = false;
 
 	constructor(notify?: ToolDispatchNotify, options: InProcessDispatchOptions = {}) {
-		super(notify);
+		super(notify, options.cwd);
 		this.#options = options;
 	}
 
@@ -267,8 +279,13 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 	readonly #childRunner: ToolChildRunner | undefined;
 	readonly #kindRunner: ToolChildKindRunner | undefined;
 
-	constructor(notify?: ToolDispatchNotify, childRunner?: ToolChildRunner, kindRunner?: ToolChildKindRunner) {
-		super(notify);
+	constructor(
+		notify?: ToolDispatchNotify,
+		childRunner?: ToolChildRunner,
+		kindRunner?: ToolChildKindRunner,
+		cwd?: string,
+	) {
+		super(notify, cwd);
 		this.#childRunner = childRunner;
 		this.#kindRunner = kindRunner;
 	}
@@ -358,7 +375,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
 	return options.runtime === "child"
-		? new ChildToolDispatcher(options.notify, options.childRunner, options.childKindRunner)
+		? new ChildToolDispatcher(options.notify, options.childRunner, options.childKindRunner, options.cwd)
 		: new InProcessToolDispatcher(options.notify, options);
 }
 

@@ -9996,6 +9996,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/machine-ops/src/files/identity-access.ts#serviceDirectory": {
+			"class": "realm-registry",
+			"reason": "the authenticated device-service directory must reach file operations even across engine copies"
+		},
 		"packages/machine-ops/src/files/mutation-queue.ts#fileMutationQueue": {
 			"class": "realm-registry",
 			"reason": "file-mutation-queue/v1: any copy's edit, write, patch or remote-hand operation on one file must queue, and the stuck-holder diagnostics see every copy (design 3.2, 3.3)"
@@ -10011,6 +10015,58 @@
 		"packages/machine-ops/src/policy/filesystem.ts#ALLOW": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-output.ts#RELEASE_CONTEXT": {
+			"class": "constant",
+			"reason": "number computed once at load from constants; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-scope.ts#KEPT_NAMES": {
+			"class": "constant",
+			"reason": "lookup set of record field names, filled once at load and only read"
+		},
+		"packages/machine-ops/src/process/identity-tail.ts#HUMAN_KEYS": {
+			"class": "constant",
+			"reason": "lookup data literal of human-record key names; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-tail.ts#NAMES": {
+			"class": "constant",
+			"reason": "lookup data literal of private field names; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-tail.ts#PRIVATE_TAIL": {
+			"class": "constant",
+			"reason": "pattern built once at load; used only through exec without the global flag, so it holds no state"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#PRIVATE_VALUE": {
+			"class": "constant",
+			"reason": "pattern built once at load; read only through matchAll, which clones it, so its lastIndex is never shared"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#HUMAN_BEFORE": {
+			"class": "constant",
+			"reason": "pattern literal read only through matchAll, which clones it, so its lastIndex is never shared"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#KEY_NAME": {
+			"class": "constant",
+			"reason": "pattern source string built once at load from constants; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#KEY_TEXT": {
+			"class": "constant",
+			"reason": "pattern built once at load; read only through matchAll, which clones it, so its lastIndex is never shared"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#KEY_TEXT_END": {
+			"class": "constant",
+			"reason": "pattern built once at load; used only through exec without the global flag, so it holds no state"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#SEPARATOR": {
+			"class": "constant",
+			"reason": "pattern source string built once at load from constants; never written after load"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#VERSION_BEFORE": {
+			"class": "constant",
+			"reason": "pattern literal read only through matchAll, which clones it, so its lastIndex is never shared"
+		},
+		"packages/machine-ops/src/process/identity-text.ts#TOKEN": {
+			"class": "constant",
+			"reason": "pattern literal read only through matchAll, which clones it, so its lastIndex is never shared"
 		},
 		"packages/machine-ops/src/process/handles.ts#ANSI": {
 			"class": "per-copy-safe",

@@ -66,6 +66,7 @@ describe("multi-session RPC protocol info", () => {
 					"peer_agent_role_v1",
 					"same_account_delegation_v1",
 					"machine_op_v1", // senpi#6752: the local relay host's device ops run in the engine.
+					"machine_op_identity_guard_v1", // senpi#7528: this engine's file effects refuse protected identities.
 					"unload_session",
 					"unload_refuse_deliveries", // senpi#7004: an unload can refuse to drop a busy session's unwritten deliveries.
 					"unload_graceful", // oh-my-openagent#14313: unload_session { graceful, waitMs } drains the turn.

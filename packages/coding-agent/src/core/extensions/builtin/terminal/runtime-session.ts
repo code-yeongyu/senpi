@@ -1,3 +1,4 @@
+import { IdentityOutputStream } from "@code-yeongyu/senpi-machine-ops";
 import type {
 	TerminalScreen,
 	TerminalScreenSnapshot,
@@ -48,6 +49,7 @@ export class TerminalRuntimeSession {
 	private finalScreen: TerminalScreenSnapshot | null = null;
 	private readonly screenRelease: Promise<void>;
 	private readonly decoder = new TextDecoder("utf-8", { fatal: false });
+	private readonly identityOutput = new IdentityOutputStream();
 	private readonly redactor: SecretOutputRedactor | undefined;
 	private redactionIdleTimer: ReturnType<typeof setTimeout> | undefined;
 	private buffer = "";
@@ -72,14 +74,15 @@ export class TerminalRuntimeSession {
 		});
 		this.session = new pty.TerminalSession(options);
 		this.unsubscribeData = this.session.onData((chunk) => {
-			const text = this.decoder.decode(chunk, { stream: true });
+			const text = this.identityOutput.push(this.decoder.decode(chunk, { stream: true }));
 			this.ingest(this.redactor ? this.redactor.push(text) : text);
 			const redactor = this.redactor;
-			if (redactor) {
+			if (redactor || this.identityOutput.holding) {
 				clearTimeout(this.redactionIdleTimer);
 				this.redactionIdleTimer = setTimeout(() => {
 					this.redactionIdleTimer = undefined;
-					this.ingest(redactor.flushIdle());
+					const idle = this.identityOutput.flushIdle();
+					this.ingest(redactor ? redactor.push(idle) + redactor.flushIdle() : idle);
 				}, 50);
 				this.redactionIdleTimer.unref?.();
 			}
@@ -88,7 +91,8 @@ export class TerminalRuntimeSession {
 			this.session.onExit(() => {
 				clearTimeout(this.redactionIdleTimer);
 				this.redactionIdleTimer = undefined;
-				if (this.redactor) this.ingest(this.redactor.push(this.decoder.decode()) + this.redactor.finish());
+				const tail = this.identityOutput.push(this.decoder.decode()) + this.identityOutput.finish();
+				this.ingest(this.redactor ? this.redactor.push(tail) + this.redactor.finish() : tail);
 				// Best-effort like every screen write (#837): a failed release leaves an empty final screen, never an unhandled rejection.
 				void this.releaseScreen()
 					.catch(() => {})

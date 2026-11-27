@@ -1,5 +1,5 @@
 import { constants, type Stats } from "node:fs";
-import { access, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { MachineOpError } from "../errors.ts";
 import { checkPath, gated, resolveOpPath } from "../policy/gate.ts";
@@ -24,6 +24,9 @@ import type {
 } from "../types.ts";
 import { type FdResolver, localGlob } from "./glob.ts";
 import { localGrep } from "./grep.ts";
+import { checkIdentityAccess, openToolFile } from "./identity-access.ts";
+import { identityWalk } from "./identity-walk.ts";
+import { canonicalizeFilesystemPath } from "../policy/filesystem.ts";
 import { acquireFileMutationLock } from "./mutation-queue.ts";
 
 const ACCESS_MODES = {
@@ -62,15 +65,20 @@ async function withPathLock<T>(path: string, ctx: OpContext, fn: () => Promise<T
 
 async function readWithinLimit(path: string, limit: number): Promise<Buffer> {
 	// An unbounded limit (the tool path) reads exactly as fs.readFile always has, with no extra stat.
-	if (Number.isFinite(limit)) {
-		const info = await stat(path);
-		if (info.size > limit) throw readLimitError(path, info.size, limit);
+	const handle = await openToolFile(path);
+	try {
+		if (Number.isFinite(limit)) {
+			const info = await handle.stat();
+			if (info.size > limit) throw readLimitError(path, info.size, limit);
+		}
+		return await handle.readFile();
+	} finally {
+		await handle.close();
 	}
-	return readFile(path);
 }
 
 async function readRange(path: string, req: ReadRequest, limit: number): Promise<ReadResult> {
-	const handle = await open(path, "r");
+	const handle = await openToolFile(path);
 	try {
 		const info: Stats = await handle.stat();
 		const offset = req.offset ?? 0;
@@ -90,10 +98,20 @@ async function writeRange(path: string, req: WriteRequest): Promise<void> {
 	if (req.total !== undefined && req.total < offset + req.bytes.byteLength) {
 		throw new MachineOpError("invalid_argument", "total must cover offset + bytes");
 	}
-	const handle = await open(path, constants.O_RDWR | constants.O_CREAT, 0o666);
+	const handle = await openToolFile(path, constants.O_RDWR | constants.O_CREAT);
 	try {
 		await handle.write(req.bytes, 0, req.bytes.byteLength, offset);
 		if (req.total !== undefined) await handle.truncate(req.total);
+	} finally {
+		await handle.close();
+	}
+}
+
+async function replaceFile(path: string, bytes: Uint8Array): Promise<void> {
+	const handle = await openToolFile(path, constants.O_WRONLY | constants.O_CREAT);
+	try {
+		await handle.truncate(0);
+		await handle.writeFile(bytes);
 	} finally {
 		await handle.close();
 	}
@@ -128,7 +146,7 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 			return withPathLock(path, ctx, () =>
 				gated("files.write", req, ctx, async () => {
 					if (req.createParentDirs) await mkdir(dirname(path), { recursive: true });
-					if (req.offset === undefined) await writeFile(path, req.bytes);
+					if (req.offset === undefined) await replaceFile(path, req.bytes);
 					else await writeRange(path, req);
 					return { path, writtenBytes: req.bytes.byteLength };
 				}),
@@ -146,7 +164,7 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 					if (pieces.length === 1) throw new MachineOpError("not_found", "exact substring was not found");
 					const next = pieces.join(req.replacement);
 					const bytes = Buffer.from(next, "utf8");
-					await writeFile(path, bytes);
+					await replaceFile(path, bytes);
 					return {
 						path,
 						content: next,
@@ -171,7 +189,12 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 				pattern = split.rest;
 			}
 			await checkPath(cwd, "enumerate", "files.glob", ctx);
-			return gated("files.glob", req, ctx, () => localGlob(pattern, cwd, req.limit, ctx.signal, options.resolveFd));
+			return gated("files.glob", req, ctx, async () => {
+				await checkIdentityAccess(cwd);
+				const result = await localGlob(pattern, cwd, req.limit, ctx.signal, options.resolveFd);
+				for (const entry of result.entries) await checkIdentityAccess(resolve(cwd, entry.path));
+				return result;
+			});
 		},
 
 		async grep(req: GrepRequest, ctx: OpContext): Promise<GrepResult> {
@@ -186,9 +209,17 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 			const path = resolveOpPath(req.path, ctx);
 			await checkPath(path, "read", "files.stat", ctx);
 			return gated("files.stat", req, ctx, async () => {
+				await checkIdentityAccess(path);
 				if (req.access !== undefined) await access(path, ACCESS_MODES[req.access]);
-				const info = await stat(path);
-				return { path, type: entryType(info), size: info.size, mtimeMs: info.mtimeMs, mode: info.mode };
+				const info = await stat(path, { bigint: true });
+				await checkIdentityAccess(path, info);
+				return {
+					path,
+					type: entryType(info),
+					size: Number(info.size),
+					mtimeMs: Number(info.mtimeNs / 1_000_000n) + Number(info.mtimeNs % 1_000_000n) / 1e6,
+					mode: Number(info.mode),
+				};
 			});
 		},
 
@@ -196,8 +227,17 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 			const path = resolveOpPath(req.path, ctx);
 			await checkPath(path, "enumerate", "files.list", ctx);
 			return gated("files.list", req, ctx, async () => {
-				const dirents = await readdir(path, { withFileTypes: true });
-				return { path, entries: dirents.map((dirent) => ({ name: dirent.name, type: entryType(dirent) })) };
+				await checkIdentityAccess(path);
+				const walk = await identityWalk(path);
+				const entries = [];
+				for (const entry of await readdir(path, { withFileTypes: true })) {
+					const file = resolve(walk.start, entry.name);
+					if (walk.hidden(file) || (entry.isSymbolicLink() && walk.hidden(await canonicalizeFilesystemPath(file))))
+						continue;
+					await checkIdentityAccess(file);
+					entries.push({ name: entry.name, type: entryType(entry) });
+				}
+				return { path, entries };
 			});
 		},
 	};

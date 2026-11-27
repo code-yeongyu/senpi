@@ -16,6 +16,8 @@ export interface GrepFileCount {
   limitReached: boolean
 }
 
+export declare function grepGuarded(options: GrepOptions, identities: Array<string>, excludedDirectories: Array<string>, signal?: AbortSignal | undefined | null): Promise<GrepResult>
+
 export interface GrepMatch {
   path: string
   line: number

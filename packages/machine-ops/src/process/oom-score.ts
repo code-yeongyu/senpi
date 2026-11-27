@@ -4,8 +4,8 @@ import process from "node:process";
 /**
  * Linux `oom_score_adj` for every command a machine exec starts: the maximum, so under memory pressure the kernel's
  * OOM killer picks a runaway command (and the descendants it forks afterwards, which inherit the value) before the
- * long-lived host that ran it. Unprivileged processes may raise their children's value. This mirrors pi-pty's
- * terminal-session helper; exec.ts sits on the CLI startup graph, which must not load pi-pty (see pty.lazy.ts).
+ * long-lived host that ran it. Unprivileged processes may raise their children's value. Keep this engine-free:
+ * one-shot exec must not load the optional terminal package on the CLI startup graph (see pty.lazy.ts).
  */
 const EXEC_CHILD_OOM_SCORE_ADJ = 1000;
 

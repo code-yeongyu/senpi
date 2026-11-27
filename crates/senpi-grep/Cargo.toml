@@ -21,5 +21,8 @@ globset.workspace = true
 rayon.workspace = true
 memchr.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+same-file = "=1.0.6"
+
 [build-dependencies]
 napi-build.workspace = true

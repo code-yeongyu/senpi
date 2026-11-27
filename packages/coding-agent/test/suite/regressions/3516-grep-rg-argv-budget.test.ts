@@ -130,37 +130,37 @@ describe("#3516 rg launches fit the whole OS command line", () => {
 		});
 	}
 
-	it("keeps every NUL-scan batch under the budget and scans each explicit file once", async () => {
+	// senpi#7528: explicit files are classified from guarded descriptors, so no NUL-scan launch
+	// exists to exceed the command line, whatever the number of files.
+	it("classifies explicit files without any rg launch", async () => {
 		const root = await realpath(await mkdtemp(join(tmpdir(), "grep-3516-nul-")));
 		cleanups.push(() => rm(root, { recursive: true, force: true }));
 		const paths: string[] = [];
 		for (let index = 0; index < 60; index++) {
 			const path = join(root, `dir ${index}`, `file "${index}".ts`);
 			await mkdir(join(path, ".."));
-			await writeFile(path, "needle\n");
+			await writeFile(path, index === 7 ? "needle\0binary\n" : "needle\n");
 			paths.push(path);
 		}
 		const request: GrepEngineRequest = { pattern: "needle", paths, cwd: root };
 		const result = { missingPaths: [], skippedBinary: 0 } as unknown as GrepEngineResult;
 		const roots = await resolveRoots(request, result);
-		const scans: string[][] = [];
-		const budget = EXECUTABLE_RESERVE + 2_000;
-		await enumerateCandidates({
+		const launches: string[][] = [];
+		const candidates = await enumerateCandidates({
 			roots,
 			cwd: root,
 			walk: [],
 			run: async (args) => {
-				scans.push(args);
+				launches.push(args);
 				return Buffer.alloc(0);
 			},
 			check: () => {},
 			result,
-			budget,
 		});
 
-		expect(scans.length).toBeGreaterThan(1);
-		for (const args of scans) expect(commandLine(args, process.platform)).toBeLessThanOrEqual(budget);
-		expect(scans.flatMap((args) => args.slice(args.indexOf("--") + 1))).toEqual(roots.map((entry) => entry.path));
+		expect(launches).toEqual([]);
+		expect(candidates).toHaveLength(60);
+		expect(result.skippedBinary).toBe(1);
 	});
 
 	it("rejects a pattern no launch can carry before spawning anything", async () => {

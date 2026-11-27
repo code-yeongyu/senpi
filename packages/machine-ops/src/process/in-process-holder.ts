@@ -1,6 +1,7 @@
 import type { TerminalSession, TerminalScreen } from "@earendil-works/pi-pty";
 import type { HeldExit, HeldTerminal, HolderLink, HolderSpawnRequest } from "./holder-link.ts";
 import { loadPty } from "./pty.lazy.ts";
+import { IdentityOutputStream } from "./identity-output.ts";
 
 const SCREEN_SCROLLBACK = 1000;
 
@@ -11,6 +12,8 @@ class InProcessTerminal implements HeldTerminal {
 	private readonly screenModel: TerminalScreen;
 	private exit: HeldExit | undefined;
 	private readonly exitWaiters = new Set<(exit: HeldExit) => void>();
+	private readonly output = new IdentityOutputStream();
+	private readonly listeners = new Set<(bytes: Uint8Array) => void>();
 
 	constructor(id: string, session: TerminalSession, screenModel: TerminalScreen) {
 		const pid = session.pid;
@@ -20,7 +23,7 @@ class InProcessTerminal implements HeldTerminal {
 		this.session = session;
 		this.screenModel = screenModel;
 		session.onData((chunk) => {
-			void this.screenModel.feed(chunk);
+			this.emit(this.output.pushBytes(chunk));
 		});
 		void session.waitExit().then(
 			(exit) => this.settle({ exitCode: exit.exitCode, signal: exit.signal }),
@@ -30,13 +33,21 @@ class InProcessTerminal implements HeldTerminal {
 
 	private settle(exit: HeldExit): void {
 		if (this.exit !== undefined) return;
+		this.emit(this.output.finishBytes());
 		this.exit = exit;
 		for (const waiter of this.exitWaiters) waiter(exit);
 		this.exitWaiters.clear();
 	}
 
 	onData(listener: (chunk: Uint8Array) => void): () => void {
-		return this.session.onData(listener);
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	private emit(chunk: Uint8Array): void {
+		if (!chunk.length) return;
+		void this.screenModel.feed(chunk);
+		for (const listener of this.listeners) listener(chunk);
 	}
 
 	onExit(listener: (exit: HeldExit) => void): () => void {

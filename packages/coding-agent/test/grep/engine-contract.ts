@@ -1,6 +1,6 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -44,7 +44,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 		}
 		function trackSpawn() {
 			const calls: string[][] = [];
-			const children: ChildProcessWithoutNullStreams[] = [];
+			const children: ChildProcess[] = [];
 			const launch: NonNullable<RgEngineOptions["spawn"]> = (command, args, options) => {
 				calls.push(args);
 				const child = spawn(command, args, options);
@@ -323,7 +323,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 				expect(result.filesSearched).toBe(1);
 				const searches = tracked.calls.filter((args) => args.includes("--json"));
 				expect(searches).toHaveLength(1);
-				expect(searches[0].filter((arg) => arg.startsWith("/") && arg.endsWith(".ts"))).toHaveLength(200);
+				expect(searches[0].slice(-200)).toEqual(Array.from({ length: 200 }, (_, i) => `/dev/fd/${i + 3}`));
 				expect(result.counts).toEqual({ matches: 1, files: 1, exact: false });
 			});
 			it("json_in_every_mode", async () => {
@@ -358,6 +358,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 					now: () => clock,
 					spawn: (command, args, options) => {
 						const child = spawn(command, args, options);
+						if (!child.stdout) throw new Error("missing test output pipe");
 						if (args.includes("--json") && ++segments === 2)
 							child.stdout.once("data", () => {
 								clock = 101;
@@ -385,7 +386,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 			it("timeout_kills_and_awaits_child", async () => {
 				const root = await tree({ "a.ts": "needle\n" });
 				vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-				let child: ChildProcessWithoutNullStreams | undefined;
+				let child: ChildProcess | undefined;
 				const engine = createRgEngine({
 					now: () => 0,
 					spawn: (command, args, options) => {
@@ -398,6 +399,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 							],
 							options,
 						);
+						if (!child.stdout) throw new Error("missing test output pipe");
 						child.stdout.once("data", () => vi.advanceTimersByTime(100));
 						return child;
 					},
@@ -444,9 +446,9 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 				const tracked = trackSpawn();
 				await createRgEngine({ spawn: tracked.launch }).search({ ...request, pattern: "--pre=should-never-run" });
 				const args = tracked.calls.find((call) => call.includes("--pre=should-never-run"));
-				expect(args?.slice(args.indexOf("--") + 1)).toEqual(["--pre=should-never-run", await realpath(root)]);
+				expect(args?.slice(args.indexOf("--") + 1)).toEqual(["--pre=should-never-run", "/dev/fd/3"]);
 				const controller = new AbortController();
-				let child: ChildProcessWithoutNullStreams | undefined;
+				let child: ChildProcess | undefined;
 				const engine = createRgEngine({
 					spawn: (command, args, options) => {
 						if (!args.includes("--json")) return spawn(command, args, options);
@@ -458,6 +460,7 @@ export function describeEngineContract(name: string, makeEngine: () => Promise<G
 							],
 							options,
 						);
+						if (!child.stdout) throw new Error("missing test output pipe");
 						child.stdout.once("data", () => controller.abort());
 						return child;
 					},

@@ -49,21 +49,3 @@ export function roomAfter(
 ): number {
 	return budget - EXECUTABLE_RESERVE - fixed.reduce((sum, argument) => sum + argvCost(argument, platform), 0);
 }
-
-/** Splits items into ordered batches whose cost fits the room; an oversized single item still gets its own batch. */
-export function packArgv<T>(items: readonly T[], costOf: (item: T) => number, room: number): T[][] {
-	const batches: T[][] = [];
-	let used = 0;
-	for (const item of items) {
-		const cost = costOf(item);
-		const batch = batches.at(-1);
-		if (batch && used + cost <= room) {
-			batch.push(item);
-			used += cost;
-		} else {
-			batches.push([item]);
-			used = cost;
-		}
-	}
-	return batches;
-}
