@@ -81,14 +81,17 @@ describe("#7596 lifecycle bookkeeping written before a compaction window", () =>
 		const { written, reopened } = session();
 		reopened.reduceHistory(lifecycleHistory);
 
-		// when a newer lifecycle record and the settlement of the open custody record arrive
+		// when a newer lifecycle record, the settlement of the open custody record and the cancellation of an earlier one arrive
 		reopened.appendCustomEntry("session-lifecycle", lifecycleRecord(written.sessionId, written.lastSeq + 1));
 		reopened.appendCustomEntry("work-custody", custodyRecord(written.sessionId, "custody-open", "settled"));
+		reopened.appendCustomEntry("work-custody", custodyRecord(written.sessionId, "custody-3", "cancelled"));
 		const folded = reopened.reduceHistory(lifecycleHistory);
 
-		// then each took the place of the record it supersedes
+		// then each took the place of the record it supersedes: the order is still that of the first records
 		expect(recordsOf(folded, "session-lifecycle").map((data) => data.seq)).toEqual([written.lastSeq + 1]);
-		expect(custodyOf(folded)).toEqual(written.custody.map(({ id }) => ({ id, state: "settled" })));
+		expect(custodyOf(folded)).toEqual(
+			written.custody.map(({ id }) => ({ id, state: id === "custody-3" ? "cancelled" : "settled" })),
+		);
 	});
 
 	it("keeps another session's records apart, and the first of two records with the same seq", () => {
