@@ -96,6 +96,8 @@ describe("multi-session RPC protocol info", () => {
 					"session_env",
 					"retry_fallback_profile",
 					"session_persona",
+					"session_persistence_none",
+					"session_tools_none_enforced",
 					"telemetry_consent", // senpi#7446: each session's telemetry follows its own callers' answers.
 					"permission_preset_accept_edits",
 					"permission_preset_auto",

@@ -3110,6 +3110,14 @@ and opens the session with every tool. A malformed persona (an unknown key, a no
 name over 128 characters, more than 256 names, an empty prompt, or a prompt over 100,000 UTF-8 bytes) is refused
 with `invalid_launch_profile`.
 
+A session opened with no tools (`persona.tools: []`, the per-session `--no-tools`) has an empty active tool set, and
+the RPC commands that would run a process on its behalf are refused for it with `errorCode: "tools_disabled"`
+(`error: "tools_disabled: ..."`), so nothing runs for it even when a client asks: today that is `bash`. Commands that
+only start a turn (`prompt`, `steer`, `follow_up`, `compact`), record a result (`record_bash_result`), call a host
+extension's handler (`extension_request`) or write a file the client supplies (`write_project_file` and the skill
+file writes) run nothing and are not refused. Only the session's own choice counts: a host started with `--no-tools`
+keeps today's `bash`. Probe `session_tools_none_enforced` before relying on the refusal.
+
 #### A session that is never written (`session_persistence_none`)
 
 `open_session.persistence: "none"` is THIS session's `--no-session`: the session lives in memory only, for a

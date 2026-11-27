@@ -43,10 +43,16 @@ it(
 		await mkdir(agentDir);
 		const host = reservationHost(cwd, agentDir);
 		host.connect("controller");
-		const send = (command: RpcCommand) => host.send("controller", command);
+		let serial = 0;
+		// A worker session answers through the writer, so a reply is looked up by its request id.
+		const send = async (command: RpcCommand) => {
+			const id = `req-${++serial}`;
+			const direct = await host.send("controller", { ...command, id });
+			return direct ?? host.records.find((record) => (record as { id?: string }).id === id);
+		};
 		const lifecycle = async (label: string) => {
 			const open = { type: "open_session", cwd, persistence: "none" } as const;
-			const opened = data(await step(`${label}-open`, send({ id: `${label}-open`, ...open })));
+			const opened = data(await step(`${label}-open`, send(open)));
 			const sessionId = String(opened.sessionId);
 			const bash = data(await step(`${label}-bash`, send({ type: "bash", sessionId, command: "echo hi" })));
 			const state = data(await send({ type: "get_state", sessionId }));

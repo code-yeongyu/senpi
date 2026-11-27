@@ -40,6 +40,7 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_PERSONA_CAPABILITY,
 	SESSION_PERSISTENCE_NONE_CAPABILITY,
+	SESSION_TOOLS_NONE_ENFORCED_CAPABILITY,
 	TELEMETRY_CONSENT_CAPABILITY,
 	SESSION_ENV_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
@@ -211,6 +212,8 @@ export function multiSessionHostCapabilities(options: {
 			SESSION_PERSONA_CAPABILITY,
 			// A session can be opened in memory only: no file, no record, gone with its last attachment (senpi#7567).
 			SESSION_PERSISTENCE_NONE_CAPABILITY,
+			// A no-tools session's `bash` is refused with `tools_disabled`, not only hidden from its model (senpi#7567).
+			SESSION_TOOLS_NONE_ENFORCED_CAPABILITY,
 			// Each session's telemetry is decided from the host's setting and its own callers' answers (senpi#7446).
 			TELEMETRY_CONSENT_CAPABILITY,
 			ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
