@@ -77,18 +77,18 @@ export function parseActivationMarkers(messages: readonly unknown[]): ParsedActi
 }
 
 /**
- * Restore valid activation history against the current winning registry docs.
+ * Restore parsed activation markers against the current winning registry docs.
  *
  * This pure scan is intended to run ONCE per registry generation. The owning
  * service is responsible for generation-level memoization; callers must not
  * continuously reapply history after each active-tool update.
  */
-export function rehydrate(
-	messages: readonly unknown[],
+export function restoreActivationMarkers(
+	markers: Iterable<ParsedActivationMarker>,
 	currentDocsByName: ReadonlyMap<string, RehydratableToolSearchDocument>,
 ): string[] {
 	const restored = new Set<string>();
-	for (const marker of parseActivationMarkers(messages)) {
+	for (const marker of markers) {
 		if (marker.version === 2) {
 			for (const activation of marker.activations) {
 				const current = currentDocsByName.get(activation.name);

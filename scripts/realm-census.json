@@ -5779,6 +5779,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/tool-search/activation-history.ts#activationMarkers": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history marker list"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/tool-search/engine/bm25.ts#DEFAULT_BM25_PRECISION": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
