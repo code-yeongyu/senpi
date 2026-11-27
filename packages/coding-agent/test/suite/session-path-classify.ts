@@ -105,12 +105,9 @@ function isOwnFunction(declaration: ts.Declaration, sources: ReadonlySet<string>
 function syncIoName(checker: ts.TypeChecker, target: ts.Expression, depth: number): string | undefined {
 	if (depth > MAX_ALIAS_DEPTH) return undefined;
 	if (ts.isPropertyAccessExpression(target) && requiresSyncIoModule(checker, target.expression, depth))
-		return target.name.text.endsWith("Sync") ? target.name.text : undefined;
+		return syncMemberName(target, target.name.text);
 	for (const declaration of declarationsOf(checker, target)) {
-		if (declaredInSyncIoModule(declaration)) {
-			const name = symbolName(checker, target) ?? "";
-			return name.endsWith("Sync") ? name : undefined;
-		}
+		if (declaredInSyncIoModule(declaration)) return syncMemberName(target, symbolName(checker, target) ?? "");
 		if (ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name) && declaration.initializer) {
 			const source = unbound(declaration.initializer);
 			if (ts.isIdentifier(source) || ts.isPropertyAccessExpression(source))
@@ -119,6 +116,18 @@ function syncIoName(checker: ts.TypeChecker, target: ts.Expression, depth: numbe
 		if (ts.isBindingElement(declaration)) return destructuredSyncName(checker, declaration);
 	}
 	return undefined;
+}
+
+/**
+ * A `*Sync` name, or `<name>Sync.native` for the native variant hung off one (`fs.realpathSync.native`, which opens
+ * the path like its parent: senpi#4565 was a host parked in exactly that call).
+ */
+function syncMemberName(target: ts.Expression, name: string): string | undefined {
+	if (name.endsWith("Sync")) return name;
+	if (name !== "native" || !ts.isPropertyAccessExpression(target)) return undefined;
+	const parent = target.expression;
+	const owner = ts.isPropertyAccessExpression(parent) ? parent.name.text : ts.isIdentifier(parent) ? parent.text : "";
+	return owner.endsWith("Sync") ? `${owner}.native` : undefined;
 }
 
 /** `const { copyFileSync } = fs` (or `{ copyFileSync: copy }`): the property, looked up on the bound value's type. */
