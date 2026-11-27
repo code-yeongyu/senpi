@@ -1,4 +1,10 @@
-import { type AgentEvent, type AgentTool, openMemoryBatchStore } from "@earendil-works/pi-agent-core";
+import {
+	type AfterToolCallResult,
+	type AgentEvent,
+	type AgentTool,
+	type AgentToolResult,
+	openMemoryBatchStore,
+} from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
@@ -16,16 +22,22 @@ function isToolResult(value: unknown): value is ToolResultMessage {
 	return typeof value === "object" && value !== null && "role" in value && value.role === "toolResult";
 }
 
-function rig() {
+const DENIAL: AfterToolCallResult = { content: [{ type: "text", text: DENY }], isError: true, details: {} };
+
+function rig(
+	answer: AfterToolCallResult = DENIAL,
+	original: AgentToolResult<unknown> = { content: [{ type: "text", text: FOREIGN_LINE }], details: undefined },
+) {
 	const parameters = Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) });
 	const grep: AgentTool<typeof parameters> = {
 		name: "grep",
 		label: "grep",
 		description: "grep-shaped fixture",
 		parameters,
-		execute: async () => ({ content: [{ type: "text", text: FOREIGN_LINE }], details: undefined }),
+		execute: async () => original,
 	};
 	const order: string[] = [];
+	const ends: AgentToolResult<unknown>[] = [];
 	const session: CursorExecBridgeSession = {
 		getRegisteredTool: (name) => (name === "grep" ? grep : undefined),
 		preflightToolCall: async () => undefined,
@@ -34,7 +46,7 @@ function rig() {
 		// guard returns.
 		emitExecBridgeToolResult: async () => {
 			order.push("tool_result");
-			return { content: [{ type: "text", text: DENY }], isError: true, details: {} };
+			return answer;
 		},
 	};
 	const runSignal = new AbortController().signal;
@@ -44,9 +56,10 @@ function rig() {
 		executionScope: { id: "test-scope", root: "" },
 		async emitExternalEvent(event: AgentEvent) {
 			order.push(event.type);
+			if (event.type === "tool_execution_end") ends.push(event.result);
 		},
 	};
-	return { bridge: createSessionCursorExecBridge({ current: session }, () => agent, runSignal), order };
+	return { bridge: createSessionCursorExecBridge({ current: session }, () => agent, runSignal), order, ends };
 }
 
 function textOf(result: unknown): string {
@@ -72,5 +85,37 @@ describe("a tool_result replacement on the Cursor exec path (omo#12466)", () => 
 
 		expect.soft(text).not.toContain("synthetic-foreign-line");
 		expect.soft(text).toContain(DENY);
+	});
+
+	it("drops the replaced result's image parts and structured content along with its text", async () => {
+		const { bridge, ends } = rig(DENIAL, {
+			content: [
+				{ type: "text", text: FOREIGN_LINE },
+				{ type: "image", data: "c3ludGhldGlj", mimeType: "image/png" },
+			],
+			structuredContent: { files: [FOREIGN_LINE] },
+			details: { matches: [FOREIGN_LINE] },
+		});
+
+		const frame = await bridge.grep?.({ toolCallId: "call-3", pattern: "synthetic", path: "/synthetic" } as never);
+
+		expect(frame).toMatchObject({ content: [{ type: "text", text: DENY }], isError: true, details: {} });
+		expect(ends).toHaveLength(1);
+		expect(ends[0]?.structuredContent).toBeUndefined();
+		expect(JSON.stringify({ frame, ends })).not.toContain("synthetic-foreign-line");
+	});
+
+	it.each([
+		{ name: "isError only", answer: { isError: true }, isError: true, details: { matches: 1 } },
+		{ name: "details only", answer: { details: {} }, isError: false, details: {} },
+	])("applies a partial override ($name) and keeps the fields it leaves out", async ({ answer, isError, details }) => {
+		const { bridge } = rig(answer, {
+			content: [{ type: "text", text: "synthetic own line" }],
+			details: { matches: 1 },
+		});
+
+		const frame = await bridge.grep?.({ toolCallId: "call-4", pattern: "synthetic", path: "/synthetic" } as never);
+
+		expect(frame).toMatchObject({ content: [{ type: "text", text: "synthetic own line" }], isError, details });
 	});
 });
