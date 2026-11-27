@@ -8,6 +8,8 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 
 import type { SessionKind } from "../../core/extensions/types.ts";
 
+import type { TelemetryConsent, TelemetryDeclaration } from "../../core/telemetry-consent.ts";
+
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse } from "./rpc-question-types.ts";
 import type { RpcHostResponse } from "./rpc-relocation-types.ts";
@@ -72,7 +74,8 @@ type RpcCommandBody =
 			 * `pi.sessionContext` and republished on `list_sessions { include_workers: true }`.
 			 * At most 32 keys matching `^[a-z][a-z0-9_]*$`, each value at most 16 KiB, at most
 			 * 32 KiB of JSON in total; anything else is refused with `invalid_session_context`.
-			 * The host never interprets them. Requires the host capability `session_context`.
+			 * The host interprets one: `approvals: "refuse"` declares that nobody answers this session's prompts
+			 * (see `docs/rpc.md`); every other label is opaque to it. Requires the host capability `session_context`.
 			 */
 			context?: Record<string, string>;
 			/**
@@ -132,6 +135,15 @@ type RpcCommandBody =
 			 * the session's existing env. Requires the host capability `session_env`.
 			 */
 			env?: Record<string, string>;
+			/**
+			 * This caller's live telemetry answer for the session (senpi#7446). Telemetry attributed to the session is
+			 * collected and delivered only while the host permits it AND every caller of the session answered
+			 * `granted`; an open without this field answers `unanswered`, so an older peer never grants. An open that
+			 * attaches to an existing session adds this caller's answer to it. Change it later with
+			 * `set_telemetry_consent`. Requires the host capability `telemetry_consent`; any other value is refused
+			 * with `invalid_launch_profile`.
+			 */
+			telemetry?: TelemetryDeclaration;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| RpcMoveSessionCommand
@@ -277,6 +289,19 @@ type RpcCommandBody =
 			type: "set_session_context";
 			sessionId: string;
 			patch: Record<string, string | number | boolean | null>;
+	  }
+	| {
+			id?: string;
+			/**
+			 * Change THIS connection's telemetry answer for a session it is attached to (senpi#7446), without
+			 * restarting the host or the session: `granted`, `declined` or `unanswered`. On a session a caller opened
+			 * the answer also stays with the session after the connection leaves, so a revocation outlives it.
+			 * Refused with `session_not_attached` from a connection that is not attached. Requires the host
+			 * capability `telemetry_consent`.
+			 */
+			type: "set_telemetry_consent";
+			sessionId: string;
+			consent: TelemetryConsent;
 	  }
 	| {
 			id?: string;

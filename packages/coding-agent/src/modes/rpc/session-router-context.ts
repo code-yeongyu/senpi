@@ -26,6 +26,7 @@ import { HostParkLedger } from "./host-park-ledger.ts";
 import { closePark } from "./session-router-park.ts";
 import { PredecessorRoutes } from "./predecessor-routes.ts";
 import { hostGeneration } from "./protocol-identity.ts";
+import { exitForTelemetryContainment } from "./session-router-telemetry.ts";
 export class RouterContext {
 	readonly routes = new PredecessorRoutes(this);
 	readonly parks = new HostParkLedger((opened) => closePark(this, opened));
@@ -93,6 +94,7 @@ export class RouterContext {
 	readonly idleNow: () => number;
 
 	readonly idleEvictionMs: number;
+	readonly onTelemetryContainmentLost: (sessionId: string) => void;
 
 	readonly emptyExitMs: number;
 
@@ -199,6 +201,7 @@ export class RouterContext {
 		this.idleEvictionMs = idle?.idleEvictionMs ?? Number.POSITIVE_INFINITY;
 		this.emptyExitMs = idle?.emptyExitMs ?? Number.POSITIVE_INFINITY;
 		this.onEmptyExit = idle?.onEmptyExit;
+		this.onTelemetryContainmentLost = idle?.onTelemetryContainmentLost ?? exitForTelemetryContainment;
 		this.onHandoffParked = idle?.onHandoffParked;
 		this.handoverParkedDir = idle?.handoverParkedDir;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;

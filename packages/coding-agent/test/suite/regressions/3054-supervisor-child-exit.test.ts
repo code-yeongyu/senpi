@@ -1,6 +1,6 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { watch } from "node:fs";
+import { readlinkSync, watch } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { join } from "node:path";
@@ -21,7 +21,8 @@ import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts
 import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
 import { hostChildAlive } from "../../../src/modes/rpc/host-stalled-evidence.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
-import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
+import { prepareSocketPath } from "../../../src/modes/rpc/host-lifecycle-proxy.ts";
+import { CHILD_KILL_EXIT_TIMEOUT_MS, childLivenessRecheckMs } from "../../../src/modes/rpc/host-stop-intent.ts";
 import { processStartTimeMs, readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { removeHostScratch } from "../../helpers/host-scratch-removal.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
@@ -111,8 +112,12 @@ async function rig(mode: string) {
 			registered.hostPid = message.pid;
 		messages.push({ ...message });
 	});
-	const wait = async (type: string, after = 0): Promise<Record<string, unknown>> => {
-		const existing = () => messages.slice(after).find((message) => message.type === type);
+	const wait = async (
+		type: string,
+		after = 0,
+		match: (message: Record<string, unknown>) => boolean = () => true,
+	): Promise<Record<string, unknown>> => {
+		const existing = () => messages.slice(after).find((message) => message.type === type && match(message));
 		const found = existing();
 		if (found) return found;
 		if (child.exitCode !== null || child.signalCode !== null)
@@ -188,6 +193,55 @@ async function releaseRig(r: Rig): Promise<void> {
 		await hostExit?.dispose();
 		await removeHostScratch(r.qa);
 	}
+}
+
+type RigHandle = Awaited<ReturnType<typeof rig>>;
+/** The supervisor's own per-platform re-check cadence: 15 s on Linux, 60 s on macOS (senpi#7525 delta review). */
+const LIVENESS_RECHECK_MS = childLivenessRecheckMs();
+const expiredRechecks = new WeakMap<RigHandle, Set<unknown>>();
+
+/** Fires the supervisor's armed child re-check: the newest one queued, since each re-check re-arms the next. */
+async function expireLivenessRecheck(r: RigHandle): Promise<void> {
+	const expired = expiredRechecks.get(r) ?? new Set<unknown>();
+	expiredRechecks.set(r, expired);
+	const pending = () =>
+		r.messages.filter((message) => message.type === "wait" && message.ms === LIVENESS_RECHECK_MS).at(-1);
+	const latest = pending();
+	const armed =
+		latest && !expired.has(latest.id)
+			? latest
+			: await r.wait("wait", r.messages.length, (message) => message.ms === LIVENESS_RECHECK_MS);
+	expired.add(armed.id);
+	r.child.send({ type: "expire", id: armed.id });
+}
+
+function signalsSince(r: RigHandle, index: number): unknown[] {
+	return r.messages
+		.slice(index)
+		.filter((message) => message.type === "child-signal")
+		.map((message) => message.signal);
+}
+
+async function stderrIncludes(r: RigHandle, text: string): Promise<void> {
+	if (r.stderr().includes(text)) return;
+	const stream = r.child.stderr;
+	if (!stream) throw new Error("supervisor stderr unavailable");
+	await new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(
+			() => finish(new Error(`supervisor never logged ${JSON.stringify(text)}: ${r.stderr()}`)),
+			20_000,
+		);
+		const onData = () => {
+			if (r.stderr().includes(text)) finish();
+		};
+		const finish = (error?: Error) => {
+			clearTimeout(timer);
+			stream.off("data", onData);
+			if (error) reject(error);
+			else resolve();
+		};
+		stream.on("data", onData);
+	});
 }
 
 afterEach(async () => {
@@ -405,6 +459,114 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 		expect(await readHostCrashRecords(r.paths.dir)).toContainEqual(expect.objectContaining({ signal: "SIGKILL" }));
 		await expect(access(r.paths.pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
 	});
+
+	// oh-my-openagent#14725 (senpi#7525): a drained generation whose successor never took over. Its host parks nothing
+	// and exits on its own, and the supervisor never hears that exit (the runtime reaped the child and the event never
+	// came). Re-checking the child's identity proves it gone; the generation then ends WITHOUT a signal to a pid that is
+	// no longer its child, and gives up the public socket instead of refusing every client and every fresh bind.
+	it("gives up the public socket, sending no signal, when its drained host is gone and the exit is never observed", async () => {
+		const r = await rig("drain-gate-exit");
+		const before = r.messages.length;
+		r.child.kill("SIGUSR1");
+		await r.wait("exit-held", before);
+		// The lifetime EOF's own check is the first observation. Off Linux it waits on `ps`, so the confirming re-check is
+		// fired only once that first one has seen the child gone.
+		await stderrIncludes(r, "its exit was not observed; confirming");
+		await expireLivenessRecheck(r);
+
+		expect(await r.exited, r.stderr()).toEqual([1, null]);
+		expect(signalsSince(r, before)).toEqual([]);
+		expect(r.stderr()).toContain("its exit was never observed");
+		// Nothing serves the endpoint any more: the supervisor released its own generation and pointer, and a fresh bind
+		// may take the path.
+		await expect(access(r.generation.dir)).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(access(r.paths.pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(prepareSocketPath(r.qa.socket)).resolves.toBeUndefined();
+		await expect(access(r.qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	// senpi#7525 review: a stop must prove the pid is still its own live child before signalling it.
+	it("stops without signalling a child that was already reaped while its exit went unobserved", async () => {
+		const r = await rig("drain-gate-exit");
+		const before = r.messages.length;
+		r.child.kill("SIGUSR1");
+		await r.wait("exit-held", before);
+		r.child.kill("SIGTERM");
+		const first = await Promise.race([
+			r.exited.then(() => "supervisor exited"),
+			r.wait("child-signal", before).then((message) => String(message.signal)),
+		]);
+		expect(first, r.stderr()).toBe("supervisor exited");
+		expect(await r.exited).toEqual([143, null]);
+		expect(signalsSince(r, before)).toEqual([]);
+	});
+
+	// senpi#7525 review: an exit that lands after the supervisor first suspected its child keeps the exit's own verdict.
+	it("keeps a late observed exit's verdict after the child was first suspected gone", async () => {
+		const r = await rig("drain-gate-exit");
+		const before = r.messages.length;
+		r.child.kill("SIGUSR1");
+		await r.wait("exit-held", before);
+		// The first re-check already saw the child gone and armed its confirmation.
+		await r.wait("wait", before, (message) => message.ms === LIVENESS_RECHECK_MS);
+		r.child.send({ type: "release-exit" });
+
+		expect(await r.exited, r.stderr()).toEqual([0, null]);
+		expect(r.stderr()).toContain("rpc host exited on its own idle policy");
+		expect(r.stderr()).not.toContain("its exit was never observed");
+		expect(signalsSince(r, before)).toEqual([]);
+	});
+
+	// senpi#7525 review: a launcher that closes the lifetime slot and replaces its image leaves a healthy host with no
+	// lifetime pipe. That EOF proves nothing, and the supervisor must keep watching the host it actually runs.
+	it("keeps watching a wrapped host that lost the lifetime slot, and ends once it is gone", async () => {
+		const r = await rig("wrapped-gate-exit");
+		await stderrIncludes(r, "closed its lifetime pipe but");
+		const before = r.messages.length;
+		r.child.kill("SIGUSR1");
+		await r.wait("exit-held", before);
+		await expireLivenessRecheck(r);
+		await expireLivenessRecheck(r);
+
+		expect(await r.exited, r.stderr()).toEqual([1, null]);
+		expect(signalsSince(r, before)).toEqual([]);
+	});
+
+	// senpi#7525 review: a descendant that inherited the lifetime slot keeps it open past the host, so no EOF ever comes.
+	it("notices a host that is gone while a descendant still holds its lifetime slot", async () => {
+		const r = await rig("descendant-gate-exit");
+		const before = r.messages.length;
+		r.child.kill("SIGUSR1");
+		await r.wait("exit-held", before);
+		await expireLivenessRecheck(r);
+		await expireLivenessRecheck(r);
+
+		expect(await r.exited, r.stderr()).toEqual([1, null]);
+		expect(signalsSince(r, before)).toEqual([]);
+	});
+
+	// senpi#7525 review: the CLI entry relaunches itself (here: isolated, for its runtime option); the host that ends up
+	// serving must hold the supervisor's lifetime slot itself, not leave it with the launcher that waits on it.
+	it.skipIf(process.platform !== "linux")(
+		"carries the lifetime slot through the real CLI relaunch to the serving host",
+		async () => {
+			const r = await rig("real-chain");
+			const served = execFileSync("pgrep", ["-P", String(r.hostPid)], { encoding: "utf8" })
+				.split("\n")
+				.map(Number)
+				.filter((pid) => Number.isInteger(pid) && pid > 0);
+			expect(served, "the launcher relaunched the CLI").toHaveLength(1);
+			const slot = (pid: number) => {
+				try {
+					return readlinkSync(`/proc/${pid}/fd/3`);
+				} catch {
+					return "closed";
+				}
+			};
+			expect(slot(r.hostPid)).toMatch(/^socket:/);
+			expect(slot(served[0] ?? 0)).toBe(slot(r.hostPid));
+		},
+	);
 
 	it("fails the breaker without releasing or replacing a still-live child's ownership", async () => {
 		const r = await rig("held-kill");

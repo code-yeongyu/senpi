@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { registerTodoCommand } from "./commands.ts";
 import { FIRST_TURN_CUSTOM_TYPE, FIRST_TURN_REMINDER, shouldArmFirstTurn, withForcedTodoChoice } from "./first-turn.ts";
 import { phasesFromCursorTodos } from "./native-todo-mirror.ts";
+import { watchSessionWorking } from "./session-working.ts";
 import { resolveActivePresetName } from "../prompt-preset/active-preset.ts";
 import { presetFirstTurnPlanDefault, presetOwnsTodoRules, presetSharedSections } from "../prompt-preset/contract.ts";
 import { FULL_TASK_MANAGEMENT_SECTION, TASK_MANAGEMENT_SECTION } from "./prompt.ts";
@@ -12,6 +13,7 @@ import {
 	clonePhases,
 	getLatestTodoStateFromBranchEntries,
 	getTodoStateFromToolResult,
+	nextActionableTask,
 	type TodoAsk,
 	type TodoCompletionTransition,
 	type TodoPhase,
@@ -57,12 +59,17 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 	};
 
 	const syncWidget = (ctx: ExtensionContext, completedTasks: readonly TodoCompletionTransition[] = []): void => {
-		const model = getTodoWidgetModel(currentState.phases);
+		const model = getTodoWidgetModel(currentState.phases, { working: isSessionWorking() });
 		ctx.ui.setWidget(
 			"todo-sidebar",
 			model ? (tui, theme) => new TodoWidgetComponent(tui, theme, model, completedTasks) : undefined,
 		);
 	};
+
+	// Registered before the session_start resync below, so that resync already reads the new session's liveness.
+	const isSessionWorking = watchSessionWorking(pi, (ctx) => {
+		if (nextActionableTask(currentState.phases)) syncWidget(ctx);
+	});
 
 	const syncFromSession = (ctx: ExtensionContext): void => {
 		currentState = getLatestTodoStateFromBranchEntries(ctx.sessionManager.getBranch());

@@ -23,7 +23,7 @@ export function extensionToolHandlers(
 		beforeToolCall: ({ toolName, toolCallId, input, nested }) =>
 			runner.hasHandlers("tool_call")
 				? runner.emitToolCall({ type: "tool_call", toolName, toolCallId, input }, options(nested))
-				: Promise.resolve(undefined),
+				: runner.emitToolCallReady({ type: "tool_call", toolName, toolCallId, input }),
 		afterToolCall: ({ toolName, toolCallId, input, result, isError, nested }) =>
 			runner.hasHandlers("tool_result")
 				? runner.emitToolResult(

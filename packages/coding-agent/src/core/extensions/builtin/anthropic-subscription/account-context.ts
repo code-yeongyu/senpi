@@ -17,10 +17,14 @@ type AccountContext = {
 // must never borrow another attempt's account. Weak keys retain neither completed turns nor tokens.
 const contexts = new WeakMap<object, AccountContext>();
 
+/** Operational account names, unlike displayName, cannot contain an email or org identifier. */
+export function accountLabel(name: string): string {
+	return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name) ? name : "configured account";
+}
+
 export function attemptAccountContext(auth: AuthenticatedAttemptInput): AccountContext {
 	return {
-		// Operational account names, unlike displayName, cannot contain an email or org identifier.
-		accountLabel: /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(auth.accountName) ? auth.accountName : "configured account",
+		accountLabel: accountLabel(auth.accountName),
 		accountSource:
 			auth.authLane === "ambient"
 				? "ambient"

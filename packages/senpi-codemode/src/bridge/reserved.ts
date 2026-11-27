@@ -23,6 +23,8 @@ export const TIMEOUT_PAUSE_OP = "timeout-pause" as const;
 export const TIMEOUT_RESUME_OP = "timeout-resume" as const;
 /** Status op the JS worker emits the moment it receives `interrupt`; proves its event loop is not blocked. */
 export const INTERRUPT_ACK_OP = "interrupt-ack" as const;
+/** A JS cell's `scope().monitor()` holds (`held: true`) or released (`held: false`) the watch `bashId`. */
+export const SCOPE_MONITOR_OP = "scope-monitor" as const;
 /** Status op the JS worker emits when a cell child is tracked or exits, so the host can retire it if the worker is lost. */
 export const CHILD_LIFECYCLE_OP = "child" as const;
 /** Status op the JS worker emits after an idle full collection between cells, carrying the live heap it measured. */

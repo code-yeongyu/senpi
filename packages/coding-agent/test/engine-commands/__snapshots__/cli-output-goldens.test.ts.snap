@@ -1,0 +1,586 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > config > agent-dir 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "{"version":1,"ok":true,"dir":"<TMP>/agent","source":"SENPI_CODING_AGENT_DIR","rule":"environment","brandedPrefix":"SENPI"}
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > config > agent-dir without json 1`] = `
+{
+  "status": 2,
+  "stderr": "",
+  "stdout": "{"version":1,"ok":false,"code":"invalid_arguments","message":"Usage: senpi config agent-dir --json"}
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > config > config local untrusted 1`] = `
+{
+  "status": 1,
+  "stderr": "Project is not trusted. Use --approve to modify local resource config.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > config > config unexpected argument 1`] = `
+{
+  "status": 1,
+  "stderr": "Unexpected argument extra.
+Usage: senpi config [-l] [--approve|--no-approve]
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > config > config unknown option 1`] = `
+{
+  "status": 1,
+  "stderr": "Unknown option --bogus for "config".
+Use "senpi --help" or "senpi config [-l] [--approve|--no-approve]".
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > host > gc empty 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "{"removed":[],"kept":[]}
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > host > shard-path bare 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "<TMP>/agent/rpc/shards/i-a3ce88ef865e90aa.sock
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > host > shard-path json 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "{"kind":"p","key":"945b87278a044a9c","socket":"<TMP>/agent/rpc/shards/p-945b87278a044a9c.sock"}
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > host > shard-path missing owner 1`] = `
+{
+  "status": 2,
+  "stderr": "Error: "senpi host shard-path" needs --kind <p|i> and --owner <id>.
+usage: senpi host <ensure|status|stop|handoff|shard-path|gc> [options]
+
+  ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
+  status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
+  stop        [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--expected-generation <json>] [--socket <path>]
+  handoff     [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
+              [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
+              (--when idle: the running host hands over to THIS runtime at its next safe idle point)
+              (a host on a newer engine is refused older_engine unless --allow-downgrade)
+  shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
+  gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
+  session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
+
+  --rpc-key-root <dir>   endpoint credentials only; keeps this client's profile
+  --mcp-presenter-enforcement   ensure/handoff deployment opt-in; default off for a new host
+  --mcp-presenter-fd 4   ensure/handoff private enrollment channel; never enrolls on reuse
+  --json   the answer is one JSON line on stdout (always, except shard-path's bare path)
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > host > status no host 1`] = `
+{
+  "status": 3,
+  "stderr": "",
+  "stdout": "{"reachable":false,"lifecycle":null,"socket":"<TMP>/agent/rpc/rpc.sock","pid":null,"processStartTime":null,"instanceId":null,"generation":null,"engineVersion":null,"capabilities":[],"launchProfile":null,"runtimeBuildId":null,"handover":null,"sessions":{"total":0,"interactive":0,"worker":0,"retained":0,"foreign_attached":0,"foreign_retained":0},"zombies":null,"rss_mb":null,"host_rss_mb":null,"host_footprint_mb":null,"open_fds":null,"memory_pressure":null,"path_identity_resolver":null,"env_keys":[],"generations":[],"pointer":{"state":"missing","instanceId":null,"candidates":[]},"crashes":0,"shard":null,"session_rows":[],"claims_live":0,"claims":[]}
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > host > stop wait without drain 1`] = `
+{
+  "status": 2,
+  "stderr": "Error: "senpi host stop" takes --instance and --wait-ms only with --drain.
+usage: senpi host <ensure|status|stop|handoff|shard-path|gc> [options]
+
+  ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
+  status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
+  stop        [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--expected-generation <json>] [--socket <path>]
+  handoff     [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
+              [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
+              (--when idle: the running host hands over to THIS runtime at its next safe idle point)
+              (a host on a newer engine is refused older_engine unless --allow-downgrade)
+  shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
+  gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
+  session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
+
+  --rpc-key-root <dir>   endpoint credentials only; keeps this client's profile
+  --mcp-presenter-enforcement   ensure/handoff deployment opt-in; default off for a new host
+  --mcp-presenter-fd 4   ensure/handoff private enrollment channel; never enrolls on reuse
+  --json   the answer is one JSON line on stdout (always, except shard-path's bare path)
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > host > unknown subcommand 1`] = `
+{
+  "status": 2,
+  "stderr": "Error: unknown host command "frobnicate".
+usage: senpi host <ensure|status|stop|handoff|shard-path|gc> [options]
+
+  ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
+  status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
+  stop        [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--expected-generation <json>] [--socket <path>]
+  handoff     [--launch-spec <file>] [--socket <path>] [--allow-downgrade]
+              [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
+              (--when idle: the running host hands over to THIS runtime at its next safe idle point)
+              (a host on a newer engine is refused older_engine unless --allow-downgrade)
+  shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
+  gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
+  session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
+
+  --rpc-key-root <dir>   endpoint credentials only; keeps this client's profile
+  --mcp-presenter-enforcement   ensure/handoff deployment opt-in; default off for a new host
+  --mcp-presenter-fd 4   ensure/handoff private enrollment channel; never enrolls on reuse
+  --json   the answer is one JSON line on stdout (always, except shard-path's bare path)
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > models > discover extra argument 1`] = `
+{
+  "status": 1,
+  "stderr": "Usage: senpi models discover <provider>
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > models > discover missing provider 1`] = `
+{
+  "status": 1,
+  "stderr": "Usage: senpi models discover <provider>
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > models > discover unknown provider 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: Cannot read <TMP>/agent/models.json: ENOENT: no such file or directory, open '<TMP>/agent/models.json'
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > models > list-models no match 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "No models matching "zzzz-no-such-model"
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > install local path 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "Installing <TMP>/local-package...
+Installed <TMP>/local-package
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > install local untrusted 1`] = `
+{
+  "status": 1,
+  "stderr": "Project is not trusted. Use --approve to modify local package config.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > install missing source 1`] = `
+{
+  "status": 1,
+  "stderr": "Missing install source.
+Usage: senpi install <source> [-l] [--approve|--no-approve]
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > install unexpected argument 1`] = `
+{
+  "status": 1,
+  "stderr": "Unexpected argument extra.
+Usage: senpi install <source> [-l] [--approve|--no-approve]
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > install unknown option 1`] = `
+{
+  "status": 1,
+  "stderr": "Unknown option --bogus for "install".
+Use "senpi --help" or "senpi install <source> [-l] [--approve|--no-approve]".
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > list approved project package 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "Project packages:
+  npm:@project/pkg
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > list empty 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "No packages installed.
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > list one user package 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "User packages:
+  ../local-package
+    <TMP>/local-package
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > list rejects local 1`] = `
+{
+  "status": 1,
+  "stderr": "Unknown option --local for "list".
+Use "senpi --help" or "senpi list [--approve|--no-approve]".
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > list unapproved project package 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "No packages installed.
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > remove installed 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "Removing <TMP>/local-package...
+Removed <TMP>/local-package
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > uninstall not installed 1`] = `
+{
+  "status": 1,
+  "stderr": "No matching package found for <TMP>/local-package
+",
+  "stdout": "Removing <TMP>/local-package...
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > update every package 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "Updated packages
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > update extension missing value 1`] = `
+{
+  "status": 1,
+  "stderr": "Missing value for --extension.
+Usage: senpi update [source|self|senpi] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > update models conflict 1`] = `
+{
+  "status": 1,
+  "stderr": "--models cannot be combined with --self, --extensions, --all, or --extension
+Usage: senpi update [source|self|senpi] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > update one package by flag 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "Updated <TMP>/local-package
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > packages > update one package positional 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "Updated <TMP>/local-package
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > queries > export missing file 1`] = `
+{
+  "status": 1,
+  "stderr": "Error: File not found: <TMP>/missing.jsonl
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > queries > export to path 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "Exported to: <TMP>/out.html
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > queries > prompt sizes record shape 1`] = `
+{
+  "keys": [
+    "sections",
+    "total",
+    "mcp",
+    "thirdPartySessionStart",
+  ],
+  "status": 0,
+  "stderr": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > queries > session-of-pid invalid 1`] = `
+{
+  "status": 2,
+  "stderr": "",
+  "stdout": "{"version":1,"ok":false,"code":"invalid_arguments","message":"Usage: senpi session-of-pid <pid> --json"}
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > queries > session-of-pid without json 1`] = `
+{
+  "status": 2,
+  "stderr": "",
+  "stdout": "{"version":1,"ok":false,"code":"invalid_arguments","message":"Usage: senpi session-of-pid <pid> --json"}
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > cancel missing id 1`] = `
+{
+  "status": 2,
+  "stderr": "cancel needs a job id
+usage: senpi schedule <list|cancel|run> [options]
+
+  list    [--json]                       every scheduled prompt, all sessions
+  cancel  <id>                           cancel a scheduled prompt for good
+  run     [--watch] [--exec <command>]   fire due prompts (once, or keep running with --watch)
+          [--poll-seconds <n>]           --watch rescan interval (default 60; new jobs also wake it)
+          [--timeout-seconds <n>]        per-delivery time limit (default 900)
+          [--concurrency <n>]            sessions delivered in parallel (default 4)
+
+Scheduled prompts are created by the schedule_prompt tool from any session, including --print runs.
+With --exec, the command receives the due prompt as one JSON object on stdin (plus SENPI_SCHEDULE_ID,
+SENPI_SCHEDULE_SESSION_ID, SENPI_SCHEDULE_SESSION_FILE, SENPI_SCHEDULE_CWD); exit 0 means delivered.
+Without --exec, the scheduling session is resumed headlessly: senpi -p --session <session> <prompt>,
+waiting while another process has that session open.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > cancel two ids 1`] = `
+{
+  "status": 2,
+  "stderr": "cancel takes exactly one job id
+usage: senpi schedule <list|cancel|run> [options]
+
+  list    [--json]                       every scheduled prompt, all sessions
+  cancel  <id>                           cancel a scheduled prompt for good
+  run     [--watch] [--exec <command>]   fire due prompts (once, or keep running with --watch)
+          [--poll-seconds <n>]           --watch rescan interval (default 60; new jobs also wake it)
+          [--timeout-seconds <n>]        per-delivery time limit (default 900)
+          [--concurrency <n>]            sessions delivered in parallel (default 4)
+
+Scheduled prompts are created by the schedule_prompt tool from any session, including --print runs.
+With --exec, the command receives the due prompt as one JSON object on stdin (plus SENPI_SCHEDULE_ID,
+SENPI_SCHEDULE_SESSION_ID, SENPI_SCHEDULE_SESSION_FILE, SENPI_SCHEDULE_CWD); exit 0 means delivered.
+Without --exec, the scheduling session is resumed headlessly: senpi -p --session <session> <prompt>,
+waiting while another process has that session open.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > cancel unknown id 1`] = `
+{
+  "status": 1,
+  "stderr": "No scheduled prompt no-such-job.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > list json 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "{"jobs":[],"invalid":[],"runners":[]}
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > list text 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "No scheduled prompts.
+Runner: none (start one with \`senpi schedule run --watch\`)
+",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > list unknown option 1`] = `
+{
+  "status": 2,
+  "stderr": "unknown option for list: --bogus
+usage: senpi schedule <list|cancel|run> [options]
+
+  list    [--json]                       every scheduled prompt, all sessions
+  cancel  <id>                           cancel a scheduled prompt for good
+  run     [--watch] [--exec <command>]   fire due prompts (once, or keep running with --watch)
+          [--poll-seconds <n>]           --watch rescan interval (default 60; new jobs also wake it)
+          [--timeout-seconds <n>]        per-delivery time limit (default 900)
+          [--concurrency <n>]            sessions delivered in parallel (default 4)
+
+Scheduled prompts are created by the schedule_prompt tool from any session, including --print runs.
+With --exec, the command receives the due prompt as one JSON object on stdin (plus SENPI_SCHEDULE_ID,
+SENPI_SCHEDULE_SESSION_ID, SENPI_SCHEDULE_SESSION_FILE, SENPI_SCHEDULE_CWD); exit 0 means delivered.
+Without --exec, the scheduling session is resumed headlessly: senpi -p --session <session> <prompt>,
+waiting while another process has that session open.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > missing subcommand 1`] = `
+{
+  "status": 2,
+  "stderr": "missing subcommand
+usage: senpi schedule <list|cancel|run> [options]
+
+  list    [--json]                       every scheduled prompt, all sessions
+  cancel  <id>                           cancel a scheduled prompt for good
+  run     [--watch] [--exec <command>]   fire due prompts (once, or keep running with --watch)
+          [--poll-seconds <n>]           --watch rescan interval (default 60; new jobs also wake it)
+          [--timeout-seconds <n>]        per-delivery time limit (default 900)
+          [--concurrency <n>]            sessions delivered in parallel (default 4)
+
+Scheduled prompts are created by the schedule_prompt tool from any session, including --print runs.
+With --exec, the command receives the due prompt as one JSON object on stdin (plus SENPI_SCHEDULE_ID,
+SENPI_SCHEDULE_SESSION_ID, SENPI_SCHEDULE_SESSION_FILE, SENPI_SCHEDULE_CWD); exit 0 means delivered.
+Without --exec, the scheduling session is resumed headlessly: senpi -p --session <session> <prompt>,
+waiting while another process has that session open.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > run bad concurrency 1`] = `
+{
+  "status": 2,
+  "stderr": "--concurrency needs a positive integer
+usage: senpi schedule <list|cancel|run> [options]
+
+  list    [--json]                       every scheduled prompt, all sessions
+  cancel  <id>                           cancel a scheduled prompt for good
+  run     [--watch] [--exec <command>]   fire due prompts (once, or keep running with --watch)
+          [--poll-seconds <n>]           --watch rescan interval (default 60; new jobs also wake it)
+          [--timeout-seconds <n>]        per-delivery time limit (default 900)
+          [--concurrency <n>]            sessions delivered in parallel (default 4)
+
+Scheduled prompts are created by the schedule_prompt tool from any session, including --print runs.
+With --exec, the command receives the due prompt as one JSON object on stdin (plus SENPI_SCHEDULE_ID,
+SENPI_SCHEDULE_SESSION_ID, SENPI_SCHEDULE_SESSION_FILE, SENPI_SCHEDULE_CWD); exit 0 means delivered.
+Without --exec, the scheduling session is resumed headlessly: senpi -p --session <session> <prompt>,
+waiting while another process has that session open.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > run exec missing command 1`] = `
+{
+  "status": 2,
+  "stderr": "--exec needs a command
+usage: senpi schedule <list|cancel|run> [options]
+
+  list    [--json]                       every scheduled prompt, all sessions
+  cancel  <id>                           cancel a scheduled prompt for good
+  run     [--watch] [--exec <command>]   fire due prompts (once, or keep running with --watch)
+          [--poll-seconds <n>]           --watch rescan interval (default 60; new jobs also wake it)
+          [--timeout-seconds <n>]        per-delivery time limit (default 900)
+          [--concurrency <n>]            sessions delivered in parallel (default 4)
+
+Scheduled prompts are created by the schedule_prompt tool from any session, including --print runs.
+With --exec, the command receives the due prompt as one JSON object on stdin (plus SENPI_SCHEDULE_ID,
+SENPI_SCHEDULE_SESSION_ID, SENPI_SCHEDULE_SESSION_FILE, SENPI_SCHEDULE_CWD); exit 0 means delivered.
+Without --exec, the scheduling session is resumed headlessly: senpi -p --session <session> <prompt>,
+waiting while another process has that session open.
+",
+  "stdout": "",
+}
+`;
+
+exports[`engine-forwarded command output (senpi#7450 parity baseline) > schedule > run once nothing due 1`] = `
+{
+  "status": 0,
+  "stderr": "",
+  "stdout": "",
+}
+`;

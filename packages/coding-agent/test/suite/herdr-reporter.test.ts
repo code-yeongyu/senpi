@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HerdrClient, herdrSocketTarget } from "../../src/core/extensions/builtin/herdr/herdr-client.ts";
-import { initialHerdrState, reduceHerdrState } from "../../src/core/extensions/builtin/herdr/herdr-state.ts";
+import { initialHerdrState, reduceHerdrState } from "../../src/core/extensions/builtin/session-liveness/state.ts";
 import type { ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
 	acknowledge,
