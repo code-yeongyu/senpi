@@ -23,8 +23,15 @@ export const STARTUP_ATTEMPT_FILE = "startup-attempt.json";
 export const ADOPTION_GRANT_FILE = "adoption-grant.json";
 
 export type StartupProducerRole = "supervisor" | "host";
-/** `host_opaque`: the supervisor's declaration, made before it spawns a host child that cannot report. */
-export type StartupMilestone = StartupPhase | "host_opaque";
+/**
+ * `host_opaque`: the supervisor's declaration, made before it spawns a host child that cannot report.
+ * `progress`: a producer's event loop is still turning through its startup; it completes nothing, and only
+ * extends the current phase when that producer owns it.
+ */
+export type StartupMilestone = StartupPhase | "host_opaque" | "progress";
+
+/** A coordinated producer reports `progress` this often while it starts. */
+export const STARTUP_PROGRESS_INTERVAL_MS = 2_000;
 
 export interface StartupBinding {
 	readonly attempt: string;

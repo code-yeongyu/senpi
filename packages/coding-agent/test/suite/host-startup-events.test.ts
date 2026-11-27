@@ -9,11 +9,18 @@ import {
 	type StartupBinding,
 	startupEventLine,
 } from "../../src/modes/rpc/host-startup-wire.ts";
-import { type StartupClock, startStartupController } from "../../src/modes/rpc/host-startup-policy.ts";
+import {
+	STARTUP_DECISION_BUDGET_MS,
+	STARTUP_PHASE_ALLOWANCE_MS,
+	STARTUP_PROGRESS_STALL_MS,
+	type StartupClock,
+	startStartupController,
+} from "../../src/modes/rpc/host-startup-policy.ts";
+import { virtualClock } from "./host-startup-clock-support.ts";
 
 const frozenClock: StartupClock = { now: () => 0, scheduleAt: () => undefined, cancel: () => {} };
 
-function attempt() {
+function attempt(clock: StartupClock = frozenClock) {
 	const binding: StartupBinding = {
 		attempt: newStartupAttempt(),
 		endpoint: "/tmp/senpi-test/host.sock",
@@ -22,7 +29,7 @@ function attempt() {
 		launchKind: "initial",
 		predecessor: null,
 	};
-	const controller = startStartupController({ launchKind: "initial", clock: frozenClock });
+	const controller = startStartupController({ launchKind: "initial", clock });
 	return {
 		binding,
 		controller,
@@ -76,6 +83,77 @@ describe("startup event ingress (senpi#4602)", () => {
 		const oversized = attempt();
 		expect(oversized.supervisor(`${"x".repeat(MAX_STARTUP_EVENT_BYTES + 1)}\n`)).toBe("protocol_failure");
 		expect(oversized.controller.terminal).toMatchObject({ kind: "failed" });
+	});
+
+	describe("progress records", () => {
+		/** An attempt on a virtual clock, already in supervisor_setup (entered at 1 s, allowance 15 s). */
+		function inSetup() {
+			const clock = virtualClock();
+			const started = attempt(clock);
+			clock.advanceTo(1_000);
+			expect(started.supervisor(startupEventLine(started.binding, "supervisor", 1, "supervisor_bootstrap"))).toBe(
+				"accepted",
+			);
+			return { clock, ...started };
+		}
+
+		it("keeps a slow supervisor that keeps reporting progress past its phase allowance", () => {
+			const { clock, binding, controller, supervisor } = inSetup();
+			let seq = 1;
+			for (let at = 3_000; at <= 40_000; at += 2_000) {
+				clock.advanceTo(at);
+				expect(supervisor(startupEventLine(binding, "supervisor", ++seq, "progress"))).toBe("accepted");
+			}
+			expect(controller.terminal).toBeUndefined();
+			expect(1_000 + STARTUP_PHASE_ALLOWANCE_MS.supervisor_setup).toBeLessThan(40_000);
+			clock.advanceTo(41_000);
+			expect(supervisor(startupEventLine(binding, "supervisor", ++seq, "supervisor_setup"))).toBe("accepted");
+			expect(controller.phase).toBe("host_bootstrap");
+			expect(controller.terminal).toBeUndefined();
+		});
+
+		it("still fails a supervisor whose progress stops, one stall bound after its last report", () => {
+			const { clock, binding, controller, supervisor } = inSetup();
+			let seq = 1;
+			for (let at = 3_000; at <= 21_000; at += 2_000) {
+				clock.advanceTo(at);
+				expect(supervisor(startupEventLine(binding, "supervisor", ++seq, "progress"))).toBe("accepted");
+			}
+			clock.advanceTo(21_000 + STARTUP_PROGRESS_STALL_MS - 1);
+			expect(controller.terminal).toBeUndefined();
+			clock.advanceTo(21_000 + STARTUP_PROGRESS_STALL_MS);
+			expect(controller.terminal).toEqual({
+				kind: "timeout",
+				phase: "supervisor_setup",
+				limit: "stall",
+				phaseBudgetMs: STARTUP_PHASE_ALLOWANCE_MS.supervisor_setup,
+				elapsedMs: 21_000 + STARTUP_PROGRESS_STALL_MS,
+			});
+		});
+
+		it("does not extend a phase from the producer that does not own it", () => {
+			const { clock, binding, controller, host } = inSetup();
+			clock.advanceTo(10_000);
+			expect(host(startupEventLine(binding, "host", 1, "progress"))).toBe("ignored");
+			clock.advanceTo(1_000 + STARTUP_PHASE_ALLOWANCE_MS.supervisor_setup);
+			expect(controller.terminal).toMatchObject({ kind: "timeout", phase: "supervisor_setup", limit: "phase" });
+		});
+
+		it("never carries an attempt past the overall decision budget", () => {
+			const { clock, binding, controller, supervisor } = inSetup();
+			let seq = 1;
+			for (let at = 3_000; at < STARTUP_DECISION_BUDGET_MS; at += 2_000) {
+				clock.advanceTo(at);
+				supervisor(startupEventLine(binding, "supervisor", ++seq, "progress"));
+			}
+			clock.advanceTo(STARTUP_DECISION_BUDGET_MS);
+			expect(controller.terminal).toMatchObject({
+				kind: "timeout",
+				phase: "supervisor_setup",
+				limit: "overall",
+				elapsedMs: STARTUP_DECISION_BUDGET_MS,
+			});
+		});
 	});
 
 	it("fails a producer milestone sent before its phase was granted", () => {

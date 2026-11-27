@@ -17,6 +17,7 @@ import {
 	parseStartupHandOff,
 	relayStartupLine,
 	STARTUP_EVENT_FD,
+	STARTUP_PROGRESS_INTERVAL_MS,
 	type StartupHandOff,
 	type StartupMilestone,
 	startupEventLine,
@@ -155,6 +156,25 @@ export function reportStartupMilestone(milestone: StartupMilestone): void {
 	if (state && reporter)
 		reporter.report(startupEventLine(state.handOff.binding, state.handOff.role, ++state.seq, milestone), milestone);
 }
+
+/**
+ * Reports `progress` every `STARTUP_PROGRESS_INTERVAL_MS` from this process's own event loop until `budgetMs`
+ * has passed: a loop that is wedged reports nothing, so the launcher's stall bound decides it. Neither timer
+ * keeps the process alive. Returns the stop.
+ */
+export function reportStartupProgress(report: () => void, budgetMs: number): () => void {
+	const ticker = setInterval(report, STARTUP_PROGRESS_INTERVAL_MS);
+	const stop = (): void => {
+		clearInterval(ticker);
+		clearTimeout(expiry);
+	};
+	const expiry = setTimeout(stop, budgetMs);
+	ticker.unref();
+	expiry.unref();
+	return stop;
+}
+
+if (state) reportStartupProgress(() => reportStartupMilestone("progress"), state.handOff.budgetMs);
 
 /** The environment value for the host child a coordinated supervisor spawns, or undefined when uncoordinated. */
 export function hostChildStartupHandOff(fillers: readonly number[]): string | undefined {

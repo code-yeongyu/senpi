@@ -4,8 +4,11 @@
  *
  * Each phase gets a finite allowance from the moment it is entered; every deadline is clipped to
  * `STARTUP_DECISION_BUDGET_MS` after spawn. Only the completion of the current phase grants the next
- * phase its allowance: a replayed milestone, a heartbeat or a same-phase event adds no time. The
- * clock is sampled at every ingress, so an event that arrives at or after the deadline loses to it.
+ * phase its allowance; a replayed milestone adds no time. A progress report from the producer that owns
+ * the current phase moves its deadline to `STARTUP_PROGRESS_STALL_MS` after the report when that is later,
+ * so a slow phase that keeps reporting is never cut at its allowance, and one that stops reporting fails one
+ * stall bound after its last report. The clock is sampled at every ingress, so an event that arrives at or
+ * after the deadline loses to it.
  */
 import { SIGKILL_GRACE_MS } from "./host-ensure-stop.ts";
 import { DEFAULT_CHILD_STALLED_STOP_MAX_MS } from "./host-stalled-evidence.ts";
@@ -13,6 +16,9 @@ import { CHILD_KILL_EXIT_TIMEOUT_MS, CHILD_STOP_TIMEOUT_MS } from "./host-stop-i
 
 /** G: spawn to ready-or-failed decision. */
 export const STARTUP_DECISION_BUDGET_MS = 180_000;
+
+/** How long a phase that has reported progress may go without another report before it fails. */
+export const STARTUP_PROGRESS_STALL_MS = 15_000;
 
 export type StartupPhase =
 	| "supervisor_bootstrap"
@@ -74,7 +80,8 @@ export interface StartupClock {
 export type StartupTimeout = {
 	readonly kind: "timeout";
 	readonly phase: StartupPhase;
-	readonly limit: "phase" | "overall";
+	/** `stall`: the phase had reported progress, and then went `STARTUP_PROGRESS_STALL_MS` without another report. */
+	readonly limit: "phase" | "stall" | "overall";
 	readonly phaseBudgetMs: number;
 	readonly elapsedMs: number;
 };
@@ -92,6 +99,11 @@ export interface StartupController {
 	 * an initial launch in supervisor_setup may switch; the opaque phase then replaces the child's phases.
 	 */
 	declareOpaqueHost(): "accepted" | "rejected";
+	/**
+	 * The owner of the current phase reports progress (its caller checks ownership): the phase deadline becomes
+	 * `STARTUP_PROGRESS_STALL_MS` from now when that is later, still clipped to the decision budget.
+	 */
+	progress(): "accepted" | "rejected";
 	fail(cause: Error): void;
 	readonly terminal: StartupOutcome | undefined;
 	readonly phase: StartupPhase;
@@ -118,6 +130,7 @@ export function startStartupController(options: {
 	let index = 0;
 	let phaseLimit = 0;
 	let deadline = 0;
+	let progressed = false;
 	let timer: unknown;
 	let terminal: StartupOutcome | undefined;
 	const listeners = new Set<() => void>();
@@ -139,16 +152,20 @@ export function startStartupController(options: {
 		settle({
 			kind: "timeout",
 			phase,
-			limit: phaseLimit < ceiling ? "phase" : "overall",
+			limit: phaseLimit >= ceiling ? "overall" : progressed ? "stall" : "phase",
 			phaseBudgetMs: allowance(phase),
 			elapsedMs: deadline - t0,
 		});
 	};
 	const enter = (at: number): void => {
 		phaseLimit = at + allowance(current());
+		progressed = false;
+		schedule();
+		notify();
+	};
+	const schedule = (): void => {
 		deadline = Math.min(phaseLimit, ceiling);
 		timer = clock.scheduleAt(deadline, expire);
-		notify();
 	};
 	/** Ingress sampling: at or past the deadline, expiry wins over whatever just arrived. */
 	const expiredAt = (now: number): boolean => {
@@ -191,6 +208,17 @@ export function startStartupController(options: {
 			if (options.launchKind !== "initial" || current() !== "supervisor_setup") return "rejected";
 			const [before = [], after = []] = [path.slice(0, index + 1), path.slice(index + 1)];
 			path = [...before, "opaque_host", ...after.filter((phase) => !OPAQUE_REPLACES.includes(phase))];
+			return "accepted";
+		},
+		progress() {
+			const now = clock.now();
+			if (expiredAt(now)) return "rejected";
+			progressed = true;
+			if (now + STARTUP_PROGRESS_STALL_MS > phaseLimit) {
+				clock.cancel(timer);
+				phaseLimit = now + STARTUP_PROGRESS_STALL_MS;
+				schedule();
+			}
 			return "accepted";
 		},
 		fail(cause) {
