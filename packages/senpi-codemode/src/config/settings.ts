@@ -47,7 +47,10 @@ export const codemodeSettingsSchema = Type.Object(
 				{ additionalProperties: false },
 			),
 		),
+		// A status source that emits on a timer is a `status*` boolean here: the fused-equivalence cases turn every one
+		// off (.agents/skills/senpi-qa/scripts/lib/equivalence-codemode-settings.test.mjs enforces it).
 		statusEvents: Type.Optional(Type.Boolean()),
+		statusTicker: Type.Optional(Type.Boolean()),
 		memory: Type.Optional(memorySettingsSchema),
 		...featureSettingsProperties,
 	},
@@ -96,6 +99,8 @@ export interface CodemodeSettings extends CodemodeFeatureSettings {
 	readonly taskTools?: CodemodeTaskTools;
 	readonly outputSink?: CodemodeOutputSink;
 	readonly statusEvents?: boolean;
+	/** The once-per-second refresh of a detached cell's elapsed label in the footer status (default on). */
+	readonly statusTicker?: boolean;
 	readonly memory?: CodemodeMemorySettings;
 }
 
@@ -104,6 +109,7 @@ export type ResolvedCodemodeSettings = CodemodeSettings & {
 	readonly taskTools: CodemodeTaskTools;
 	readonly outputSink: CodemodeOutputSink;
 	readonly statusEvents: boolean;
+	readonly statusTicker: boolean;
 	readonly memory: CodemodeMemorySettings;
 };
 
@@ -164,6 +170,7 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		maxColumns: 768,
 	},
 	statusEvents: true,
+	statusTicker: true,
 	memory: validatedMemorySettings(undefined).settings,
 };
 
@@ -237,6 +244,7 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			maxColumns: input.outputSink?.maxColumns ?? defaultCodemodeSettings.outputSink.maxColumns,
 		},
 		statusEvents: input.statusEvents ?? defaultCodemodeSettings.statusEvents,
+		statusTicker: input.statusTicker ?? defaultCodemodeSettings.statusTicker,
 		memory: validatedMemorySettings(input.memory).settings,
 		...pickFeatureSettings(input),
 	};

@@ -148,9 +148,11 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			);
 		},
 	});
-	const showDetachedCells = (entries: readonly EvalDetachedCellStatusEntry[]): void => {
-		statusTicker.sync(entries);
-	};
+	const showDetachedCells =
+		(live: boolean) =>
+		(entries: readonly EvalDetachedCellStatusEntry[]): void => {
+			statusTicker.sync(entries, live);
+		};
 	const emitWakeSourceState = (state: WakeSourceState): void => {
 		// Same dual publication as the settle payload below: the in-process bus
 		// feeds the TUI footer, the rpc channel feeds out-of-process consumers.
@@ -248,7 +250,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 					retainedResultsBytes: resolveRetainedResultsBytes(defaultCodemodeSettings),
 					hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
 					runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
-					onStatusChange: showDetachedCells,
+					onStatusChange: showDetachedCells(defaultCodemodeSettings.statusTicker),
 					onWakeSourceState: emitWakeSourceState,
 					...(options.now === undefined ? {} : { now: options.now }),
 				}),
@@ -294,7 +296,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			retainedImagesBytes: resolveRetainedImagesBytes(runtime.settings),
 			hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
 			runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
-			onStatusChange: showDetachedCells,
+			onStatusChange: showDetachedCells(runtime.settings.statusTicker),
 			onWakeSourceState: emitWakeSourceState,
 			...(options.now === undefined ? {} : { now: options.now }),
 		});
