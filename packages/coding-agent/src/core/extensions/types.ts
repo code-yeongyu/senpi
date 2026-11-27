@@ -540,19 +540,31 @@ export type FilesystemPolicyDecision = { allow: true } | { allow: false; reason:
  *
  * `excludesEntry` prunes a walk below a root `check` allowed: `find`, `ls` and `grep` ask it for every entry they
  * would return (its canonical path), before counting anything from it, and leave out the entries it excludes. It
- * is synchronous, and one that throws excludes the entry.
+ * is synchronous, and one that throws excludes the entry. `prunesBelow` tells a walk whether anything below its
+ * root could be excluded, so a walk that cannot meet a pruned entry pays nothing for the filter; absent or throwing
+ * counts as true.
  */
 export interface FilesystemPolicy {
 	check(request: Readonly<FilesystemPolicyRequest>): FilesystemPolicyDecision | Promise<FilesystemPolicyDecision>;
 	excludesEntry?: (canonicalPath: string, toolName: string) => boolean;
+	prunesBelow?: (canonicalRoot: string, toolName: string) => boolean;
 	deniedRoots?: readonly string[];
 }
 
-/** Composed deny-wins checker used by built-in tool executors; `excludesEntry` is any policy's entry filter. */
+/** What `registerFilesystemPolicy` answers: whether the built-in tools will consult the policy. */
+export type FilesystemPolicyRegistration =
+	| { readonly applied: true; readonly entryPruning: true }
+	| { readonly applied: false; readonly reason: string };
+
+/** Composed deny-wins checker used by built-in tool executors. */
 export type FilesystemPolicyChecker = ((
 	request: Readonly<FilesystemPolicyRequest>,
 ) => Promise<FilesystemPolicyDecision>) & {
-	readonly excludesEntry?: (canonicalPath: string, toolName: string) => boolean;
+	/** The entry filter for a walk below `canonicalRoot`, or undefined when no policy prunes anything there. */
+	readonly entryExclusionBelow?: (
+		canonicalRoot: string,
+		toolName: string,
+	) => ((canonicalPath: string, toolName: string) => boolean) | undefined;
 };
 
 /**
@@ -3042,9 +3054,12 @@ export interface ExtensionAPI {
 
 	/**
 	 * Register a deny-wins filesystem policy for Senpi's built-in read, write,
-	 * edit, ls, find, and grep tools. Factory-time only.
+	 * edit, ls, find, and grep tools. Factory-time only: the tools compose the
+	 * policies when the session's runtime is built, so a policy registered later
+	 * is refused (`applied: false`, with a warning) instead of silently ignored.
+	 * `entryPruning: true` says this host applies `excludesEntry`.
 	 */
-	registerFilesystemPolicy(policy: FilesystemPolicy): void;
+	registerFilesystemPolicy(policy: FilesystemPolicy): FilesystemPolicyRegistration;
 
 	/** Registers a file-backed module `ctx.offload(id, ...)` can run (see {@link ChildModuleRegistration}). */
 	registerChildModule(registration: ChildModuleRegistration): void;

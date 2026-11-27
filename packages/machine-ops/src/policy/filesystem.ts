@@ -28,14 +28,20 @@ export interface FilesystemPolicy {
 	 * result reads as if the entry did not exist. Synchronous because a walk asks it per entry.
 	 */
 	excludesEntry?: FilesystemEntryExclusion;
+	/**
+	 * Whether `excludesEntry` could exclude anything below `canonicalRoot`. A walk it answers false for skips the
+	 * per-entry filter and the work that filter needs; absent, or throwing, counts as true.
+	 */
+	prunesBelow?: (canonicalRoot: string, toolName: string) => boolean;
 	deniedRoots?: readonly string[];
 }
 
-/** Composed deny-wins checker; `excludesEntry` is present when any policy prunes walked entries. */
+/** Composed deny-wins checker; `entryExclusionBelow` is present when any policy prunes walked entries. */
 export type FilesystemPolicyChecker = ((
 	request: Readonly<FilesystemPolicyRequest>,
 ) => Promise<FilesystemPolicyDecision>) & {
-	readonly excludesEntry?: FilesystemEntryExclusion;
+	/** The entry filter for a walk below `canonicalRoot`, or undefined when no policy prunes anything there. */
+	readonly entryExclusionBelow?: (canonicalRoot: string, toolName: string) => FilesystemEntryExclusion | undefined;
 };
 
 const ALLOW: FilesystemPolicyDecision = { allow: true };
@@ -120,16 +126,24 @@ export function composeFilesystemPolicies(policies: readonly FilesystemPolicy[])
 		}
 		return ALLOW;
 	};
-	const exclusions = policies.flatMap((policy) => (policy.excludesEntry ? [policy.excludesEntry.bind(policy)] : []));
-	if (exclusions.length === 0) return check;
-	// Any policy excluding wins, and one that throws excludes: a filter that failed has not cleared the entry.
-	const excludesEntry: FilesystemEntryExclusion = (canonicalPath, toolName) =>
-		exclusions.some((excludes) => {
-			try {
-				return excludes(canonicalPath, toolName);
-			} catch {
-				return true;
-			}
-		});
-	return Object.assign(check, { excludesEntry });
+	const pruning = policies.filter((policy) => policy.excludesEntry !== undefined);
+	if (pruning.length === 0) return check;
+	// A policy that throws prunes and excludes: an answer that failed has not cleared the walk or the entry.
+	const entryExclusionBelow = (canonicalRoot: string, toolName: string): FilesystemEntryExclusion | undefined => {
+		const active = pruning.filter((policy) =>
+			answersTrue(() => policy.prunesBelow?.(canonicalRoot, toolName) ?? true),
+		);
+		if (active.length === 0) return undefined;
+		return (canonicalPath, entryTool) =>
+			active.some((policy) => answersTrue(() => policy.excludesEntry?.(canonicalPath, entryTool) ?? false));
+	};
+	return Object.assign(check, { entryExclusionBelow });
+}
+
+function answersTrue(ask: () => boolean): boolean {
+	try {
+		return ask();
+	} catch {
+		return true;
+	}
 }

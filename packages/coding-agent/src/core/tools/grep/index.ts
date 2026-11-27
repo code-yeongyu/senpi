@@ -120,6 +120,7 @@ export function createGrepToolDefinition(
 			const workingCwd = ctx?.cwd || cwd;
 			const paths: string[] = [];
 			const missingPaths: string[] = [];
+			let excludesEntry: ((canonicalPath: string, toolName: string) => boolean) | undefined;
 			let lineStart: number | undefined;
 			let lineEnd: number | undefined;
 			let singleFile = false;
@@ -148,6 +149,7 @@ export function createGrepToolDefinition(
 						toolName: "grep",
 					});
 					if (!decision.allow) throw new Error(decision.reason);
+					excludesEntry ??= options.filesystemPolicy.entryExclusionBelow?.(canonicalPath, "grep");
 				}
 				if (!info) {
 					missingPaths.push(path);
@@ -183,11 +185,11 @@ export function createGrepToolDefinition(
 				lineEnd,
 				mode,
 			};
-			// A policy that prunes walked files needs the engine that walks in JS: rg drops them before anything is
-			// counted or searched, which the native engine cannot be asked to do (omo#12466).
-			const excludesEntry = options?.filesystemPolicy?.excludesEntry;
-			if (excludesEntry) request.excludeEntry = (canonicalPath) => excludesEntry(canonicalPath, "grep");
-			let engine = excludesEntry ? createRgEngine() : await resolveGrepEngine();
+			// A policy that may prune below these roots needs the engine that walks in JS: rg drops those files before
+			// anything is counted or searched, which the native engine cannot be asked to do (omo#12466).
+			const exclusion = excludesEntry;
+			if (exclusion) request.excludeEntry = (canonicalPath) => exclusion(canonicalPath, "grep");
+			let engine = exclusion ? createRgEngine() : await resolveGrepEngine();
 			let preselection: GrepEngineResult | undefined;
 			let selected: string[] = [];
 			let more = false;

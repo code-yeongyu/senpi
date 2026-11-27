@@ -140,7 +140,7 @@ export function createFindToolDefinition(
 						let list = (walk: (limit: number) => Promise<string[]>) => walk(effectiveLimit);
 						if (filesystemPolicy) {
 							const canonicalSearchPath = await canonicalizeFilesystemPath(searchPath);
-							const excludesEntry = filesystemPolicy.excludesEntry;
+							const excludesEntry = filesystemPolicy.entryExclusionBelow?.(canonicalSearchPath, "find");
 							if (excludesEntry) {
 								const kept = (entry: string) => {
 									const relative = relativizeFindResultPath(entry.replace(/\r$/, "").trim(), searchPath);

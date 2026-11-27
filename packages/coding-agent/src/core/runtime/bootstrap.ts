@@ -6,6 +6,7 @@ import {
 	type ToolDefinition,
 	wrapRegisteredTools,
 } from "../extensions/index.ts";
+import { closeFilesystemPolicyRegistration } from "../extensions/loader.ts";
 import type { ExtensionContext, FilesystemPolicyChecker } from "../extensions/types.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { SessionManager } from "../session-manager.ts";
@@ -60,6 +61,7 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 	const filesystemPolicy = composeFilesystemPolicies(
 		extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
 	);
+	closeFilesystemPolicyRegistration(extensionsResult.runtime);
 	const shellPath = settingsManager.getShellPath();
 	// A runtime without a session has no model and no session state for the built-in tools to read (senpi#5413).
 	const sessionless = options.sessionManager === undefined;

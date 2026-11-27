@@ -143,10 +143,11 @@ export function createLsToolDefinition(
 						}
 
 						// An entry a policy prunes is dropped before anything is counted, as if it did not exist (omo#12466).
-						const excludesEntry = filesystemPolicy?.excludesEntry;
-						if (excludesEntry && canonicalDir !== undefined) {
+						if (canonicalDir !== undefined) {
 							const dir = canonicalDir;
-							entries = entries.filter((entry) => !excludesEntry(nodePath.join(dir, entry), "ls"));
+							const excludesEntry = filesystemPolicy?.entryExclusionBelow?.(dir, "ls");
+							if (excludesEntry)
+								entries = entries.filter((entry) => !excludesEntry(nodePath.join(dir, entry), "ls"));
 						}
 
 						// Sort alphabetically, case-insensitive.
