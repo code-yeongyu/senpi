@@ -11674,6 +11674,22 @@
 			"class": "constant",
 			"reason": "value read from a frozen defaults literal at load; never written after load"
 		},
+		"packages/coding-agent/src/core/engine-paused.ts#enginePauseHistory": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history state"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/ttsr/follow-up-limit.ts#correctedRules": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history state"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/ttsr/injected-history.ts#injectedTtsrRules": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history state"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/ttsr/repetitive-turns-lane.ts#persistedAssistantTexts": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history state"
+		},
 		"packages/coding-agent/src/engine/metadata-flags.ts#TRUST_FLAGS": {
 			"class": "constant",
 			"reason": "command metadata data literal; never written after load"
