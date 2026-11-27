@@ -30,6 +30,9 @@ const START_CLAIM = "start.claim";
 const START_CLAIM_STALE_MS = 5 * 60_000;
 // A live claimant keeps its claim fresh while its start is still loading, so only a stopped process lets it expire.
 const START_CLAIM_REFRESH_MS = 60_000;
+// A claim whose pid is alive but whose start time cannot be read may belong to a process that reused the pid of an
+// ended claimant. Its own claimant would have refreshed it; one not refreshed for two intervals has none.
+const UNPROVEN_CLAIM_STALE_MS = 2 * START_CLAIM_REFRESH_MS;
 
 interface OwnClaim {
 	readonly path: string;
@@ -88,7 +91,8 @@ async function inspectClaim(path: string, probes: LockProbes): Promise<ClaimStat
 		(info) => info.mtimeMs,
 		() => undefined,
 	);
-	if (claimedAt !== undefined && Date.now() - claimedAt > START_CLAIM_STALE_MS) return { state: "stale", raw };
+	const staleAfterMs = lock.unproven === true ? UNPROVEN_CLAIM_STALE_MS : START_CLAIM_STALE_MS;
+	if (claimedAt !== undefined && Date.now() - claimedAt > staleAfterMs) return { state: "stale", raw };
 	return { state: "held", raw, pid: lock.holder?.pid, unproven: lock.unproven === true };
 }
 

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { admitStartupSession, SESSION_HELD_EXIT_CODE } from "../../../src/cli/session-opening.ts";
 import { claimSessionStart, liveSessionHolders } from "../../../src/core/session-holders.ts";
 import { encodedSessionId } from "../../../src/core/session-sidecar-store.ts";
-import { dropStartClaim } from "../../../src/core/session-start-claim.ts";
+import { dropStartClaim, startClaimant } from "../../../src/core/session-start-claim.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
 import { type CliStart, cliStart } from "./5988-start-support.ts";
 
@@ -95,6 +95,22 @@ it.skipIf(process.platform === "win32").each(["before", "after"] as const)(
 		expect(await next.next()).toMatchObject({ step: "holding" });
 	},
 );
+
+// A pid an ended start left behind may now belong to another process whose start time cannot be read (unproven): its
+// own claimant would refresh the claim, so one left unrefreshed for two refresh intervals has none.
+it("an unprovable claim that stopped being refreshed no longer keeps others out", async () => {
+	const first = start();
+	const admitted = await first.next();
+	expect(admitted).toMatchObject({ step: "admitted" });
+	const dir = join(root, "session-holders", encodedSessionId(id));
+	const unprovable = { readProcessStartMs: async () => undefined, markUnproven: true };
+	expect(await startClaimant(dir, unprovable)).toMatchObject({ pid: admitted?.pid, unproven: true });
+
+	const unrefreshed = new Date(Date.now() - 3 * 60_000);
+	await utimes(claimFile(), unrefreshed, unrefreshed);
+
+	expect(await startClaimant(dir, unprovable)).toBeUndefined();
+});
 
 it("a live start keeps its claim past the expiry while it is still loading", async () => {
 	vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });

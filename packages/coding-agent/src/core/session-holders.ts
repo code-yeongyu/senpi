@@ -14,7 +14,13 @@ import {
 import { type HolderGeneration, liveHolders, type SessionHolderProbes } from "./session-holder-records.ts";
 import { activeMover, underMoveLock } from "./session-move-lock.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
-import { carryStartClaim, dropStartClaim, startClaimant, takeStartClaim } from "./session-start-claim.ts";
+import {
+	type CarriedClaim,
+	carryStartClaim,
+	dropStartClaim,
+	startClaimant,
+	takeStartClaim,
+} from "./session-start-claim.ts";
 import { advanceSessionFence } from "./session-write-fence.ts";
 
 export {
@@ -221,19 +227,26 @@ export async function withSessionMoveLock<T>(
 	if (options.destination === undefined) return underMoveLock(sessionFile, dir, identity, move, waitMs);
 	// A start that admitted the session and now moves it (a rebind) holds its start claim at the destination before the
 	// file arrives there, so a start on the new path finds it (senpi#5988).
-	const destination = options.destination;
-	const carried = await carryStartClaim(
-		sessionId,
-		holdersDir(destination, sessionId),
-		await identityRecord(process.cwd()),
-	);
-	if (carried === false) throw new SessionHeldError(destination, await liveSessionHolders(destination, sessionId));
+	const carried = await carryToDestination(sessionId, options.destination);
+	let moved: T;
 	try {
-		const moved = await underMoveLock(sessionFile, dir, identity, move, waitMs);
-		await carried?.commit();
-		return moved;
+		moved = await underMoveLock(sessionFile, dir, identity, move, waitMs);
 	} catch (error) {
 		await carried?.abort();
 		throw error;
+	}
+	// The file is at the destination now: whatever happens to the source's claim, the carried one stands.
+	await carried?.commit();
+	return moved;
+}
+
+// A destination claim held by a start that ends before its holder can be named is free again: one more try.
+async function carryToDestination(sessionId: string, destination: string): Promise<CarriedClaim | undefined> {
+	const dir = holdersDir(destination, sessionId);
+	for (let attempt = 0; ; attempt += 1) {
+		const carried = await carryStartClaim(sessionId, dir, await identityRecord(process.cwd()));
+		if (carried !== false) return carried;
+		const holders = await liveSessionHolders(destination, sessionId);
+		if (holders.length > 0 || attempt > 0) throw new SessionHeldError(destination, holders);
 	}
 }

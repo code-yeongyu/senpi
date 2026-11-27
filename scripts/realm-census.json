@@ -11793,6 +11793,10 @@
 		"packages/coding-agent/src/core/session-start-claim.ts#ownClaims": {
 			"class": "per-copy-safe",
 			"reason": "the session start claims this copy took and their refresh timers; the claim files themselves coordinate processes"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#UNPROVEN_CLAIM_STALE_MS": {
+			"class": "constant",
+			"reason": "numeric constant computed from another constant at load; never written"
 		}
 	}
 }
