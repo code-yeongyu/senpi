@@ -10,7 +10,13 @@ import type { Duplex } from "node:stream";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { type HostLifetimeOwner, hostOwnerGone, readHostOwner, sameHostOwner } from "./host-daemon-state.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
-import { hostOccupancyHolders, WATCH_HOST_OCCUPANCY } from "./host-observe-request.ts";
+import {
+	type HostReply,
+	hostOccupancyHolders,
+	ObserverCensus,
+	type SessionListingRequest,
+	WATCH_HOST_OCCUPANCY,
+} from "./host-observe-request.ts";
 import { holdIdleExitForSettling, SessionRunActivity } from "./host-run-activity.ts";
 import { startupHandOff } from "./host-startup-beacon.ts";
 import { supervisorLog } from "./host-supervisor-log.ts";
@@ -46,6 +52,7 @@ export class SupervisorActivity {
 	private observerSocket: Duplex | undefined;
 	/** The host's last `host_occupancy` on the current observer connection; undefined until it answers. */
 	private sessionHolders: number | undefined;
+	private readonly census = new ObserverCensus();
 	private readonly options: SupervisorActivityOptions;
 
 	constructor(options: SupervisorActivityOptions) {
@@ -129,6 +136,11 @@ export class SupervisorActivity {
 		this.observerSocket?.destroy();
 	}
 
+	/** The host's `list_sessions` answer over the observer link, which a drain does not cut (senpi#7132). */
+	listSessions(request: SessionListingRequest): Promise<HostReply | undefined> {
+		return this.census.listSessions(request);
+	}
+
 	private async connectObserver() {
 		const secret = this.options.internalSecret;
 		const next = createConnection(
@@ -151,12 +163,14 @@ export class SupervisorActivity {
 		}
 		this.observerSocket = stream;
 		this.sessionHolders = undefined;
+		this.census.attach(stream);
 		attachJsonlLineReader(stream, (line) => this.observeHostEvent(line), { maxLineLength: MAX_RPC_LINE_CHARACTERS });
 		stream.write(`${JSON.stringify({ type: WATCH_HOST_OCCUPANCY, observe: true })}\n`);
 		return {
 			onLost: (handler: () => void) => {
 				const lost = () => {
 					this.sessionHolders = undefined;
+					this.census.detach();
 					handler();
 					this.options.onActivity?.();
 				};
@@ -167,6 +181,7 @@ export class SupervisorActivity {
 	}
 
 	private observeHostEvent(line: string): void {
+		if (this.census.observe(line)) return;
 		const holders = hostOccupancyHolders(line);
 		if (holders !== undefined) {
 			this.sessionHolders = holders;

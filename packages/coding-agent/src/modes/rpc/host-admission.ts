@@ -1,3 +1,8 @@
+import type { HostReply, SessionListingRequest } from "./host-observe-request.ts";
+
+/** Reads the host's `list_sessions` over a connection that outlives the drain; `undefined` when it does not answer. */
+export type HostSessionCensus = (request: SessionListingRequest) => Promise<HostReply | undefined>;
+
 /**
  * The public admission authority lives on the supervisor's loop. A ready probe is
  * informational: every open must still pass this gate, including on held sockets.
@@ -7,9 +12,11 @@ export class HostAdmission {
 	private readonly listeners = new Set<() => Promise<void>>();
 	private replies: Promise<void> = Promise.resolve();
 	private info: Readonly<Record<string, unknown>>;
+	private readonly census: HostSessionCensus | undefined;
 
-	constructor(info: Readonly<Record<string, unknown>>) {
+	constructor(info: Readonly<Record<string, unknown>>, census?: HostSessionCensus) {
 		this.info = info;
+		this.census = census;
 	}
 
 	get stopping(): boolean {
@@ -22,6 +29,14 @@ export class HostAdmission {
 
 	observe(info: Readonly<Record<string, unknown>>): void {
 		this.info = info;
+	}
+
+	/**
+	 * What the host holds, for a client accepted after the stop (senpi#7132): a stop decision must read the host's
+	 * own count, and a refusal it reads as "nothing open" ends a turn that is still streaming.
+	 */
+	listSessions(request: SessionListingRequest): Promise<HostReply | undefined> {
+		return this.census?.(request) ?? Promise.resolve(undefined);
 	}
 
 	/** Synchronous and monotonic; runs before any child signal or awaited teardown. */

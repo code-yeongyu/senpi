@@ -167,11 +167,9 @@ async function probeHostStatusInKeyRoot(
 	const registered = await readHostRegistration(paths);
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;
 	// A socket that did not answer who it is will not answer what it holds: asking again would only
-	// spend a second budget on a hung endpoint.
+	// spend a second budget on a hung endpoint. A draining host still answers its listing (senpi#7132).
 	const listing: readonly HostSessionRow[] =
-		host === undefined || host.lifecycle === "stopping"
-			? []
-			: await readSessionListing(options.socket, includeWorkers, timeoutMs);
+		host === undefined ? [] : ((await readSessionListing(options.socket, includeWorkers, timeoutMs)) ?? []);
 	const claims = await readClaimRows(paths, generations);
 	const report: HostStatusReport = {
 		reachable: host !== undefined,
@@ -210,18 +208,23 @@ async function probeHostStatusInKeyRoot(
 }
 
 /**
- * The occupancy a stop decision is made on. A host that does not answer holds nothing a client can
- * see, and an empty count is what lets a stop proceed against a socket nobody serves.
+ * The occupancy a stop decision is made on, or `undefined` when the host did not answer it. An unanswered
+ * count is never an empty one (senpi#7132): whether it may be stopped anyway is the caller's decision, made
+ * on whether anything answers `get_protocol_info` at all.
  */
-export async function readSessionCounts(socket: string, includeWorkers: boolean): Promise<HostSessionCounts> {
-	return countSessions(await readSessionListing(socket, includeWorkers));
+export async function readSessionCounts(
+	socket: string,
+	includeWorkers: boolean,
+): Promise<HostSessionCounts | undefined> {
+	const listing = await readSessionListing(socket, includeWorkers);
+	return listing === undefined ? undefined : countSessions(listing);
 }
 
 async function readSessionListing(
 	socket: string,
 	includeWorkers: boolean,
 	timeoutMs = STATUS_PROBE_TIMEOUT_MS,
-): Promise<readonly HostSessionRow[]> {
+): Promise<readonly HostSessionRow[] | undefined> {
 	const reply = await requestOnSocket(
 		socket,
 		{ type: "list_sessions", [OBSERVE_REQUEST_FIELD]: true, ...(includeWorkers ? { include_workers: true } : {}) },

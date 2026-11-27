@@ -195,7 +195,10 @@ export class JsonlPeer {
 	}
 }
 
-/** Anthropic-Messages fake whose single answer is withheld until release(), holding a turn open. */
+/**
+ * Anthropic-Messages fake whose single answer is withheld until release(), holding a turn open. With `midStream` the
+ * answer's first delta is already on the wire when the hold begins, so the turn is held while it streams.
+ */
 export class HeldAnthropicModel {
 	private readonly server: Server;
 	private readonly releaseHolds: () => void;
@@ -207,7 +210,7 @@ export class HeldAnthropicModel {
 		this.requested = requested;
 	}
 
-	static async start(): Promise<HeldAnthropicModel> {
+	static async start(options: { readonly midStream?: boolean } = {}): Promise<HeldAnthropicModel> {
 		let releaseHolds: () => void = () => {};
 		const held = new Promise<void>((resolve) => {
 			releaseHolds = resolve;
@@ -216,8 +219,12 @@ export class HeldAnthropicModel {
 		const server = createServer((req, res) => {
 			req.resume();
 			req.on("end", () => {
+				if (options.midStream === true) writeHeldAnswerHead(res);
 				requested.resolve();
-				void held.then(() => writeHeldAnswer(res));
+				void held.then(() => {
+					if (options.midStream !== true) writeHeldAnswerHead(res);
+					writeHeldAnswerTail(res);
+				});
 			});
 		});
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -240,11 +247,14 @@ export class HeldAnthropicModel {
 	}
 }
 
-function writeHeldAnswer(res: ServerResponse): void {
+function sendHeldEvent(res: ServerResponse, event: string, data: Record<string, unknown>): void {
+	res.write(`event: ${event}\ndata: ${JSON.stringify({ type: event, ...data })}\n\n`);
+}
+
+/** The held answer up to and including its first delta, `held turn `. */
+function writeHeldAnswerHead(res: ServerResponse): void {
 	res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-	const send = (event: string, data: Record<string, unknown>): void => {
-		res.write(`event: ${event}\ndata: ${JSON.stringify({ type: event, ...data })}\n\n`);
-	};
+	const send = (event: string, data: Record<string, unknown>): void => sendHeldEvent(res, event, data);
 	send("message_start", {
 		message: {
 			id: "msg-held-generation",
@@ -258,7 +268,13 @@ function writeHeldAnswer(res: ServerResponse): void {
 		},
 	});
 	send("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
-	send("content_block_delta", { index: 0, delta: { type: "text_delta", text: "held turn complete" } });
+	send("content_block_delta", { index: 0, delta: { type: "text_delta", text: "held turn " } });
+}
+
+/** The rest of the held answer: `complete`, then the end of the message. */
+function writeHeldAnswerTail(res: ServerResponse): void {
+	const send = (event: string, data: Record<string, unknown>): void => sendHeldEvent(res, event, data);
+	send("content_block_delta", { index: 0, delta: { type: "text_delta", text: "complete" } });
 	send("content_block_stop", { index: 0 });
 	send("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } });
 	send("message_stop", {});

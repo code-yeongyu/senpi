@@ -45,7 +45,7 @@ describe("session row memory parsing (#1960)", () => {
 				},
 			],
 		});
-		expect(rows[0]?.memory).toEqual({ main_heap_mb: 0, kernel_heap_mb: 0, kernel_count: 0 });
-		expect(rows[1]?.memory).toEqual({ main_heap_mb: 32, kernel_heap_mb: 0, kernel_count: 0 });
+		expect(rows?.[0]?.memory).toEqual({ main_heap_mb: 0, kernel_heap_mb: 0, kernel_count: 0 });
+		expect(rows?.[1]?.memory).toEqual({ main_heap_mb: 32, kernel_heap_mb: 0, kernel_count: 0 });
 	});
 });

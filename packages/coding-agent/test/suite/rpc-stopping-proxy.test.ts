@@ -5,14 +5,14 @@ import { createConnection, createServer, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HostAdmission } from "../../src/modes/rpc/host-admission.ts";
+import { HostAdmission, type HostSessionCensus } from "../../src/modes/rpc/host-admission.ts";
 import { ClientOccupancy } from "../../src/modes/rpc/host-client-occupancy.ts";
 import { closeServer, createPublicProxy, listen } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 
-async function proxy(holdOpen = false, publicSecret?: Buffer) {
+async function proxy(holdOpen = false, publicSecret?: Buffer, census?: HostSessionCensus) {
 	const dir = await mkdtemp(join(tmpdir(), "admit-"));
 	const peers: Socket[] = [];
 	const internalLines: string[] = [];
@@ -31,12 +31,15 @@ async function proxy(holdOpen = false, publicSecret?: Buffer) {
 		});
 	});
 	await listen(internal, internalPath);
-	const admission = new HostAdmission({
-		protocolVersion: 1,
-		serverVersion: "fixture",
-		capabilities: [],
-		instanceId: "proxy",
-	});
+	const admission = new HostAdmission(
+		{
+			protocolVersion: 1,
+			serverVersion: "fixture",
+			capabilities: [],
+			instanceId: "proxy",
+		},
+		census,
+	);
 	const clients = new ClientOccupancy(() => {});
 	const server = createPublicProxy({
 		internalSocket: internalPath,
@@ -211,6 +214,50 @@ describe.skipIf(process.platform === "win32")("supervisor admission framing", ()
 			{ id: "late", errorCode: "host_stopping" },
 			{ id: "info", data: { lifecycle: "stopping" } },
 		]);
+	});
+
+	// senpi#7132: a client accepted after the stop has no hop; the census answers its listing, nothing else gets through.
+	it("answers a late client's list_sessions from the census and refuses everything else", async () => {
+		const asked: unknown[] = [];
+		let answer: Record<string, unknown> | undefined = {
+			type: "response",
+			id: "census-1",
+			command: "list_sessions",
+			success: true,
+			data: { sessions: [{ sessionId: "live" }] },
+		};
+		const p = await proxy(false, undefined, async (request) => {
+			asked.push(request);
+			return answer;
+		});
+		p.admission.stop();
+		const late = createConnection(p.publicPath);
+		const replies: Record<string, unknown>[] = [];
+		attachJsonlLineReader(late, (line) => {
+			replies.push(JSON.parse(line));
+			late.emit("reply");
+		});
+		cleanups.push(async () => {
+			late.destroy();
+		});
+		await once(late, "connect");
+		const take = async (count: number) => {
+			const signal = AbortSignal.timeout(5_000);
+			while (replies.length < count) await once(late, "reply", { signal });
+			return replies.splice(0, count);
+		};
+		late.write(
+			'{"id":"list","type":"list_sessions","include_workers":true,"hold_host":true}\n{"id":"prompt","type":"prompt"}\n',
+		);
+		expect(await take(2)).toMatchObject([
+			{ id: "list", command: "list_sessions", success: true, data: { sessions: [{ sessionId: "live" }] } },
+			{ id: "prompt", errorCode: "host_stopping" },
+		]);
+		expect(asked).toEqual([{ id: "list", type: "list_sessions", include_workers: true, hold_host: true }]);
+		answer = undefined;
+		late.write('{"id":"unanswered","type":"list_sessions"}\n');
+		expect(await take(1)).toMatchObject([{ id: "unanswered", errorCode: "host_stopping" }]);
+		expect(p.internalLines).toEqual([]);
 	});
 
 	it("keeps whole response records when stopping races outbound backpressure", async () => {

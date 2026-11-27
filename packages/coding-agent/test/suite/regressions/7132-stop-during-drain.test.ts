@@ -17,11 +17,13 @@ import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 // senpi#7132: a normal (non-forced) stop must keep refusing while a draining host still holds a live session.
 // The supervisor is the real one; its child is a stand-in that reports ONE attached session for as long as it lives
 // and ignores the drain request, which is what a host with a turn still streaming looks like from outside.
-const fixture = join(import.meta.dirname, "../../fixtures/7132-live-session-supervisor.ts");
+const liveSession = join(import.meta.dirname, "../../fixtures/7132-live-session-supervisor.ts");
+// The same supervisor around a child that lists nothing: a draining host that is in fact empty.
+const noSession = join(import.meta.dirname, "../../fixtures/rpc-stopping-supervisor.ts");
 const INSTANCE = "draining-generation";
 const cleanups: Array<() => Promise<void>> = [];
 
-async function rig() {
+async function rig(fixture = liveSession) {
 	const qa = generationScratch("7132");
 	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
 	await writeHostSettings(paths, {
@@ -90,34 +92,52 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-describe.skipIf(process.platform === "win32")("a normal stop of a draining host that holds a live session (senpi#7132)", () => {
-	it("refuses before the drain, as a control", async () => {
-		const r = await rig();
+describe.skipIf(process.platform === "win32")(
+	"a normal stop of a draining host that holds a live session (senpi#7132)",
+	() => {
+		it("refuses before the drain, as a control", async () => {
+			const r = await rig();
 
-		expect(await probeSessionCount(r.qa.socket, 5_000)).toBe(1);
-		expect(await stopHost({ socket: r.qa.socket, agentDir: r.qa.agentDir })).toEqual({
-			action: "refuse",
-			reason: "sessions_live",
+			expect(await probeSessionCount(r.qa.socket, 5_000)).toBe(1);
+			expect(await stopHost({ socket: r.qa.socket, agentDir: r.qa.agentDir })).toEqual({
+				action: "refuse",
+				reason: "sessions_live",
+			});
+			expect(r.messages).not.toContain("child-stopping");
 		});
-		expect(r.messages).not.toContain("child-stopping");
-	});
 
-	it("still counts the session and still refuses once the drain has begun", async () => {
-		const r = await rig();
-		r.supervisor.kill("SIGUSR1");
-		await r.seen("child-draining");
+		it("still counts the session and still refuses once the drain has begun", async () => {
+			const r = await rig();
+			r.supervisor.kill("SIGUSR1");
+			await r.seen("child-draining");
 
-		// What a stop decision reads: the host's own count, through both readers.
-		expect.soft(await probeSessionCount(r.qa.socket, 5_000)).toBe(1);
-		expect.soft((await readSessionCounts(r.qa.socket, true)).total).toBe(1);
+			// What a stop decision reads: the host's own count, through both readers.
+			expect.soft(await probeSessionCount(r.qa.socket, 5_000)).toBe(1);
+			expect.soft((await readSessionCounts(r.qa.socket, true))?.total).toBe(1);
 
-		const stopping = stopHost({ socket: r.qa.socket, agentDir: r.qa.agentDir });
-		// If the stop goes through, the child hears SIGTERM; let it leave so the stop call can settle.
-		void r.seen("child-stopping").then(
-			() => r.supervisor.send("exit"),
-			() => {},
-		);
-		expect.soft(await stopping).toEqual({ action: "refuse", reason: "sessions_live" });
-		expect.soft(r.messages).not.toContain("child-stopping");
-	});
-});
+			const stopping = stopHost({ socket: r.qa.socket, agentDir: r.qa.agentDir });
+			// If the stop goes through, the child hears SIGTERM; let it leave so the stop call can settle.
+			void r.seen("child-stopping").then(
+				() => r.supervisor.send("exit"),
+				() => {},
+			);
+			expect.soft(await stopping).toEqual({ action: "refuse", reason: "sessions_live" });
+			expect.soft(r.messages).not.toContain("child-stopping");
+		});
+
+		it("stops a draining host that reports no session, without waiting for it to empty", async () => {
+			const r = await rig(noSession);
+			r.supervisor.kill("SIGUSR1");
+			await r.seen("child-draining");
+
+			// An answered zero, not an unanswered count: the stop goes through at once.
+			expect(await probeSessionCount(r.qa.socket, 5_000)).toBe(0);
+			const leaving = r.seen("child-stopping").then(() => r.supervisor.send("exit"));
+			expect(await stopHost({ socket: r.qa.socket, agentDir: r.qa.agentDir })).toEqual({
+				action: "stopped",
+				pid: r.supervisor.pid,
+			});
+			await leaving;
+		});
+	},
+);

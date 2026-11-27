@@ -217,6 +217,28 @@ describe("generation-bound stop requests", () => {
 		expect(outcome.payload).toMatchObject({ action: "refuse", reason: "sessions_live" });
 		expect(qa.signals()).toEqual([]);
 	});
+
+	// senpi#7132: a draining host whose supervisor lost its observer link answers who it is but not what it holds.
+	it("refuses sessions_unknown when the host answers but its count does not, and still stops by force", async () => {
+		const start = await readProcessStartTime(process.pid);
+		if (start === undefined) throw new Error("fixture process identity unavailable");
+		const qa = await fixture(start);
+		probes.protocol.mockResolvedValue({ protocolVersion: 1, capabilities: [], lifecycle: "stopping" });
+		probes.counts.mockResolvedValue(undefined);
+		const request = { action: "stop", target: { socket: qa.socket, agentDir: root }, drain: false } as const;
+
+		const refused = await runHostRequest({ ...request, force: false, expectedGeneration: qa.expected(start) });
+		expect(refused.payload).toMatchObject({ action: "refuse", reason: "sessions_unknown", sessions: null });
+		expect(await stopHost({ socket: qa.socket, agentDir: root, expectedGeneration: qa.expected(start) })).toEqual({
+			action: "refuse",
+			reason: "sessions_unknown",
+		});
+		expect(qa.signals()).toEqual([]);
+
+		const forced = await runHostRequest({ ...request, force: true, expectedGeneration: qa.expected(start) });
+		expect(forced.payload).toMatchObject({ action: "stopped", pid: process.pid, sessions: null });
+		expect(qa.signals()).toEqual([[process.pid, "SIGTERM"]]);
+	});
 });
 
 /** A live second process whose start time is provable, so a registration naming it passes the owner proof. */

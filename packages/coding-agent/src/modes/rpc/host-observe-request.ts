@@ -1,3 +1,4 @@
+import type { Duplex } from "node:stream";
 /**
  * Which public-socket connections count as host activity.
  *
@@ -146,4 +147,81 @@ export function requestOriginHostInstance(line: string): string | undefined {
 	if (typeof request !== "object" || request === null || Array.isArray(request)) return undefined;
 	const origin: unknown = Reflect.get(request, ORIGIN_HOST_INSTANCE_FIELD);
 	return typeof origin === "string" && origin.length > 0 ? origin : undefined;
+}
+
+/**
+ * The supervisor's read of its host's session listing over the observer link (senpi#7132).
+ *
+ * Once admission stops, a public client accepted after that has no hop of its own: a draining host destroys every
+ * connection that reaches it after its drain began. The observer link was opened at startup, so the draining host
+ * still serves it, and a stop decision can still learn what the host holds instead of reading a refusal as "empty".
+ * Each read is an `observe` read with no `hold_host`, so asking can neither attach to nor pin the host.
+ */
+
+/** A read answers within the same budget a client's own probe has (`DEFAULT_PROBE_TIMEOUT_MS`). */
+const CENSUS_TIMEOUT_MS = 10_000;
+const CENSUS_ID_PREFIX = "supervisor-census-";
+
+export type HostReply = Readonly<Record<string, unknown>>;
+
+/** The one flag of a client's `list_sessions` that is carried over; everything else on its request is dropped. */
+export interface SessionListingRequest {
+	readonly include_workers?: unknown;
+}
+
+export class ObserverCensus {
+	private stream: Duplex | undefined;
+	private asked = 0;
+	private readonly pending = new Map<string, (reply: HostReply | undefined) => void>();
+
+	attach(stream: Duplex): void {
+		this.stream = stream;
+	}
+
+	/** The link was lost: every read still waiting on it goes unanswered. */
+	detach(): void {
+		this.stream = undefined;
+		for (const settle of [...this.pending.values()]) settle(undefined);
+	}
+
+	/** The host's whole `list_sessions` response, or `undefined` when the link is down or the host does not answer. */
+	listSessions(request: SessionListingRequest): Promise<HostReply | undefined> {
+		const stream = this.stream;
+		if (stream === undefined || stream.destroyed) return Promise.resolve(undefined);
+		const id = `${CENSUS_ID_PREFIX}${++this.asked}`;
+		return new Promise((resolve) => {
+			const settle = (reply: HostReply | undefined): void => {
+				clearTimeout(timer);
+				this.pending.delete(id);
+				resolve(reply);
+			};
+			const timer = setTimeout(() => settle(undefined), CENSUS_TIMEOUT_MS);
+			timer.unref?.();
+			this.pending.set(id, settle);
+			const read = {
+				id,
+				type: "list_sessions",
+				[OBSERVE_REQUEST_FIELD]: true,
+				...(request.include_workers === true && { include_workers: true }),
+			};
+			stream.write(`${JSON.stringify(read)}\n`);
+		});
+	}
+
+	/** Whether `line` answers a read of this census; such a line means nothing else to the observer. */
+	observe(line: string): boolean {
+		if (this.pending.size === 0 || !line.includes(CENSUS_ID_PREFIX)) return false;
+		let reply: unknown;
+		try {
+			reply = JSON.parse(line);
+		} catch {
+			return false;
+		}
+		if (typeof reply !== "object" || reply === null || Array.isArray(reply)) return false;
+		const record: HostReply = Object.fromEntries(Object.entries(reply));
+		const settle = typeof record.id === "string" ? this.pending.get(record.id) : undefined;
+		if (record.type !== "response" || settle === undefined) return false;
+		settle(record);
+		return true;
+	}
 }

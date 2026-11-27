@@ -227,7 +227,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		void state.childExitRecorded.then(() => shutdown(verdict.reason, verdict.exitCode));
 	});
 
-	const admission = new HostAdmission({ protocolVersion: 1, serverVersion: VERSION, capabilities: [], instanceId });
+	const admission = new HostAdmission(
+		{ protocolVersion: 1, serverVersion: VERSION, capabilities: [], instanceId },
+		(request) => activity.listSessions(request),
+	);
 	const drain = new SupervisorDrain(
 		child,
 		() => state.shuttingDown,

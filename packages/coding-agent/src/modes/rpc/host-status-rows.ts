@@ -47,8 +47,9 @@ export interface HostPathClaimRow {
 
 const BYTES_PER_MB = 1024 * 1024;
 
-export function parseSessionRows(reply: unknown): readonly HostSessionRow[] {
-	if (!isRecord(reply) || !Array.isArray(reply.sessions)) return [];
+/** The rows of a `list_sessions` reply; `undefined` when the reply lists nothing (no answer, or a refusal), never `[]`. */
+export function parseSessionRows(reply: unknown): readonly HostSessionRow[] | undefined {
+	if (!isRecord(reply) || !Array.isArray(reply.sessions)) return undefined;
 	return reply.sessions.flatMap((entry: unknown) => {
 		if (!isRecord(entry)) return [];
 		return [

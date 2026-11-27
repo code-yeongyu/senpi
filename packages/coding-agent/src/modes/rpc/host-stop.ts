@@ -55,7 +55,12 @@ export type StopHostResult =
 	| { readonly action: "stopped"; readonly pid: number }
 	| {
 			readonly action: "refuse";
-			readonly reason: "unknown_owner" | "drain_unsupported" | "sessions_live" | "stale_generation";
+			readonly reason:
+				| "unknown_owner"
+				| "drain_unsupported"
+				| "sessions_live"
+				| "sessions_unknown"
+				| "stale_generation";
 	  };
 
 /**
@@ -105,9 +110,8 @@ async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult>
 	// A hard stop ends whatever the host is doing, including work that belongs to other clients:
 	// it is allowed only against a host that reports nothing open, or by an explicit override.
 	const sessions = await probeSessionCount(options.socket, options.timeoutMs ?? 10_000);
-	if (options.force !== true && host !== undefined && sessions !== undefined && sessions > 0) {
-		return { action: "refuse", reason: "sessions_live" };
-	}
+	const refusal = occupancyRefusal(options.force === true, host !== undefined, sessions);
+	if (refusal !== undefined) return refusal;
 	if (options.requireAnswer === true && (host === undefined || sessions === undefined)) {
 		return { action: "refuse", reason: "sessions_live" };
 	}
@@ -129,6 +133,23 @@ async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult>
 }
 
 type StopRefusal = Extract<StopHostResult, { action: "refuse" }>;
+
+/**
+ * The occupancy gate of a hard stop, shared by `stopHost` and `senpi host stop` (senpi#7132). A listed session
+ * always refuses. A host that answers `get_protocol_info` - ready or stopping - serves the socket, so a count it
+ * did not give is unknown, never empty: a draining host still holding a streaming turn looked exactly like that.
+ * Only a socket where nothing answers `get_protocol_info` is "nobody serves it", and stays stoppable. `force`
+ * skips the gate.
+ */
+export function occupancyRefusal(
+	force: boolean,
+	answered: boolean,
+	sessions: number | undefined,
+): StopRefusal | undefined {
+	if (force) return undefined;
+	if (sessions !== undefined) return sessions > 0 ? { action: "refuse", reason: "sessions_live" } : undefined;
+	return answered ? { action: "refuse", reason: "sessions_unknown" } : undefined;
+}
 
 function generationRefusal(match: ReturnType<typeof compareStopGeneration>): StopRefusal | undefined {
 	if (match === "stale") return { action: "refuse", reason: "stale_generation" };
