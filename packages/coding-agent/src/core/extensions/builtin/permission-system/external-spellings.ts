@@ -1,8 +1,8 @@
-import { lstatSync, readdirSync, readlinkSync } from "node:fs";
-import { refuseUnmountedAutomountPath, UNMOUNTED_AUTOMOUNT } from "@code-yeongyu/senpi-machine-ops";
+import { UNMOUNTED_AUTOMOUNT } from "@code-yeongyu/senpi-machine-ops";
 import { dirname, isAbsolute, join, parse, sep } from "node:path";
-import { realpathWithoutOpenStrict } from "../../../../utils/paths.ts";
+import { realpathWithoutOpenStrictWith } from "../../../../utils/paths.ts";
 import { canonicalPathCase, sameLexicalPath } from "./external-pattern.ts";
+import { currentPathFacts } from "./path-facts.ts";
 import type { Rule } from "./types.ts";
 
 type Decision = { readonly action: Rule["action"]; readonly rules: readonly Rule[] };
@@ -19,6 +19,7 @@ export function decideExternalPaths(
 	aliases: readonly string[],
 	decide: (spelling: string, resolved: string, canonicalCase: (value: string) => string) => Decision,
 ): Decision {
+	const facts = currentPathFacts();
 	const targets = typeof target === "string" ? [target] : target;
 	const resolvedPaths = new Map<string, string>();
 	const cases = new Map<string, string>();
@@ -29,8 +30,7 @@ export function decideExternalPaths(
 			result = canonicalPathCase(value, (directory) => {
 				let entries = directories.get(directory);
 				if (entries === undefined) {
-					refuseUnmountedAutomountPath(directory);
-					entries = readdirSync(directory);
+					entries = facts.readdir(directory);
 					directories.set(directory, entries);
 				}
 				return entries;
@@ -42,7 +42,10 @@ export function decideExternalPaths(
 	const resolve = (value: string): string => {
 		let result = resolvedPaths.get(value);
 		if (result === undefined) {
-			result = realpathWithoutOpenStrict(isAbsolute(value) ? value : `${process.cwd()}${sep}${value}`);
+			result = realpathWithoutOpenStrictWith(
+				isAbsolute(value) ? value : `${process.cwd()}${sep}${value}`,
+				facts.walkIo,
+			);
 			resolvedPaths.set(value, result);
 		}
 		return result;
@@ -79,8 +82,7 @@ export function decideExternalPaths(
 				const candidate = join(physical, part);
 				let link: string;
 				try {
-					refuseUnmountedAutomountPath(candidate);
-					if (!lstatSync(candidate).isSymbolicLink()) {
+					if (!facts.lstat(candidate).isSymbolicLink()) {
 						physical = candidate;
 						continue;
 					}
@@ -89,7 +91,7 @@ export function decideExternalPaths(
 					// before S was followed and could erase a genuine intermediate deny.
 					const intermediate = [candidate, ...pending].join(sep);
 					if (!add(intermediate, resolved)) return { action: "ask", rules: [] };
-					link = readlinkSync(candidate);
+					link = facts.readlink(candidate);
 				} catch (error) {
 					if (
 						error instanceof Error &&

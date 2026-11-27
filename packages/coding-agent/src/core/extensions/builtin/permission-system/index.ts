@@ -20,6 +20,7 @@ import {
 	permissionRequestsFor,
 	toolOwnedPermissionRequests,
 } from "./parsers.ts";
+import { decideWithPathFacts, PathFacts } from "./path-facts.ts";
 import { sharedPathIdentityResolver } from "./path-identity-host.ts";
 import { readDecisionPresetOverride, registerPermissionPresetReader } from "./preset-registry.ts";
 import { showPermissionPrompt } from "./prompt.ts";
@@ -357,11 +358,19 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		) {
 			return undefined;
 		}
-		const permissionRequests = permissionRequestsFor(getTools, parserRegistry, event.toolName, event.input, ctx.cwd);
+		// The parse reads path facts fetched off the host thread (senpi#4565); the decisions below reuse them.
+		const facts = new PathFacts();
+		const registry = parserRegistry;
+		const permissionRequests = await decideWithPathFacts(
+			() => permissionRequestsFor(getTools, registry, event.toolName, event.input, ctx.cwd, facts),
+			facts,
+		);
 		const sessionID = ctx.sessionManager === undefined ? "" : ctx.sessionManager.getSessionId();
 		// The MCP dispatch approval is keyed by the session; a runtime with no session decides MCP calls here only.
 		const approve =
-			ctx.sessionManager === undefined ? undefined : prepareMcpDispatchApproval(pi, event, ctx, dispatchAuthorizer);
+			ctx.sessionManager === undefined
+				? undefined
+				: await prepareMcpDispatchApproval(pi, event, ctx, dispatchAuthorizer);
 
 		for (const permissionRequest of permissionRequests) {
 			const request: Request = {
@@ -392,6 +401,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					presetBound: callPreset === "auto",
 					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
 					...(permissionRequest.executed ? { executed: permissionRequest.executed } : {}),
+					facts,
 				})
 				.then(
 					() => ({ ok: true as const }),

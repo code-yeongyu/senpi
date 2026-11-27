@@ -102,7 +102,7 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 			else host.activeRequests.delete(sessionId);
 			if (sessionId !== undefined)
 				for (const listener of host.requestSettledListeners.get(sessionId) ?? []) listener();
-			if (host.draining) sweepDrain(host);
+			if (host.draining) void sweepDrain(host);
 		}),
 	);
 }

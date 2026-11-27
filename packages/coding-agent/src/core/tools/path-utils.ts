@@ -43,38 +43,43 @@ export function resolveToCwd(filePath: string, cwd: string): string {
 }
 
 export function resolveReadPath(filePath: string, cwd: string): string {
+	return resolveReadPathWith(filePath, cwd, fileExists);
+}
+
+/** {@link resolveReadPath} over an injected existence check: the permission parser reads its prefetched facts (senpi#4565). */
+export function resolveReadPathWith(filePath: string, cwd: string, exists: (path: string) => boolean): string {
 	const resolved = resolveToCwd(filePath, cwd);
 
-	if (fileExists(resolved)) {
+	if (exists(resolved)) {
 		return resolved;
 	}
 
 	const unquoted = unquotedPath(filePath);
 	if (unquoted !== undefined) {
-		return resolveReadPath(unquoted, cwd);
+		return resolveReadPathWith(unquoted, cwd, exists);
 	}
 
 	// Try macOS AM/PM variant (narrow no-break space before AM/PM)
 	const amPmVariant = tryMacOSScreenshotPath(resolved);
-	if (amPmVariant !== resolved && fileExists(amPmVariant)) {
+	if (amPmVariant !== resolved && exists(amPmVariant)) {
 		return amPmVariant;
 	}
 
 	// Try NFD variant (macOS stores filenames in NFD form)
 	const nfdVariant = tryNFDVariant(resolved);
-	if (nfdVariant !== resolved && fileExists(nfdVariant)) {
+	if (nfdVariant !== resolved && exists(nfdVariant)) {
 		return nfdVariant;
 	}
 
 	// Try curly quote variant (macOS uses U+2019 in screenshot names)
 	const curlyVariant = tryCurlyQuoteVariant(resolved);
-	if (curlyVariant !== resolved && fileExists(curlyVariant)) {
+	if (curlyVariant !== resolved && exists(curlyVariant)) {
 		return curlyVariant;
 	}
 
 	// Try combined NFD + curly quote (for French macOS screenshots like "Capture d'écran")
 	const nfdCurlyVariant = tryCurlyQuoteVariant(nfdVariant);
-	if (nfdCurlyVariant !== resolved && fileExists(nfdCurlyVariant)) {
+	if (nfdCurlyVariant !== resolved && exists(nfdCurlyVariant)) {
 		return nfdCurlyVariant;
 	}
 

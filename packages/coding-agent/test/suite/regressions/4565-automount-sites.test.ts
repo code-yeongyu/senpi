@@ -18,9 +18,16 @@ import { getMissingSessionCwdIssue } from "../../../src/core/session-cwd.ts";
 import {
 	assertSessionPathsOnThisMachine,
 	canonicalSessionPath,
-	sessionDirectoryRemoved,
+	removedSessionDirectories,
 } from "../../../src/modes/rpc/session-path-key.ts";
-import { realpathWithoutOpen, realpathWithoutOpenStrict } from "../../../src/utils/paths.ts";
+import { findProjectRoot } from "../../../src/core/extensions/builtin/rules/rules/project-root.ts";
+import { resolveMessagePath } from "../../../src/core/message-path-resolution.ts";
+import {
+	canonicalizePath,
+	canonicalizePathStrict,
+	realpathWithoutOpen,
+	realpathWithoutOpenStrict,
+} from "../../../src/utils/paths.ts";
 
 // senpi#4565: on macOS a synchronous probe of a path under /home (an autofs trigger) can park the host thread for
 // good. Before the first mount-table read lands, every host-thread probe site must answer such a path from the
@@ -71,7 +78,7 @@ afterAll(() => {
 	syncBuiltinESMExports();
 });
 
-function decide(toolName: string, input: Record<string, unknown>): string {
+async function decide(toolName: string, input: Record<string, unknown>): Promise<string> {
 	const service = new PermissionService(
 		[{ permission: "*", pattern: "*", action: "ask" }],
 		[],
@@ -86,7 +93,9 @@ function decide(toolName: string, input: Record<string, unknown>): string {
 		async () => undefined,
 	);
 	const ctx = { cwd: "/tmp/senpi-4565-project", sessionManager: undefined } as unknown as ExtensionContext;
-	return authorizer.policy({ toolCallId: "call", toolName, input, identity: { owner: {}, metadata: "" } }, ctx).action;
+	const request = { toolCallId: "call", toolName, input, identity: { owner: {}, metadata: "" } };
+	await authorizer.prepare?.(request, ctx);
+	return authorizer.policy(request, ctx).action;
 }
 
 const sites: ReadonlyArray<readonly [string, () => unknown, (answer: unknown) => void]> = [
@@ -144,8 +153,8 @@ const sites: ReadonlyArray<readonly [string, () => unknown, (answer: unknown) =>
 		(answer) => expect(answer).toBe(`${ELSEWHERE}/session.jsonl`),
 	],
 	[
-		"session directory gone",
-		() => sessionDirectoryRemoved(`${ELSEWHERE}/session.jsonl`),
+		"session directory gone (session-path-key.ts removedSessionDirectories)",
+		async () => (await removedSessionDirectories([`${ELSEWHERE}/session.jsonl`])).has(ELSEWHERE),
 		(answer) => expect(answer).toBe(true),
 	],
 	[
@@ -172,15 +181,41 @@ const sites: ReadonlyArray<readonly [string, () => unknown, (answer: unknown) =>
 		() => findMovedPath(`${ELSEWHERE}/x`),
 		(answer) => expect(answer).toBeUndefined(),
 	],
+	[
+		"project root (rules/project-root.ts findProjectRoot)",
+		() => findProjectRoot(`${ELSEWHERE}/src`),
+		(answer) => expect(answer).toBeNull(),
+	],
+	[
+		"a path named in a message (message-path-resolution.ts)",
+		() => resolveMessagePath({ path: `${ELSEWHERE}/notes.md`, cwd: "/tmp" }).status,
+		(answer) => expect(answer).toBe("not_found"),
+	],
+	[
+		"canonicalizePath (utils/paths.ts)",
+		() => canonicalizePath(`${ELSEWHERE}/x`),
+		(answer) => expect(answer).toBe(`${ELSEWHERE}/x`),
+	],
+	[
+		"canonicalizePathStrict refuses with a typed code (utils/paths.ts)",
+		() => {
+			try {
+				return canonicalizePathStrict(`${ELSEWHERE}/x`);
+			} catch (error) {
+				return (error as { code?: string }).code;
+			}
+		},
+		(answer) => expect(answer).toBe("EAUTOMOUNT"),
+	],
 ];
 
 describe("4565 every host-thread probe site answers a path under an unmounted automount without touching it", () => {
-	it.each(sites)("%s", (_name, run, check) => {
+	it.each(sites)("%s", async (_name, run, check) => {
 		// Given the macOS default automount map and no finished mount-table read
 		touched.length = 0;
 
 		// When the site handles a path under /home
-		const answer = run();
+		const answer = await run();
 
 		// Then it answers, and no synchronous filesystem call reached the path
 		check(answer);

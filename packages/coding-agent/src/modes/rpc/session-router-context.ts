@@ -113,6 +113,11 @@ export class RouterContext {
 	handoffParks = 0;
 
 	drainExitRequested = false;
+	/** A drain pass awaiting its transcript-directory checks, and whether another was asked for meanwhile. */
+	drainPass: Promise<void> | undefined;
+	drainPassAgain = false;
+	/** An occupancy sweep awaiting its transcript-directory checks; the next tick retries while it runs. */
+	idleSweep: Promise<void> | undefined;
 
 	readonly handoffClosed = new Set<string>();
 
@@ -231,7 +236,11 @@ export class RouterContext {
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
 			const tickMs = Math.max(20, Math.min(5_000, Math.min(this.idleEvictionMs, this.emptyExitMs) / 4));
-			this.sweepTimer = setInterval(() => sweepIdleSessions(this), tickMs);
+			this.sweepTimer = setInterval(() => {
+				sweepIdleSessions(this).catch((cause: unknown) => {
+					process.stderr.write(`senpi rpc occupancy sweep failed, retrying on the next tick: ${String(cause)}\n`);
+				});
+			}, tickMs);
 			this.sweepTimer.unref?.();
 		}
 	}

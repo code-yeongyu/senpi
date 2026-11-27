@@ -143,10 +143,12 @@ export function isHostIdle(
 ): boolean {
 	if ((inFlight.get(undefined) ?? 0) > 0) return false;
 	const sessions = registry.list();
+	// Idle counts park and gone alike, so whether a transcript directory is gone never changes the answer.
 	const verdicts = selectDrainVerdicts(
 		registry,
 		(sessionId) => (inFlight.get(sessionId) ?? 0) > 0,
 		() => {},
+		() => false,
 	);
 	return verdicts.park.length + verdicts.gone.length === sessions.length;
 }

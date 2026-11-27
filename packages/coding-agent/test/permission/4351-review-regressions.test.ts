@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -27,8 +28,10 @@ describe("4351 binding review regressions", () => {
 
 	afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-	const external = (tool: string, input: Record<string, unknown>, cwd: string) => {
-		const request = registry.parse(tool, input, cwd).find((item) => item.permission === "external_directory");
+	const external = async (tool: string, input: Record<string, unknown>, cwd: string) => {
+		const request = (await withFetchedFacts(() => registry.parse(tool, input, cwd))).find(
+			(item) => item.permission === "external_directory",
+		);
 		if (!request) throw new Error("Missing external-directory request");
 		return request;
 	};
@@ -46,8 +49,11 @@ describe("4351 binding review regressions", () => {
 			[],
 		);
 		for (const inputPath of [target, relative(cwd, target)]) {
-			const request = external("write", { path: inputPath }, cwd);
-			expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe("allow");
+			const request = await external("write", { path: inputPath }, cwd);
+			expect(
+				(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request)))
+					.action,
+			).toBe("allow");
 			await expect(
 				service.ask({ ...request, sessionID: "precedence", metadata: {} }, request),
 			).resolves.toBeUndefined();
@@ -82,7 +88,7 @@ describe("4351 binding review regressions", () => {
 								? `${modules}/*/pi-ai/*.JSON`
 								: `${modules}/*/pi-ai/*`;
 				const input = { path: variant === "input-case" ? join(scope, "PI-AI", "package.json") : lexical };
-				const request = external("read", input, cwd);
+				const request = await external("read", input, cwd);
 				const emitter = createLocalEventEmitter();
 				const service = new PermissionService(
 					[
@@ -115,8 +121,8 @@ describe("4351 binding review regressions", () => {
 		}
 	}
 
-	it("uses absolute rule aliases rather than raw relative display paths", () => {
-		const request = external("write", { path: relative(cwd, join(outside, "File.txt")) }, cwd);
+	it("uses absolute rule aliases rather than raw relative display paths", async () => {
+		const request = await external("write", { path: relative(cwd, join(outside, "File.txt")) }, cwd);
 		const service = new PermissionService(
 			[
 				{ permission: "external_directory", pattern: "*", action: "allow" },
@@ -124,7 +130,9 @@ describe("4351 binding review regressions", () => {
 			],
 			[],
 		);
-		expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe("allow");
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request))).action,
+		).toBe("allow");
 	});
 
 	it.each([
@@ -137,23 +145,29 @@ describe("4351 binding review regressions", () => {
 		["deny", "allow", "deny"],
 		["deny", "ask", "deny"],
 		["deny", "deny", "deny"],
-	] as const)("combines lexical %s and resolved %s as %s regardless of rule order", (lexical, resolved, expected) => {
-		const data = join(root, "data");
-		mkdirSync(join(data, "a"), { recursive: true });
-		symlinkSync(outside, join(data, "a", "secret"), process.platform === "win32" ? "junction" : "dir");
-		const request = external("read", { path: join(data, "a", "secret", "File.txt") }, cwd);
-		const rules: Ruleset = [
-			{ permission: "external_directory", pattern: `${data}/*/secret/*`, action: lexical },
-			{ permission: "external_directory", pattern: `${outside}/*`, action: resolved },
-		];
-		for (const ordered of [rules, [...rules].reverse()]) {
-			const service = new PermissionService(
-				[{ permission: "external_directory", pattern: "*", action: "deny" }, ...ordered],
-				[],
-			);
-			expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe(expected);
-		}
-	});
+	] as const)(
+		"combines lexical %s and resolved %s as %s regardless of rule order",
+		async (lexical, resolved, expected) => {
+			const data = join(root, "data");
+			mkdirSync(join(data, "a"), { recursive: true });
+			symlinkSync(outside, join(data, "a", "secret"), process.platform === "win32" ? "junction" : "dir");
+			const request = await external("read", { path: join(data, "a", "secret", "File.txt") }, cwd);
+			const rules: Ruleset = [
+				{ permission: "external_directory", pattern: `${data}/*/secret/*`, action: lexical },
+				{ permission: "external_directory", pattern: `${outside}/*`, action: resolved },
+			];
+			for (const ordered of [rules, [...rules].reverse()]) {
+				const service = new PermissionService(
+					[{ permission: "external_directory", pattern: "*", action: "deny" }, ...ordered],
+					[],
+				);
+				expect(
+					(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request)))
+						.action,
+				).toBe(expected);
+			}
+		},
+	);
 
 	// senpi#4351: a wildcard before a symlink must not erase a lexical deny.
 	for (const tool of [
@@ -191,7 +205,7 @@ describe("4351 binding review regressions", () => {
 							: tool === "bash_input"
 								? { input: `cat "${path}"` }
 								: { path };
-					const request = external(tool, input, cwd);
+					const request = await external(tool, input, cwd);
 					const emitter = createLocalEventEmitter();
 					const service = new PermissionService(rules, [], emitter);
 					// A missed deny resolves instead of leaving this regression waiting for a prompt.
@@ -208,17 +222,15 @@ describe("4351 binding review regressions", () => {
 						async () => undefined,
 					);
 					const ctx = { cwd, sessionManager: { getSessionId: () => "wildcard-symlink" } } as ExtensionContext;
-					expect(
-						authorizer.policy(
-							{
-								toolName: tool,
-								toolCallId: "wildcard",
-								input,
-								identity: { owner: registry, metadata: "wildcard" },
-							},
-							ctx,
-						).action,
-					).toBe("deny");
+					const dispatched = {
+						toolName: tool,
+						toolCallId: "wildcard",
+						input,
+						identity: { owner: registry, metadata: "wildcard" },
+					};
+					// The host prepares a dispatch's path facts off its thread before the synchronous policy reads them.
+					await authorizer.prepare?.(dispatched, ctx);
+					expect(authorizer.policy(dispatched, ctx).action).toBe("deny");
 				}
 			});
 		}
@@ -243,12 +255,12 @@ describe("4351 binding review regressions", () => {
 			["link first", ["link", "real"]],
 			["both twice", ["real", "link", "real", "link"]],
 		] as const) {
-			it(`${tool} keeps the symlink alias when one call names both spellings (${ordering})`, () => {
+			it(`${tool} keeps the symlink alias when one call names both spellings (${ordering})`, async () => {
 				const link = join(root, "link");
 				symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
 				const real = join(outside, "File.txt");
 				const lexical = join(link, "File.txt");
-				const request = external(
+				const request = await external(
 					tool,
 					toInput(spellings.map((spelling) => (spelling === "real" ? real : lexical))),
 					cwd,
@@ -262,7 +274,10 @@ describe("4351 binding review regressions", () => {
 					],
 					[],
 				);
-				expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe("deny");
+				expect(
+					(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request)))
+						.action,
+				).toBe("deny");
 			});
 		}
 	}
@@ -271,7 +286,7 @@ describe("4351 binding review regressions", () => {
 		const data = join(root, "data");
 		mkdirSync(join(data, "a"), { recursive: true });
 		symlinkSync(outside, join(data, "a", "secret"), process.platform === "win32" ? "junction" : "dir");
-		const request = external("read", { path: join(data, "a", "secret", "File.txt") }, cwd);
+		const request = await external("read", { path: join(data, "a", "secret", "File.txt") }, cwd);
 		const emitter = createLocalEventEmitter();
 		const service = new PermissionService(
 			[{ permission: "external_directory", pattern: `${data}/*/secret/*`, action: "allow" }],
@@ -287,7 +302,7 @@ describe("4351 binding review regressions", () => {
 		expect(prompted).toBe(true);
 	});
 
-	it("refreshes filesystem identity between evaluations after a rule symlink changes", () => {
+	it("refreshes filesystem identity between evaluations after a rule symlink changes", async () => {
 		const alias = join(root, "alias");
 		symlinkSync(outside, alias, process.platform === "win32" ? "junction" : "dir");
 		const service = new PermissionService(
@@ -295,14 +310,16 @@ describe("4351 binding review regressions", () => {
 			[],
 		);
 		const target = join(outside, "File.txt");
-		expect(service.dispatchDecision("external_directory", target).action).toBe("allow");
+		expect((await withFetchedFacts(() => service.dispatchDecision("external_directory", target))).action).toBe(
+			"allow",
+		);
 		rmSync(alias);
 		symlinkSync(cwd, alias, process.platform === "win32" ? "junction" : "dir");
-		expect(service.dispatchDecision("external_directory", target).action).toBe("ask");
+		expect((await withFetchedFacts(() => service.dispatchDecision("external_directory", target))).action).toBe("ask");
 	});
 
 	for (const suffix of ["File.txt", "missing/nested/file.txt"]) {
-		it(`H1: denies both spellings of an external case alias: ${suffix}`, (context) => {
+		it(`H1: denies both spellings of an external case alias: ${suffix}`, async (context) => {
 			const alternate = join(root, "outside");
 			try {
 				const actual = statSync(outside);
@@ -321,8 +338,10 @@ describe("4351 binding review regressions", () => {
 					[],
 				);
 				for (const target of [join(outside, suffix), join(alternate, suffix)]) {
-					const request = external("write", { path: target }, cwd);
-					expect(service.dispatchDecision(request.permission, request.patterns).action).toBe("deny");
+					const request = await external("write", { path: target }, cwd);
+					expect(
+						(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns))).action,
+					).toBe("deny");
 				}
 			}
 		});
@@ -339,7 +358,7 @@ describe("4351 binding review regressions", () => {
 		["*?Nested?*.txt", "dir/Nested/File.txt", "DIR/NESTED/FILE.TXT"],
 		["*/Nested/missing/new.txt", "dir/Nested/missing/new.txt", "DIR/NESTED/missing/new.txt"],
 	]) {
-		it(`H1-GLOB: denies both case spellings for ${pattern}`, (context) => {
+		it(`H1-GLOB: denies both case spellings for ${pattern}`, async (context) => {
 			writeFileSync(join(outside, "package.json"), "{}");
 			mkdirSync(join(outside, "Nested"));
 			writeFileSync(join(outside, "Nested", "File.txt"), "fixture");
@@ -362,17 +381,21 @@ describe("4351 binding review regressions", () => {
 				[],
 			);
 			for (const target of [direct, alternate]) {
-				const request = external("write", { path: join(outside, target) }, cwd);
-				expect(service.dispatchDecision(request.permission, request.patterns).action).toBe("deny");
+				const request = await external("write", { path: join(outside, target) }, cwd);
+				expect(
+					(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns))).action,
+				).toBe("deny");
 			}
-			const missing = external("write", { path: join(outside, "dir/Nested/missing/NEW.TXT") }, cwd);
+			const missing = await external("write", { path: join(outside, "dir/Nested/missing/NEW.TXT") }, cwd);
 			if (pattern.endsWith("missing/new.txt")) {
-				expect(service.dispatchDecision(missing.permission, missing.patterns).action).toBe("allow");
+				expect(
+					(await withFetchedFacts(() => service.dispatchDecision(missing.permission, missing.patterns))).action,
+				).toBe("allow");
 			}
 		});
 	}
 
-	it("H1-GLOB: keeps distinct case-sensitive suffixes separate", (context) => {
+	it("H1-GLOB: keeps distinct case-sensitive suffixes separate", async (context) => {
 		writeFileSync(join(outside, "package.json"), "{}");
 		try {
 			writeFileSync(join(outside, "PACKAGE.JSON"), "other", { flag: "wx" });
@@ -392,8 +415,10 @@ describe("4351 binding review regressions", () => {
 			["package.json", "deny"],
 			["PACKAGE.JSON", "allow"],
 		]) {
-			const request = external("write", { path: join(outside, target) }, cwd);
-			expect(service.dispatchDecision(request.permission, request.patterns).action).toBe(action);
+			const request = await external("write", { path: join(outside, target) }, cwd);
+			expect(
+				(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns))).action,
+			).toBe(action);
 		}
 	});
 
@@ -410,17 +435,22 @@ describe("4351 binding review regressions", () => {
 		const emitter = createLocalEventEmitter();
 		const service = new PermissionService([], [], emitter);
 		emitter.onAsked((request) => service.reply({ requestID: request.id, reply: "always" }));
-		const request = external("write", { path: join(alternate, "missing", "file.txt") }, cwd);
+		const request = await external("write", { path: join(alternate, "missing", "file.txt") }, cwd);
 		await service.ask({ ...request, sessionID: "case", metadata: {} });
 		const agentDir = join(root, "agent");
 		appendApproved(agentDir, cwd, service.getSessionApproved());
 		const reloaded = new PermissionService([], loadApproved(agentDir, cwd));
-		const direct = external("write", { path: join(outside, "missing", "other.txt") }, cwd);
-		expect(reloaded.dispatchDecision(direct.permission, direct.patterns).action).toBe("allow");
-		expect(reloaded.dispatchDecision("external_directory", join(root, "sibling.txt")).action).toBe("ask");
+		const direct = await external("write", { path: join(outside, "missing", "other.txt") }, cwd);
+		expect((await withFetchedFacts(() => reloaded.dispatchDecision(direct.permission, direct.patterns))).action).toBe(
+			"allow",
+		);
+		expect(
+			(await withFetchedFacts(() => reloaded.dispatchDecision("external_directory", join(root, "sibling.txt"))))
+				.action,
+		).toBe("ask");
 	});
 
-	it("H1: keeps distinct case-sensitive external directories separate", (context) => {
+	it("H1: keeps distinct case-sensitive external directories separate", async (context) => {
 		const other = join(root, "outside");
 		try {
 			mkdirSync(other);
@@ -432,8 +462,13 @@ describe("4351 binding review regressions", () => {
 			[{ permission: "external_directory", pattern: `${outside}/*`, action: "deny" }],
 			[{ permission: "external_directory", pattern: `${other}/*`, action: "allow" }],
 		);
-		expect(service.dispatchDecision("external_directory", join(outside, "new.txt")).action).toBe("deny");
-		expect(service.dispatchDecision("external_directory", join(other, "new.txt")).action).toBe("allow");
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision("external_directory", join(outside, "new.txt"))))
+				.action,
+		).toBe("deny");
+		expect(
+			(await withFetchedFacts(() => service.dispatchDecision("external_directory", join(other, "new.txt")))).action,
+		).toBe("allow");
 	});
 
 	it.each(["bash", "bash_input", "monitor"])(
@@ -444,19 +479,28 @@ describe("4351 binding review regressions", () => {
 			const alias = join(root, "alias");
 			symlinkSync(directory, alias, process.platform === "win32" ? "junction" : "dir");
 			const command = `ls "${alias}/"`;
-			const request = external(tool, tool === "bash_input" ? { input: command } : { command }, cwd);
+			const request = await external(tool, tool === "bash_input" ? { input: command } : { command }, cwd);
 			const emitter = createLocalEventEmitter();
 			const service = new PermissionService([], [], emitter);
 			const sibling = join(outside, "package.json");
-			expect(service.dispatchDecision("external_directory", sibling).action).toBe("ask");
+			expect((await withFetchedFacts(() => service.dispatchDecision("external_directory", sibling))).action).toBe(
+				"ask",
+			);
 			emitter.onAsked((pending) => service.reply({ requestID: pending.id, reply: "always" }));
 			await service.ask({ ...request, sessionID: "scope", metadata: {} });
-			expect(service.dispatchDecision("external_directory", sibling).action).toBe("ask");
-			expect(service.dispatchDecision("external_directory", directory).action).toBe("ask");
+			expect((await withFetchedFacts(() => service.dispatchDecision("external_directory", sibling))).action).toBe(
+				"ask",
+			);
+			expect((await withFetchedFacts(() => service.dispatchDecision("external_directory", directory))).action).toBe(
+				"ask",
+			);
 			expect(service.getSessionApproved()).toEqual([
 				{ permission: "external_directory", pattern: `${directory}/*`, action: "allow" },
 			]);
-			expect(service.dispatchDecision("external_directory", join(directory, "entry.txt")).action).toBe("allow");
+			expect(
+				(await withFetchedFacts(() => service.dispatchDecision("external_directory", join(directory, "entry.txt"))))
+					.action,
+			).toBe("allow");
 		},
 	);
 });

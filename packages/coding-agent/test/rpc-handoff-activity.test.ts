@@ -40,7 +40,7 @@ it("does not park while an accepted host request is still in flight", async () =
 		const session = opened(await rig.open("client", { cwd: dir, sessionPath: join(dir, "request.jsonl") }), 0);
 		const request = rig.router.handle({ type: "get_state", sessionId: session.sessionId });
 		await entered.promise;
-		rig.router.beginDrain();
+		await rig.router.beginDrain();
 		expect(rig.registry.peek(session.sessionId)?.state).toBe("open");
 		expect(rig.records().some((record) => record.type === "session_closed")).toBe(false);
 		release.resolve();

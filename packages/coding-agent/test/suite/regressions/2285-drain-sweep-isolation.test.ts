@@ -35,7 +35,7 @@ it("ends a session whose directory was deleted as session_dir_removed and still 
 	const { dir, rig, s1, s2, closes, exited } = await drainRig();
 	await rm(join(dir, "children"), { recursive: true, force: true });
 
-	rig.router.beginDrain();
+	await rig.router.beginDrain();
 	await exited;
 	await rig.settle();
 
@@ -58,7 +58,7 @@ it("parks a session whose activity cannot be read instead of stranding every oth
 	});
 	vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-	expect(() => rig.router.beginDrain()).not.toThrow();
+	expect(async () => await rig.router.beginDrain()).not.toThrow();
 	await exited;
 	await rig.settle();
 
@@ -73,7 +73,7 @@ it("retries a drain pass that failed as a whole on the armed drain timer", async
 		throw Object.assign(new Error("ENOENT: no such file or directory, lstat '/gone'"), { code: "ENOENT" });
 	});
 
-	expect(() => rig.router.beginDrain()).not.toThrow();
+	expect(async () => await rig.router.beginDrain()).not.toThrow();
 	expect(list).toHaveBeenCalledTimes(1);
 	expect(rig.records().some((record) => record.type === "session_closed")).toBe(false);
 
@@ -90,9 +90,9 @@ it("completes when the drain is requested again after a failed pass", async () =
 		throw new Error("listing failed");
 	});
 
-	expect(() => rig.router.beginDrain()).not.toThrow();
+	expect(async () => await rig.router.beginDrain()).not.toThrow();
 	// Grace expiry or a second SIGUSR1 re-enters the drain on the same router.
-	expect(() => rig.router.beginDrain()).not.toThrow();
+	expect(async () => await rig.router.beginDrain()).not.toThrow();
 	await exited;
 	await rig.settle();
 	expect(reasons()).toEqual(["handoff_parked", "handoff_parked"]);

@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "../permission/path-facts-support.ts";
 import { vi } from "vitest";
 
 const fsState = vi.hoisted(() => ({
@@ -56,9 +57,9 @@ class EventSink {
 	}
 }
 
-function approvedParentFor(path: string, cwd: string): string | undefined {
+async function approvedParentFor(path: string, cwd: string): Promise<string | undefined> {
 	const input: Record<string, unknown> = { description: "probe", path };
-	createBuiltinParserRegistry().parse("monitor", input, cwd);
+	await withFetchedFacts(() => createBuiltinParserRegistry().parse("monitor", input, cwd));
 	return getApprovedMonitorParent(input);
 }
 
@@ -140,7 +141,7 @@ describe("file monitor parent resolution", () => {
 			await symlink(real, link, "dir");
 			const registry = createRegistry(new EventSink());
 			const requested = join(link, "artifact");
-			const approvedParent = approvedParentFor(requested, root);
+			const approvedParent = await approvedParentFor(requested, root);
 
 			// when / then
 			expect(approvedParent).toBe(real);
@@ -167,7 +168,7 @@ describe("file monitor parent resolution", () => {
 			const parent = join(root, "parent");
 			await mkdir(parent);
 			const requested = join(parent, "artifact");
-			const approvedParent = approvedParentFor(requested, root);
+			const approvedParent = await approvedParentFor(requested, root);
 			expect(approvedParent).toBe(parent);
 			await rename(parent, join(root, "moved"));
 			await symlink(outside, parent, "dir");

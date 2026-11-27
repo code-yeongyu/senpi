@@ -13,7 +13,7 @@ import {
 import type { RouteTable } from "./predecessor-route-table.ts";
 import { isRoutedSessionRow } from "./predecessor-wire.ts";
 import { authRecord } from "./rpc-auth-proof.ts";
-import { canonicalSessionPath } from "./session-path-key.ts";
+import { canonicalSessionPathAsync } from "./session-path-key.ts";
 import { SOCKET_HANDSHAKE_TIMEOUT_MS } from "./socket-transport.ts";
 
 /** How long a listing waits for a predecessor's answer: as long as its handshake may take. */
@@ -58,7 +58,9 @@ export async function discoverRoutes(table: RouteTable): Promise<void> {
 	);
 	if (unclaimed.length) {
 		const parked = new Set(
-			(await readHandoverParkedSessions(dir)).map((entry) => canonicalSessionPath(entry.sessionPath)),
+			await Promise.all(
+				(await readHandoverParkedSessions(dir)).map((entry) => canonicalSessionPathAsync(entry.sessionPath)),
+			),
 		);
 		for (const route of unclaimed)
 			if (!parked.has(route.path) && !route.attachments.size && table.holds(route)) table.forget(route);
@@ -80,11 +82,15 @@ async function listPredecessor(table: RouteTable, endpoint: RouteEndpoint, paths
 		const rows = authRecord(answer.data)?.sessions;
 		if (!Array.isArray(rows)) return;
 		const localPaths = new Set(
-			table.host.registry.list().flatMap((row) => (row.sessionPath ? [canonicalSessionPath(row.sessionPath)] : [])),
+			await Promise.all(
+				table.host.registry
+					.list()
+					.flatMap((row) => (row.sessionPath ? [canonicalSessionPathAsync(row.sessionPath)] : [])),
+			),
 		);
 		for (const row of rows) {
 			if (!isRoutedSessionRow(row) || !row.sessionPath || row.status !== "open") continue;
-			const path = canonicalSessionPath(row.sessionPath);
+			const path = await canonicalSessionPathAsync(row.sessionPath);
 			if (!paths.has(path) || localPaths.has(path)) continue;
 			const route = table.route(path, endpoint);
 			route.upstream = row.sessionId;

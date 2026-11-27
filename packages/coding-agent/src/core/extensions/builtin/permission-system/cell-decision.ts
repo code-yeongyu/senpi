@@ -3,6 +3,7 @@ import { isPresetRule } from "./config.ts";
 import type { DispatchPermissionState } from "./dispatch-policy.ts";
 import type { IdentityMatcher } from "./evaluate.ts";
 import { permissionRequestsFor } from "./parsers.ts";
+import { decideWithPathFacts, PathFacts } from "./path-facts.ts";
 import type { IdentityInput, KernelCanonical } from "./service.ts";
 import type { PermissionPresetName, Ruleset } from "./types.ts";
 import { Wildcard } from "./wildcard.ts";
@@ -170,78 +171,89 @@ export function createCellDecision(
 		if (state.setupError !== null) return unavailable("setup_failed");
 		if (!state.service || !state.parsers) return unavailable("unavailable");
 		const service = state.service;
-		const requests = permissionRequestsFor(() => [], state.parsers, call.tool, call.input, call.cwd);
-		const written = typeof call.input.path === "string" ? call.input.path : undefined;
-		const executed =
-			typeof call.input.executedPath === "string"
-				? call.input.executedPath
-				: written === undefined
-					? undefined
-					: resolve(call.cwd, written);
-		const kernel = kernelCanonicalOf(call.input);
-		const settle = (): CellDecision => {
-			if (WRITE_TOOLS.has(call.tool)) service.noteMutation(executed);
-			return { action: "pass" };
-		};
-		const decideRequest = (
-			request: (typeof requests)[number],
-			pattern: string,
-			identity: IdentityInput | undefined,
-		): CellDecision | undefined => {
-			const aliases = request.ruleAliases ?? [pattern];
-			const targets =
-				executed !== undefined ? [...new Set([...aliases, executed])] : (request.ruleAliases ?? pattern);
-			const decision = service.dispatchDecision(request.permission, targets, {
-				presetBound: state.preset === "auto",
-				...(identity ? { identity } : {}),
-			});
-			if (decision.action !== "deny") return undefined;
-			const matcher = service.identityMatcher(request.permission, identity);
-			const configured = provenance(request.permission, typeof targets === "string" ? [targets] : targets, matcher);
-			const deciding = decision.rules.find((rule) => rule.action === "deny");
-			return {
-				action: "deny",
-				rule: configured ?? {
-					permission: deciding?.permission ?? request.permission,
-					pattern: deciding?.pattern ?? pattern,
-					layer: "system",
-				},
+		const parsers = state.parsers;
+		// Every path probe reads this cell's facts, fetched off the host thread when missing (senpi#4565).
+		const facts = new PathFacts();
+		const parse = () => permissionRequestsFor(() => [], parsers, call.tool, call.input, call.cwd, facts);
+		const parsed = parse();
+		if (facts.incomplete) return decideWithPathFacts(parse, facts).then((requests) => decideRequests(requests));
+		return decideRequests(parsed);
+		function decideRequests(requests: ReturnType<typeof parse>): CellDecision | Promise<CellDecision> {
+			const written = typeof call.input.path === "string" ? call.input.path : undefined;
+			const executed =
+				typeof call.input.executedPath === "string"
+					? call.input.executedPath
+					: written === undefined
+						? undefined
+						: resolve(call.cwd, written);
+			const kernel = kernelCanonicalOf(call.input);
+			const settle = (): CellDecision => {
+				if (WRITE_TOOLS.has(call.tool)) service.noteMutation(executed);
+				return { action: "pass" };
 			};
-		};
-		const pendingIdentities: Promise<IdentityInput>[] = [];
-		const plan: {
-			request: (typeof requests)[number];
-			pattern: string;
-			identity: IdentityInput | Promise<IdentityInput> | undefined;
-		}[] = [];
-		for (const request of requests) {
-			for (const pattern of request.patterns) {
-				const identity =
-					executed !== undefined && service.identityWanted(request.permission, kernel)
-						? service.prepareIdentity(request.permission, [executed], call.cwd, kernel)
-						: undefined;
-				if (identity instanceof Promise) pendingIdentities.push(identity);
-				plan.push({ request, pattern, identity });
-			}
-		}
-		if (pendingIdentities.length === 0) {
-			for (const step of plan) {
-				const denied = decideRequest(
-					step.request,
-					step.pattern,
-					step.identity instanceof Promise ? undefined : step.identity,
+			const decideRequest = (
+				request: (typeof requests)[number],
+				pattern: string,
+				identity: IdentityInput | undefined,
+			): CellDecision | undefined => {
+				const aliases = request.ruleAliases ?? [pattern];
+				const targets =
+					executed !== undefined ? [...new Set([...aliases, executed])] : (request.ruleAliases ?? pattern);
+				const decision = service.dispatchDecision(request.permission, targets, {
+					presetBound: state.preset === "auto",
+					...(identity ? { identity } : {}),
+					facts,
+				});
+				if (decision.action !== "deny") return undefined;
+				const matcher = service.identityMatcher(request.permission, identity);
+				const configured = provenance(
+					request.permission,
+					typeof targets === "string" ? [targets] : targets,
+					matcher,
 				);
-				if (denied) return denied;
+				const deciding = decision.rules.find((rule) => rule.action === "deny");
+				return {
+					action: "deny",
+					rule: configured ?? {
+						permission: deciding?.permission ?? request.permission,
+						pattern: deciding?.pattern ?? pattern,
+						layer: "system",
+					},
+				};
+			};
+			const pendingIdentities: Promise<IdentityInput>[] = [];
+			const plan: {
+				request: (typeof requests)[number];
+				pattern: string;
+				identity: IdentityInput | Promise<IdentityInput> | undefined;
+			}[] = [];
+			for (const request of requests) {
+				for (const pattern of request.patterns) {
+					const identity =
+						executed !== undefined && service.identityWanted(request.permission, kernel)
+							? service.prepareIdentity(request.permission, [executed], call.cwd, kernel)
+							: undefined;
+					if (identity instanceof Promise) pendingIdentities.push(identity);
+					plan.push({ request, pattern, identity });
+				}
 			}
-			return settle();
+			const decidePlan = (identities: readonly (IdentityInput | undefined)[]): CellDecision => {
+				for (const [index, step] of plan.entries()) {
+					const denied = decideRequest(step.request, step.pattern, identities[index]);
+					if (denied) return denied;
+				}
+				return settle();
+			};
+			if (pendingIdentities.length === 0) {
+				const identities = plan.map((step) => (step.identity instanceof Promise ? undefined : step.identity));
+				const decided = decidePlan(identities);
+				if (!facts.incomplete) return decided;
+				return decideWithPathFacts(() => decidePlan(identities), facts);
+			}
+			return (async () => {
+				const identities = await Promise.all(plan.map((step) => step.identity));
+				return decideWithPathFacts(() => decidePlan(identities), facts);
+			})();
 		}
-		return (async () => {
-			for (const step of plan) {
-				const identity = step.identity instanceof Promise ? await step.identity : step.identity;
-				const denied = decideRequest(step.request, step.pattern, identity);
-				if (denied) return denied;
-			}
-			return settle();
-		})();
 	};
 }

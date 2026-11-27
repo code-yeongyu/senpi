@@ -12,6 +12,13 @@ import {
 } from "./identity-decision.ts";
 import type { IdentityMatcher } from "./evaluate.ts";
 import { createMountRewrite, readFirmlinks } from "./alias-detector.ts";
+import {
+	currentPathFacts,
+	decideNowOrWithPathFacts,
+	decideWithPathFacts,
+	PathFacts,
+	withPathFacts,
+} from "./path-facts.ts";
 import type { PathIdentityResolver } from "./path-identity-host.ts";
 import { PendingRequests } from "./pending-requests.ts";
 import { RuleIdentityCache, type RuleIdentityEntry } from "./rule-identity-cache.ts";
@@ -217,12 +224,25 @@ export class PermissionService {
 	): Decision {
 		this.refreshApproved();
 		const approved = this.approvedFor(scope);
-		if (permission === "external_directory") {
-			return decideExternalPaths(target, options.ruleAliases ?? [], (spelling, resolved, canonicalCase) =>
-				this.decideTarget(approved, permission, spelling, options, resolved, spelling !== resolved, canonicalCase),
-			);
-		}
-		return this.decideTarget(approved, permission, options.ruleAliases ?? target, options);
+		const facts = options.facts ?? currentPathFacts();
+		const decision = withPathFacts(facts, () => {
+			if (permission === "external_directory") {
+				return decideExternalPaths(target, options.ruleAliases ?? [], (spelling, resolved, canonicalCase) =>
+					this.decideTarget(
+						approved,
+						permission,
+						spelling,
+						options,
+						resolved,
+						spelling !== resolved,
+						canonicalCase,
+					),
+				);
+			}
+			return this.decideTarget(approved, permission, options.ruleAliases ?? target, options);
+		});
+		// A decision that read a fact not fetched yet is incomplete: it may deny, never allow (senpi#4565).
+		return facts.incomplete && decision.action === "allow" ? { action: "ask", rules: decision.rules } : decision;
 	}
 
 	private decideTarget(
@@ -255,6 +275,7 @@ export class PermissionService {
 			ruleAliases,
 			executed,
 			onPending,
+			facts = new PathFacts(),
 		}: {
 			readonly autoApproveAsk?: boolean;
 			readonly approveBlanketAsk?: boolean;
@@ -268,6 +289,8 @@ export class PermissionService {
 			readonly executed?: readonly string[];
 			/** Called once the request is registered as pending: the decision is `ask` and needs a reply. */
 			readonly onPending?: () => void;
+			/** The call's path facts; the decision fetches whatever it still misses off the host thread (senpi#4565). */
+			readonly facts?: PathFacts;
 		} = {},
 	): Promise<void> {
 		const info: Request = {
@@ -296,11 +319,21 @@ export class PermissionService {
 			ruleAliases,
 			originalPaths: info.originalPaths,
 			...(identity ? { identity } : {}),
+			facts,
 		};
-		for (const pattern of info.patterns) {
-			const aliases =
-				executed && executed.length > 0 ? uniq([...(ruleAliases ?? [pattern]), ...executed]) : ruleAliases;
-			const action = this.decide(info.permission, pattern, { ...options, ruleAliases: aliases }, info.sessionID);
+		const decideAll = () =>
+			info.patterns.map((pattern) => {
+				const aliases =
+					executed && executed.length > 0 ? uniq([...(ruleAliases ?? [pattern]), ...executed]) : ruleAliases;
+				return {
+					pattern,
+					action: this.decide(info.permission, pattern, { ...options, ruleAliases: aliases }, info.sessionID),
+				};
+			});
+		// A decision that reads no path fact (or only prefetched ones) stays synchronous, so its request registers
+		// before `ask` first yields; one that misses a fact waits for it off the host thread (senpi#4565).
+		const decided = decideNowOrWithPathFacts(decideAll, facts) ?? (await decideWithPathFacts(decideAll, facts));
+		for (const { pattern, action } of decided) {
 			if (action === "deny") {
 				deniedPatterns.push(pattern);
 				continue;

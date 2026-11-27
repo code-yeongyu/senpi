@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 import {
 	mkdirSync,
 	mkdtempSync,
@@ -44,13 +45,13 @@ describe("canonical external-directory identity", () => {
 
 	it.each(["write", "edit", "multiedit", "apply_patch", "read", "grep", "ls", "find", "glob", "monitor", "bash"])(
 		"%s cannot use an alias approval to bypass a real-target deny",
-		(tool) => {
+		async (tool) => {
 			const target = join(outside, "file.txt");
 			const aliased = join(alias, "file.txt");
 			const input = tool === "bash" ? { command: `cat "${aliased}"` } : { path: aliased };
-			const external = registry
-				.parse(tool, input, cwd)
-				.find((request) => request.permission === "external_directory");
+			const external = (await withFetchedFacts(() => registry.parse(tool, input, cwd))).find(
+				(request) => request.permission === "external_directory",
+			);
 			expect(external).toBeDefined();
 			const service = new PermissionService(
 				[
@@ -59,7 +60,10 @@ describe("canonical external-directory identity", () => {
 				],
 				[{ permission: "external_directory", pattern: `${alias}/*`, action: "allow" }],
 			);
-			expect(service.dispatchDecision("external_directory", external?.patterns ?? []).action).toBe("deny");
+			expect(
+				(await withFetchedFacts(() => service.dispatchDecision("external_directory", external?.patterns ?? [])))
+					.action,
+			).toBe("deny");
 			expect(external?.patterns).toEqual([target]);
 		},
 	);
@@ -67,9 +71,9 @@ describe("canonical external-directory identity", () => {
 	it("remembers the resolved parent of a missing target and reuses it across aliases", async () => {
 		const aliased = join(alias, "missing", "nested", "file.txt");
 		const target = join(outside, "missing", "nested", "file.txt");
-		const external = registry
-			.parse("write", { path: aliased }, cwd)
-			.find((r) => r.permission === "external_directory");
+		const external = (await withFetchedFacts(() => registry.parse("write", { path: aliased }, cwd))).find(
+			(r) => r.permission === "external_directory",
+		);
 		expect(external).toBeDefined();
 		if (!external) throw new Error("Missing external-directory request");
 		expect(external.patterns).toEqual([target]);
@@ -81,16 +85,21 @@ describe("canonical external-directory identity", () => {
 		const agentDir = join(root, "agent");
 		appendApproved(agentDir, cwd, service.getSessionApproved());
 		const reloaded = new PermissionService(rulesForPreset("accept-edits"), loadApproved(agentDir, cwd));
-		expect(reloaded.dispatchDecision("external_directory", target).action).toBe("allow");
+		expect((await withFetchedFacts(() => reloaded.dispatchDecision("external_directory", target))).action).toBe(
+			"allow",
+		);
 		// The approval names the original target, not wherever the alias points next.
 		rmSync(alias);
 		const other = join(root, "other");
 		mkdirSync(other);
 		symlinkSync(other, alias, process.platform === "win32" ? "junction" : "dir");
-		const changed = registry
-			.parse("write", { path: aliased }, cwd)
-			.find((r) => r.permission === "external_directory");
-		expect(reloaded.dispatchDecision("external_directory", changed?.patterns ?? []).action).toBe("ask");
+		const changed = (await withFetchedFacts(() => registry.parse("write", { path: aliased }, cwd))).find(
+			(r) => r.permission === "external_directory",
+		);
+		expect(
+			(await withFetchedFacts(() => reloaded.dispatchDecision("external_directory", changed?.patterns ?? [])))
+				.action,
+		).toBe("ask");
 	});
 
 	it.each([1, 2])("displays all %s resolved literal targets alongside their lexical spellings", async (count) => {
@@ -98,9 +107,11 @@ describe("canonical external-directory identity", () => {
 		const target = join(outside, "legal*name.txt");
 		const aliases = [aliased, join(alias, "second.txt")].slice(0, count);
 		const targets = [target, join(outside, "second.txt")].slice(0, count);
-		const external = registry
-			.parse("bash", { command: `cat ${aliases.map((path) => `"${path}"`).join(" ")}` }, cwd)
-			.find((r) => r.permission === "external_directory");
+		const external = (
+			await withFetchedFacts(() =>
+				registry.parse("bash", { command: `cat ${aliases.map((path) => `"${path}"`).join(" ")}` }, cwd),
+			)
+		).find((r) => r.permission === "external_directory");
 		expect(external).toBeDefined();
 		if (!external) throw new Error("Missing external-directory request");
 		const request: Request = {
@@ -121,7 +132,7 @@ describe("canonical external-directory identity", () => {
 		for (const path of aliases) expect(message).toContain(path);
 	});
 
-	it("keeps existing and missing case aliases inside the same directory", (context) => {
+	it("keeps existing and missing case aliases inside the same directory", async (context) => {
 		const caseAlias = join(root, "project");
 		let aliasInfo: Stats;
 		try {
@@ -137,16 +148,20 @@ describe("canonical external-directory identity", () => {
 			return;
 		}
 		writeFileSync(join(cwd, "file.txt"), "fixture");
-		expect(isExternalPath(join(caseAlias, "file.txt"), cwd)).toBe(false);
-		expect(isExternalPath(join(caseAlias, "missing", "nested", "file.txt"), cwd)).toBe(false);
-		expect(isExternalPath(join(cwd, "missing", "file.txt"), caseAlias)).toBe(false);
-		expect(registry.parse("write", { path: join(caseAlias, "file.txt") }, cwd).map((r) => r.permission)).toEqual([
-			"edit",
-		]);
-		expect(isExternalPath(join(outside, "file.txt"), caseAlias)).toBe(true);
+		expect(await withFetchedFacts(() => isExternalPath(join(caseAlias, "file.txt"), cwd))).toBe(false);
+		expect(await withFetchedFacts(() => isExternalPath(join(caseAlias, "missing", "nested", "file.txt"), cwd))).toBe(
+			false,
+		);
+		expect(await withFetchedFacts(() => isExternalPath(join(cwd, "missing", "file.txt"), caseAlias))).toBe(false);
+		expect(
+			(await withFetchedFacts(() => registry.parse("write", { path: join(caseAlias, "file.txt") }, cwd))).map(
+				(r) => r.permission,
+			),
+		).toEqual(["edit"]);
+		expect(await withFetchedFacts(() => isExternalPath(join(outside, "file.txt"), caseAlias))).toBe(true);
 	});
 
-	it("keeps distinct case-sensitive directories separate", (context) => {
+	it("keeps distinct case-sensitive directories separate", async (context) => {
 		const other = join(root, "project");
 		try {
 			mkdirSync(other);
@@ -155,7 +170,7 @@ describe("canonical external-directory identity", () => {
 			context.skip();
 			return;
 		}
-		expect(isExternalPath(join(other, "missing", "file.txt"), cwd)).toBe(true);
-		expect(isExternalPath(join(cwd, "missing", "file.txt"), other)).toBe(true);
+		expect(await withFetchedFacts(() => isExternalPath(join(other, "missing", "file.txt"), cwd))).toBe(true);
+		expect(await withFetchedFacts(() => isExternalPath(join(cwd, "missing", "file.txt"), other))).toBe(true);
 	});
 });

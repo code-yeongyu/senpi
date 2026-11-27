@@ -1,9 +1,8 @@
-import { lstatSync } from "node:fs";
-import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
 import * as os from "node:os";
 import * as path from "node:path";
-import { realpathWithoutOpenStrict } from "../../../../utils/paths.ts";
+import { realpathWithoutOpenStrictWith } from "../../../../utils/paths.ts";
 import { isCredentialPath } from "./auto-credentials.ts";
+import { currentPathFacts } from "./path-facts.ts";
 
 /** Hidden project entries `auto` may touch: repository metadata and formatter/linter configs. */
 const SAFE_HIDDEN_NAMES = new Set([
@@ -25,7 +24,7 @@ export type TargetKind = "file" | "directory" | "missing" | "other";
 
 const physicalPath = (target: string): string | undefined => {
 	try {
-		const resolved = realpathWithoutOpenStrict(target);
+		const resolved = realpathWithoutOpenStrictWith(target, currentPathFacts().walkIo);
 		return resolved.split(path.sep).includes("..") ? undefined : resolved;
 	} catch {
 		return undefined;
@@ -50,11 +49,13 @@ function projectRoot(cwd: string): string | undefined {
 /** Whether something, even a dangling symlink, exists at `target` itself; git looks at the name. */
 export function existsAtName(target: string): boolean {
 	try {
-		refuseUnmountedAutomountPath(target);
-		return lstatSync(target, { throwIfNoEntry: false }) !== undefined;
-	} catch {
-		// A name the filesystem refuses (too long, a loop, no permission) is not a plain ref either:
-		// report it as existing so the caller checks it as a path, and that check asks.
+		currentPathFacts().lstat(target);
+		return true;
+	} catch (error) {
+		const code = (error as { code?: unknown }).code;
+		if (code === "ENOENT" || code === "ENOTDIR") return false;
+		// A name the filesystem refuses (too long, a loop, no permission, an unmounted automount, a fact not fetched
+		// yet) is not a plain ref either: report it as existing so the caller checks it as a path, and that check asks.
 		return true;
 	}
 }
@@ -69,8 +70,7 @@ export function targetKind(target: string): TargetKind {
 	const physical = physicalPath(target);
 	if (physical === undefined) return "other";
 	try {
-		refuseUnmountedAutomountPath(physical);
-		const stats = lstatSync(physical);
+		const stats = currentPathFacts().lstat(physical);
 		return stats.isFile() ? "file" : stats.isDirectory() ? "directory" : "other";
 	} catch (error) {
 		return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "other";

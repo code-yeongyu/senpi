@@ -59,7 +59,7 @@ it("keeps serving opens after a retained session's directory is deleted, and end
 		expect(opened(latest, 0).sessionId).not.toBe(gone.sessionId);
 
 		// And: the next sweep ends the session whose directory vanished.
-		router.sweepIdleSessions();
+		await router.sweepIdleSessions();
 		const ending = registry.peek(gone.sessionId);
 		expect(ending?.state ?? "closed").not.toBe("open");
 		await ending?.closeCompletion;

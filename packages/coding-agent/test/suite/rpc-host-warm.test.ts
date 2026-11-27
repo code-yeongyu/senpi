@@ -211,12 +211,12 @@ describe("warm and the host's idle rules (senpi#2314)", () => {
 		let now = 0;
 		let exits = 0;
 		const host = heldWarmHost({ now: () => now, emptyExitMs: 1_000, onEmptyExit: () => exits++ });
-		host.router.sweepIdleSessions();
+		await host.router.sweepIdleSessions();
 
 		now = 500;
 		const pending = host.router.handle(warm({ cwd }));
 		now = 1_000;
-		host.router.sweepIdleSessions();
+		await host.router.sweepIdleSessions();
 
 		expect(exits).toBe(1);
 		host.release();
@@ -228,7 +228,7 @@ describe("warm and the host's idle rules (senpi#2314)", () => {
 		const host = heldWarmHost({ now: () => 0, emptyExitMs: Number.POSITIVE_INFINITY, onEmptyExit: () => exits++ });
 		const pending = host.router.handle(warm({ cwd }));
 
-		host.router.beginDrain();
+		await host.router.beginDrain();
 
 		expect(exits).toBe(1);
 		expect(await host.router.handle(warm({ cwd }))).toMatchObject({ success: false, error: "host_draining" });

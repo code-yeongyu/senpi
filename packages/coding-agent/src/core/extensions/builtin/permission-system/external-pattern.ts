@@ -1,7 +1,7 @@
-import { type BigIntStats, lstatSync, readdirSync, statSync } from "node:fs";
-import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
+import type { BigIntStats } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, sep } from "node:path";
-import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import { realpathWithoutOpenWith } from "../../../../utils/paths.ts";
+import { currentPathFacts } from "./path-facts.ts";
 import { Wildcard } from "./wildcard.ts";
 
 /** `name` with the case of every letter inverted; equal to `name` when it has no cased letter. */
@@ -24,8 +24,7 @@ function mayHaveOtherCase(parent: string, part: string, identity: BigIntStats): 
 	if (swapped === part) return false;
 	const sibling = `${parent}${parent.endsWith(sep) ? "" : sep}${swapped}`;
 	try {
-		refuseUnmountedAutomountPath(sibling);
-		const other = lstatSync(sibling, { bigint: true });
+		const other = currentPathFacts().lstat(sibling);
 		return other.dev === identity.dev && other.ino === identity.ino;
 	} catch {
 		return false;
@@ -41,22 +40,22 @@ function mayHaveOtherCase(parent: string, part: string, identity: BigIntStats): 
  */
 export function canonicalPathCase(
 	value: string,
-	listDirectory: (directory: string) => readonly string[] = readdirSync,
+	listDirectory: (directory: string) => readonly string[] = (directory) => currentPathFacts().readdir(directory),
 ): string {
 	if (!isAbsolute(value)) return value;
+	const facts = currentPathFacts();
 	const root = parse(value).root;
 	const parts = value.slice(root.length).split(sep).filter(Boolean);
 	let parent = root;
 	for (let index = 0; index < parts.length; index++) {
 		const part = parts[index];
 		try {
-			refuseUnmountedAutomountPath(`${parent}${parent.endsWith(sep) ? "" : sep}${part}`);
-			const identity = lstatSync(`${parent}${parent.endsWith(sep) ? "" : sep}${part}`, { bigint: true });
+			const identity = facts.lstat(`${parent}${parent.endsWith(sep) ? "" : sep}${part}`);
 			const entries = mayHaveOtherCase(parent, part, identity) ? listDirectory(parent) : [part];
 			if (!entries.includes(part)) {
 				const spelling = entries.find((entry) => {
 					if (entry.toLowerCase() !== part.toLowerCase()) return false;
-					const candidate = lstatSync(`${parent}${parent.endsWith(sep) ? "" : sep}${entry}`, { bigint: true });
+					const candidate = facts.lstat(`${parent}${parent.endsWith(sep) ? "" : sep}${entry}`);
 					return candidate.dev === identity.dev && candidate.ino === identity.ino;
 				});
 				if (spelling !== undefined) parts[index] = spelling;
@@ -78,13 +77,12 @@ export function sameLexicalPath(left: string, right: string): boolean {
 	const rightRoot = parse(right).root;
 	const leftParts = left.slice(leftRoot.length).split(sep);
 	const rightParts = right.slice(rightRoot.length).split(sep);
+	const facts = currentPathFacts();
 	try {
 		for (let index = 0; index < leftParts.length; index++) {
 			if (leftParts[index] === rightParts[index]) continue;
-			refuseUnmountedAutomountPath(leftRoot + leftParts.slice(0, index + 1).join(sep));
-			refuseUnmountedAutomountPath(rightRoot + rightParts.slice(0, index + 1).join(sep));
-			const a = lstatSync(leftRoot + leftParts.slice(0, index + 1).join(sep), { bigint: true });
-			const b = lstatSync(rightRoot + rightParts.slice(0, index + 1).join(sep), { bigint: true });
+			const a = facts.lstat(leftRoot + leftParts.slice(0, index + 1).join(sep));
+			const b = facts.lstat(rightRoot + rightParts.slice(0, index + 1).join(sep));
 			if (a.dev !== b.dev || a.ino !== b.ino) return false;
 		}
 		return true;
@@ -103,7 +101,7 @@ export function createExternalPathMatcher(
 	const realpath = (value: string): string => {
 		let result = resolved.get(value);
 		if (result === undefined) {
-			result = preserveAncestry ? canonicalCase(value) : realpathWithoutOpen(value);
+			result = preserveAncestry ? canonicalCase(value) : realpathWithoutOpenWith(value, currentPathFacts().walkIo);
 			resolved.set(value, result);
 		}
 		return result;
@@ -112,8 +110,7 @@ export function createExternalPathMatcher(
 		let result = identities.get(value);
 		if (result === undefined) {
 			try {
-				refuseUnmountedAutomountPath(value);
-				result = statSync(value, { bigint: true });
+				result = currentPathFacts().stat(value);
 			} catch (error) {
 				result = error as Error;
 			}

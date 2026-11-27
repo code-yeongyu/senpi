@@ -5,7 +5,7 @@
  */
 import { type FileHandle, lstat, open, stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import { realpathWithoutOpenAsync } from "../permission-system/path-facts.ts";
 import type { FileMonitorRecord } from "./file-monitor-record.ts";
 import { digestFileHandle } from "./monitor-file-digest.ts";
 
@@ -21,14 +21,14 @@ export async function checkFileOnce(record: FileMonitorRecord, actions: FileChec
 	let current: Awaited<ReturnType<typeof stat>> | null = null;
 	let handle: FileHandle | undefined;
 	try {
-		const currentParent = realpathWithoutOpen(dirname(record.path));
+		const currentParent = await realpathWithoutOpenAsync(dirname(record.path));
 		if (currentParent !== record.canonicalParent) {
 			actions.settle(`watcher error: monitored parent changed: ${dirname(record.path)}`);
 			return;
 		}
 		const target = await lstat(record.canonicalPath);
 		if (target.isSymbolicLink()) throw new Error(`Cannot watch file: target identity changed: ${record.path}`);
-		const resolvedTarget = realpathWithoutOpen(record.canonicalPath);
+		const resolvedTarget = await realpathWithoutOpenAsync(record.canonicalPath);
 		if (resolvedTarget !== record.canonicalPath)
 			throw new Error(`Cannot watch file: target identity changed: ${record.path}`);
 		handle = await open(record.canonicalPath, "r");

@@ -1,7 +1,6 @@
-import { statSync } from "node:fs";
-import { refuseUnmountedAutomountPath, UNMOUNTED_AUTOMOUNT } from "@code-yeongyu/senpi-machine-ops";
+import { UNMOUNTED_AUTOMOUNT } from "@code-yeongyu/senpi-machine-ops";
 import { dirname, resolve } from "node:path";
-import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import { realpathWithoutOpenWith } from "../../../../utils/paths.ts";
 import { resolveToCwd } from "../../../tools/path-utils.ts";
 import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
@@ -18,6 +17,7 @@ import {
 import type { Request } from "../permission-system/types.ts";
 import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
 import { urlOriginAlias, widerAlwaysScope } from "./always-scope.ts";
+import { currentPathFacts, type PathFacts, withPathFacts } from "./path-facts.ts";
 import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
@@ -126,8 +126,7 @@ const unknownToolTarget: TargetResolver = (rawPath, cwd) => [rawPath, resolveToC
 /** Match grep's pathStat: only ENOENT permits selector fallback; other I/O errors block the call. */
 function grepPathStat(path: string) {
 	try {
-		refuseUnmountedAutomountPath(path);
-		return statSync(path);
+		return currentPathFacts().stat(path);
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		// A path under an unmounted automount names nothing on this machine, like a missing one (senpi#4565).
@@ -261,10 +260,14 @@ export function permissionRequestsFor(
 	toolName: string,
 	input: Record<string, unknown>,
 	cwd: string,
+	facts: PathFacts,
 ): PermissionRequest[] {
-	const requests = registry.has(toolName)
-		? registry.parse(toolName, input, cwd)
-		: (toolOwnedPermissionRequests(getTools(), toolName, input, cwd) ?? registry.parse(toolName, input, cwd));
+	// Path probes in the parsers read the call's facts, never the filesystem (senpi#4565).
+	const requests = withPathFacts(facts, () =>
+		registry.has(toolName)
+			? registry.parse(toolName, input, cwd)
+			: (toolOwnedPermissionRequests(getTools(), toolName, input, cwd) ?? registry.parse(toolName, input, cwd)),
+	);
 	if (toolName === "eval" && !requests.some((request) => request.permission === "eval")) {
 		return [...requests, fallbackEvalPermissionRequest()];
 	}
@@ -338,7 +341,10 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			// This runs on the host main thread: the parent identity must be derived without open(2)
 			// (realpath opens directories and blocks forever on a wedged autofs trigger). Registration
 			// performs the authoritative access check and re-derives the parent the same way.
-			setApprovedMonitorParent(input, realpathWithoutOpen(dirname(resolve(cwd, path))));
+			setApprovedMonitorParent(
+				input,
+				realpathWithoutOpenWith(dirname(resolve(cwd, path)), currentPathFacts().walkIo),
+			);
 			return withExternalDirectoryRequests(
 				[{ permission: "read", patterns: [path], always: [path], executed: [resolve(cwd, path)] }],
 				[path],

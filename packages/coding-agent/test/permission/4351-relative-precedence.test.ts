@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "./path-facts-support.ts";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,8 +25,10 @@ describe("4351 relative-target precedence", () => {
 	});
 	afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-	const external = (path: string) => {
-		const request = registry.parse("read", { path }, cwd).find((r) => r.permission === "external_directory");
+	const external = async (path: string) => {
+		const request = (await withFetchedFacts(() => registry.parse("read", { path }, cwd))).find(
+			(r) => r.permission === "external_directory",
+		);
 		if (!request) throw new Error("Missing external request");
 		return request;
 	};
@@ -41,8 +44,8 @@ describe("4351 relative-target precedence", () => {
 		["deny", "allow", "deny"],
 		["deny", "ask", "deny"],
 		["deny", "deny", "deny"],
-	] as const)("combines relative lexical %s and resolved %s as %s", (lexical, resolved, expected) => {
-		const request = external(join(root, "proj", "x", "secret", "f.txt"));
+	] as const)("combines relative lexical %s and resolved %s as %s", async (lexical, resolved, expected) => {
+		const request = await external(join(root, "proj", "x", "secret", "f.txt"));
 		const rules: Ruleset = [
 			{ permission: "external_directory", pattern: `${root}/proj/*/secret/*`, action: lexical },
 			{ permission: "external_directory", pattern: `${outside}/*`, action: resolved },
@@ -52,26 +55,35 @@ describe("4351 relative-target precedence", () => {
 				[{ permission: "external_directory", pattern: "*", action: "deny" }, ...ordered],
 				[],
 			);
-			expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe(expected);
+			expect(
+				(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request)))
+					.action,
+			).toBe(expected);
 		}
 	});
 
-	it.each([false, true])("keeps an intermediate blanket deny when both endpoints allow, reversed=%s", (reversed) => {
-		mkdirSync(join(root, "tmp"));
-		symlinkSync("../proj", join(root, "tmp", "entry"), "dir");
-		const request = external(join(root, "tmp", "entry", "x", "secret", "f.txt"));
-		const allows: Ruleset = [
-			{ permission: "external_directory", pattern: `${root}/tmp/entry/*`, action: "allow" },
-			{ permission: "external_directory", pattern: `${outside}/*`, action: "allow" },
-		];
-		const service = new PermissionService(
-			[
-				{ permission: "external_directory", pattern: "*", action: "deny" },
-				...(reversed ? [...allows].reverse() : allows),
-			],
-			[],
-		);
+	it.each([false, true])(
+		"keeps an intermediate blanket deny when both endpoints allow, reversed=%s",
+		async (reversed) => {
+			mkdirSync(join(root, "tmp"));
+			symlinkSync("../proj", join(root, "tmp", "entry"), "dir");
+			const request = await external(join(root, "tmp", "entry", "x", "secret", "f.txt"));
+			const allows: Ruleset = [
+				{ permission: "external_directory", pattern: `${root}/tmp/entry/*`, action: "allow" },
+				{ permission: "external_directory", pattern: `${outside}/*`, action: "allow" },
+			];
+			const service = new PermissionService(
+				[
+					{ permission: "external_directory", pattern: "*", action: "deny" },
+					...(reversed ? [...allows].reverse() : allows),
+				],
+				[],
+			);
 
-		expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe("deny");
-	});
+			expect(
+				(await withFetchedFacts(() => service.dispatchDecision(request.permission, request.patterns, request)))
+					.action,
+			).toBe("deny");
+		},
+	);
 });

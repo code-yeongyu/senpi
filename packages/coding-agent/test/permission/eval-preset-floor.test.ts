@@ -11,6 +11,7 @@ import {
 	createBuiltinParserRegistry,
 	permissionRequestsFor,
 } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
+import { PathFacts } from "../../src/core/extensions/builtin/permission-system/path-facts.ts";
 import type { Action } from "../../src/core/extensions/builtin/permission-system/types.ts";
 import type { ExtensionFactory, ToolInfo } from "../../src/core/extensions/types.ts";
 import { createPermissionP0Host } from "../suite/regressions/permission-p0-host.ts";
@@ -136,6 +137,7 @@ describe("eval is never looser than shell, edit or write (senpi#3210)", () => {
 			"eval",
 			{ language: "js", code: "x" },
 			project,
+			new PathFacts(),
 		);
 
 		//#then: the narrower `read` answer is not the only request

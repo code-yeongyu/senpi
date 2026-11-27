@@ -8,7 +8,7 @@ import type { Stats } from "node:fs";
 import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { access, type FileHandle, lstat, open, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import { realpathWithoutOpenAsync } from "../permission-system/path-facts.ts";
 import type { PendingFileRegistration, RegistrationGuard } from "./file-monitor-guard.ts";
 import type { RegisterFileMonitorOptions } from "./file-monitor-record.ts";
 
@@ -37,7 +37,7 @@ export async function proveWatchTarget(
 		await guard.await(pending, access(parent));
 		// Identity is derived without open(2), with the same walker the permission parser used, so the
 		// two sides agree byte-for-byte and neither can block on a wedged mount.
-		approvedParent = realpathWithoutOpen(parent);
+		approvedParent = await realpathWithoutOpenAsync(parent);
 		const approvedParentAtPermission = options.approvedParent;
 		if (approvedParentAtPermission !== undefined && approvedParent !== approvedParentAtPermission) {
 			throw new Error(`Cannot watch file: parent directory changed during permission approval: ${parent}`);
@@ -62,7 +62,7 @@ export async function proveWatchTarget(
 		});
 		initial = await guard.await(pending, initialHandle.stat());
 		if (!initial.isFile()) throw new Error(`Cannot watch file: target is not a regular file: ${path}`);
-		const resolvedTarget = realpathWithoutOpen(path);
+		const resolvedTarget = await realpathWithoutOpenAsync(path);
 		if (resolvedTarget !== join(approvedParent, basename(path)))
 			throw new Error(`Cannot watch file: target identity changed: ${path}`);
 		const rebound = await guard.await(pending, lstat(path));

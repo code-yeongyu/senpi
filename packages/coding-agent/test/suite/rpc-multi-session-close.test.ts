@@ -206,7 +206,7 @@ describe("multi-session RPC close routing", () => {
 		]) as SessionCommandRouter;
 		await router.handle({ id: "open", type: "open_session", cwd: "/tmp" });
 		const close = router.handle({ id: "close", type: "close_session", sessionId: "known" });
-		router.sweepIdleSessions();
+		await router.sweepIdleSessions();
 		const disposingRouter = router.dispose();
 		releaseDispose();
 		await expect(Promise.all([close, disposingRouter])).resolves.toEqual([undefined, undefined]);

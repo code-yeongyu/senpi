@@ -227,7 +227,7 @@ export async function open(
 			// they need and nothing more, and an open must never fail because a
 			// settle notification is unavailable - the periodic sweep still parks it.
 			const settled = () => {
-				if (host.draining) queueMicrotask(() => sweepDrain(host));
+				if (host.draining) queueMicrotask(() => void sweepDrain(host));
 			};
 			if (typeof entry.worker?.subscribeSettled === "function") entry.worker.subscribeSettled(settled);
 			else if (typeof entry.runtime?.session.subscribe === "function")

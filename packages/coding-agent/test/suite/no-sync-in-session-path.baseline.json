@@ -1,5 +1,5 @@
 {
-	"documentation": "Frozen, shrink-only baseline for test/suite/no-sync-in-session-path.test.ts (senpi#3676). Every synchronous fs, crypto or zlib call reachable from the RPC session path, outside the three whole-file APIs the ledger tracks and outside the move path (which allows none). Keyed by (file, declared callee, enclosing symbol) with the exact call count. The test fails on any site not listed here (adding one is forbidden: make the new call asynchronous) and on any listed entry that no longer occurs at that count (remove or lower it in the same PR). It may only shrink, to zero. Sorted by codepoint; counts are call sites. The one addition after the first snapshot, made in #3991 when the audit learned the bind/alias forms, is src/utils/photon.ts readFileSync in patchPhotonWasmRead (see its reason).",
+	"documentation": "Frozen, shrink-only baseline for test/suite/no-sync-in-session-path.test.ts (senpi#3676). Every synchronous fs, crypto or zlib call reachable from the RPC session path, outside the three whole-file APIs the ledger tracks and outside the move path (which allows none). Keyed by (file, declared callee, enclosing symbol) with the exact call count. The test fails on any site not listed here (adding one is forbidden: make the new call asynchronous) and on any listed entry that no longer occurs at that count (remove or lower it in the same PR). It may only shrink, to zero. Sorted by codepoint; counts are call sites. The one addition after the first snapshot, made in #3991 when the audit learned the bind/alias forms, is src/utils/photon.ts readFileSync in patchPhotonWasmRead (see its reason). senpi#4565 taught the classifier the `<name>Sync.native` form (fs.realpathSync.native, the call that parked a macOS host), which made five pre-existing sites visible; they were added with that reason and are tracked in senpi#7561.",
 	"entries": [
 		{
 			"file": "src/config.ts",
@@ -231,6 +231,13 @@
 		},
 		{
 			"file": "src/core/extensions/builtin/rules/rules/project-root.ts",
+			"callee": "realpathSync.native",
+			"symbol": "findProjectRoot",
+			"count": 1,
+			"reason": "pre-existing, invisible to the classifier before senpi#4565; can receive a caller- or session-supplied path, so it sits behind the automount gate (automountTriggerPathSync) with a zero-filesystem test in test/suite/regressions/4565-automount-sites.test.ts; conversion tracked in senpi#7561"
+		},
+		{
+			"file": "src/core/extensions/builtin/rules/rules/project-root.ts",
 			"callee": "statSync",
 			"symbol": "findProjectRoot",
 			"count": 1
@@ -308,6 +315,13 @@
 			"callee": "statSync",
 			"symbol": "exceedsCap",
 			"count": 1
+		},
+		{
+			"file": "src/core/message-path-resolution.ts",
+			"callee": "realpathSync.native",
+			"symbol": "existing",
+			"count": 1,
+			"reason": "pre-existing, invisible to the classifier before senpi#4565; can receive a caller- or session-supplied path, so it sits behind the automount gate (automountTriggerPathSync) with a zero-filesystem test in test/suite/regressions/4565-automount-sites.test.ts; conversion tracked in senpi#7561"
 		},
 		{
 			"file": "src/core/message-path-resolution.ts",
@@ -912,12 +926,6 @@
 		},
 		{
 			"file": "src/modes/rpc/session-path-key.ts",
-			"callee": "existsSync",
-			"symbol": "sessionDirectoryRemoved",
-			"count": 1
-		},
-		{
-			"file": "src/modes/rpc/session-path-key.ts",
 			"callee": "realpathSync",
 			"symbol": "canonicalSessionPath",
 			"count": 1
@@ -1059,6 +1067,27 @@
 			"callee": "renameSync",
 			"symbol": "writeIfChanged",
 			"count": 1
+		},
+		{
+			"file": "src/utils/fs-watch.ts",
+			"callee": "realpathSync.native",
+			"symbol": "canonicalWatchPath",
+			"count": 1,
+			"reason": "pre-existing, invisible to the classifier before senpi#4565; win32 only (the 8.3 short-name guard of fs.watch), never a caller path on POSIX; tracked in senpi#7561"
+		},
+		{
+			"file": "src/utils/paths.ts",
+			"callee": "realpathSync.native",
+			"symbol": "canonicalizePath",
+			"count": 1,
+			"reason": "pre-existing, invisible to the classifier before senpi#4565; can receive a caller- or session-supplied path, so it sits behind the automount gate (automountTriggerPathSync) with a zero-filesystem test in test/suite/regressions/4565-automount-sites.test.ts; conversion tracked in senpi#7561"
+		},
+		{
+			"file": "src/utils/paths.ts",
+			"callee": "realpathSync.native",
+			"symbol": "canonicalizePathStrict",
+			"count": 1,
+			"reason": "pre-existing, invisible to the classifier before senpi#4565; can receive a caller- or session-supplied path, so it sits behind the automount gate (automountTriggerPathSync) with a zero-filesystem test in test/suite/regressions/4565-automount-sites.test.ts; conversion tracked in senpi#7561"
 		},
 		{
 			"file": "src/utils/paths.ts",

@@ -1,8 +1,8 @@
-import { type BigIntStats, statSync } from "node:fs";
-import { refuseUnmountedAutomountPath } from "@code-yeongyu/senpi-machine-ops";
+import type { BigIntStats } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import { realpathWithoutOpenWith } from "../../../../utils/paths.ts";
+import { currentPathFacts } from "./path-facts.ts";
 
 export type AlwaysScope = "file" | "directory";
 
@@ -44,9 +44,10 @@ export function resolveExternalPath(inputPath: string, cwd: string): string | un
 	const expandedPath = expandHome(inputPath);
 	// Resolution must never open(2) a component (autofs triggers block, execute-only dirs EACCES):
 	// realpathWithoutOpen walks lstat/readlink only, exactly what the classifier needs.
-	const normalizedCwd = realpathWithoutOpen(cwd);
+	const facts = currentPathFacts();
+	const normalizedCwd = realpathWithoutOpenWith(cwd, facts.walkIo);
 	const absolutePath = path.isAbsolute(expandedPath) ? expandedPath : path.resolve(normalizedCwd, expandedPath);
-	const normalizedTarget = realpathWithoutOpen(absolutePath);
+	const normalizedTarget = realpathWithoutOpenWith(absolutePath, facts.walkIo);
 
 	if (normalizedTarget === normalizedCwd) {
 		return undefined;
@@ -62,16 +63,14 @@ export function resolveExternalPath(inputPath: string, cwd: string): string | un
 	// since two differently cased directories can be distinct on a case-sensitive volume.
 	let cwdIdentity: BigIntStats;
 	try {
-		refuseUnmountedAutomountPath(normalizedCwd);
-		cwdIdentity = statSync(normalizedCwd, { bigint: true });
+		cwdIdentity = facts.stat(normalizedCwd);
 	} catch {
 		return normalizedTarget;
 	}
 	let ancestor = normalizedTarget;
 	for (;;) {
 		try {
-			refuseUnmountedAutomountPath(ancestor);
-			const identity = statSync(ancestor, { bigint: true });
+			const identity = facts.stat(ancestor);
 			if (identity.dev === cwdIdentity.dev && identity.ino === cwdIdentity.ino) return undefined;
 		} catch {
 			// A missing or inaccessible component does not establish containment.

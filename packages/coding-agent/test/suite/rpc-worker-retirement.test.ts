@@ -42,7 +42,7 @@ it("parks a completed detached worker on the next sweep and reopens its durable 
 
 	// When: the occupancy sweep observes the completed worker.
 	now = 5_000;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 	expect(entry.state).toBe("closing");
 	await entry.closeCompletion;
 
@@ -71,10 +71,10 @@ it("uses the normal idle deadline when a zero-attachment worker has no detach st
 
 	// When: the early-retirement grace passes, followed by the ordinary idle deadline.
 	now = 5_000;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 	expect(entry.state).toBe("open");
 	now = 60_000;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 
 	// Then: no detach stamp prevents early retirement, not all retirement forever.
 	expect(entry.state).toBe("closing");
@@ -131,7 +131,7 @@ it.each(["attached", "unflushed", "turn", "wake", "queued", "delivery", "prompt"
 			// "queued"/"delivery" already sat past the deadline; a held prompt or request must
 			// also protect the worker past it, not just at time zero.
 			if (reason === "queued" || reason === "delivery" || reason === "prompt" || reason === "request") now = 60_001;
-			rig.router.sweepIdleSessions();
+			await rig.router.sweepIdleSessions();
 
 			// Then: work and the runtime are preserved.
 			expect(entry.state).toBe("open");
@@ -152,7 +152,7 @@ it("keeps a quiet detached interactive session for its normal retention window",
 	await rig.drop("owner");
 
 	// When: a sweep runs before the configured idle window.
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 
 	// Then: a reconnect still attaches to the same runtime.
 	const resumed = opened(await rig.open("resume", { cwd: dir, sessionPath: first.state.sessionFile }), 1);

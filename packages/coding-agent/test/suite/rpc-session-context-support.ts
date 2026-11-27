@@ -327,7 +327,7 @@ export async function contextHost(
 				(record) =>
 					record.type === "response" && record.command === "close_session" && record.sessionId === sessionId,
 			);
-			router.sweepIdleSessions();
+			await router.sweepIdleSessions();
 			await closed;
 			await settle();
 		},

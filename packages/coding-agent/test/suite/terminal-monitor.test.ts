@@ -1,3 +1,4 @@
+import { withFetchedFacts } from "../permission/path-facts-support.ts";
 import { link, mkdtemp, open, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { vi } from "vitest";
 
@@ -893,7 +894,7 @@ describe("terminal monitor tool", () => {
 			const requested = join(link, "artifact");
 			await symlink(internal, link, "dir");
 			const input = { description: "approval race", path: requested } as MonitorInput;
-			const requests = createBuiltinParserRegistry().parse("monitor", input, root);
+			const requests = await withFetchedFacts(() => createBuiltinParserRegistry().parse("monitor", input, root));
 			expect(requests.map((request) => request.permission)).toEqual(["read"]);
 			await rm(link);
 			await symlink(external, link, "dir");
@@ -915,8 +916,10 @@ describe("terminal monitor tool", () => {
 		}
 	}, 15_000);
 
-	it("adds external-directory approval for native paths", () => {
-		const requests = createBuiltinParserRegistry().parse("monitor", { path: "/tmp/secret/file" }, process.cwd());
+	it("adds external-directory approval for native paths", async () => {
+		const requests = await withFetchedFacts(() =>
+			createBuiltinParserRegistry().parse("monitor", { path: "/tmp/secret/file" }, process.cwd()),
+		);
 		expect(requests.map((request) => request.permission)).toEqual(["read", "external_directory"]);
 	});
 
@@ -926,7 +929,9 @@ describe("terminal monitor tool", () => {
 		try {
 			const link = join(root, "link");
 			await symlink(outside, link, "dir");
-			const requests = createBuiltinParserRegistry().parse("monitor", { path: join(link, "not-yet-created") }, root);
+			const requests = await withFetchedFacts(() =>
+				createBuiltinParserRegistry().parse("monitor", { path: join(link, "not-yet-created") }, root),
+			);
 			expect(requests.map((request) => request.permission)).toEqual(["read", "external_directory"]);
 		} finally {
 			await rm(root, { recursive: true, force: true });
@@ -1037,8 +1042,10 @@ describe("terminal monitor tool", () => {
 		}
 	}, 15_000);
 
-	it("uses the same bash permission class as command execution", () => {
-		const requests = createBuiltinParserRegistry().parse("monitor", { command: "rm -rf /tmp/monitor" }, "/tmp");
+	it("uses the same bash permission class as command execution", async () => {
+		const requests = await withFetchedFacts(() =>
+			createBuiltinParserRegistry().parse("monitor", { command: "rm -rf /tmp/monitor" }, "/tmp"),
+		);
 		expect(requests[0]?.permission).toBe("bash");
 		expect(requests[0]?.patterns).toContain("rm");
 	});

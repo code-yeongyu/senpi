@@ -9,6 +9,7 @@ import { PROGRAM_RULES } from "./auto-program-rules.ts";
 import type { ClassifiedWord } from "./auto-shell-grammar.ts";
 import { splitShellSegments } from "./auto-shell-segments.ts";
 import type { PermissionRequest } from "./parsers.ts";
+import { decideWithPathFacts, withPathFacts } from "./path-facts.ts";
 
 export type AutoCommandVerdict = "allow" | "ask";
 
@@ -93,15 +94,33 @@ export async function decideAuto(
 	request: PermissionRequest,
 	cwd: string,
 ): Promise<AutoDecision> {
+	const readTarget = toolName === "read" ? await readToolTarget(input, cwd) : undefined;
+	// The path checks read facts fetched off the host thread (senpi#4565).
+	return decideWithPathFacts((facts) =>
+		withPathFacts(facts, () => decideAutoWithFacts(toolName, input, request, cwd, readTarget)),
+	);
+}
+
+async function readToolTarget(input: Record<string, unknown>, cwd: string): Promise<string | undefined> {
+	const raw = input.path ?? input.file_path;
+	return typeof raw === "string" ? resolveReadPathAsync(raw, cwd) : undefined;
+}
+
+function decideAutoWithFacts(
+	toolName: string,
+	input: Record<string, unknown>,
+	request: PermissionRequest,
+	cwd: string,
+	readTarget: string | undefined,
+): AutoDecision {
 	if (!isProjectSession(cwd)) return NO;
 	if (toolName === "bash" || (toolName === "monitor" && typeof input.command === "string")) {
 		if (request.permission !== "bash" || typeof input.command !== "string") return NO;
 		return judgeAutoCommand(input.command, cwd) === "allow" ? YES : NO;
 	}
 	if (toolName === "read") {
-		const raw = input.path ?? input.file_path;
-		if (typeof raw !== "string") return NO;
-		return approvedTarget(await resolveReadPathAsync(raw, cwd), cwd, ["file", "missing"]) ? YES : NO;
+		if (readTarget === undefined) return NO;
+		return approvedTarget(readTarget, cwd, ["file", "missing"]) ? YES : NO;
 	}
 	if (toolName === "grep") {
 		const raws = stringPaths(input.path);

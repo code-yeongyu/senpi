@@ -195,7 +195,7 @@ describe("move_session import: sessionDir and open (senpi#6267)", () => {
 		const { a, b, importFields } = await readyToImport("move-o5");
 		await using _a = a;
 		await using _b = b;
-		b.router.beginDrain();
+		await b.router.beginDrain();
 
 		const reply = await moveAs(b, "conn-b", { ...importFields, open: true });
 

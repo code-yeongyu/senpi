@@ -64,13 +64,13 @@ it.each(commands)("classifies $type activity through the shared host's idle swee
 
 	await rig.send("observer", { ...command, id: "control", sessionId: session.sessionId });
 	now = 1_000;
-	rig.router.sweepIdleSessions();
+	await rig.router.sweepIdleSessions();
 
 	expect(delivered).toEqual([command.type]);
 	if (command.type === "eval_cells.stop") {
 		expect(entry.state).toBe("open");
 		now = 1_999;
-		rig.router.sweepIdleSessions();
+		await rig.router.sweepIdleSessions();
 	}
 	expect(entry.state).toBe("closing");
 	await entry.closeCompletion;

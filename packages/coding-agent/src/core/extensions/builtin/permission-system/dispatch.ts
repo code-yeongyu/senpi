@@ -21,6 +21,8 @@ export interface DispatchPolicy {
 }
 
 export interface DispatchAuthorizer {
+	/** Fetch, off the host thread, the path facts the synchronous `policy` and the fence read (senpi#4565). */
+	prepare?(request: DispatchRequest, ctx: ExtensionContext): Promise<void>;
 	policy(request: DispatchRequest, ctx: ExtensionContext): DispatchPolicy;
 	ask(request: DispatchRequest, ctx: ExtensionContext, signal: AbortSignal | undefined): Promise<void>;
 }
@@ -149,6 +151,9 @@ export async function authorizeToolDispatch(
 	signal?.throwIfAborted();
 	const registration = authorizers.get(session);
 	if (!registration) throw new Error("Permission authorizer is unavailable");
+	registration.retired.signal.throwIfAborted();
+	await registration.authorizer.prepare?.(request, ctx);
+	signal?.throwIfAborted();
 	registration.retired.signal.throwIfAborted();
 	const policy = registration.authorizer.policy(request, ctx);
 	if (policy.action === "deny") throw new DeniedError(["*"]);

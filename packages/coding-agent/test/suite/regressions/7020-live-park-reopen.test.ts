@@ -30,7 +30,7 @@ describe("the park record says whether the session was live when its host ended"
 		await host.open(sessionPath);
 		expect(liveOf(await parkedEntry(daemonDir, sessionPath))).toBe(true);
 		await host.detach();
-		host.router.beginDrain();
+		await host.router.beginDrain();
 		await host.waitForLine('"handoff_parked"');
 		expect(liveOf(await parkedEntry(daemonDir, sessionPath))).toBe(true);
 
@@ -99,7 +99,7 @@ it("a session the handoff drain held resumes on the successor by itself and deli
 			resolve();
 		});
 	});
-	host.router.beginDrain();
+	await host.router.beginDrain();
 	await within(held, TURN_MS, "the drain's hold");
 	await host.inScope(() =>
 		host.session.sendCustomMessage(
@@ -130,7 +130,7 @@ it("a live reopen keeps a person's Stop: the session stays paused and a peer is 
 	await host.open(sessionPath);
 	await host.session.stop();
 	await host.detach();
-	host.router.beginDrain();
+	await host.router.beginDrain();
 	await host.waitForLine('"handoff_parked"');
 
 	const successor = await reopenOnSuccessor(dir, daemonDir, await parkedEntry(daemonDir, sessionPath));
@@ -150,7 +150,7 @@ it("a live reopen keeps an unattended hold the session already had: only the dra
 	const host = await parkHost(dir, daemonDir);
 	await host.send({ type: "open_session", sessionPath, cwd: dir, retain_on_disconnect: true, attended: false });
 	await host.detach();
-	host.router.beginDrain();
+	await host.router.beginDrain();
 	await host.waitForLine('"handoff_parked"');
 
 	const successor = await reopenOnSuccessor(dir, daemonDir, await parkedEntry(daemonDir, sessionPath));

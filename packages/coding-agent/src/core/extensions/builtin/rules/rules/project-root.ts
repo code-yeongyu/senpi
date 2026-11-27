@@ -1,4 +1,5 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
+import { automountTriggerPathSync } from "@code-yeongyu/senpi-machine-ops";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -6,6 +7,8 @@ import { PROJECT_MARKERS } from "./constants.ts";
 
 export function findProjectRoot(startPath: string, markers: ReadonlyArray<string> = PROJECT_MARKERS): string | null {
 	const normalizedStartPath = resolve(startPath);
+	// A path under an unmounted automount names nothing on this machine; probing it parks the host thread (senpi#4565).
+	if (automountTriggerPathSync(normalizedStartPath) !== undefined) return null;
 
 	if (!existsSync(normalizedStartPath)) {
 		return null;
@@ -97,6 +100,7 @@ export function widenToRepositoryRoot(projectRoot: string | null): string | null
 }
 
 function resolveExistingPath(path: string): string {
+	if (automountTriggerPathSync(resolve(path)) !== undefined) return resolve(path);
 	try {
 		return realpathSync.native(resolve(path));
 	} catch {

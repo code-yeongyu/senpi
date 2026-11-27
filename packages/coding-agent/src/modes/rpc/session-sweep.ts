@@ -1,4 +1,3 @@
-import { sessionDirectoryRemoved } from "./session-path-key.ts";
 import type { RpcSessionRegistry } from "./session-registry.ts";
 
 export interface SweepVerdicts {
@@ -32,7 +31,8 @@ export function selectSweepEvictions(
 	registry: Pick<RpcSessionRegistry, "list" | "peek">,
 	now: number,
 	idleEvictionMs: number,
-	hasPendingRequest: (sessionId: string) => boolean = () => false,
+	hasPendingRequest: (sessionId: string) => boolean,
+	directoryRemoved: (sessionFile: string) => boolean,
 ): SweepVerdicts {
 	const idle: string[] = [];
 	const orphaned: string[] = [];
@@ -40,7 +40,7 @@ export function selectSweepEvictions(
 		if (status !== "open") continue;
 		const entry = registry.peek(sessionId);
 		if (!entry) continue;
-		if (entry.attachments === 0 && sessionPath !== undefined && sessionDirectoryRemoved(sessionPath)) {
+		if (entry.attachments === 0 && sessionPath !== undefined && directoryRemoved(sessionPath)) {
 			orphaned.push(sessionId);
 			continue;
 		}

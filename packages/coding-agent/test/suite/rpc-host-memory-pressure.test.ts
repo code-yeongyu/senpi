@@ -231,12 +231,12 @@ describe("host memory pressure", () => {
 		);
 		try {
 			clock = 600;
-			router.sweepIdleSessions();
+			await router.sweepIdleSessions();
 			// Then nothing is parked yet
 			expect(registry.closes).toEqual([]);
 			// When the host reports memory pressure
 			router.setMemoryPressure(true);
-			router.sweepIdleSessions();
+			await router.sweepIdleSessions();
 			// Then the same session is parked at half the window, and the host still counts it
 			expect(registry.closes).toEqual(["rpc-1"]);
 			expect(router.sessionCount).toBe(1);
@@ -263,7 +263,7 @@ describe("host memory pressure", () => {
 			// When the host drops back below its memory threshold
 			router.setMemoryPressure(false);
 			clock = 600;
-			router.sweepIdleSessions();
+			await router.sweepIdleSessions();
 			// Then the full window applies again and the session keeps running
 			expect(registry.closes).toEqual([]);
 		} finally {

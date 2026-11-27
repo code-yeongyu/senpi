@@ -82,7 +82,7 @@ it("the drain holds automatic turns of attached and unattended sessions", async 
 	await rig.drop("gone");
 	expect(rig.registry.peek(unattended)?.attachments).toBe(0);
 
-	rig.router.beginDrain();
+	await rig.router.beginDrain();
 	await rig.settle();
 
 	expect(childTurn.automaticTurnHolds).toBe(1);
