@@ -21,7 +21,8 @@ function sharedBytes(argumentsValue: Record<string, unknown>): string {
 
 describe("share redacts secrets passed as flags and in prose (senpi#3577)", () => {
 	it.each([
-		["a long password flag", `mysql --password ${PASSWORD} db`, PASSWORD],
+		["a long password flag", `deploy --password ${PASSWORD} prod`, PASSWORD],
+		["mysql's --password= value", `mysql -u root --password=${PASSWORD} db`, PASSWORD],
 		["a long password flag with =", `psql --password=${PASSWORD}`, PASSWORD],
 		["a token flag", `curl --token ${TOKEN} https://example.com`, TOKEN],
 		["an api-key flag with a hex value", `tool --api-key ${HEX_40}`, HEX_40],
@@ -53,6 +54,10 @@ describe("share redacts secrets passed as flags and in prose (senpi#3577)", () =
 		["a continuation right after =", `tool --password=\\\n${PASSWORD}`, PASSWORD],
 		["a double continuation", `tool --password \\\n \\\n ${PASSWORD}`, PASSWORD],
 		["docker login -p", `docker login -u bob -p ${PASSWORD} registry.example.com`, PASSWORD],
+		// Fourth review of #7552 (7218785669).
+		["mysql's glued -p split by a continuation", `mysql -u root -p\\\n${PASSWORD} db`, PASSWORD],
+		["a password stated after 'is:'", `my password is: ${PASSWORD} for the db`, PASSWORD],
+		["a password stated after 'is:' with no space", `my password is:${PASSWORD}`, PASSWORD],
 	])("%s", (_name, command, secret) => {
 		const bytes = sharedBytes({ command });
 		expect(bytes).not.toContain(secret);
@@ -85,6 +90,8 @@ describe("share redacts secrets passed as flags and in prose (senpi#3577)", () =
 		["the command sshpass runs keeps its own -p (env password)", "sshpass -e ssh -p 2222 host"],
 		["the command sshpass runs keeps its own -p (file password)", "sshpass -f pwfile ssh -p 2222 host"],
 		["curl's --user-agent", "curl --user-agent=Foo:bar https://x"],
+		["psql's prompting --password keeps the database", "psql --password mydb"],
+		["mysql's prompting --password keeps the database", "mysql -u root --password mydb"],
 		// A letters-only word after "password is" cannot be told from prose, so it stays (accepted, documented).
 		["a letters-only word after 'password is'", "my password is swordfish please"],
 		["a sentence about what a secret is", "the secret is that we cache"],
@@ -133,6 +140,10 @@ describe("argument lists that pass a client's password (senpi#7552 review)", () 
 		["curl -u user:password", ["curl", "-u", `alice:${PASSWORD}`, "https://x"]],
 	])("%s", (_name, args) => {
 		expect(sharedBytes({ args })).not.toContain(PASSWORD);
+	});
+
+	it("psql's prompting --password keeps the database in an argument list", () => {
+		expect(sharedBytes({ args: ["psql", "--password", "mydb"] })).toContain('"mydb"');
 	});
 
 	it("the command sshpass runs keeps its own -p", () => {

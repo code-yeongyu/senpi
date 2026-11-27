@@ -33,8 +33,23 @@ const FLAG_VALUE = new RegExp(
 	"g",
 );
 const FROM_ELSEWHERE = /-(?:stdin|file|path|env|prompt|command|cmd)$/i;
+// For these clients a bare `--password` only asks for a prompt; the word after it is the database (`psql --password mydb`).
+const PROMPTING_PASSWORD_CLIENT = /\b(?:psql|mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b/;
+
+function promptsForPassword(text: string, offset: number, flag: string, separator: string): boolean {
+	if (separator === "=" || flag.toLowerCase() !== "--password") return false;
+	const before = text.slice(0, offset);
+	const commandStart = Math.max(
+		before.lastIndexOf(";"),
+		before.lastIndexOf("&&"),
+		before.lastIndexOf("||"),
+		before.lastIndexOf("|"),
+		before.lastIndexOf("\n"),
+	);
+	return PROMPTING_PASSWORD_CLIENT.test(before.slice(commandStart + 1));
+}
 const CLIENT_FLAG = new RegExp(
-	String.raw`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b${SAME_COMMAND}${SEP}-p|\bsshpass\b${SSHPASS_OPTIONS}${SEP}-p(?:${SEP})?|\bredis-cli\b${SAME_COMMAND}${SEP}-a${SEP}|\bdocker\b${SAME_COMMAND}${SEP}login\b${SAME_COMMAND}${SEP}-p${SEP})(?!assword)${VALUE}`,
+	String.raw`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b${SAME_COMMAND}${SEP}-p(?:\\\r?\n)?|\bsshpass\b${SSHPASS_OPTIONS}${SEP}-p(?:${SEP})?|\bredis-cli\b${SAME_COMMAND}${SEP}-a${SEP}|\bdocker\b${SAME_COMMAND}${SEP}login\b${SAME_COMMAND}${SEP}-p${SEP})(?!assword)${VALUE}`,
 	"g",
 );
 /** `curl -u user:pw`, `--user=user:pw`, `-uuser:pw`, quoted or not: only the password half goes, a quoted one whole. */
@@ -45,7 +60,7 @@ const CURL_USER = new RegExp(
 const SECRET_ENV =
 	/\b((?:PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|SSHPASS)[ \t]*=[ \t]*)(?:(["'])((?:(?!\2)[^\n])*)\2|(<redacted>|[^\s"'<][^\s"']*))/g;
 const PROSE_SECRET = new RegExp(
-	String.raw`\b((?:password|passphrase|passwd|secret|token)[ \t]+(?:is|was)[ \t]+)${VALUE}([ \t]+[A-Za-z]+)?`,
+	String.raw`\b((?:password|passphrase|passwd|secret|token)[ \t]+(?:is|was)(?:[ \t]*:[ \t]*|[ \t]+))${VALUE}([ \t]+[A-Za-z]+)?`,
 	"gi",
 );
 const LENGTH_UNIT = /^[ \t]+(?:characters?|chars?|letters?|digits?|bytes?|long)$/i;
@@ -71,9 +86,19 @@ export function redactFlagSecrets(text: string, onRedact: () => void): string {
 	return text
 		.replace(
 			FLAG_VALUE,
-			(match, flag: string, separator: string, quote: string | undefined, quoted: string, bare: string) => {
+			(
+				match,
+				flag: string,
+				separator: string,
+				quote: string | undefined,
+				quoted: string,
+				bare: string,
+				offset: number,
+				whole: string,
+			) => {
 				const name = flag.slice(2);
 				if (!isSensitiveKeyName(name) || FROM_ELSEWHERE.test(name)) return match;
+				if (promptsForPassword(whole, offset, flag, separator)) return match;
 				return redactValue(`${flag}${separator}`, quote, quote === undefined ? bare : quoted);
 			},
 		)
@@ -170,6 +195,12 @@ export function redactFlagArguments(items: unknown[], onRedact: () => void): unk
 		if (typeof previous !== "string" || !/^--[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(previous)) return item;
 		const name = previous.slice(2);
 		if (!isSensitiveKeyName(name) || FROM_ELSEWHERE.test(name)) return item;
+		const words = items.slice(0, index).filter((word): word is string => typeof word === "string");
+		if (
+			name.toLowerCase() === "password" &&
+			PROMPTING_PASSWORD_CLIENT.test(words.map((word) => word.replace(/^.*\//, "")).join(" "))
+		)
+			return item;
 		onRedact();
 		return "<redacted>";
 	});
