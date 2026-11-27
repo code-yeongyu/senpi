@@ -48,7 +48,7 @@ function runToolCall(cwd: string, { module, factory, args }: ToolCall) {
 	const child = spawnSync(process.execPath, ["--import", TSX, "--input-type=module", "-e", script], {
 		cwd,
 		encoding: "utf8",
-		timeout: 60_000,
+		timeout: 25_000,
 		env: { ...process.env, HOME: cwd },
 	});
 	const reports = child.stdout
@@ -126,23 +126,17 @@ describe.runIf(process.platform !== "win32")("edit, write and read with a non-re
 			call: { module: "write", factory: "createWriteTool", args: { path: "/dev/null", content: "x" } },
 			refusal: /Could not write file: \/dev\/null\. It is a special file, not a regular file\./,
 		},
-	])(
-		"$name is refused at once and the target is untouched",
-		({ call, refusal }) => {
-			const root = fifoRoot();
+	])("$name is refused at once and the target is untouched", ({ call, refusal }) => {
+		const root = fifoRoot();
 
-			const run = runToolCall(root, call);
+		const run = runToolCall(root, call);
 
-			expect(run.outcome, `after abort: ${JSON.stringify(run.afterAbort)}; ${run.stderr.slice(-400)}`).toMatchObject(
-				{
-					outcome: "rejected",
-				},
-			);
-			expect(run.outcome?.message).toMatch(refusal);
-			expect(lstatSync(join(root, "pipe")).isFIFO()).toBe(true);
-		},
-		90_000,
-	);
+		expect(run.outcome, `after abort: ${JSON.stringify(run.afterAbort)}; ${run.stderr.slice(-400)}`).toMatchObject({
+			outcome: "rejected",
+		});
+		expect(run.outcome?.message).toMatch(refusal);
+		expect(lstatSync(join(root, "pipe")).isFIFO()).toBe(true);
+	});
 
 	it.each<{ name: string; call: MachineCall; localSpecialControl: boolean }>([
 		{
