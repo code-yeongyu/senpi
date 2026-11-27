@@ -49,6 +49,12 @@ export function cliStart(args: {
 		},
 		[Symbol.asyncDispose]: async () => {
 			child.stdin.end();
+			// A test that stopped its start (SIGSTOP) and failed before resuming it leaves a child that cannot read the closed
+			// stdin: it is resumed and, if it still runs, killed, so no start outlives its test.
+			if (child.exitCode === null && child.signalCode === null) {
+				child.kill("SIGCONT");
+				child.kill("SIGKILL");
+			}
 			await exited;
 		},
 	};
