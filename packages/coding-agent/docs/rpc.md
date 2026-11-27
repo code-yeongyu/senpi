@@ -3100,13 +3100,19 @@ the instructions and tool policy `--append-system-prompt`, `--tools` / `--no-too
 process, e.g. a task child's agent definition. `appendSystemPrompt` is appended to the session's system prompt as
 literal text: unlike the flag, it is never read as a file path. `tools` lists the only tools the session may have and
 an empty list means none; an absent `tools` leaves the host's set. `excludeTools` lists tools the session never has.
-The persona only narrows the host's own flags: the allowlist is the intersection of both and the denylist their
-union, so a tool the host excludes stays excluded whatever `tools` names. It is held on the session's launch profile,
+The persona only narrows the host's own `--tools`, `--no-tools` and `--exclude-tools`: the allowlist is the
+intersection of both and the denylist their union, so a tool the host excludes stays excluded whatever `tools` names.
+A host that restricts its built-in tools by default (`--no-builtin-tools` or settings `defaultTools`) without a
+`--tools` of its own refuses a persona that names `tools` (`persona_tools_unsupported`): those defaults apply where
+the narrowing cannot see them, so the open is refused instead of risking a wider tool set. A persona session never runs
+on a hand: `select_hand` with a device is refused with `persona_not_supported_on_hand`, and a session file that
+recorded a hand reopens with that hand unreachable, so its calls fail visibly rather than running on a runtime without
+the persona. It is held on the session's launch profile,
 so a session replace keeps it and a successor generation reopens a parked session with it. An attach that names a
 persona joins only a session opened with the same one; another (or `{}`) is refused with `session_path_in_use`
 `{ reason: "persona_mismatch", action: "open_a_new_session" }`, and an attach naming none keeps the session's own.
 Probe `session_persona` in `get_protocol_info` before sending the field: a host without it ignores the unknown field
-and opens the session with every tool. A malformed persona (an unknown key, a non-string or empty tool name, a
+and opens the session with every tool. A malformed persona (an unknown key, a non-string, empty or padded tool name, a
 name over 128 characters, more than 256 names, an empty prompt, or a prompt over 100,000 UTF-8 bytes) is refused
 with `invalid_launch_profile`.
 

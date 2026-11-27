@@ -5,7 +5,6 @@ import { lateLoopRoute, loopWakeRoute } from "../../core/execution/hand-wake-rou
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import { PresentationBroker } from "../../core/extensions/ui-presentation.ts";
 import { bootstrapRuntime, buildToolRegistry } from "../../core/runtime/bootstrap.ts";
-import { withSessionPersona } from "../../core/session-persona.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import {
 	armedEvalOnlyToolNames,
@@ -130,10 +129,7 @@ export function createLooplessRuntimeFactory(
 			modelRegistry: services.modelRegistry,
 			toolDispatcher: dispatcher,
 		});
-		const toolSelection = looplessToolSelection(
-			withSessionPersona(parsed, profile.launchProfile?.persona),
-			services.settingsManager,
-		);
+		const toolSelection = looplessToolSelection(parsed, services.settingsManager);
 		const registry = buildToolRegistry({
 			baseToolDefinitions: runtime.baseToolDefinitions,
 			runner: runtime.extensionRunner,

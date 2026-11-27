@@ -221,6 +221,15 @@ export class WorkerSessionRegistry {
 		// A host-default preset folded into a preset-less attach is not a client choice (see session-registry-attach.ts).
 		const permissionPreset = clientNamedPreset(requested);
 		const entry = this.entries.get(owner);
+		// A different persona is refused with its reason first, whatever state the worker is in (omo#13057).
+		const personaMismatch =
+			entry === undefined ? undefined : attachPersonaMismatch(requested.persona, entry.profile.persona);
+		if (personaMismatch !== undefined)
+			throw new RpcSessionRegistryError(
+				"session_path_in_use",
+				"the session runs under another persona",
+				personaMismatch,
+			);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
 		// The worker's live permission system cannot be told from here that nobody answers it: refused before anything moves.
@@ -231,13 +240,6 @@ export class WorkerSessionRegistry {
 				{
 					reason: "approvals_label_unsupported",
 				},
-			);
-		const personaMismatch = attachPersonaMismatch(requested.persona, entry.profile.persona);
-		if (personaMismatch !== undefined)
-			throw new RpcSessionRegistryError(
-				"session_path_in_use",
-				"the session runs under another persona",
-				personaMismatch,
 			);
 		// Same rule as RpcSessionRegistry: an attach that names a surface moves the live session to it.
 		if (promptSurface !== undefined && promptSurface !== entry.profile.promptSurface) {

@@ -216,6 +216,17 @@ describe("open_session.persona (oh-my-openagent#13057)", () => {
 		expect(afterSwitch.systemPrompt).toContain("SYNTHETIC-PERSONA");
 	});
 
+	it("a persona allowlist on a host that restricts its built-in tools by default is refused, never widened", async () => {
+		const host = await personaHost(["--no-builtin-tools"]);
+
+		const refused = await host.send({ type: "open_session", cwd: host.cwd, persona: { tools: ["read", "write"] } });
+		const denyOnly = await host.send({ type: "open_session", cwd: host.cwd, persona: { excludeTools: ["write"] } });
+
+		expect(refused?.success).toBe(false);
+		expect(String(refused?.error)).toContain("persona_tools_unsupported");
+		expect(denyOnly?.success).toBe(true);
+	});
+
 	it("a claim that names a persona never takes a session parked without it; the same claim without one does (control)", async () => {
 		const host = await personaHost();
 		expect(await host.send({ type: "park_session", cwd: host.cwd })).toMatchObject({ success: true });
@@ -235,6 +246,7 @@ describe("open_session.persona (oh-my-openagent#13057)", () => {
 		["a non-object", "deny"],
 		["an unknown key", { excludeTools: ["write"], allowEverything: true }],
 		["a non-string tool", { tools: [7] }],
+		["a padded tool name, which would deny nothing", { excludeTools: [" write"] }],
 		["instructions over the byte budget", { appendSystemPrompt: "\u{AC00}".repeat(40_000) }],
 	])("a malformed persona (%s) is refused before any session opens", async (_case, persona) => {
 		const host = await personaHost();
