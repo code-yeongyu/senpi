@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import chalk from "chalk";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
+import { CONTEXT_FILE_NAMES } from "./context-file-names.ts";
 import { stripBom } from "../utils/text.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { findGitPaths } from "./footer-data-provider.ts";
@@ -41,8 +42,7 @@ export const DEFAULT_CONTEXT_FILES_MAX_TOTAL_BYTES = 128 * 1024;
 const MIN_USEFUL_BYTES = 1024;
 
 function loadContextFileFromDir(dir: string): ContextFile | null {
-	const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
-	for (const filename of candidates) {
+	for (const filename of CONTEXT_FILE_NAMES) {
 		const filePath = join(dir, filename);
 		if (existsSync(filePath)) {
 			try {
