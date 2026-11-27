@@ -11,13 +11,11 @@ const REFUSED = {
 	},
 };
 
-const enforcing = { preload: 'process.env.SENPI_RPC_REQUIRE_ATTACH = "1";' };
-
 // senpi#3795: resume_session releases engine holds, so it is a mutation that requires attachment. Per
 // design v7.1 an open_session { attended: false } hold is an attachment like any other open.
 describe.each(["in-process", "worker"] as const)("attachment gate and unattended holds (%s)", (sessionRuntime) => {
 	it("refuses resume_session from an unattached connection and serves it to the attached one", async () => {
-		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime, ...enforcing });
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
 		try {
 			const owner = await host.connect();
 			const stranger = await host.connect();
@@ -29,20 +27,24 @@ describe.each(["in-process", "worker"] as const)("attachment gate and unattended
 				command: "resume_session",
 				success: true,
 			});
-			expect(host.stderrText()).not.toContain("(refused from the next release)");
+			expect(host.stderrText()).not.toContain("(served: SENPI_RPC_ALLOW_UNATTACHED=1)");
 		} finally {
 			await host.dispose();
 		}
 	}, 60_000);
 
-	it("serves an unattached resume_session in grace and logs it once", async () => {
-		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
+	it("serves an unattached resume_session with the dated opt-out and logs it once", async () => {
+		const host = await startWorkerHost(undefined, {
+			socket: true,
+			sessionRuntime,
+			preload: 'process.env.SENPI_RPC_ALLOW_UNATTACHED = "1";',
+		});
 		try {
 			const owner = await host.connect();
 			const stranger = await host.connect();
 			const opened = await owner.request({ type: "open_session", cwd: host.cwd });
 			const sessionId = opened.data?.sessionId;
-			const line = `senpi rpc host: resume_session on ${sessionId} from a connection not attached to it (refused from the next release)`;
+			const line = `senpi rpc host: resume_session on ${sessionId} from a connection not attached to it (served: SENPI_RPC_ALLOW_UNATTACHED=1)`;
 			const logged = waitForStderr(host.child, line);
 			expect(await stranger.request({ type: "resume_session", sessionId })).toMatchObject({
 				command: "resume_session",
@@ -53,7 +55,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate and unattended
 				host
 					.stderrText()
 					.split("\n")
-					.filter((entry) => entry.includes("(refused from the next release)")),
+					.filter((entry) => entry.includes("(served: SENPI_RPC_ALLOW_UNATTACHED=1)")),
 			).toEqual([line]);
 		} finally {
 			await host.dispose();
@@ -61,7 +63,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate and unattended
 	}, 60_000);
 
 	it("counts an unattended open as an attachment of its connection (design v7.1)", async () => {
-		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime, ...enforcing });
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
 		try {
 			const owner = await host.connect();
 			const observer = await host.connect();
@@ -83,7 +85,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate and unattended
 				expect.objectContaining({ sessionId, attachments: 1 }),
 			]);
 			expect(await observer.request({ type: "resume_session", sessionId })).toMatchObject(REFUSED);
-			expect(host.stderrText()).not.toContain("(refused from the next release)");
+			expect(host.stderrText()).not.toContain("(served: SENPI_RPC_ALLOW_UNATTACHED=1)");
 		} finally {
 			await host.dispose();
 		}

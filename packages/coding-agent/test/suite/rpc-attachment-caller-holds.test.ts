@@ -1,13 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { attachmentRig } from "./rpc-attachment-support.ts";
 import { attachmentWireResponse } from "./rpc-attachment-wire-schema.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
-
-const requireAttach = process.env.SENPI_RPC_REQUIRE_ATTACH;
-afterEach(() => {
-	if (requireAttach === undefined) delete process.env.SENPI_RPC_REQUIRE_ATTACH;
-	else process.env.SENPI_RPC_REQUIRE_ATTACH = requireAttach;
-});
 
 // senpi#3814 review H1: every hold the caller owns is its own, however many it opened.
 // unload_session is in-process only; a worker isolate answers it as unsupported.
@@ -74,7 +68,6 @@ it("names why an attachment command found no attachment", async () => {
 
 // senpi#3814 review L3: open_session is exempt from the gate, but a sessionId on it routes nothing.
 it("never lets an open_session carrying a foreign sessionId reach that session", async () => {
-	process.env.SENPI_RPC_REQUIRE_ATTACH = "1";
 	await using rig = await attachmentRig();
 	const ref = await rig.session();
 	// open_session declares no sessionId; a client can still put one on the wire.

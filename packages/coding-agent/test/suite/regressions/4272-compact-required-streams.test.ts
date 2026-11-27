@@ -62,7 +62,6 @@ it("T2/T5 N overlapping selected admissions share one bounded atomic payload", a
 
 it("T5/T6 omitted starts and block controls seed the pre-record cut inside the dependent unit", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 	await using host = await statusHost();
 	const owner = host.client("owner");
 	const peer = host.client("peer");

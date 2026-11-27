@@ -15,7 +15,6 @@ for (const kind of ["checkpoint", "event"] as const) {
 		: (["get_recovery_page", "release_recovery"] as const)) {
 		it(`RULING-96 ${type}/${kind}: mismatched admissions and unknown/foreign tokens answer identical bytes`, async () => {
 			vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-			vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 			await using host = await statusHost();
 			const peer = host.client("peer");
 			const foreign = host.client("foreign");

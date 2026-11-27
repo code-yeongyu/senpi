@@ -10,7 +10,6 @@ it.each(["unsubscribe", "peer end"])(
 	"%s retires a compact subscription's page route",
 	async (operation) => {
 		vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-		vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 		await using host = await statusHost();
 		const peer = host.client("peer");
 		const answer = await peer.request({ type: "subscribe_sessions", admissionId: "status" });

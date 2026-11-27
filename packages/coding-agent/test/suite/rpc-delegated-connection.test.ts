@@ -134,11 +134,10 @@ async function recordFor(type: RpcMethodType): Promise<WireRecord> {
 }
 
 // vitest restores stubbed env before every test (`unstubEnvs`), so the host behaviour this suite compares against X14
-// is pinned per test: attach grace (not SENPI_RPC_REQUIRE_ATTACH), no ambient socket, memory reports off.
+// is pinned per test: no ambient socket, memory reports off.
 beforeEach(() => {
 	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
 		vi.stubEnv(name, undefined);
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", undefined);
 	for (const brand of ["SENPI", "OMO", "PI"])
 		for (const name of ["MEMORY_REPORT", "MEMORY_REPORT_SNAPSHOT"]) vi.stubEnv(`${brand}_${name}`, "0");
 });
@@ -357,6 +356,10 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		const request = await asked;
 		const delegated = await host.proven();
 		expect(await declare(delegated, FORWARDABLE)).toMatchObject({ success: true });
+		// senpi#6245: attached, so the refusal below is the secret rule's, not the attachment gate's.
+		expect(await delegated.send({ type: "open_session", sessionPath: opened.state.sessionFile })).toMatchObject({
+			success: true,
+		});
 		const answer = {
 			type: "extension_ui_response",
 			sessionId,
