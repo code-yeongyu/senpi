@@ -59,8 +59,12 @@ export function redactShareValue<T>(value: T, context: ShareRedactionContext, ta
 function redactNode(value: unknown, context: ShareRedactionContext, tally: ShareRedactionTally): unknown {
 	if (typeof value === "string") return redactShareText(value, context, tally);
 	if (Array.isArray(value))
+		// The boundary pass runs on the raw blocks first: a per-block rule (`token is <head>`) would otherwise redact one half
+		// and leave the other (`<tail>` in the next block) unrecognizable. It runs again after, for joins only redaction reveals.
 		return joinAdjacentText(
-			redactFlagArguments(value, () => count(tally, "credential")).map((item) => redactNode(item, context, tally)),
+			redactFlagArguments(joinAdjacentText([...value], tally), () => count(tally, "credential")).map((item) =>
+				redactNode(item, context, tally),
+			),
 			tally,
 		);
 	if (value === null || typeof value !== "object") return value;

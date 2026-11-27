@@ -27,6 +27,18 @@ describe("share redacts secrets passed as flags and in prose (senpi#3577)", () =
 		["an api-key flag with a hex value", `tool --api-key ${HEX_40}`, HEX_40],
 		["mysql's glued -p password", `mysql -u root -p${PASSWORD} db`, PASSWORD],
 		["a password said in prose", `my password is ${PASSWORD} for the db`, PASSWORD],
+		// Review of #7552 (7214813462): quoted and continued values, letters-only and quoted prose, and the common clients.
+		["mysql's quoted -p password", `mysql -u root -p'${PASSWORD}' db`, PASSWORD],
+		["mysql's double-quoted -p password", `mysql -u root -p"${PASSWORD}" db`, PASSWORD],
+		["a flag value continued on the next line", `tool --password \\\n  ${PASSWORD}`, PASSWORD],
+		["a letters-only password in prose", "my password is swordfishx please", "swordfishx"],
+		["a quoted multi-word password in prose", "the password is 'correct horse' ok", "correct horse"],
+		["a token said in prose", `the token is ${TOKEN} now`, TOKEN],
+		["curl -u user:password", `curl -u alice:${PASSWORD} https://example.com`, PASSWORD],
+		["curl --user user:password", `curl --user alice:${PASSWORD} https://example.com`, PASSWORD],
+		["sshpass -p", `sshpass -p ${PASSWORD} ssh host`, PASSWORD],
+		["redis-cli -a", `redis-cli -a ${PASSWORD} ping`, PASSWORD],
+		["PGPASSWORD in the environment", `PGPASSWORD=${PASSWORD} psql -h db`, PASSWORD],
 	])("%s", (_name, command, secret) => {
 		const bytes = sharedBytes({ command });
 		expect(bytes).not.toContain(secret);
@@ -45,7 +57,26 @@ describe("share redacts secrets passed as flags and in prose (senpi#3577)", () =
 		["mkdir -p with a directory", "mkdir -p build/out"],
 		["a token budget flag", "senpi --max-tokens 4096"],
 		["prose about a password that names no value", "the password field is required"],
+		["a later command after a mysql call", "mysql -u r db && tar -pxf a.tar"],
+		[
+			"a boolean password flag followed by a placeholder-free argument",
+			"docker login --password-stdin registry.example.com",
+		],
+		["a password length in prose", "the password is 12 characters long"],
 	])("leaves %s alone", (_name, command) => {
 		expect(sharedBytes({ command })).toContain(command);
+	});
+});
+
+describe("share flag redaction is idempotent and counts each secret once (senpi#7552 review)", () => {
+	it("one quoted flag secret counts once, and a second pass changes and counts nothing", () => {
+		const first = prepareShare(
+			(sanitize) => JSON.stringify(sanitize({ command: 'tool --secret="abc def ghi"' })),
+			context,
+		);
+		expect(first.tally.get("credential")).toBe(1);
+		const again = prepareShare((sanitize) => sanitize(first.html), context);
+		expect(again.html).toBe(first.html);
+		expect(again.tally.get("credential") ?? 0).toBe(0);
 	});
 });
