@@ -8477,7 +8477,12 @@ request stays pending.
 - A run that asked and that the host reopens on its own (a handover restore) has no answerer: no key survives a
   generation change. Every open and attach reply on it says `answerer: false, answererUnavailable: "host_handover"`,
   and every answer is refused with `errorData.reason: "host_handover"`, so a client can close it, open it again and
-  take a new key without a person.
+  take a new key without a person. Only the flag that the run asked travels in the host's parked record, never the
+  key or its digest; a parked record from an engine without this field reopens with the rule off, as before.
+- After a handover a controller checks `prompt_answerer` on the SUCCESSOR: a successor engine that does not know the
+  field reopens such a run with the rule off, and a controller that finds the capability absent treats the run's
+  prompts as advisory. A same-user process that can rewrite the host's parked records can switch the rule off for the
+  next reopen in the same way.
 - Secret inputs keep their own raiser route and are not checked here.
 
 What this protects: the prompts of a **live** run, against every client but the one that opened it, including a

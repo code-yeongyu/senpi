@@ -81,6 +81,8 @@ export interface AgentSessionLaunchProfile {
 	retryFallback?: SessionRetryFallbackProfile;
 	/** Per-session instructions and tool policy (`open_session.persona`); they narrow the host's own flags. */
 	persona?: SessionPersona;
+	/** The opener asked that only the run's designated answerer resolve its prompts (senpi#7572); never the key. */
+	designatedAnswerer?: true;
 	/**
 	 * Per-session caller env (`open_session.env`, senpi#4381): the variables THIS session's tool
 	 * subprocesses see on top of the process environment. Never the host's own, never another session's.
