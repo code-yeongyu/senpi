@@ -25,10 +25,18 @@ async function appendPreviousLog(paths: Pick<HostDaemonPaths, "stderrLog" | "pre
 	const current = await readTail(paths.stderrLog);
 	if (current.length === 0) return;
 	const marker = Buffer.from(`--- daemon log kept by a fresh start at ${new Date().toISOString()} ---\n`);
-	const joined = Buffer.concat([await readTail(paths.previousStderrLog), marker, current]);
-	await writeFile(paths.previousStderrLog, joined.subarray(Math.max(0, joined.length - PREVIOUS_LOG_MAX_BYTES)), {
-		mode: 0o600,
-	});
+	// The marker always fits; each log keeps its newest whole lines, so the file never opens mid-line or mid-character.
+	const room = PREVIOUS_LOG_MAX_BYTES - marker.length;
+	const kept = newestLines(current, room);
+	const earlier = newestLines(await readTail(paths.previousStderrLog), room - kept.length);
+	await writeFile(paths.previousStderrLog, Buffer.concat([earlier, marker, kept]), { mode: 0o600 });
+}
+
+/** The newest bytes of `log` within `limit`, starting at a line boundary when anything had to be cut. */
+function newestLines(log: Buffer, limit: number): Buffer {
+	if (log.length <= limit) return log;
+	const lineEnd = log.indexOf(0x0a, log.length - limit - 1);
+	return lineEnd === -1 ? Buffer.alloc(0) : log.subarray(lineEnd + 1);
 }
 
 async function readTail(path: string): Promise<Buffer> {
