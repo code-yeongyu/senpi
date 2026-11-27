@@ -5,7 +5,6 @@ import type { SessionEntry } from "./session-manager.ts";
 import { isRecord } from "./work-custody-record.ts";
 
 export interface ChildLifecycleStore {
-	readonly entries: readonly SessionEntry[];
 	append(report: ChildLifecycleReport): void;
 	changed(): void;
 }
@@ -13,9 +12,10 @@ export interface ChildLifecycleStore {
 export class LifecycleChildren {
 	private readonly records = new Map<string, ChildLifecycleReport>();
 	private readonly store: ChildLifecycleStore;
-	constructor(store: ChildLifecycleStore) {
+	/** `entries` is read here only: the restoration history is not kept for the session's life (senpi#7603). */
+	constructor(store: ChildLifecycleStore, entries: readonly SessionEntry[]) {
 		this.store = store;
-		for (const entry of store.entries) {
+		for (const entry of entries) {
 			if (entry.type !== "custom" || entry.customType !== "child-lifecycle") continue;
 			const report = readChildReport(entry.data);
 			if (report) this.accept(report, false);
