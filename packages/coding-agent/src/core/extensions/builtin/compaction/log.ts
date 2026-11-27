@@ -258,8 +258,7 @@ async function fileSize(filePath: string): Promise<number> {
 function safeValueOf(value: unknown, seen: WeakSet<object>): unknown {
 	if (value === undefined) return undefined;
 	if (typeof value === "string") return redactLogText(value);
-	if (typeof value === "number" || typeof value === "boolean" || value === null)
-		return value;
+	if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
 	if (typeof value === "bigint") return value.toString();
 	if (typeof value === "symbol" || typeof value === "function") return String(value);
 	if (typeof value !== "object") return String(value);

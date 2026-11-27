@@ -4039,10 +4039,6 @@
 			"class": "per-copy-safe",
 			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/config-reload/log.ts#SENSITIVE_TEXT": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
-		},
 		"packages/coding-agent/src/core/extensions/builtin/config-reload/protocol.ts#CONFIG_WATCH_CHANGED": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
@@ -6939,6 +6935,10 @@
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
+		"packages/coding-agent/src/core/sensitive-output.ts#LOG_CREDENTIAL_TEXT": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/coding-agent/src/core/session-call-keys.ts#executionKeys": {
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
@@ -6974,10 +6974,6 @@
 		"packages/coding-agent/src/core/session-log.ts#DEBUG_PREFIX": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/session-log.ts#SENSITIVE_TEXT": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
 		"packages/coding-agent/src/core/session-manager.ts#DEFERRED_FILE_LOAD": {
 			"class": "constant",

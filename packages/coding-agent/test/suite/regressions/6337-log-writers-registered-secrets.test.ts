@@ -5,7 +5,11 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { rememberResolvedReferenceValue } from "../../../src/core/config-reference-redaction.ts";
 import { createCompactionLogger, flushCompactionLogs } from "../../../src/core/extensions/builtin/compaction/log.ts";
 import { createConfigReloadLogger } from "../../../src/core/extensions/builtin/config-reload/log.ts";
-import { flushGuardLog, logGuardEvent } from "../../../src/core/extensions/builtin/moved-path-guard/guard-log.ts";
+import {
+	flushGuardLog,
+	guardLogPath,
+	logGuardEvent,
+} from "../../../src/core/extensions/builtin/moved-path-guard/guard-log.ts";
 import { createSessionLogger } from "../../../src/core/session-log.ts";
 
 // senpi#6337: a value a config reference resolved to reaches a log writer's free-text fields (an error, a reason, a
@@ -14,12 +18,6 @@ import { createSessionLogger } from "../../../src/core/session-log.ts";
 // has no shape the pattern rules know: only the registry can catch it.
 
 const root = mkdtempSync(join(tmpdir(), "senpi-6337-"));
-const guardDir = join(root, "guard");
-
-vi.mock("../../../src/config.ts", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../../../src/config.ts")>();
-	return { ...actual, getAgentDir: () => guardDir };
-});
 
 const RESOLVED = ["plain", "resolved", "7".repeat(6), "value"].join("~");
 const LONG_PREFIX = "x".repeat(190);
@@ -42,6 +40,7 @@ afterEach(() => {
 
 afterAll(() => {
 	rmSync(root, { recursive: true, force: true });
+	rmSync(guardLogPath(), { force: true });
 });
 
 describe("log writers redact registered resolved values (senpi#6337)", () => {
@@ -73,7 +72,7 @@ describe("log writers redact registered resolved values (senpi#6337)", () => {
 		});
 		await flushGuardLog();
 
-		expectRedacted(written(join(guardDir, "logs", "moved-path-guard.log")));
+		expectRedacted(written(guardLogPath()));
 	});
 
 	it("config-reload.log: reasons and watcher error messages from config text", () => {
@@ -126,7 +125,7 @@ describe("log writers redact registered resolved values (senpi#6337)", () => {
 		]) {
 			expect((JSON.parse(written(file).trim()) as { reason: string }).reason).toBe(ordinary);
 		}
-		const guardLines = written(join(guardDir, "logs", "moved-path-guard.log")).trim().split("\n");
+		const guardLines = written(guardLogPath()).trim().split("\n");
 		expect(guardLines.map((line) => (JSON.parse(line) as { reason: string }).reason)).toContain(ordinary);
 	});
 });

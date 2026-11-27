@@ -24,9 +24,9 @@ describe("a worker realm's writers redact what that realm resolved (senpi#6335)"
 		const agentDir = join(root, "worker");
 		const worker = new Worker(fixture, {
 			workerData: { agentDir, name: "SENPI_6335_SYNTHETIC", value },
-			execArgv: ["--import", "tsx"],
+			execArgv: [],
 		});
-		const [message] = await once(worker, "message", { signal: AbortSignal.timeout(90_000) });
+		const [message] = await once(worker, "message", { signal: AbortSignal.timeout(25_000) });
 		await worker.terminate();
 		expect(message).toBe("logged");
 
@@ -41,5 +41,5 @@ describe("a worker realm's writers redact what that realm resolved (senpi#6335)"
 			expect(text).toContain("provider rejected key [redacted]");
 			expect(text).not.toContain(value);
 		}
-	}, 120_000);
+	});
 });
