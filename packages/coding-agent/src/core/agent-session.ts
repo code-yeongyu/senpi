@@ -119,6 +119,7 @@ import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
 import { isTurnRetryableFailure, TURN_RETRY_SUPPRESSION_PREFIX } from "./turn-retry-eligibility.ts";
 import { BridgedCallKeys } from "./session-call-keys.ts";
+import { CLOSING_HOLD_KEY, SESSION_CLOSED_ENTRY, type SessionClosedRecord } from "./session-closed.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
 import {
@@ -180,13 +181,22 @@ import {
 	userTextEquals,
 } from "./edited-user-message.ts";
 import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn, settledRepetitiveTurnPause } from "./engine-paused.ts";
-import { EngineTurnHold, engineTurnHoldHistory, engineWakeSource, type SessionHoldEvent } from "./engine-turn-hold.ts";
+import {
+	EngineTurnHold,
+	engineTurnHoldHistory,
+	engineWakeSource,
+	type HoldKind,
+	type SessionHoldEvent,
+} from "./engine-turn-hold.ts";
 import { EngineTurnInput } from "./engine-turn-input.ts";
 import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
 	ENGINE_TURN_START_ENTRY_TYPE,
+	type EngineTurnCap,
 	type EngineTurnStartRecord,
+	type EngineTurnStop,
+	engineTurnCapOf,
 	engineTurnHistory,
 	engineTurnLimitNotice,
 	engineTurnStop,
@@ -251,6 +261,8 @@ import {
 	type ContextUsage,
 	ExecuteToolError,
 	type ExecuteToolOptions,
+	type ToolCallEvent,
+	type ToolCallEventResult,
 	type ExtensionCommandContextActions,
 	type ExtensionContext,
 	type ExtensionErrorListener,
@@ -294,9 +306,10 @@ import type {
 	SessionHoldRecord,
 	ToolChildJob,
 } from "./extensions/types.ts";
-import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
+import { normalizeToolExposure, RUNTIME_EXTENSION_PATH, SESSION_CONTROL_DELIVERY_TYPE } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admission.ts";
+import { holdsKeepingPeerDelivery } from "./peer-delivery-hold.ts";
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf } from "./input-origin.ts";
@@ -418,12 +431,14 @@ import {
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import { nextRetryWait, type RetryWait } from "./retry-wait.ts";
 import {
 	type RunBackgroundJob,
 	RunBackgroundJobs,
 	type RunBackgroundStopOutcome,
 } from "./run-background-jobs.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
+import { HOST_DRAIN_HOLD_KEY, restartHoldData, restartRelease } from "./host-restart-continuation.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
@@ -493,7 +508,7 @@ import {
 	STALL_WARNING_MS,
 	watchForStall,
 } from "./stall-warning.ts";
-import { stopResumeDirective } from "./stop-resume-directive.ts";
+import { type ResumeCause, stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
 	type ClampedThinkingSelection,
@@ -505,6 +520,8 @@ import {
 	type ThinkingClampNotice,
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
+import { isInstallTelemetryEnabled } from "./telemetry.ts";
+import { HOST_ONLY_VERDICT, type TelemetryCallersVerdict, telemetryPermitted } from "./telemetry-consent.ts";
 import { ToolBarrier, type ToolBarrierSpec, toolBarrierSpecError } from "./tool-barrier.ts";
 import { TurnConflictError, turnConflict } from "./turn-conflict.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
@@ -852,6 +869,15 @@ export type AgentSessionEvent =
 	// terminal result arrive here, because an interactive browser round-trip
 	// cannot fit inside the request timeout.
 	| { type: "auth_login_url"; provider: string; url: string }
+	/** A device-code login's code for the user to enter at `verificationUri`; precedes that URL's `auth_login_url`. */
+	| {
+			type: "device_code";
+			provider: string;
+			userCode: string;
+			verificationUri: string;
+			intervalSeconds?: number;
+			expiresInSeconds?: number;
+	  }
 	/**
 	 * A login progress line, such as a `provider_login_start` handler's download status (senpi#4436). The line is
 	 * `text`, not `message`: event consumers detect chat-message events with `"message" in event`.
@@ -1221,17 +1247,21 @@ export interface ResumeSessionRequest {
 	readonly mode?: "continue" | "release";
 	readonly message?: string;
 	readonly effectId?: string;
+	/** Resume nothing while a person's Stop or a parent's run hold is live: a resume a peer asks for (senpi#7016). */
+	readonly unlessStopped?: boolean;
 }
 
 export interface ResumeSessionAnswer {
 	readonly resumed: boolean;
-	readonly reason?: "stale" | "not_paused" | "resume_through_parent";
+	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped" | "engine_turn_cap";
 	readonly parentSessionId?: string;
 	readonly pauseSeq: number;
 	readonly turnStarted: boolean;
 	readonly deliveredNotices: number;
 	readonly deliveredHeldInputs: number;
 	readonly replayed?: boolean;
+	/** The engine-turn cap this Resume continued, or (`reason: "engine_turn_cap"`) would not release without a turn (senpi#7138). */
+	readonly engineTurnCap?: EngineTurnCap;
 }
 
 /**
@@ -1527,6 +1557,8 @@ export class AgentSession {
 	/** senpi#3709: reset moments the failed requests of this run named, and whether its fallback ladder ran out. */
 	private _runLimitResets: number[] = [];
 	private _runLimitFailure = false;
+	/** Back-offs spent waiting for a rate-limited or overloaded provider to take queued input (omo#14428). */
+	private _queuedDrainBackoffAttempt = 0;
 	private _runFallbackExhausted = false;
 	private _promptsInFlight = 0;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
@@ -1549,6 +1581,8 @@ export class AgentSession {
 	private _pendingCustomTurnHeaders = 0;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _engineResumeWindow: boolean;
+	/** The one continuation a host restart owes this session has been made (senpi#7020). */
+	private _restartContinued = false;
 	private readonly _engineTurnHold: EngineTurnHold;
 	private _lifecycleBinding: LifecycleSessionBinding;
 	/** Itemized batches waiting for the entry their one message is written to (senpi#3811). */
@@ -1632,6 +1666,8 @@ export class AgentSession {
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
+		heldBy: () => this._peerDeliveryHolds(),
+		cappedBy: () => this._peerDeliveryCap(),
 		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
 		start: (message) =>
 			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
@@ -1743,6 +1779,7 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private _retryWait: RetryWait | undefined = undefined;
 	/**
 	 * A manual switch landed while a run was live and no request has been prepared on
 	 * the pick since (senpi#6893). A failure arriving now came from a request built
@@ -1783,6 +1820,7 @@ export class AgentSession {
 	private _userAbortGeneration = 0;
 	/** Set when clearQueue({ abortWillFollow: true }) drains queues immediately before abort(). */
 	private _hadClearedQueuedMessages = false;
+	private _closedOnRequest = false;
 	private _extensionEventSignal: AbortSignal | undefined = undefined;
 
 	// Bash execution state
@@ -1884,6 +1922,8 @@ export class AgentSession {
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
 	/** The issuing assistant message of each model-issued call while it runs, for its nested calls (senpi#5234). */
 	private readonly _toolCallIssuers = new Map<string, AssistantMessage>();
+	/** Calls a provider's exec channel (the Cursor bridge) runs for the model, from their preflight to their result. */
+	private readonly _execBridgeToolCalls = new Set<string>();
 	private readonly _toolBarrier = new ToolBarrier((spec) => this._emit({ type: "tool_barrier_expired", ...spec }));
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
@@ -1915,6 +1955,8 @@ export class AgentSession {
 	private _promptSurface: PromptSurface | undefined;
 	private _browserEngine: BrowserEngine | undefined;
 	private readonly _sessionEnv: Readonly<Record<string, string>> | undefined;
+	/** What this session's callers permit, per use (senpi#7446); a classic launch has no caller but the host. */
+	private _telemetryCallers: TelemetryCallersVerdict = HOST_ONLY_VERDICT;
 
 	constructor(config: AgentSessionConfig) {
 		this._promptSurface = config.promptSurface;
@@ -2520,8 +2562,11 @@ export class AgentSession {
 	async preflightToolCall(
 		toolCall: AgentToolCall,
 		args: unknown,
-		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal } = {},
-	) {
+		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal; execBridge?: boolean } = {},
+	): Promise<ToolCallEventResult | undefined> {
+		// The model issued this call through the exec channel: it counts as model-issued until the bridge releases it when
+		// the call ends, however it ends (senpi#6915, senpi#6919).
+		if (options.execBridge) this._execBridgeToolCalls.add(toolCall.id);
 		// Neither wait below has a deadline of its own: one that never settles is logged once, never cut short (senpi#6189).
 		// The call's own `timeout` bounds its execution, not this phase, which includes a human permission decision.
 		const thresholdMs = STALL_WARNING_MS;
@@ -2556,18 +2601,19 @@ export class AgentSession {
 			}
 
 			const runner = this._extensionRunner;
+			const event: ToolCallEvent = {
+				type: "tool_call",
+				toolName: toolCall.name,
+				toolCallId: toolCall.id,
+				...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
+				input: args as Record<string, unknown>,
+			};
 			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
+				return await runner.emitToolCallReady(event, signal);
 			}
 
 			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
-					toolName: toolCall.name,
-					toolCallId: toolCall.id,
-					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
-					input: args as Record<string, unknown>,
-				}, signal === undefined ? {} : { signal });
+				return await runner.emitToolCall(event, signal === undefined ? {} : { signal });
 			} catch (err) {
 				if (err instanceof Error) {
 					throw err;
@@ -3134,6 +3180,7 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent, captureSource: object = event): void {
 		this._recoveryIdentity?.observe(event);
+		this._retryWait = nextRetryWait(this._retryWait, event, Date.now());
 		const produced = event;
 		if (
 			event.type === "session_paused" ||
@@ -4377,6 +4424,7 @@ export class AgentSession {
 		let launchedContinuation = false;
 		let retryContinuationBlocked = false;
 		let retryExhaustionAllowsQueuedContinuation = false;
+		let retryableFailureAwaitingDrain: AssistantMessage | undefined;
 		let allowsPostCompactionUsageExemptContinuation = false;
 		let releasedExemptionAllowsQueuedContinuation = false;
 		const userAbortSuppressedQueuedContinuation =
@@ -4391,6 +4439,7 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			if (msg.stopReason !== "error") this._queuedDrainBackoffAttempt = 0;
 			if (msg.stopReason === "error") {
 				const resetAt = limitResetAt(msg, this._fallbackWallNow());
 				if (resetAt !== undefined) this._runLimitResets.push(resetAt);
@@ -4512,6 +4561,19 @@ export class AgentSession {
 				retryOwnedDeferredQueue &&
 				retryOutcome === "not-handled" &&
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
+			// A provider that is only rate limited or overloaded answers again later: the input queued behind this run
+			// waits that out instead of parking until unrelated input arrives (omo#14428). A provider timeout keeps its
+			// own policy: input stays parked until that provider proves responsive.
+			if (
+				!userAbortSuppressedQueuedContinuation &&
+				retryOutcome === "not-handled" &&
+				retryableError &&
+				!isProviderTimeoutError(msg) &&
+				msg.stopReason === "error" &&
+				this.settingsManager.getRetrySettings().enabled
+			) {
+				retryableFailureAwaitingDrain = msg;
+			}
 
 			if (retryOutcome === "not-handled" && msg.errorCause?.type === "model_config") {
 				this._modelConfigErrors.report(msg, this.sessionManager.getSessionId());
@@ -4607,6 +4669,20 @@ export class AgentSession {
 				this._requiredCompactionAdmissionError = undefined;
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
+			}
+			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again.
+			// A queue of a person's own input alone waits for their next prompt (#4036); in a queue that holds both, the
+			// drained run takes the person's input too, in queue order.
+			if (
+				!launchedContinuation &&
+				!retryContinuationBlocked &&
+				retryableFailureAwaitingDrain &&
+				this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
+			) {
+				const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
+				launchedContinuation = drain === "continued";
+				// A cancelled wait settles the run, as a retry cancelled during its backoff does.
+				retryContinuationBlocked ||= drain === "cancelled";
 			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before
 			// the run settles. A user abort or a blocked retry settles without it.
@@ -5013,25 +5089,12 @@ export class AgentSession {
 		return this._structuredLane.available;
 	}
 
-	/**
-	 * Temporarily disconnect from agent events.
-	 * User listeners are preserved and will receive events again after resubscribe().
-	 * Used internally during operations that need to pause event processing.
-	 */
+	/** Disconnect from agent events during disposal. */
 	private _disconnectFromAgent(): void {
 		if (this._unsubscribeAgent) {
 			this._unsubscribeAgent();
 			this._unsubscribeAgent = undefined;
 		}
-	}
-
-	/**
-	 * Reconnect to agent events after _disconnectFromAgent().
-	 * Preserves all existing listeners.
-	 */
-	private _reconnectToAgent(): void {
-		if (this._unsubscribeAgent) return; // Already connected
-		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 	}
 
 	/**
@@ -5307,6 +5370,11 @@ export class AgentSession {
 		return !this._isAgentRunActive;
 	}
 
+	/** The surface this session's prompt is built for; what its host does with a result follows from it. */
+	get promptSurface(): PromptSurface {
+		return this._promptSurface ?? resolvePromptSurface(process.env);
+	}
+
 	/**
 	 * Rebuilds the prompt for another surface (a later `open_session.promptSurface`). The next
 	 * turn's `before_agent_start` hands presets the new surface through `systemPromptOptions`.
@@ -5328,6 +5396,21 @@ export class AgentSession {
 		return this._browserEngine;
 	}
 
+	/** The callers' half of this session's telemetry decision, from `SessionTelemetryCallers` (senpi#7446). */
+	setTelemetryCallers(verdict: TelemetryCallersVerdict): void {
+		this._telemetryCallers = verdict;
+	}
+
+	/** Whether this session's telemetry events may be collected or delivered right now; read at each use (senpi#7446). */
+	telemetryPermitted(): boolean {
+		return telemetryPermitted(isInstallTelemetryEnabled(this.settingsManager), this._telemetryCallers.events);
+	}
+
+	/** Whether this session's next provider request may carry the provider attribution headers (senpi#7446). */
+	attributionPermitted(): boolean {
+		return telemetryPermitted(isInstallTelemetryEnabled(this.settingsManager), this._telemetryCallers.attribution);
+	}
+
 	get sessionEnv(): Readonly<Record<string, string>> | undefined {
 		return this._sessionEnv;
 	}
@@ -5346,6 +5429,10 @@ export class AgentSession {
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
+	}
+
+	get retryWait(): RetryWait | undefined {
+		return this._retryWait;
 	}
 
 	/** Abort owner for the current turn boundary, used by internal renderers. */
@@ -5372,6 +5459,8 @@ export class AgentSession {
 		if (this._abortCause === undefined) this._abortCause = { kind: "host_shutdown" };
 		await this._abortActiveAgentAndRetry("system");
 		if (!this.isIdle) await this._waitForIdleAfterAbort();
+		// The next host reads the cut run as interrupted, exactly as a kill leaves it (senpi#7020).
+		this._lifecycleBinding.controller.cutByHostShutdown();
 	}
 
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
@@ -5661,6 +5750,11 @@ export class AgentSession {
 	 */
 	getRegisteredTool(name: string): AgentTool | undefined {
 		return this._toolRegistry.get(name);
+	}
+
+	/** The exec-frame call `toolCallId` ended, whether it ran, was blocked or was aborted: it is no longer model-issued. */
+	releaseExecBridgeToolCall(toolCallId: string): void {
+		this._execBridgeToolCalls.delete(toolCallId);
 	}
 
 	/** Cursor exec already ran the tool; still emit tool_result so plan-touch trackers see .omo/plans writes. */
@@ -7840,6 +7934,9 @@ export class AgentSession {
 			return;
 		}
 		if (itemized !== undefined) this._persistWatchers.set(appMessage, itemized);
+		// senpi#6490: a peer's message continues an unattended session as a person's does, never a silent held notice.
+		const releasedByPeer = !releasedWake && this._peerDeliveryReleasesHold(message.customType, options);
+		if (releasedByPeer) this._engineTurnInput.begin();
 		if (
 			!releasedWake &&
 			this._wakeGateApplies(message.customType, options) &&
@@ -7851,7 +7948,11 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("finished-without-start");
 			return;
 		}
+		// senpi#7138: a delivery admission answered held with the engine-turn cap starts no turn of its own, whatever
+		// changed since; it neither waits for session work nor parks behind a compaction, and is recorded as refused.
+		const admittedCapped = options?.triggerTurn === true && this.externalAdmission.answeredCapped(appMessage);
 		const waitForExistingSessionWork =
+			!admittedCapped &&
 			options?.triggerTurn === true &&
 			options.deliverAs !== "nextTurn" &&
 			!this.isStreaming &&
@@ -7887,6 +7988,7 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (
+				!admittedCapped &&
 				options?.triggerTurn === true &&
 				((pendingCompactionAdmission !== undefined && pendingCompactionAdmission.outcome !== "completed") ||
 					(activeCompactionGeneration !== undefined &&
@@ -7900,12 +8002,21 @@ export class AgentSession {
 				} else {
 					this.agent.steer(appMessage);
 				}
-			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
+			} else if (
+				options?.triggerTurn &&
+				(this._stopEngineTurn(message.customType, releasedWake !== undefined || releasedByPeer) || admittedCapped)
+			) {
 				if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const environmentContext = this._pendingEnvironmentContextMessage();
-				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
+				// The wakes a peer's message released ride ahead of it, as they ride ahead of a person's message.
+				const releasedWakes = releasedByPeer ? this._engineTurnInput.messages() : [];
+				const messages: AgentMessage[] = [
+					...(environmentContext ? [environmentContext] : []),
+					...releasedWakes,
+					appMessage,
+				];
 				const queueTriggerForLater = (): void => {
 					// A released wake stays in notice custody until final admission claims it.
 					if (releasedWake) return;
@@ -7965,7 +8076,13 @@ export class AgentSession {
 				if (releasedWake && !releasedWake()) return;
 				const inputOrigin = customTurnOrigin(message.customType);
 				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
-				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
+				await this._promptAgent(messages, {
+					inputOrigin,
+					deferredTurnClaim,
+					...(releasedByPeer
+						? { onTurnAdmitted: () => this._engineTurnInput.admit(false, (wake) => this.agent.steer(wake)) }
+						: {}),
+				});
 			} else if (this.isStreaming) {
 				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._pendingCustomMessages.push(appMessage);
@@ -7976,7 +8093,53 @@ export class AgentSession {
 		} finally {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
+			// A release no turn admitted gives the holds back; an admitted one settles here or when its run settles.
+			if (releasedByPeer)
+				this._settleInputRelease()?.catch((error: unknown) => {
+					this._sessionLogger.warn("input_release_settle_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
 		}
+	}
+
+	/**
+	 * The cap a peer delivery's turn would meet now (senpi#7138), counted as `_stopEngineTurn` will count it: a delivery
+	 * that releases an unattended hold is the released turn, outside the resume window.
+	 */
+	private _peerDeliveryCap(): EngineTurnCap | undefined {
+		const stop = this._engineTurnStopNow(
+			this._engineTurnHold.holdsSource(engineWakeSource(SESSION_CONTROL_DELIVERY_TYPE)),
+		);
+		return stop === null ? undefined : engineTurnCapOf(stop);
+	}
+
+	/** The holds a peer delivery cannot release (senpi#6490); `externalAdmission` answers `held` with them. */
+	private _peerDeliveryHolds(): HoldKind[] {
+		return holdsKeepingPeerDelivery(
+			this._engineTurnHold.holds,
+			this._lifecycleBinding.controller.requiresHumanContinuation,
+		);
+	}
+
+	/**
+	 * A peer delivery the wake gate would hold, with no hold a peer cannot release, continues the session as a person's
+	 * input does (senpi#6490): an `unattended` hold, or the release barrier of an unattended Resume. `_engineTurnInput.begin()`
+	 * attends the session and releases what it holds, after which `holdsSource` is false; so the admission's `started`
+	 * (no `_peerDeliveryHolds()`) and this gate always agree, and anything else is answered `held`.
+	 */
+	private _peerDeliveryReleasesHold(
+		customType: string,
+		options: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } | undefined,
+	): boolean {
+		return (
+			customType === SESSION_CONTROL_DELIVERY_TYPE &&
+			options?.triggerTurn === true &&
+			options.deliverAs !== "nextTurn" &&
+			!this.isStreaming &&
+			this._engineTurnHold.holdsSource(engineWakeSource(customType)) &&
+			this._peerDeliveryHolds().length === 0
+		);
 	}
 
 	/**
@@ -8064,7 +8227,9 @@ export class AgentSession {
 		const holds = this._engineTurnHold.holds;
 		const idle = { pauseSeq, turnStarted: false, deliveredNotices: 0, deliveredHeldInputs: 0 };
 		const answered = (answer: ResumeSessionAnswer) => ({ answer, settled: Promise.resolve() });
-		if (holds.length === 0 && !this._engineTurnHold.awaitingInput)
+		// Nothing held: the engine-turn cap may still pause automatic turns, and Resume continues those too (senpi#7138).
+		const cap = holds.length === 0 && !this._engineTurnHold.awaitingInput ? this.engineTurnCap : undefined;
+		if (holds.length === 0 && !this._engineTurnHold.awaitingInput && cap === undefined)
 			return answered({ resumed: false, reason: "not_paused", ...idle });
 		const inherited = this._runHolds.inheritedOwner();
 		if (inherited !== undefined && holds.every((hold) => hold.kind === "inherited_hold"))
@@ -8074,8 +8239,14 @@ export class AgentSession {
 				parentSessionId: inherited.parentSessionId,
 				...idle,
 			});
+		if (request.unlessStopped === true && this.automaticInputHoldLive())
+			return answered({ resumed: false, reason: "stopped", ...idle });
 		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
+		// Only a turn a person asked for lifts the cap, so a release that starts no turn, or a resume a peer asks for
+		// (`unlessStopped`), names the cap instead.
+		if (cap !== undefined && (request.mode === "release" || request.unlessStopped === true))
+			return answered({ resumed: false, reason: "engine_turn_cap", engineTurnCap: cap, ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
 			// A person's resume attends the session like their input does, so an unattended hold it frees stays freed.
@@ -8094,6 +8265,13 @@ export class AgentSession {
 			});
 		const deliveredNotices = this._engineTurnHold.noticeCount;
 		const deliveredHeldInputs = this._heldInputs.pending().length;
+		if (cap !== undefined) {
+			const { turnStarted, settled } = await this._resumeAfterStop(onQueued, "engine_turn_cap");
+			return {
+				answer: { resumed: true, pauseSeq, turnStarted, deliveredNotices, deliveredHeldInputs, engineTurnCap: cap },
+				settled,
+			};
+		}
 		// Payload-free notices (including goals) revalidate through their producer after release.
 		// An interruption must not add a directive-only turn when that work has already completed.
 		const resumeHeldTurn =
@@ -8141,8 +8319,10 @@ export class AgentSession {
 	 * once its send settled without one) and returns its settlement, which finishes the release only if the shared
 	 * resume settlement delivered the turn.
 	 */
-	private async _resumeAfterStop(onQueued?: () => void): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
-		const resumeCause = this._resumeCause();
+	private async _resumeAfterStop(
+		onQueued?: () => void,
+		resumeCause: ResumeCause = this._resumeCause(),
+	): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
 		const sources = this._engineTurnHold.releaseAll("resume_session");
 		const { turnId, delivered } = await this._startResumeTurn(onQueued, resumeCause);
 		const settled = (async () => {
@@ -8170,7 +8350,7 @@ export class AgentSession {
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
 	private async _startResumeTurn(
 		onQueued?: () => void,
-		resumeCause: "stop" | "interrupted" = "stop",
+		resumeCause: ResumeCause = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
 		const settlement = Promise.withResolvers<void>();
 		this._resumeSettlement = settlement.promise;
@@ -8221,7 +8401,7 @@ export class AgentSession {
 		continues: ReadonlySet<string>,
 		heldInputs: HeldInput[],
 		onQueued?: () => void,
-		resumeCause: "stop" | "interrupted" = "stop",
+		resumeCause: ResumeCause = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
 		return startRunResumeTurn({
 			resumeCause,
@@ -8335,7 +8515,57 @@ export class AgentSession {
 	 * host and it parks when that turn settles. A person's input or resume_session releases the hold.
 	 */
 	holdAutomaticTurns(): void {
-		this._engineTurnHold.addHold("unattended");
+		// Its own key (senpi#7020): the successor releases exactly this hold, never an unattended hold the session had.
+		this._engineTurnHold.addHold("unattended", { key: HOST_DRAIN_HOLD_KEY });
+	}
+
+	/**
+	 * A session reopened because it was live when its previous host ended continues as that host left it (senpi#7020):
+	 * it releases the holds the restart caused, through the ordinary Resume when they are the only ones, so the wakes
+	 * held during a drain are delivered, a goal resumes and an engine-started run the restart cut continues once.
+	 */
+	private _continueAfterHostRestart(): void {
+		if (this._sessionStartEvent.continued !== true || this._restartContinued) return;
+		this._restartContinued = true;
+		const release = restartRelease(this._engineTurnHold.holds, () => this.sessionManager.getBranch());
+		if (release === undefined) return;
+		if ("release" in release) {
+			this._engineTurnHold.release([...release.release], "resume_session");
+			return;
+		}
+		if (release.interruptedRun) this._lifecycleBinding.controller.continueAfterRestart();
+		void this._resumeOnce({})
+			.then(({ settled }) => settled)
+			.catch((error: unknown) =>
+				this._sessionLogger.warn("host_restart_resume_failed", { error: String(error) }),
+			);
+	}
+
+	/**
+	 * A graceful close drains the running turn (oh-my-openagent#14313): automatic turns (monitor, goal, loop wakes) wait
+	 * as notices meanwhile, so the running turn is the session's last. The close releases the hold again whether it
+	 * ends the session or gives up, so a reopen never replays it as a pause.
+	 */
+	holdForClose(): void {
+		this._engineTurnHold.addHold("unattended", { key: CLOSING_HOLD_KEY });
+	}
+
+	releaseCloseHold(): void {
+		this._engineTurnHold.release([CLOSING_HOLD_KEY], "session_close");
+	}
+
+	/** Set by `recordClosedOnRequest`: the teardown's `session_shutdown` then carries `closed: true`. */
+	get closedOnRequest(): boolean {
+		return this._closedOnRequest;
+	}
+
+	/**
+	 * A graceful close ended this session on request (oh-my-openagent#14313): its `session-closed` entry is the clean-stop
+	 * record, and the teardown tells extensions to stop the work they would otherwise restore on a reopen.
+	 */
+	recordClosedOnRequest(record: SessionClosedRecord): void {
+		this._closedOnRequest = true;
+		this._emitEntryAppended(this.sessionManager.appendCustomEntry(SESSION_CLOSED_ENTRY, record));
 	}
 
 	/** A parent's Stop reaching this child (senpi#3811): hold every automatic turn until the parent's run Resume. */
@@ -8460,6 +8690,14 @@ export class AgentSession {
 		return this._engineTurnHold.isHeld();
 	}
 
+	/** The engine-turn cap that pauses automatic turns now, if any (senpi#7138); a person's message or Resume lifts it. */
+	get engineTurnCap(): EngineTurnCap | undefined {
+		// A run in progress, even the last one the cap allows, is not stopped: the cap stops only the turn after it.
+		if (this._isAgentRunActive || this._promptStartPending) return undefined;
+		const stop = this._engineTurnStopNow(false);
+		return stop === null ? undefined : engineTurnCapOf(stop);
+	}
+
 	private _createLifecycleBinding(): LifecycleSessionBinding {
 		return new LifecycleSessionBinding(this, {
 			append: (type, data) => {
@@ -8533,6 +8771,12 @@ export class AgentSession {
 		return this._engineTurnHold.holds;
 	}
 
+	/** The interrupted-run hold; on a reopen after a restart it names why a cut continuation stays held (senpi#7079). */
+	private _addInterruptedRunHold(): void {
+		const data = restartHoldData(this._sessionStartEvent.continued === true, () => this.sessionManager.getBranch());
+		this._engineTurnHold.addHold("session_hold", { key: "interrupted-run", ...(data === undefined ? {} : { data }) });
+	}
+
 	/**
 	 * An automatic send that would start a turn while the previous run is interrupted waits for a person (senpi#4683):
 	 * it joins the interrupted-run hold as a notice that Resume or the next message delivers. Refused as a turn it was
@@ -8542,7 +8786,7 @@ export class AgentSession {
 		if (options?.triggerTurn !== true || this.isStreaming) return false;
 		if (!this._lifecycleBinding.controller.requiresHumanContinuation) return false;
 		if (this._engineTurnHold.getHold("interrupted-run") === undefined) {
-			this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
+			this._addInterruptedRunHold();
 			this._extensionRunner
 				.getUIContext()
 				.notify(
@@ -8628,34 +8872,23 @@ export class AgentSession {
 	 * exceed the engine-wide bound is not started: the message is still recorded, and the stop is recorded (best
 	 * effort), emitted and shown, so a session file that refuses writes still pauses visibly (senpi#2967).
 	 */
-	private _stopEngineTurn(customType: string): boolean {
+	private _stopEngineTurn(customType: string, released = false): boolean {
 		if (isUserDirectedTurn(customType)) return false;
-		const stop = engineTurnStop(
-			this.sessionManager.reduceHistory(engineTurnHistory),
-			Date.now(),
-			{
-				...this.settingsManager.getEngineTurnSettings(),
-				maxPerResumeWindow: this._engineResumeWindow
-					? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow
-					: 0,
-			},
-			this._engineTurnStarts,
-		);
+		// The turn a Resume or a peer's message just released is the turn it was answered with (`started`): the resume
+		// window, which counts every engine turn since the last real input, the reopened lane's own history included,
+		// bounds the automatic turns after it, never that turn itself (senpi#7020).
+		const stop = this._engineTurnStopNow(released);
 		if (stop === null) return false;
 		const details = { customType, ...stop, at: Date.now() };
 		if (!this._engineTurnPauseRecorded && !enginePauseSinceLastTurn(this.sessionManager.getBranch())) {
 			this._engineTurnPauseRecorded = true;
+			const cap = engineTurnCapOf(stop);
 			try {
 				this._emitEntryAppended(
 					this.sessionManager.appendCustomEntry(ENGINE_PAUSED_ENTRY_TYPE, {
-						reason:
-							stop.reason === "resume-window"
-								? "cap-per-resume-window"
-								: stop.reason === "per-user-input"
-									? "cap-per-message"
-									: "cap-per-minute",
+						reason: cap.reason,
 						customType,
-						count: stop.reason !== "tool-free-rate" ? stop.sinceUserInput : stop.toolFreeInWindow,
+						count: cap.count,
 						at: details.at,
 					}),
 				);
@@ -8680,6 +8913,18 @@ export class AgentSession {
 			this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
 		}
 		return true;
+	}
+
+	/** The engine-wide bound one more engine turn would meet now; a `released` turn is outside the resume window. */
+	private _engineTurnStopNow(released: boolean): EngineTurnStop | null {
+		const settings = this.settingsManager.getEngineTurnSettings();
+		const resumeWindow = this._engineResumeWindow && !released;
+		return engineTurnStop(
+			this.sessionManager.reduceHistory(engineTurnHistory),
+			Date.now(),
+			{ ...settings, maxPerResumeWindow: resumeWindow ? settings.maxPerResumeWindow : 0 },
+			this._engineTurnStarts,
+		);
 	}
 
 	/** Environment context a new turn must carry: set when cwd or date differs from the latest one visible (senpi#2093). */
@@ -9037,6 +9282,25 @@ export class AgentSession {
 		}
 		this._emitQueueUpdate();
 		return nextText === undefined ? "removed" : "edited";
+	}
+
+	/**
+	 * Takes every queued cross-session delivery out of the queues unwritten and settles it as `clearQueue` does (its
+	 * engine custody cancelled, a send waiting on it failed, its admission dropped), leaving user input queued. An
+	 * interrupt does this once the aborted work settled, so a delivery the aborted run left queued never pins the
+	 * session; its sender redelivers it (oh-my-openagent#14169).
+	 */
+	takeQueuedDeliveries(): void {
+		const removed = this.agent.peekQueuedMessages({ all: true }).filter((queued) => deliveryIdOf(queued) !== undefined);
+		for (const message of removed) this.agent.removeQueuedMessage(message);
+		const tickets = removed.flatMap((message) => {
+			const ticket = message.role === "custom" ? messageTicket(message) : undefined;
+			return ticket === undefined ? [] : [ticket];
+		});
+		this._releaseQueuedDeliveries(tickets, "cleared");
+		this._settleRemovedCarriers(removed);
+		this.externalAdmission.dropQueued();
+		this._emitQueueUpdate();
 	}
 
 	/**
@@ -10615,15 +10879,12 @@ export class AgentSession {
 		const controller = admission.controller;
 		const requestId = randomUUID();
 		let outcome: "completed" | "failed" | "aborted" = "failed";
-		let disconnected = false;
 
 		try {
-			// Keep the session subscriber attached until the aborted run emits
-			// agent_end. That event clears the active-run and retry state that
-			// waitForIdle() depends on.
+			// The session stays subscribed to its agent for the whole compaction. The abort's agent_end clears the
+			// active-run and retry state waitForIdle() depends on, and a run this abort does not stop (a continuation
+			// the ending run schedules, a run the session does not own) still has every message written (omo#14428).
 			await this._abortActiveAgentAndRetry("system");
-			this._disconnectFromAgent();
-			disconnected = true;
 			this._emit({ type: "compaction_start", reason: "manual", requestId });
 			const execution = await this._executeCompaction({
 				controller,
@@ -10674,7 +10935,6 @@ export class AgentSession {
 				this._compactionAbortController = undefined;
 			}
 			this._releasePendingCompactionAdmission(admission, outcome);
-			if (disconnected && !this.isCompacting) this._reconnectToAgent();
 			if (outcome === "completed") this._resumeQueuedMessagesAfterCompaction();
 		}
 	}
@@ -12266,8 +12526,7 @@ export class AgentSession {
 			this._applyExtensionBindings(this._extensionRunner);
 			// Opening a session is not explicit Resume. Install the same hold used by Stop before
 			// session_start producers run, so automatic work waits quietly in notice custody.
-			if (this._lifecycleBinding.controller.requiresHumanContinuation)
-				this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
+			if (this._lifecycleBinding.controller.requiresHumanContinuation) this._addInterruptedRunHold();
 			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit({
@@ -12291,6 +12550,7 @@ export class AgentSession {
 		await Promise.all(bindingPromptReadiness);
 		if (this._lifecycleBinding.isRestored) await this._lifecycleBinding.refreshFacts();
 		else await this._lifecycleBinding.restore();
+		this._continueAfterHostRestart();
 	}
 
 	private _beginSessionStartSettlement(): () => void {
@@ -12583,6 +12843,7 @@ export class AgentSession {
 				},
 				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
 				getBrowserEngine: () => this._browserEngine,
+				getTelemetryPermitted: () => this.telemetryPermitted(),
 				getSessionEnv: () => this._sessionEnv,
 				// A split session's tools run on its hand, so its device files are the hand's file channel (senpi#5839).
 				getDeviceFiles: () =>
@@ -12629,12 +12890,9 @@ export class AgentSession {
 					void (async () => {
 						let outcome: "completed" | "failed" | "aborted" = "failed";
 						let compactionCompleted = false;
-						let disconnected = false;
 
 						try {
 							await this._abortActiveAgentAndRetry("system");
-							this._disconnectFromAgent();
-							disconnected = true;
 							this._emit({
 								type: "compaction_start",
 								reason: "extension",
@@ -12684,7 +12942,6 @@ export class AgentSession {
 								this._compactionAbortController = undefined;
 							}
 							this._releasePendingCompactionAdmission(admission, outcome);
-							if (disconnected && !this.isCompacting) this._reconnectToAgent();
 							// A throwing onComplete consumer overwrites outcome in the catch
 							// block, so recovery keys off whether compaction itself succeeded.
 							if (compactionCompleted) this._resumeQueuedMessagesAfterCompaction();
@@ -12730,6 +12987,8 @@ export class AgentSession {
 					),
 				executeTool: (callerId, name, args, options) => this._executeNestedToolCall(callerId, name, args, options),
 				getCallableTools: () => this._getCallableTools(),
+				isModelIssuedToolCall: (toolCallId) =>
+					this._toolCallIssuers.has(toolCallId) || this._execBridgeToolCalls.has(toolCallId),
 			},
 			{
 				registerProvider: (name, config, extensionPath) => {
@@ -13823,16 +14082,7 @@ export class AgentSession {
 		// admitted passes through verbatim; a number is the profile's own cap. The
 		// settings cap applies only when the profile declares no ceiling of its own
 		// (the tiered senpi-default).
-		const profileTurnCeilingMs =
-			retryProfile.turn.serverHint.mode === "override" ? retryProfile.turn.serverHint.ceiling.maxDelayMs : undefined;
-		// An explicitly user-configured retry.maxAgentDelayMs always wins; a profile's own
-		// ceiling is the next authority; the 60s default is the last resort.
-		const userConfiguredCeilingMs = this.settingsManager.isRetryMaxAgentDelayMsConfigured?.() ?? false;
-		const agentCeilingMs = userConfiguredCeilingMs
-			? settings.maxAgentDelayMs
-			: profileTurnCeilingMs === undefined
-				? settings.maxAgentDelayMs
-				: profileTurnCeilingMs;
+		const agentCeilingMs = this._agentDelayCeilingMs(retryProfile, settings.maxAgentDelayMs);
 		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
@@ -13952,6 +14202,64 @@ export class AgentSession {
 		this._scheduleContinuationAfterCurrentEvent(continuation.options, true, continuation.watchdogTimeoutMs);
 
 		return "continued";
+	}
+
+	/**
+	 * omo#14428: the retry owner gave up on a rate-limited or overloaded provider while input was still queued. The
+	 * session waits the provider out (the provider's stated delay, else a backoff that grows with each wait and
+	 * restarts after a run that ends without an error) and then runs the queue, whose own failures retry again. An
+	 * abort cancels the wait like a retry backoff.
+	 */
+	private async _drainQueueAfterProviderBackoff(
+		failure: AssistantMessage,
+	): Promise<"continued" | "cancelled" | "nothing-queued"> {
+		const attempt = ++this._queuedDrainBackoffAttempt;
+		const retryProfile = this._resolveRetryProfile();
+		const settings = this.settingsManager.getRetrySettings();
+		const backoffMs = retryBackoffDelayMs(retryProfile.turn.backoff, attempt, this._retryRandom());
+		const errorMessage = failure.errorMessage ?? "";
+		const hintMs = errorMessage === "" ? undefined : this._getProviderRetryDelayMs(errorMessage);
+		// The same ceiling the retry backoff applies, and never unbounded: this wait holds input the user may still type,
+		// so a provider asking for an hour (the case the retry owner gave up on) is retried within the ceiling instead.
+		const ceilingMs = this._agentDelayCeilingMs(retryProfile, settings.maxAgentDelayMs) ?? settings.maxAgentDelayMs;
+		const delayMs = Math.min(Math.max(backoffMs, hintMs ?? 0), ceilingMs);
+		const controller = new AbortController();
+		this._retryAbortController = controller;
+		// Announced like a retry backoff, so the UI and `list_sessions` show the wait instead of an unexplained busy run.
+		this._emit({ type: "auto_retry_start", attempt, maxAttempts: attempt, delayMs, errorMessage });
+		let outcome: "continued" | "cancelled" | "nothing-queued";
+		try {
+			await sleep(delayMs, controller.signal);
+			outcome = this.agent.hasQueuedMessages() ? "continued" : "nothing-queued";
+		} catch {
+			outcome = "cancelled";
+		} finally {
+			if (this._retryAbortController === controller) this._retryAbortController = undefined;
+		}
+		// Every announced wait is closed: a cancelled one failed; a wait that hands the queue to a run, or that found nothing
+		// left to run (the user took the queue back to edit it), ended as it should.
+		this._emit(
+			outcome === "cancelled"
+				? { type: "auto_retry_end", success: false, attempt, finalError: "Retry cancelled" }
+				: { type: "auto_retry_end", success: true, attempt },
+		);
+		if (outcome !== "continued") return outcome;
+		this._scheduleContinuationAfterCurrentEvent();
+		return "continued";
+	}
+
+	/**
+	 * The ceiling on one agent-level wait: an explicitly configured `retry.maxAgentDelayMs` wins, then a profile's own
+	 * override-mode turn ceiling (`null` is explicitly uncapped, as kimi-code declares), then the settings default.
+	 */
+	private _agentDelayCeilingMs(
+		retryProfile: ReturnType<SettingsManager["resolveRetryProfile"]>,
+		settingsCeilingMs: number,
+	): number | null {
+		const profileTurnCeilingMs =
+			retryProfile.turn.serverHint.mode === "override" ? retryProfile.turn.serverHint.ceiling.maxDelayMs : undefined;
+		const userConfigured = this.settingsManager.isRetryMaxAgentDelayMsConfigured?.() ?? false;
+		return userConfigured || profileTurnCeilingMs === undefined ? settingsCeilingMs : profileTurnCeilingMs;
 	}
 
 	/**

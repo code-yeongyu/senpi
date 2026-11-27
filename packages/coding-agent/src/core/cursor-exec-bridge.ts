@@ -61,6 +61,8 @@ export interface CursorExecBridgeOptions {
 		result: AgentToolResult<unknown>;
 		isError: boolean;
 	}) => Promise<void>;
+	/** Called once a call that reached the prepared pipeline ended, on every path: run, blocked, aborted or thrown. */
+	settleToolCall?: (toolCallId: string) => void;
 	/** Run the session's vetoable extension preflight before tool execution. */
 	preflightToolCall?: (event: ToolCallEvent) => Promise<ToolCallEventResult | undefined>;
 	/** Abort signal for in-flight bridge executions (the active run's signal). */
@@ -204,21 +206,26 @@ async function executeTool(
 		},
 		options.openBatchStore,
 	);
-	const { messages } = await host.execute(
-		{ scope: options.getExecutionScope(), calls: [toolCall], mode: "sequential" },
-		{
-			signal: runSignal,
-			emit: async (event) => {
-				if (!isToolResultMessageEvent(event)) await options.emitEvent(event, runSignal);
+	try {
+		const { messages } = await host.execute(
+			{ scope: options.getExecutionScope(), calls: [toolCall], mode: "sequential" },
+			{
+				signal: runSignal,
+				emit: async (event) => {
+					if (!isToolResultMessageEvent(event)) await options.emitEvent(event, runSignal);
+				},
+				...(options.recordWitness === undefined ? {} : { recordWitness: options.recordWitness }),
+				local: {
+					context: { systemPrompt: "", messages: [], tools: [ownedTool] },
+					assistantMessage: issuingMessage(toolCall),
+				},
 			},
-			...(options.recordWitness === undefined ? {} : { recordWitness: options.recordWitness }),
-			local: {
-				context: { systemPrompt: "", messages: [], tools: [ownedTool] },
-				assistantMessage: issuingMessage(toolCall),
-			},
-		},
-	);
-	return messages[0] ?? errorResult(toolCallId, toolName, NO_ACTIVE_RUN);
+		);
+		return messages[0] ?? errorResult(toolCallId, toolName, NO_ACTIVE_RUN);
+	} finally {
+		// A block after a passing preflight (the run ended) or an abort skips afterToolCall, so the end is reported here.
+		options.settleToolCall?.(toolCallId);
+	}
 }
 
 /**

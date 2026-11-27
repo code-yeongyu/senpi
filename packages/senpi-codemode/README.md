@@ -30,6 +30,9 @@ task-tool names are known.
   pending-call counts, and bounded per-tool aggregates.
 - Bounded streaming output with head/tail previews, column clamping, and
   session-adjacent spill files for large streams.
+- Source files a cell writes on its own (the `write()` helper, `fs`, a child
+  process, any kernel) go through the hooks a `write` call triggers when the
+  cell settles, and the result lists them; see "Files a cell writes".
 - TUI and HTML-export rendering for syntax-highlighted cells, status rows,
   task progress, structured display values, truncation warnings, and image
   fallbacks. A JavaScript cell sent as dense one-line code is previewed broken
@@ -349,6 +352,8 @@ Configuration is loaded in this order:
 | `sandbox.memoryMb` | `64` | Memory cap (MiB) for a sandbox cell. Env override: `SENPI_CODEMODE_SANDBOX_MEMORY_MB` (a positive integer wins). |
 | `sandbox.timeoutSeconds` | `300` | Time limit for a sandbox cell. |
 | `prompt.advertiseHelpers` | `false` | When `true`, one pointer line to `tool_schema('eval:helpers')` is appended to the eval description. |
+| `jsCells.typescript` | `false` | When `true`, a JS cell the engine rejects as JavaScript but that parses as TypeScript runs with its types erased in place (never type-checked; every token keeps its line and column, so errors and parse diagnostics point at the submitted text). Valid JavaScript is never reinterpreted. `enum`, `namespace`, constructor parameter properties, `import =` and `export =` are refused with their position. The eval description says so. |
+| `jsCells.scope` | `false` | When `true`, JS cells get the `scope()` helper below and a Bun kernel's eval description documents it with `using` / `await using`. |
 | `kernelTools.enabled` | `true` | Allows cells to define kernel tools. `false` makes JavaScript `tool(fn)` and Python `@tool` refuse with `tools_unavailable`, naming this setting. |
 
 Every key in the table takes the effect its row describes.
@@ -392,6 +397,7 @@ options object and asynchronous helpers are `await`-able.
 | `workpool(agent, name, mode?, tools?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. `tools` is a list of kernel-tool names this cell defined; the pool's workers may call exactly those, the host refuses any name the caller doesn't hold, and a value that isn't a list of names raises `invalid_tools`. Ruby and Julia define no kernel tools, so they have nothing to grant. |
 | `output(ids, format?, offset?, limit?)` | Delegates transcript retrieval to the configured active `taskTools.output` tool. |
 | `parallel(thunks)` | Runs thunks through the configured bounded pool while preserving input order. |
+| `scope()` | JS, with `jsCells.scope`: an `AsyncDisposableStack` for `await using s = scope()`. `s.serve(opts)`, `s.spawn(cmd, opts)` (Bun), `await s.tempDir(prefix?)` and `await s.monitor(args)` start a resource and register its teardown; everything closes in reverse order when the block exits, on throw too, and disposing twice is a no-op. `s.move()` hands the open resources to a new stack. A stopped or timed-out cell still loses them: cell ownership ends its servers and children, the release hook removes its temp dirs, and the host stops its scoped watches. `persistent: true` watches are refused; start those with `tool.monitor`. |
 | `pipeline(items, ...stages)` | Applies stages left to right with a barrier between stages. |
 | `log(message)` / `phase(title)` | Emits progress text and starts a status phase. |
 
@@ -606,6 +612,85 @@ bytes. With a session file such as `/path/session.jsonl`, artifacts live in
 directory. A truncated result tells the model so in its text: the kept and
 original sizes, then a plain-path notice such as
 `[Full output: /absolute/path/eval-….log]`.
+
+## Files a cell writes
+
+A cell can change workspace files without a `write` or `edit` call: through the
+`write()` helper, `fs`, `Bun.write`, a child process, or a Python, Ruby or Julia
+cell. When a cell settles with a kernel result, the source files that changed in
+the workspace while it ran go through the `tool_result` handlers a `write` call
+triggers, and the result gains one text block: the list of those files, then
+whatever the handlers appended for each (diagnostics, for example).
+`EvalToolDetails.writtenFiles` carries the same list for RPC consumers. A cell
+that changed no source file gets no block. A detached cell delivers the block in
+its completion notification.
+
+- **Source file**: a regular file whose real location, with every directory in
+  its path resolved, is inside the session cwd and outside `.git`,
+  `node_modules` and the session's own artifacts directory (a path below a
+  directory that links out of the workspace or into one of those is never
+  listed, read or hooked; on a case-insensitive filesystem `NODE_MODULES` or
+  `.GIT` counts as the excluded directory when it resolves to the same one, and
+  also when either lookup fails for any reason but the path being absent; a
+  file is read only if the file opened is the regular file just checked and,
+  after the open, the path still names it at the same real location with no
+  link as its last entry, so a symlink swapped in as the last entry, even to the
+  checked file moved out, is not followed. A file moved out after those checks
+  is still read through the already open descriptor), that the workspace
+  does not ignore, at most 1 MiB, whose first 8 KiB are UTF-8 text. The definition lives in `src/written-files/source-file.ts`.
+- **Detection** compares the workspace before and after the cell, so it covers
+  every way of writing. In a git repository it reads `git status` (files that
+  differ from HEAD or are untracked, plus files committed while the cell ran,
+  plus the earlier scan's tracked files, so a tracked file written back to its
+  HEAD content counts as written; an untracked file the cell makes ignored does
+  not, nor does a file taken out of the index with `git rm --cached`: an
+  earlier tracked file that leaves `git status` is carried only when
+  `git ls-files` still finds it in the index, and not when git cannot say);
+  elsewhere it lists the workspace through an empty repository kept in the
+  session artifacts, so the workspace's own ignore files still apply. It needs
+  `git`; without it the first cell says the check is off.
+- **Cost**: one scan before the first live cell starts and one at each
+  settlement. A scan is one `git` process killed at 500 ms that may stat at most
+  5,000 changed or untracked paths, plus one more under the same deadline when
+  HEAD moved and one when earlier tracked files left `git status`. Three scans in a row that fail or run over
+  that budget turn the check off for the session, and the cell says so.
+- **Hooks**: only `tool_result` handlers run, with `toolName: "write"`,
+  `input: { path, content }` (absolute path, the content on disk) and
+  `parentToolCallId` set to the eval call. No tool runs, so nothing is written
+  again, no permission is asked and no write guard can block it. A handler that
+  fails is named in the block; the cell still succeeds.
+- **Once**: a file a `write` or `edit` call took through the hooks, from the cell
+  or from the model while a detached cell was running, is not sent again unless
+  it was rewritten afterwards. A file a cell's settlement listed belongs to that
+  cell until its write hooks for it return, so a hook that rewrites it (a
+  formatter) is never charged to another cell that settles meanwhile; that other
+  cell leaves the file out, and a change it made to that file while the hook ran
+  is taken as the hook's. The file stays the cell's until the whole handler chain
+  for it returns: the host bounds each handler and moves on to the next when one
+  times out, so a write a handler makes after the chain returned is reported by
+  whichever cell settles next. A `write` or `edit` call the model issues holds its
+  file from before it writes until it ends, so a cell settling meanwhile neither
+  lists nor hooks it. Neither side waits for the other: a call that takes a file
+  a settling cell has already looked at, up to the moment the cell's hooks for it
+  start, takes it from that cell, which then neither lists, counts nor hooks it
+  and leaves the change to the call. A call that starts while the cell's hooks
+  for the file run gets its own hooks; the cell's ran for what the cell wrote.
+  A settlement that claims a file and then cannot run its
+  hooks (the cell was cancelled or closed) leaves the change for the next cell.
+- **Limits**: the first 20 files are listed and hooked and the rest are counted;
+  hook output is capped at 2,000 code points per file and 12,000 per cell. The
+  count can exceed the 20 listed files, and then it is not exactly what the
+  cell wrote: a file a model call takes from the cell leaves the list and the
+  count only when it was listed. A file past the limit is never claimed, so it
+  stays counted even when a model `write` or `edit` took it while the cell
+  settled; the cell never hooks it, and the call's own hooks are its only ones.
+  The part of the count beyond the list is therefore an upper bound, and no file
+  in it is reported again.
+
+Not covered: a cell that is cancelled, times out or is killed (it has no kernel
+result); deleted files, which are never reported; files inside submodules and nested repositories. Cells
+that run at the same time share one comparison, so a change is reported once, by
+the first of them to settle.
 
 ## Deliberate differences from oh-my-pi
 

@@ -153,4 +153,95 @@ describe("terminal monitor liveness event", () => {
 			unsubscribe();
 		}
 	});
+
+	it("replays the current monitor and wake state to a late RPC subscriber only", async () => {
+		const harness = await createHarness({ extensionFactories: [registerTerminalExtension] });
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const runner = harness.getExtensionRunner();
+		const early: string[] = [];
+		const unsubscribeEarly = runner.onRpcEvent(({ name }) => early.push(name));
+		try {
+			const started = await harness.session.executeTool("monitor", {
+				description: "late subscriber",
+				command: "cat",
+				persistent: true,
+			});
+			const bashId = String((started.details as { bash_id?: string } | undefined)?.bash_id ?? "");
+			try {
+				const beforeSubscribe = early.length;
+				const late: Array<{ name: string; data: unknown }> = [];
+				const unsubscribeLate = runner.onRpcEvent((event) => late.push(event));
+				try {
+					for (const name of ["terminal_monitor_state", "wake_source_state"]) {
+						const active = late.filter(
+							(event) =>
+								event.name === name &&
+								typeof event.data === "object" &&
+								event.data !== null &&
+								"activeCount" in event.data &&
+								event.data.activeCount === 1,
+						);
+						expect(active, name).toHaveLength(1);
+						expect(active[0]?.data).toMatchObject({
+							monitors: [expect.objectContaining({ description: "late subscriber" })],
+						});
+					}
+					// The background-session source replays too, as its own row even with no live session.
+					const background = late.filter(
+						(event) =>
+							event.name === "wake_source_state" &&
+							typeof event.data === "object" &&
+							event.data !== null &&
+							"source" in event.data &&
+							event.data.source === "terminal-background-sessions",
+					);
+					expect(background).toHaveLength(1);
+					expect(background[0]?.data).toMatchObject({ activeCount: 0, items: [] });
+					expect(early.slice(beforeSubscribe)).not.toContain("terminal_monitor_state");
+					expect(early.slice(beforeSubscribe)).not.toContain("wake_source_state");
+				} finally {
+					unsubscribeLate();
+				}
+			} finally {
+				await harness.session.executeTool("kill_bash", { bash_id: bashId });
+			}
+		} finally {
+			unsubscribeEarly();
+		}
+	});
+
+	it("replays a live background session to a late RPC subscriber with its source and items", async () => {
+		const harness = await createHarness({ extensionFactories: [registerTerminalExtension] });
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const runner = harness.getExtensionRunner();
+		const started = await harness.session.executeTool("bash", { command: "cat", run_in_background: true });
+		const bashId = String((started.details as { bash_id?: string } | undefined)?.bash_id ?? "");
+		expect(bashId).not.toBe("");
+		try {
+			const late: Array<{ name: string; data: unknown }> = [];
+			const unsubscribeLate = runner.onRpcEvent((event) => late.push(event));
+			try {
+				const background = late.filter(
+					(event) =>
+						event.name === "wake_source_state" &&
+						typeof event.data === "object" &&
+						event.data !== null &&
+						"source" in event.data &&
+						event.data.source === "terminal-background-sessions",
+				);
+				expect(background).toHaveLength(1);
+				expect(background[0]?.data).toMatchObject({
+					source: "terminal-background-sessions",
+					activeCount: 1,
+					items: [expect.objectContaining({ id: bashId })],
+				});
+			} finally {
+				unsubscribeLate();
+			}
+		} finally {
+			await harness.session.executeTool("kill_bash", { bash_id: bashId });
+		}
+	});
 });

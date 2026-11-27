@@ -17,7 +17,11 @@ oh-my-pi, plus the `/todo` command suite and the `todo-sidebar` widget. Fully di
   `prompt.ts` (`TODO_TOOL_DESCRIPTION`, `TASK_MANAGEMENT_SECTION`), `markdown.ts`.
 - **First turn**: `first-turn.ts` (gate, named tool_choice wire shapes, `FIRST_TURN_REMINDER`).
 - **UI**: `todo-widget.ts` (10-line window model), `todo-widget-component.ts`
-  (completion strike animation), `native-todo-mirror.ts`.
+  (completion strike animation), `native-todo-mirror.ts`, `session-working.ts` (reads whether the
+  session is working from the session's one liveness watcher, `../session-liveness/`, the same
+  answer the herdr pane report publishes; while it is not, the widget draws no active item and its
+  title reads paused with the open count of the whole list, senpi#1146; stored state is unchanged;
+  with no watcher bound every item draws as before).
 
 ## ASK / NOW / NEXT
 
@@ -37,13 +41,16 @@ task in phase order that is not Now.
 admitted `session_control_delivery` (not a preview, not a `?`/`!` question, not an ask-user
 answer frame, no earlier prompt or delivery request on the branch (answer frames do not count,
 senpi#2419), `todo` active, not `print`/`json`, not another extension-triggered turn,
-`todo.firstTurnPlan` not `off`). `before_agent_start` then adds the hidden
+`todo.firstTurnPlan` not `off`; unset, it is `off` under a GPT prompt preset or `deepseek-v4-1-flash` and `force` elsewhere,
+`presetFirstTurnPlanDefault` in `../prompt-preset/contract.ts`, senpi#7101, senpi#7100). `before_agent_start` then adds the hidden
 `senpi.todo-first-turn` reminder; under `force`, `before_provider_request` names `todo` in
 `tool_choice` on that run's requests until the first assistant `message_end` (or
 `agent_end` / abort / session change), only where the resolved compat allows a forced
 choice and the model has not refused one earlier in the process (senpi#2218), the payload declares `todo` with no `tool_choice` of its own, and Anthropic thinking
 is off. The decomposition mandate's single home is `TASK_MANAGEMENT_SECTION`; do not restate
-it in `TODO_TOOL_DESCRIPTION`, the tool guidelines, or a preset.
+it in `TODO_TOOL_DESCRIPTION` or the tool guidelines. A preset whose core states the todo rules itself
+is listed in `presetOwnsTodoRules` (`../prompt-preset/contract.ts`, today `gpt-6.2` and `deepseek-v4-1-flash`), and `index.ts` appends
+no `Task_Management` block after it: the rule keeps one home either way.
 
 ## CONVENTIONS
 

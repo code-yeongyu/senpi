@@ -13,6 +13,7 @@ import {
 	type ToolPathCanonicalizer,
 	type ToolPathResolver,
 } from "./file-tool-host.ts";
+import { createSyntaxChecker, parseBreakWarning, type SyntaxChecker } from "./syntax-check.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import type { ToolMachine } from "./tool-machine.ts";
 import { createWriteDetails, type WriteBaseline, type WriteToolDetails } from "./write-result.ts";
@@ -86,6 +87,28 @@ export interface CoreWriteToolOptions {
 	canonicalizePath?: ToolPathCanonicalizer;
 	/** The content before the write, for the result's patch. Default: read on `machine`; none with custom operations. */
 	readBaseline?: (absolutePath: string) => Promise<WriteBaseline>;
+	/** Parse check behind the parse-break warning. Default: JSON only. */
+	checkSyntax?: SyntaxChecker;
+}
+
+function writeParseBreakWarning(
+	checkSyntax: SyntaxChecker,
+	path: string,
+	baseline: WriteBaseline,
+	content: string,
+): string | undefined {
+	switch (baseline.kind) {
+		case "missing":
+			return parseBreakWarning(checkSyntax, path, undefined, content);
+		case "present":
+			return parseBreakWarning(checkSyntax, path, baseline.content, content);
+		case "unavailable":
+			return undefined;
+		default: {
+			const exhaustive: never = baseline;
+			return exhaustive;
+		}
+	}
 }
 
 export function createCoreWriteToolDefinition(
@@ -99,6 +122,7 @@ export function createCoreWriteToolDefinition(
 	const dirname = options.dirname ?? posixDirname;
 	const withMutationQueue = options.withMutationQueue ?? inProcessFileMutationQueue;
 	const canonicalizePath = options.canonicalizePath ?? lexicalCanonicalPath;
+	const checkSyntax = options.checkSyntax ?? createSyntaxChecker();
 	return {
 		name: "write",
 		label: "write",
@@ -155,8 +179,10 @@ export function createCoreWriteToolDefinition(
 				await ops.writeFile(absolutePath, content);
 				throwIfAborted();
 
+				const warning = writeParseBreakWarning(checkSyntax, path, baseline, content);
+				const summary = `Successfully wrote to ${path}`;
 				return {
-					content: [{ type: "text", text: `Successfully wrote to ${path}` }],
+					content: [{ type: "text", text: warning === undefined ? summary : `${summary}\n\n${warning}` }],
 					details: createWriteDetails(path, content, baseline),
 				};
 			});

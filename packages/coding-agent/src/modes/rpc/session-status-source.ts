@@ -5,6 +5,7 @@
  * and file before the registry's own metadata sync runs.
  */
 import { isSessionArchived } from "../../core/session-archived.ts";
+import { redactedRetryWait } from "../../core/retry-wait.ts";
 import { readSessionSettled, type SettledFields, settledFields } from "../../core/session-settled.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
@@ -29,6 +30,7 @@ export function sessionRuntimeView(session: LiveSession, pendingQuestions?: numb
 		steering: typeof session.getSteeringMessages === "function" ? session.getSteeringMessages().length : 0,
 		followUp: typeof session.getFollowUpMessages === "function" ? session.getFollowUpMessages().length : 0,
 		pendingQuestions: pendingQuestions ?? sessionQuestionBridges.get(session)?.pendingQuestions()?.length ?? 0,
+		...(session.retryWait === undefined ? {} : { waiting: session.retryWait }),
 	};
 }
 
@@ -46,6 +48,7 @@ function runtimeView(entry: RpcSessionEntry): SessionStatusRuntimeView | undefin
 		steering: state.steering.length,
 		followUp: state.followUp.length,
 		pendingQuestions: state.pendingQuestions?.length ?? 0,
+		...(state.retryWait === undefined ? {} : { waiting: state.retryWait }),
 	};
 }
 
@@ -73,6 +76,7 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 		kind: entry.kind,
 		cwd: entry.cwd,
 		attachments: entry.attachments,
+		lastActivityAt: entry.lastCommandAt,
 		...(durableSessionId !== undefined ? { durableSessionId } : {}),
 		...(sessionPath !== undefined ? { sessionPath } : {}),
 		...(name !== undefined ? { name } : {}),
@@ -85,19 +89,24 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 
 /**
  * The `list_sessions` row fields, read from the same sources a `session_status` row is derived from. A row shows
- * only whether a turn runs and the model, so it reads those two and never the queue or question counts.
+ * only whether a turn runs, its retry wait and the model, so it reads those and never the queue or question counts.
+ * The wait is redacted: a listing reaches every connection that can list sessions, so it carries the typed kind
+ * and its timing but never the provider's error text, which stays on `get_state` and on `session_status`.
  */
 export function sessionRowStatusFields(
 	entry: RpcSessionEntry,
-): Pick<RpcSessionRow, "archived" | "settled" | "settledBy" | "activity" | "model"> {
+): Pick<RpcSessionRow, "archived" | "settled" | "settledBy" | "activity" | "waiting" | "model"> {
 	const session = entry.runtime?.session;
 	const state = entry.worker?.snapshot?.state;
 	const streaming = session !== undefined ? session.isStreaming === true : state?.isStreaming === true;
 	const model = modelOf(session !== undefined ? session.model : (state?.model ?? undefined));
+	const wait = streaming ? (session !== undefined ? session.retryWait : state?.retryWait) : undefined;
+	const waiting = wait === undefined ? undefined : redactedRetryWait(wait);
 	return {
 		archived: entryView(entry).archived === true,
 		...(settledOf(entry) ?? { settled: false }),
 		activity: streaming ? "running" : "idle",
+		...(waiting === undefined ? {} : { waiting }),
 		...(model !== undefined ? { model } : {}),
 	};
 }

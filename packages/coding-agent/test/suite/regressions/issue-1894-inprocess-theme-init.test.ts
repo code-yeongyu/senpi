@@ -83,6 +83,8 @@ describe("in-process multi-session host initializes the interactive theme", () =
 		const workspace = path.join(tmp, "workspace");
 		const socketPath = path.join(tmp, "rpc.sock");
 		const marker = path.join(tmp, "theme-probe-loaded");
+		// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+		fs.mkdirSync(agentDir, { mode: 0o700 });
 		fs.mkdirSync(extensionsDir, { recursive: true });
 		fs.mkdirSync(sessionDir, { recursive: true });
 		fs.mkdirSync(workspace, { recursive: true });

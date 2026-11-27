@@ -1,3 +1,39 @@
+## 2026-11-21 - JS eval locates syntax errors in the submitted cell (senpi#7200)
+
+### What changed
+
+- A failed JS cell compilation can report the original line, column and excerpt. A shell heredoc inside a template literal also gets a quoting hint.
+
+### Why
+
+- An unescaped backtick inside a multiline command produced only an engine error. Positions in the generated persistence wrapper do not identify the same column in the submitted cell.
+
+### Why an extension could not handle it
+
+- The codemode extension owns both the compilation step and the eval result; it can distinguish a parse failure from a running cell throwing `SyntaxError`.
+
+### Expected merge conflict zones
+
+- LOW: the JS worker's eval call and the ordinary-cell result path.
+
+## 2026-11-19 - The eval description names eval-only tools first (senpi#7032)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt-template.ts`: the `Eval-only tools (...)` line moves from `<prelude>` to right after the description's first line and says the tools are called inside a cell as `tool.<name>(args)`.
+
+### Why
+
+- A host that caps tool descriptions (Claude Code cuts MCP tool descriptions at 4096 chars) dropped the line, which sat at ~char 4.8k: the one place the thread tools are named (oh-my-openagent#14291).
+
+### Why an extension could not handle it
+
+- The eval description is this extension's own template.
+
+### Expected merge conflict zones
+
+- LOW: the head of `EVAL_PROMPT_TEMPLATE` and the `tool.<name>()` entry of its prelude.
+
 ## 2026-11-17 - A nested tool result with isError: true counts as a failure (senpi#6906, senpi#6904)
 
 ### What changed

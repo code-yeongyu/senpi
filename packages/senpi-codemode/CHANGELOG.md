@@ -12,6 +12,219 @@
 
 ### Removed
 
+## [2026.11.26] - 2026-11-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.25] - 2026-11-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.24] - 2026-11-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.22-2] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- JS eval reports the original line and column for malformed cells when the parser can locate the error ([#7201](https://github.com/code-yeongyu/senpi/pull/7201)).
+
+### Removed
+
+## [2026.11.22] - 2026-11-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21-2] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.21] - 2026-11-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.20] - 2026-11-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-5] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-4] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19-3] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The eval tool description names the eval-only tools in its first lines, so a host that cuts long tool descriptions still shows them ([#7032](https://github.com/code-yeongyu/senpi/pull/7032))
+- Eval kernels (Python, Ruby, Julia, JavaScript in both isolation modes), their children and `%pip` installs no longer inherit the RPC host's identity or launch-default client capabilities, and a `new Bun.$.Shell()` in a cell starts from the kernel's env view ([#7037](https://github.com/code-yeongyu/senpi/pull/7037))
+
+### Removed
+
+## [2026.11.19-2] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.19] - 2026-11-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-3] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.18-2] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+- Eval kernels attest the processes they run for a session: a python, ruby or julia kernel, or a process-isolated JavaScript kernel, is recorded for its session, so every command it starts (a `Bun.$` command included) resolves to that session; a worker-thread JavaScript kernel attests the `Bun.spawn` children it reports. A `Bun.$` command of a worker-thread kernel is not attested ([#6978](https://github.com/code-yeongyu/senpi/pull/6978))
+
+### Changed
+
+### Fixed
+
+- Eval kernel modules no longer load the senpi host package: the extension hands each kernel the session-bound spawn attestation, so a kernel module loads on its own again (a process-isolated JavaScript kernel resolving its runtime under plain Node, the compiled python host on Windows) ([#6996](https://github.com/code-yeongyu/senpi/pull/6996))
+
+### Removed
+
+## [2026.11.18] - 2026-11-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.17-2] - 2026-11-17
 
 ### Breaking Changes

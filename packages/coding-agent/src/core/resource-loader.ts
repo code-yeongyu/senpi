@@ -23,6 +23,7 @@ export { loadProjectContextFiles };
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { requiredInternalBuiltins, selectActiveBuiltinIds } from "./builtin-extension-selection.ts";
 import { bundledBuiltinExtensions } from "./bundled-resources.ts";
 import { type ContextFile, loadProjectContextFiles } from "./context-files.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
@@ -513,7 +514,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 		this.eventBus = options.eventBus ?? createEventBus();
 		const factories = options.extensionFactories ?? [];
-		this.extensionFactories = factories.filter((input) => !isBuiltinExtension(input));
+		const hostFactories = factories.flatMap((input) =>
+			typeof input !== "function" && input.host ? [{ id: input.name, factory: input.factory }] : [],
+		);
+		this.extensionFactories = factories.filter(
+			(input) => !(typeof input !== "function" && input.host) && !isBuiltinExtension(input),
+		);
 		this.builtinExtensions = new Map(factories.filter(isBuiltinExtension).map((input) => [input.name, input]));
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -538,6 +544,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 								}
 							: extension,
 					);
+		this.builtinExtensionFactories = [...this.builtinExtensionFactories, ...hostFactories];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
@@ -1063,6 +1070,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const extensionsResult = await this.loadExtensionPaths(extensionPaths);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
+			await this.placeRequiredInternalBuiltins(extensionsResult);
 			const replacementWarnings: Array<{ path: string; warning: string }> = [];
 			extensionsResult.extensions = omitReplacedExtensions(extensionsResult.extensions, replacementWarnings);
 			mergeExtensionWarnings(extensionsResult, replacementWarnings);
@@ -1103,18 +1111,81 @@ export class DefaultResourceLoader implements ResourceLoader {
 			.filter((extension): extension is Extension => extension !== undefined);
 		orderedExtensions.unshift(...factoryExtensions);
 
-		const replacementWarnings: Array<{ path: string; warning: string }> = [];
-		const extensionsResult: LoadExtensionsResult = {
-			extensions: omitReplacedExtensions(orderedExtensions, replacementWarnings),
+		const assembled: LoadExtensionsResult = {
+			extensions: orderedExtensions,
 			errors: [...preTrustExtensions.errors, ...remainingExtensions.errors],
 			warnings: [...(preTrustExtensions.warnings ?? []), ...(remainingExtensions.warnings ?? [])],
 			runtime: preTrustExtensions.runtime,
 			eventBus: preTrustExtensions.eventBus ?? remainingExtensions.eventBus ?? this.eventBus,
 		};
+		await this.placeRequiredInternalBuiltins(assembled);
+		const replacementWarnings: Array<{ path: string; warning: string }> = [];
+		const extensionsResult: LoadExtensionsResult = {
+			...assembled,
+			extensions: omitReplacedExtensions(assembled.extensions, replacementWarnings),
+		};
 		mergeExtensionWarnings(extensionsResult, replacementWarnings);
 		this.rebuildExtensionFlagDefaults(extensionsResult);
 		this.addExtensionConflictDiagnostics(extensionsResult);
 		return extensionsResult;
+	}
+
+	/**
+	 * The one place internal builtins enter a final extension set (senpi#1146): whichever group selected the builtins
+	 * that require them (settings, an explicit `builtin:<name>` path, before or after project trust), they load once,
+	 * each right after the leading run of builtins the registry lists before it: behind the guards and policy when
+	 * those lead the set, and ahead of every other extension (a later builtin, a bundled, inline or path extension),
+	 * any of which may re-publish liveness in its session_start. An internal builtin handles no tool call, so one
+	 * placed ahead of a guard (an inline extension leads the plain branch) takes no veto from it.
+	 */
+	private async placeRequiredInternalBuiltins(result: LoadExtensionsResult): Promise<void> {
+		const builtinIdOf = (path: string): string | undefined =>
+			path.startsWith("<builtin:") && path.endsWith(">")
+				? path.slice("<builtin:".length, -1)
+				: path.startsWith(BUILTIN_PATH_PREFIX)
+					? path.slice(BUILTIN_PATH_PREFIX.length)
+					: undefined;
+		const selected = new Set(result.extensions.flatMap((extension) => builtinIdOf(extension.path) ?? []));
+		const internals = requiredInternalBuiltins(this.builtinExtensionFactories, selected);
+		if (internals.length === 0) return;
+		const internalIds = new Set(internals.map((builtin) => builtin.id));
+		const isInternal = (extension: Extension) => internalIds.has(builtinIdOf(extension.path) ?? "");
+		const required: Extension[] = [];
+		for (const builtin of internals) {
+			const path = `<builtin:${builtin.id}>`;
+			const loaded = result.extensions.find((extension) => builtinIdOf(extension.path) === builtin.id);
+			if (loaded) {
+				required.push(loaded);
+				continue;
+			}
+			try {
+				required.push(
+					await loadExtensionFromFactory(
+						builtin.factory,
+						this.cwd,
+						this.eventBus,
+						result.runtime,
+						path,
+						this.extensionSession,
+					),
+				);
+			} catch (error) {
+				result.errors.push({ path, error: error instanceof Error ? error.message : "failed to load extension" });
+			}
+		}
+		const registryIndex = (id: string | undefined): number =>
+			id === undefined ? -1 : this.builtinExtensionFactories.findIndex((builtin) => builtin.id === id);
+		const placed = result.extensions.filter((extension) => !isInternal(extension));
+		for (const internal of required) {
+			const own = registryIndex(builtinIdOf(internal.path));
+			const listedEarlier = (extension: Extension): boolean => {
+				const index = registryIndex(builtinIdOf(extension.path));
+				return index !== -1 && index < own;
+			};
+			const end = placed.findIndex((extension) => !listedEarlier(extension));
+			placed.splice(end === -1 ? placed.length : end, 0, internal);
+		}
+		result.extensions = placed;
 	}
 
 	private addExtensionConflictDiagnostics(extensionsResult: LoadExtensionsResult): void {
@@ -1399,32 +1470,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private getActiveBuiltinExtensionIds(): Set<string> {
-		const enabledBuiltinExtensions = this.settingsManager.getEnabledBuiltinExtensions();
-		const enabledBuiltinExtensionSet = enabledBuiltinExtensions ? new Set(enabledBuiltinExtensions) : undefined;
-		const disabledBuiltinExtensions = new Set(this.settingsManager.getDisabledBuiltinExtensions());
-		const activeBuiltinExtensionIds = new Set<string>();
-
-		for (const builtinExtension of this.builtinExtensionFactories) {
-			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(builtinExtension.id)) {
-				continue;
-			}
-			if (disabledBuiltinExtensions.has(builtinExtension.id)) {
-				continue;
-			}
-
-			activeBuiltinExtensionIds.add(builtinExtension.id);
-		}
-		for (const bundledExtension of bundledBuiltinExtensions) {
-			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(bundledExtension.id)) {
-				continue;
-			}
-			if (disabledBuiltinExtensions.has(bundledExtension.id)) {
-				continue;
-			}
-			activeBuiltinExtensionIds.add(bundledExtension.id);
-		}
-
-		return activeBuiltinExtensionIds;
+		return selectActiveBuiltinIds(
+			this.builtinExtensionFactories,
+			bundledBuiltinExtensions.map((extension) => extension.id),
+			{
+				enabled: this.settingsManager.getEnabledBuiltinExtensions(),
+				disabled: this.settingsManager.getDisabledBuiltinExtensions(),
+			},
+		);
 	}
 
 	private getShadowedVendoredBuiltinPackageNames(): Set<string> {

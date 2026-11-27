@@ -2594,6 +2594,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/ai/src/utils/retry.ts#HTTP_408_REASON_PHRASE": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/ai/src/utils/retry.ts#NON_QUOTA_NON_RETRYABLE_PATTERN": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
@@ -3058,6 +3062,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/auth-storage.ts#localAsyncAuthLocks": {
+			"class": "realm-registry",
+			"reason": "local-async-auth-locks/v1: the async auth-store lock holders of every copy are registered here, so a synchronous writer in any copy sees that its own realm holds the lock and fails fast instead of spinning on a lock only its blocked event loop can release (design 3.2, 3.3)"
+		},
 		"packages/coding-agent/src/core/auth-storage.ts#sharedAuthFileReadState": {
 			"class": "per-copy-safe",
 			"reason": "parsed-credential read cache; must not sit behind a documented key, and file reads re-validate (design 3.2)"
@@ -3375,6 +3383,10 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/dynamic-prompt/handoff.ts#HANDOFF_MOMENTS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/dynamic-prompt/handoff.ts#REPLY_LANGUAGE_RULE": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -4167,10 +4179,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts#GPT6_ASTRA_RECEIVER_IDS": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
 		"packages/coding-agent/src/core/extensions/builtin/goal/provider-retry.ts#ISO_INSTANT": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
@@ -4275,15 +4283,15 @@
 			"class": "per-copy-safe",
 			"reason": "counter or id sequence for this copy's own objects; a split cannot collide across them"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#OPEN_ENDED_WAKE_SOURCES": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#OPEN_ENDED_WAKE_SOURCES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#REPRESENTED_WAKE_SOURCES": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#REPRESENTED_WAKE_SOURCES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#WAKE_SOURCE_LABELS": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#WAKE_SOURCE_LABELS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -4319,67 +4327,47 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#BOOTSTRAP_SCRIPT": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#BOOTSTRAP_SCRIPT": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#DARK_VARS": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#DARK_VARS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#HTML_RENDER_CONTENT_SECURITY_POLICY": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#HTML_RENDER_CONTENT_SECURITY_POLICY": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#LIGHT_VARS": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#LIGHT_VARS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#POLICY_META": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#POLICY_META": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/bootstrap.ts#PREAMBLE": {
+		"packages/coding-agent/src/extensions/html-render/bootstrap.ts#PREAMBLE": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#ABSOLUTE_PATH": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#MAX_IMAGE_BYTES": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#IMAGE_EXTENSIONS": {
+		"packages/coding-agent/src/extensions/html-render/images.ts#MAX_PAGE_BYTES": {
 			"class": "constant",
-			"reason": "value derived from constants at load; never written after load"
+			"reason": "value computed or aliased at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#IMAGE_MIME_TYPES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#LOCAL_IMAGE_PATTERN": {
+		"packages/coding-agent/src/extensions/html-render/tool.ts#BASE64_IMAGE": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#MAX_IMAGE_BYTES": {
+		"packages/coding-agent/src/extensions/html-render/tool.ts#Params": {
 			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
+			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#MAX_PAGE_BYTES": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#RAW_TEXT_ELEMENTS": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/images.ts#TAG_START": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#BASE64_IMAGE": {
-			"class": "per-copy-safe",
-			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts#Params": {
+		"packages/coding-agent/src/extensions/html-render/tool.ts#showHtmlPageTool": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
@@ -5291,6 +5279,22 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#GPT_BLOCK_HANDOFF_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#NO_HANDOFF_BLOCK_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#PLAN_AFTER_READING_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#TODO_RULE_OWNER_PRESETS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts#FULL_SHARED_SECTION_PRESETS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -5299,15 +5303,11 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts#CLAIM_REPORT": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash-rules.ts#DEEPSEEK_V41_FLASH_RULES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts#DEEPSEEK_V41_FLASH_RULES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts#INTENT_GATE_LEAD": {
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts#LIST_SECTIONS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -5380,6 +5380,26 @@
 			"reason": "value computed or aliased at load; never written after load"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts#SURFACE_DIRECTIVE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#APP_AND_CHAT": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#GPT62_RULES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#TERMINAL": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2-rules.ts#TERMINAL_AND_APP": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6.2.ts#LIST_SECTIONS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -5607,6 +5627,10 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts#kernelBootRecords": {
+			"class": "per-copy-safe",
+			"reason": "memoized kernel probe; each copy reads the same host boot record, and readers refresh before trusting a boot mismatch"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/terminal/pty.lazy.ts#loaded": {
 			"class": "per-copy-safe",
 			"reason": "lazy-load cache (design 3.3)"
@@ -5730,6 +5754,10 @@
 		"packages/coding-agent/src/core/extensions/builtin/todotools/native-todo-mirror.ts#STATUSES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts#GPT_HANDOFF_CUES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts#HANDOFF_CUES": {
 			"class": "constant",
@@ -6390,6 +6418,14 @@
 			"class": "per-copy-safe",
 			"reason": "per-process random or derived key material held by the copy that uses it; a split only means two copies use different keys for their own records"
 		},
+		"packages/coding-agent/src/core/kernel-process-identity.ts#darwinReader": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
+		},
+		"packages/coding-agent/src/core/kernel-process-identity.ts#linuxBootId": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
+		},
 		"packages/coding-agent/src/core/keybindings.ts#KEYBINDINGS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -6495,6 +6531,10 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/lifecycle-history.ts#lifecycleHistory": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-history.ts#lastRunEnd": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -6674,6 +6714,10 @@
 			"class": "per-copy-safe",
 			"reason": "timing attribution only, no A1-A3 decision; a split costs timing attribution: work entered by another copy is not marked speculative",
 			"ground": "ii"
+		},
+		"packages/coding-agent/src/core/opener-approvals.ts#refusalRecords": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/output-guard.ts#rawStdoutWriteTail": {
 			"class": "per-copy-safe",
@@ -6875,6 +6919,10 @@
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
+		"packages/coding-agent/src/core/retry-fallback/log.ts#retirements": {
+			"class": "realm-registry",
+			"reason": "fallback-log-retirements/v1: two copies starting on one agent dir share one first-start removal per log path, so the later one cannot delete lines the earlier one wrote (senpi#6351)"
+		},
 		"packages/coding-agent/src/core/retry-fallback/log.ts#unsettledLoggers": {
 			"class": "per-copy-safe",
 			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
@@ -7042,6 +7090,10 @@
 		"packages/coding-agent/src/core/session-sidecar-store.ts#snapshots": {
 			"class": "per-copy-safe",
 			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/session-spawn-attestation.ts#ownIdentity": {
+			"class": "per-copy-safe",
+			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
 		},
 		"packages/coding-agent/src/core/session-summary-cache.ts#cache": {
 			"class": "per-copy-safe",
@@ -7295,6 +7347,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/telemetry-consent.ts#TELEMETRY_CONSENTS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/subscription-limits/usage-poller.ts#running": {
 			"class": "per-copy-safe",
 			"reason": "install-once guard or handle for a hook this copy installs; holds no A1-A3 asset"
@@ -7482,6 +7538,10 @@
 		"packages/coding-agent/src/core/tools/write-core.ts#writeSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/trust-store-writers.ts#trustStoreWriters": {
+			"class": "realm-registry",
+			"reason": "trust-store-writers/v1: trust store writes of every copy take turns per file, and a synchronous reader in any copy must see that a writer of the realm holds the store lock, or it spins on a lock only the blocked event loop can release. Copies older than this registry do not consult it and wait out the lock's 200 ms budget while such a write holds it"
 		},
 		"packages/coding-agent/src/core/turn-origin.ts#continuingTurns": {
 			"class": "per-copy-safe",
@@ -7843,6 +7903,10 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/nearest-parent-config.ts#ACCOUNT_HOME_DIR": {
+			"class": "constant",
+			"reason": "account home resolved once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/hand/hand-wakes.ts#HAND_WAKE_LIMITS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -8112,10 +8176,6 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/interactive/provider-error-reason.ts#STATUS_SOURCES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts#RISKY_MODEL_FAMILIES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -8774,6 +8834,18 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/host-identity-env.ts#HOST_HANDOFF_ENV_NAMES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/host-identity-env.ts#HOST_HANDOFF_NAME_SET": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/host-watchdog.ts#WATCH_ENV_SUFFIXES": {
+			"class": "constant",
+			"reason": "lookup data derived at load from a literal; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/host-bind-alias-reaper.ts#ALIAS_NAME": {
 			"class": "constant",
 			"reason": "regex without g/y flags; carries no lastIndex state"
@@ -9107,6 +9179,14 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#RetryFallback": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#TelemetryConsent": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#TelemetryDeclaration": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
@@ -9688,6 +9768,14 @@
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
+		"packages/coding-agent/src/private-fd-token-handoff.ts#DESCRIPTOR_ENV": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/private-fd-token-handoff.ts#DESCRIPTOR_FLAGS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/private-fds.ts#WINDOWS_PRIVATE_FD_PAIR_PROVEN": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -9887,6 +9975,10 @@
 		"packages/machine-ops/src/errors.ts#ERRNO_CODES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/machine-ops/src/files/automount-trigger.ts#active": {
+			"class": "per-copy-safe",
+			"reason": "trigger lookup holding a derived-value cache of the mount table, plus the child-resolver options (swapped only by tests); a split only re-reads the table"
 		},
 		"packages/machine-ops/src/files/bounded-realpath.ts#RESOLUTION_TIMED_OUT": {
 			"class": "constant",
@@ -10814,34 +10906,6 @@
 			"class": "per-copy-safe",
 			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
 		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#CONTROL_PAREN_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#DECLARATION_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#EXPRESSION_PREFIX_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#REGEX_PREFIX_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#STATEMENT_CONTINUATION_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#UNSHADOWABLE": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#shadowedNames": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
 		"packages/senpi-codemode/src/kernels/js/worker-kill-guard.js#SPAWNERS": {
 			"class": "per-copy-safe",
 			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
@@ -11527,6 +11591,202 @@
 			"reason": "stateless helper instance; holds no mutable state"
 		},
 		"packages/tui/src/wsl-session.ts#WSL_ENV_MARKERS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#ABSOLUTE_PATH": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#CSS_URL": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_EXTENSIONS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_MIME_TYPES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#IMAGE_PATH": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#RAW_TEXT_ELEMENTS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#SCRIPT_PATH": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#TAG_START": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#UNQUOTED_URL": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/extensions/html-render/image-references.ts#URL_ATTRIBUTES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#PREDECESSOR_DISCOVERY_TIMEOUT_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#ROUTE_GONE_CODES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-routes.ts#ROUTE_GONE_ERRORS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-wire.ts#ROW_STATES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#PREDECESSOR_REQUEST_TIMEOUT_MS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_POLL_SECONDS": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_TIMEOUT_SECONDS": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_CONCURRENCY": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#TRUST_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#LOCAL_FLAG": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#SETUP_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata derived from a literal at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#ENDPOINT_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#PRESENTER_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#HOST_JSON": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#HOST_SHARED": {
+			"class": "constant",
+			"reason": "command metadata lookup literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata.ts#ENGINE_COMMANDS": {
+			"class": "constant",
+			"reason": "exported command metadata literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#config": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#schedule": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#queries": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-host.ts#host": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-packages.ts#packages": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-packages.ts#models": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/index.ts#engine": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/js-source-scan.js#REGEX_PREFIX_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/js-source-scan.js#EXPRESSION_PREFIX_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#CONTROL_PAREN_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#BLOCK_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#STATEMENT_CONTINUATION_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#UNSHADOWABLE": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#shadowedNames": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#DECLARATION_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_ONLY_STATEMENTS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#DECLARABLE": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_SYNTAX": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_SUFFIX_EXPRESSIONS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#UNSUPPORTED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#MEMBER_MODIFIER_RE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/typescript-cell.ts#AsyncFunction": {
+			"class": "constant",
+			"reason": "intrinsic constructor read at load; never written after load"
+		},
+		"packages/senpi-codemode/src/bridge/reserved.ts#SCOPE_MONITOR_OP": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		}

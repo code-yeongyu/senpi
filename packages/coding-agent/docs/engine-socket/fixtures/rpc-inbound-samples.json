@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "c477a16606e8f83cd6b93d4641116109f37fc4b54c3e8467171ea1defef5c215",
+	"methodClassesDigest": "055a33b1d791ce6d0edc996161b19c8298e257d90878f4347bcad7ba8d919f73",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 136,
+	"methodCount": 138,
 	"methods": [
 		{
 			"method": "abort",
@@ -396,6 +396,16 @@
 				"type": "extension_ui_response",
 				"id": "00000000-0000-7000-8000-000000000000",
 				"cancelled": true
+			}
+		},
+		{
+			"method": "find_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "find_session",
+				"durableSessionId": "00000000-0000-7000-8000-000000000000"
 			}
 		},
 		{
@@ -1268,6 +1278,17 @@
 			"sample": {
 				"type": "set_steering_mode",
 				"mode": "all"
+			}
+		},
+		{
+			"method": "set_telemetry_consent",
+			"class": "thread",
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_telemetry_consent",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"consent": "declined"
 			}
 		},
 		{

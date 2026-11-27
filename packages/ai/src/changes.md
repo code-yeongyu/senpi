@@ -1,3 +1,93 @@
+## 2026-11-24 - Models.logout honours expectedLoginId (senpi#7406)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `logout` routes the slot and whole-entry removals through the login comparison and rethrows `stale_login` unwrapped instead of as an `auth` store failure.
+
+### Why
+
+- Callers must tell "the sign-in changed, nothing happened" apart from a storage failure.
+
+### Why an extension could not handle it
+
+- `Models.logout` is the core removal path every surface uses.
+
+### Expected merge conflict zones
+
+- LOW: the `logout` body in `models.ts`.
+
+## 2026-11-22 - Document structured status in retry decisions (senpi#3251)
+
+### What changed
+
+- `packages/ai/src/provider-diagnostic.ts`: the contract now states that a structured 408 makes an otherwise non-terminal failure eligible for same-model retry. The SDK guide documents the same behavior.
+
+### Why
+
+- The diagnostic preserves the status used by the existing retry policy; it no longer serves only as descriptive metadata.
+
+### Why an extension could not handle it
+
+- The contract belongs with the shared `ProviderDiagnostic` type in `packages/ai/src/provider-diagnostic.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the type documentation in `packages/ai/src/provider-diagnostic.ts`.
+
+## 2026-11-22 - Carry a local sign-in requirement on assistant errors (senpi#5722)
+
+### What changed
+
+- `packages/ai/src/types.ts` accepts a `sign_in_required` error cause containing local account labels.
+
+### Why
+
+- Clients need to distinguish a required sign-in from a provider rejecting a request.
+
+### Why an extension could not handle it
+
+- The assistant message contract is shared across providers and the agent.
+
+### Expected merge conflict zones
+
+- LOW: the optional `AssistantMessage.errorCause` union.
+
+## 2026-11-17 - Root export of the OAuth refresh (custody CK18, senpi#5865)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `refreshOAuthCredential` and `OAuthRefreshRequest` from `auth/oauth-refresh.ts`.
+
+### Why
+
+`AuthStorage.refreshOAuthCredential` in the coding-agent package delegates to it, so a refresh started there and one started by request-time resolution take the same per-account refresh lock (#5837).
+
+### Why an extension could not handle it
+
+The package root's export list is the public contract; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `auth/` export block in `index.ts`.
+
+## 2026-11-18 - GPT-6.2 ids in the map-less effort inference (senpi#6948, senpi#6942)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `GPT_6_NO_NONE_EFFORT_MODEL_IDS`, `XHIGH_MODEL_IDS` and `OPENAI_MAX_MODEL_IDS` gain `gpt-6.2-astra` and `gpt-6.2-sol`.
+
+### Why
+
+- A custom provider or gateway row for either id without a `thinkingLevelMap` would otherwise lose `xhigh` and `max` and keep `off` selectable, which sends `reasoning.effort: none`. Both models reject that value.
+
+### Why an extension could not handle it
+
+- The inference runs inside the core thinking-level resolution that every provider row goes through. An extension can only supply an explicit map for its own rows.
+
+### Expected merge conflict zones
+
+- LOW: the three id lists.
+
 ## 2026-11-11 - Provider strict mode and scope are one registry per realm (omo#12965)
 
 ### What changed

@@ -62,12 +62,36 @@ function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], p
 	return result;
 }
 
-function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model: Model<TApi>): Message[] {
+export interface ImageDowngradeOptions {
+	/**
+	 * Name of a tool the model can call to get an image described from its file path. When set,
+	 * the placeholders that replace images for a model without image input name it.
+	 */
+	imageDescriptionTool?: string;
+}
+
+/**
+ * Replace the media a model cannot take with text placeholders. `transformMessages` runs this
+ * for every request; a host that offers an image-describing tool runs it first with that tool's
+ * name, which leaves nothing for the later pass to replace.
+ */
+export function downgradeUnsupportedImages<TApi extends Api>(
+	messages: Message[],
+	model: Model<TApi>,
+	options: ImageDowngradeOptions = {},
+): Message[] {
 	const supportsImages = model.input.includes("image");
 	const supportsVideo = model.input.includes("video");
 	if (supportsImages && supportsVideo) {
 		return messages;
 	}
+	const tool = options.imageDescriptionTool;
+	const userImagePlaceholder = tool
+		? `(image omitted: this model cannot see images; ${tool} describes an image given its file path)`
+		: NON_VISION_USER_IMAGE_PLACEHOLDER;
+	const toolImagePlaceholder = tool
+		? `(tool image omitted: this model cannot see images; call ${tool} with the image's file path for a description)`
+		: NON_VISION_TOOL_IMAGE_PLACEHOLDER;
 
 	return messages.map((msg) => {
 		if (msg.role === "user" && Array.isArray(msg.content)) {
@@ -80,7 +104,7 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 				);
 			}
 			if (!supportsImages) {
-				content = replaceImagesWithPlaceholder(content, NON_VISION_USER_IMAGE_PLACEHOLDER);
+				content = replaceImagesWithPlaceholder(content, userImagePlaceholder);
 			}
 			return { ...msg, content };
 		}
@@ -93,7 +117,7 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 				);
 			}
 			if (!supportsImages) {
-				content = replaceImagesWithPlaceholder(content, NON_VISION_TOOL_IMAGE_PLACEHOLDER);
+				content = replaceImagesWithPlaceholder(content, toolImagePlaceholder);
 			}
 			return { ...msg, content };
 		}

@@ -138,6 +138,8 @@ class WorkerEventWriter extends SessionEventWriter {
 					record.type === "session_settled_changed" ||
 					record.type === "question_resolved" ||
 					record.type === "question_updated" ||
+					record.type === "auto_retry_start" ||
+					record.type === "auto_retry_end" ||
 					(record.type === "extension_ui_request" && "method" in record && record.method === "question"))
 					? workerSnapshot(entry)
 					: undefined;
@@ -395,6 +397,11 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		case "browser_engine":
 			if (!entry?.runtime) throw new Error("session_closing");
 			entry.runtime.setBrowserEngine(message.engine);
+			send({ type: "result", request: message.request });
+			return;
+		case "telemetry_callers":
+			if (!entry?.runtime) throw new Error("session_closing");
+			entry.runtime.setTelemetryCallers(message.verdict);
 			send({ type: "result", request: message.request });
 			return;
 		case "permission_preset":

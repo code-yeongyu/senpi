@@ -81,7 +81,7 @@ import type { BashResult } from "../bash-executor.ts";
 import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
-import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart, PromptSurface } from "../dynamic-prompt/build.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
@@ -129,6 +129,7 @@ import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../v
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type { RpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import type { McpServerRegistry } from "./mcp-server-registry.ts";
+import type { ReportedToolResult, ReportedToolResultOutcome } from "./reported-tool-result.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
@@ -579,6 +580,13 @@ export interface ExtensionContext {
 	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
 	readonly sessionEnv?: Readonly<Record<string, string>>;
 	/**
+	 * Whether telemetry attributed to THIS session may be collected or delivered now (senpi#7446): the host permits it
+	 * AND every caller of the session granted it. It changes while the session runs, so read it when an event is
+	 * collected and again before a buffered event is delivered. Optional for contexts built outside a runner, and
+	 * `false` on a runner that has no session.
+	 */
+	readonly telemetryPermitted?: boolean;
+	/**
 	 * The files of the device this session's tools run on (senpi#5839): the local filesystem on a fused session and on a
 	 * hand, the hand's file channel on the loop side of a split session. Data that must stay on the device goes through
 	 * it. Optional for contexts built outside a runner; every runner-built context has it.
@@ -854,6 +862,28 @@ export interface ExtensionToolContext extends ExtensionContext {
 	 * errors come back as `isError: true`.
 	 */
 	executeTool(name: string, args: unknown, options?: ExecuteToolOptions): Promise<AgentToolCallOutcome>;
+	/**
+	 * Run the session's `tool_result` handlers for work this call already did outside the tool pipeline, for example
+	 * a file a codemode cell wrote on its own. No tool runs and no `tool_call` handler is asked: nothing is left to
+	 * gate. The event carries the id `<calling id>/reported-<n>` and `parentToolCallId`, like the result of a call
+	 * made through {@link executeTool}; it emits no `tool_execution_*` event and leaves no `nestedCalls` record.
+	 *
+	 * Never rejects for a handler failure: a handler that throws, times out or is interrupted is listed in
+	 * `failures` (and reported to the extension error listeners) while the remaining handlers still run.
+	 */
+	reportToolResult(report: ReportedToolResult): Promise<ReportedToolResultOutcome>;
+	/**
+	 * Whether the model issued this call, through the agent loop or a provider's exec channel (Cursor), so its result
+	 * joins the transcript. On a hand (brain/hand split) a call the brain's agent loop dispatched counts too. False for a
+	 * call made through {@link executeTool} or `pi.executeTool()`.
+	 */
+	readonly issuedByModel: boolean;
+	/**
+	 * The prompt surface of the session the call belongs to (`"terminal"`, `"app"`, `"chat"`), which says what that
+	 * session's host does with a result. On a hand (brain/hand split) it is the brain session's, sent with the call.
+	 * Absent when the runtime knows none.
+	 */
+	readonly promptSurface?: PromptSurface;
 }
 
 /**
@@ -1435,6 +1465,12 @@ export interface SessionStartEvent {
 	 * turns are held until real input or an explicit Resume (senpi#3853). Attaching releases nothing.
 	 */
 	attended?: boolean;
+	/**
+	 * `true` when a host reopened this session because it was live when the previous host ended (a crash, a clean
+	 * stop or a handoff, senpi#7020). Automatic turns continue as that host left them: only the holds the restart
+	 * itself caused are released.
+	 */
+	continued?: boolean;
 }
 
 /** Sources released by real input or an explicit Resume; goal handlers revalidate current state. */
@@ -1579,6 +1615,11 @@ export interface SessionShutdownEvent {
 	reason: "quit" | "reload" | "new" | "resume" | "fork";
 	/** Destination session file when shutting down due to session replacement. */
 	targetSessionFile?: string;
+	/**
+	 * The session was closed on request with a graceful close (oh-my-openagent#14313): stop the work it would
+	 * otherwise restore on a reopen (monitors, loops) and leave state that reads as cleanly stopped.
+	 */
+	closed?: true;
 	/**
 	 * Per-handler signal the host aborts when this handler exceeds
 	 * `sessionShutdownHandlerTimeoutMs`; teardown then continues without it.
@@ -2220,6 +2261,22 @@ export type ToolCallEvent =
 	| LsToolCallEvent
 	| CustomToolCallEvent;
 
+/**
+ * Fired once for each call about to run, before the tool executes: after its whole `tool_call` chain let it run, or at
+ * once when no `tool_call` handler is registered. `input` is a deep copy of the arguments the tool runs with, after the
+ * handlers' changes (a handler may have redirected a path). Observe only: what a handler returns or changes here does
+ * not reach the call. Not fired for a blocked call. The call waits for these handlers; the turn's abort ends that wait
+ * and the call does not run.
+ */
+export interface ToolCallReadyEvent {
+	type: "tool_call_ready";
+	toolCallId: string;
+	toolName: string;
+	/** Set when another tool (for example a codemode script) issued this call. */
+	parentToolCallId?: string;
+	input: Record<string, unknown>;
+}
+
 interface ToolResultEventBase {
 	type: "tool_result";
 	/** The call's id; `<parent id>/<n>` for nested calls, see `ToolCallEvent`. */
@@ -2396,6 +2453,7 @@ export type ExtensionEvent =
 	| InputEvent
 	| InputDispositionEvent
 	| ToolCallEvent
+	| ToolCallReadyEvent
 	| ToolResultEvent;
 
 // ============================================================================
@@ -2917,6 +2975,11 @@ export interface ExtensionAPI {
 	on(
 		event: "tool_call",
 		handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_call_ready",
+		handler: ExtensionHandler<ToolCallReadyEvent>,
 		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(
@@ -3545,6 +3608,8 @@ export type InlineExtension =
 			factory: ExtensionFactory;
 			/** Omit this extension from the startup Extensions list. */
 			hidden?: boolean;
+			/** Host-supplied default, controlled by enabledBuiltinExtensions/disabledBuiltinExtensions by name. */
+			host?: boolean;
 			/**
 			 * Leave this extension out when another extension registers a tool, command, or flag with a
 			 * name it registers during loading, instead of reporting a conflict. The CLI's built-in MCP,
@@ -3906,6 +3971,7 @@ export interface ExtensionContextActions {
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
+	getTelemetryPermitted?: () => boolean;
 	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
 	getDeviceFiles?: () => DeviceFiles;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
@@ -3930,6 +3996,8 @@ export interface ExtensionContextActions {
 	) => Promise<AgentToolCallOutcome>;
 	/** Backs `ExtensionToolContext.tools`. */
 	getCallableTools?: () => readonly AgentTool[];
+	/** Backs `ExtensionToolContext.issuedByModel`. Without it, no call counts as issued by the model. */
+	isModelIssuedToolCall?: (toolCallId: string) => boolean;
 }
 
 export interface LoadedHookSources {

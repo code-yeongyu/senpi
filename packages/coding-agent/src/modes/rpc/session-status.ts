@@ -8,6 +8,7 @@
  * socket or a registry, so the derivation table is pinned by unit tests rather than by timing.
  */
 import type { SessionKind } from "../../core/extensions/types.ts";
+import type { RetryWait } from "../../core/retry-wait.ts";
 import type { SettledFields, ThreadSettledBy } from "../../core/session-settled.ts";
 import type { RpcSessionState } from "./session-registry-types.ts";
 
@@ -38,7 +39,8 @@ export type SessionStatusCause =
 	| "context"
 	| "rename"
 	| "archive"
-	| "settle";
+	| "settle"
+	| "retry";
 
 export type SessionStatusActor = "client" | "agent" | "host";
 
@@ -57,6 +59,8 @@ export interface SessionStatusEntryView {
 	readonly kind: SessionKind;
 	readonly cwd: string;
 	readonly attachments: number;
+	/** Milliseconds since the Unix epoch of the holder's last observed activity, if known. */
+	readonly lastActivityAt?: number;
 	readonly durableSessionId?: string;
 	readonly sessionPath?: string;
 	readonly name?: string;
@@ -82,6 +86,7 @@ export interface SessionStatusRuntimeView {
 	readonly steering: number;
 	readonly followUp: number;
 	readonly pendingQuestions: number;
+	readonly waiting?: RetryWait;
 }
 
 /** The fanout's pending `question` frames for the session (replayed on attach); undefined when the count is unknown. */
@@ -105,6 +110,7 @@ export interface DerivedSessionStatus {
 	readonly model?: { readonly provider: string; readonly id: string };
 	readonly thinkingLevel?: string;
 	readonly pendingQueue: { readonly steering: number; readonly followUp: number };
+	readonly waiting?: RetryWait;
 	readonly context: PublishedSessionContext;
 }
 
@@ -135,8 +141,11 @@ export interface SessionStatusRecord {
 	readonly model?: { readonly provider: string; readonly id: string };
 	readonly thinkingLevel?: string;
 	readonly pendingQueue: { readonly steering: number; readonly followUp: number };
+	/** senpi#7025: the auto-retry wait the running session sleeps through; absent when it is not waiting. */
+	readonly waiting?: RetryWait;
 	readonly context?: PublishedSessionContext;
 	readonly lastEffect?: SessionStatusLastEffect;
+	/** The last published status change. With no recorded change, snapshots use last known activity, or subscription time if unknown. */
 	readonly lastChange: { readonly at: string; readonly cause: SessionStatusCause; readonly by: SessionStatusActor };
 }
 
@@ -200,6 +209,7 @@ export function deriveSessionStatus(
 		...(runtime?.model !== undefined ? { model: { provider: runtime.model.provider, id: runtime.model.id } } : {}),
 		...(runtime?.thinkingLevel !== undefined ? { thinkingLevel: runtime.thinkingLevel } : {}),
 		pendingQueue: { steering: runtime?.steering ?? 0, followUp: runtime?.followUp ?? 0 },
+		...(runtime?.waiting !== undefined && status === "running" ? { waiting: runtime.waiting } : {}),
 		context: entry.context,
 	};
 }
@@ -256,6 +266,9 @@ export function causeOfRecord(record: {
 			return "settle";
 		case "question_resolved":
 			return "question";
+		case "auto_retry_start":
+		case "auto_retry_end":
+			return "retry";
 		case "extension_ui_request":
 			return record.method === "question" ? "question" : undefined;
 		case "compaction_start":

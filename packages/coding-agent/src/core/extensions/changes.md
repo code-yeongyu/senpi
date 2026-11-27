@@ -1,3 +1,166 @@
+## 2026-11-22 - Scope snapshot delivery to the subscribing client (senpi#4669)
+
+### What changed
+- `packages/coding-agent/src/core/extensions/runner.ts` supplies a reply function valid only during the subscription notification, and `replayRpcState` runs that same notification for one receiver without a new subscription.
+
+### Why
+- Broadcasting a snapshot would send existing clients a duplicate initial event.
+
+### Why an extension could not handle it
+- Only the runner knows which RPC listener just subscribed.
+
+### Expected merge conflict zones
+- `onRpcEvent` listener registration.
+
+## 2026-11-19 - tool_result handlers still run for a tool an abort cut (senpi#7073)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolResult()` hands the turn's abort signal to the hook wait only when it is not already aborted, so the `tool_result` handlers of a tool the abort cut run to completion as before; an abort that arrives during the wait still ends it.
+- `packages/coding-agent/src/core/extensions/tool-hook-wait.ts`: `SELF_BOUNDED_TOOL_HOOK_PATH` and `DEFAULT_TOOL_RESULT_HANDLER_TIMEOUT_MS` are module-private.
+
+### Why
+
+- senpi#7069 made the wait answer `aborted` at once for an already-aborted turn, which skipped the PostToolUse handlers after an abort mid-tool (fused equivalence case E09).
+
+### Why an extension could not handle it
+
+- The wait is the runner's own dispatch loop.
+
+### Expected merge conflict zones
+
+- LOW: the `waitForToolHook` call inside `emitToolResult()`.
+
+## 2026-11-19 - A tool hook handler cannot hold the tool loop (oh-my-openagent#14354)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/tool-hook-wait.ts` (new): `waitForToolHook()` waits on one handler until it settles, the turn's abort signal fires or a deadline passes; `toolResultHandlerTimeoutMs()` resolves the `tool_result` deadline (default 120 s, `SENPI_TOOL_RESULT_HANDLER_TIMEOUT_MS` overrides, 0 disables, the builtin hooks extension is exempt because its command hooks carry their own timeout).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolResult()` waits on each handler through `waitForToolHook()`: past the deadline the handler is abandoned, the tool result continues without it, the hook run ends `failed` and an extension error names the extension and the elapsed time; an abort of the turn ends the wait. `emitToolCall()` has no deadline, and an abort of the turn ends its wait and blocks the call as `Operation aborted`.
+
+### Why
+
+- A `tool_result` handler that never settled held the tool loop forever. The await had no deadline and ignored the turn's abort signal, so Esc and an RPC interrupt did nothing, and an in-process handler leaves no child to kill.
+
+### Why an extension could not handle it
+
+- The wait is the runner's own dispatch loop; an extension cannot bound another extension's handler.
+
+### Expected merge conflict zones
+
+- MEDIUM: the handler call inside the `emitToolResult()` and `emitToolCall()` loops in `runner.ts`, plus one import line.
+
+## 2026-11-19 - session_start says when a host restart continued the session (senpi#7020)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SessionStartEvent.continued?: boolean`, `true` when a host reopened the session because it was live when the previous host ended.
+
+### Why
+
+- A handler that suppresses work on a cold reopen (the goal extension's continuation-flood guard) must not suppress a session the restart merely interrupted.
+
+### Why an extension could not handle it
+
+- The event is emitted by the host's open; only the host knows why it reopened the session.
+
+### Expected merge conflict zones
+
+- LOW: one optional field on `SessionStartEvent`.
+
+## 2026-11-19 - `session_shutdown.closed` (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SessionShutdownEvent` gains `closed?: true`, set when a graceful close ended the session on request. The terminal builtin then records no monitor or background job to restore, loops end `stopped`, and an active goal is paused.
+
+### Why
+
+- oh-my-openagent#14313: a session closed on purpose must reopen with nothing restored and nothing held.
+
+### Why an extension could not handle it
+
+- The field is part of the public event contract that every extension's shutdown handler reads.
+
+### Expected merge conflict zones
+
+- LOW: the `SessionShutdownEvent` interface.
+
+## 2026-11-18 - ExtensionToolContext.promptSurface (senpi#6925)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionToolContext` gains the optional `promptSurface`: the prompt surface of the session the call belongs to. On a hand, that is the brain session's, sent with the call.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createToolContext` serves `promptSurface`. On a session it comes from `getSystemPromptOptions().surface`; on a runtime without a session, from the new `bindSessionlessFacts({ promptSurfaceOf })`.
+
+### Why
+
+- senpi#6921 L2. A tool on a hand must report what the brain session's host does with its result.
+
+### Why an extension could not handle it
+
+- Only the runtime that runs a call knows the surface of the session the call belongs to.
+
+### Expected merge conflict zones
+
+- LOW: the end of `ExtensionToolContext` in `types.ts`; the tool-context fields and `bindSessionlessFacts` in `runner.ts`.
+
+## 2026-11-17 - ExtensionToolContext.issuedByModel on hands (senpi#6920)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindSessionlessFacts` accepts `isModelIssuedToolCall`, which backs `ctx.issuedByModel` on a runtime without a session.
+- `packages/coding-agent/src/core/extensions/types.ts`: the `issuedByModel` contract names the hand case. On a hand, a call the brain's agent loop dispatched counts as issued by the model.
+
+### Why
+
+- senpi#6919 L2. Only `bindCore` provided the flag, so a hand reported every call as `false`, although the brain's model issued it.
+
+### Why an extension could not handle it
+
+- The origin of a hand's call is known only to the runtime that runs it.
+
+### Expected merge conflict zones
+
+- LOW: the `bindSessionlessFacts` parameter list and the head of its body in `runner.ts`; the `issuedByModel` doc comment in `types.ts`.
+
+## 2026-11-17 - ExtensionToolContext.issuedByModel (senpi#6917)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionToolContext` gains `readonly issuedByModel: boolean`. It is true when the model issued the running call, through the agent loop or a provider's exec channel (Cursor). `ExtensionContextActions` gains the optional `isModelIssuedToolCall(toolCallId)` that backs it.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createToolContext` sets `issuedByModel` from the bound `isModelIssuedToolCall`, and is false when no host binds one.
+
+### Why
+
+- senpi#6915 / senpi#6917 review M1. show_html_page must know whether its result joins the transcript, so the page counts against the session's page budget. Only the session knows a call's origin. Looking the id up in saved messages missed Cursor exec-frame calls, which run before their issuing message is saved.
+
+### Why an extension could not handle it
+
+- A tool sees only its call id; the origin of the call is known only to the session that ran it.
+
+### Expected merge conflict zones
+
+- LOW: the end of `ExtensionToolContext` and `ExtensionContextActions` in `types.ts`; the tool-context fields in `runner.ts` (`createToolContext`, the bound-action fields and their assignment).
+
+## 2026-10-30 - Declare host-supplied default extensions (#5045)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds `InlineExtension.host` so an SDK host can supply a default extension under existing per-name settings.
+
+### Why
+
+- Host tools must not live in the engine's unconditional catalog, and relocating them must not revive a tool the user disabled.
+
+### Why an extension could not handle it
+
+- The public factory contract tells the resource loader how to compose defaults before extension execution.
+
+### Expected merge conflict zones
+
+- The named `InlineExtension` variant in `packages/coding-agent/src/core/extensions/types.ts`.
+
 ## 2026-11-17 - getAllTools() carries a tool's own row renderers (senpi#6903)
 
 ### What changed

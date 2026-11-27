@@ -94,19 +94,25 @@ export function admitInput(
 		whenIdle: whenIdle === "start" ? "start" : "queue",
 	});
 	const identity = clientMessageId === undefined ? {} : { clientMessageId };
-	const admitted = (disposition: "started" | "queued"): object => {
-		if (clientMessageId === undefined) return answered(id, command.type, { disposition });
+	const admitted = (disposition: TerminalInputReceipt["disposition"]): object => {
+		const holds = {
+			...(result.holds === undefined ? {} : { holds: [...result.holds] }),
+			...(result.engine_turn_cap === undefined ? {} : { engineTurnCap: result.engine_turn_cap }),
+		};
+		if (clientMessageId === undefined) return answered(id, command.type, { disposition, ...holds });
 		const receipt: TerminalInputReceipt = {
 			fingerprint,
 			disposition,
 			admission: { clientMessageId, durableSessionId: context.session.sessionId, disposition },
 		};
 		context.attachments.receipts.set(clientMessageId, receipt);
-		return answered(id, command.type, { disposition, clientMessageId, admission: receipt.admission });
+		return answered(id, command.type, { disposition, clientMessageId, admission: receipt.admission, ...holds });
 	};
 	switch (result.kind) {
 		case "started":
 			return admitted("started");
+		case "held":
+			return admitted("held");
 		case "steered":
 		case "queued":
 			return admitted("queued");
@@ -114,8 +120,9 @@ export function admitInput(
 			return answered(id, command.type, { disposition: "queued", duplicate: true, ...identity });
 		case "held_draft":
 			return refusal(id, command.type, "held_draft", {
-				reason: "the user is composing in this terminal, so nothing was delivered",
-				action: "retry after the draft is sent or cleared",
+				reason:
+					"input the user submitted in this terminal has not reached the runtime yet, so nothing was delivered",
+				action: "retry once that input was taken",
 			});
 		case "turn_conflict":
 			return refusal(id, command.type, "turn_conflict", {

@@ -143,8 +143,12 @@ export async function mcpRuntimeWithScopes(options: McpScopedRuntimeOptions): Pr
 			// The scope's own tool context, listing the runtime's tools the way a session's callable set does.
 			const context: ExtensionToolContext = Object.assign(scope.runner.createContext(), {
 				tools: wrapRegisteredTools(scope.runner.getAllRegisteredTools(), scope.runner),
+				issuedByModel: true,
 				executeTool: async () => {
 					throw new Error("nested tool calls are not part of this harness");
+				},
+				reportToolResult: async () => {
+					throw new Error("reported tool results are not part of this harness");
 				},
 			});
 			const result = await definition.execute(`call-${calls}`, args, undefined, undefined, context);

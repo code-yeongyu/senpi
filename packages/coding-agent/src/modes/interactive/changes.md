@@ -1,3 +1,173 @@
+## 2026-11-24 - A model switch from the picker no longer replays the transcript (senpi#7411)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/model-selector.ts`: an optional `layout.rowsBelow(width)` constructor argument; when it is given, `render()` caps the model list so the picker plus the rows below it fit the terminal height (at least one model), and lets a capped list grow back when the screen gets taller.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the model picker gets `rowsBelow` from the rendered height of `widgetContainerBelow` plus `footerContainer`; `showSelector` clears `lastStatusSpacer`/`lastStatusText`, so the first status after a selector appends a row instead of rewriting the previous status row.
+
+### Why
+
+- A picker taller than the screen pushed its top rows into scrollback, and the status after the choice rewrote a status row the picker had pushed off screen. Either way the frame changed a row above the screen while the line count changed, so the renderer cleared the scrollback and replayed the whole transcript: a full-screen flash, worst over a remote link, and a shifted screen on a phone (sisyphuslabs/doriterm#2745).
+
+### Why an extension could not handle it
+
+- The picker's sizing and the status-row collapse are core interactive-mode behavior; no extension hook sizes a built-in selector or owns the status row anchor.
+
+### Expected merge conflict zones
+
+- LOW: `ModelSelectorComponent` constructor signature and `updateList()` window sizing; `showSelector()` body and the `new ModelSelectorComponent(...)` call in `showModelSelector`.
+
+## 2026-11-22 - Match model-family warnings at name boundaries (senpi#2753)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts` distinguishes actual Qwen and MiniMax family names from unrelated words: the name must not follow a letter, digit, or combining mark and must not be followed by a letter or combining mark. These boundaries apply across scripts and still allow version suffixes.
+
+### Why
+
+- A false warning on an unrelated model undermines the notice for models it is meant to identify.
+
+### Why an extension could not handle it
+
+- The interactive model-selection surface invokes the warning directly.
+
+### Expected merge conflict zones
+
+- LOW: the family predicate in `packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts`. The warning text and rendering are unchanged.
+
+## 2026-11-14 - The terminal control endpoint refuses an `interrupt` `background` other than `"stop"`
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-session-commands.ts`: the control endpoint's `interrupt` refuses a `background` other than `"stop"` with the RPC host's reason, before it touches the turn.
+
+### Why
+
+- The endpoint passed any value through, so an invalid one interrupted the turn as a plain interrupt where the RPC host refused it.
+
+### Why an extension could not handle it
+
+- The control endpoint is interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case of `runSessionControlCommand`.
+
+## 2026-11-19 - A terminal closes its own session gracefully on request (oh-my-openagent#14313, senpi#7046)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the control surface's `closeSession` runs the normal quit path after the close's answer is sent.
+- `packages/coding-agent/src/modes/interactive/session-control-close.ts` (new): `unload_session { graceful: true }` on the control endpoint. It refuses while the composer holds unsent text (before the fence and again after the drain), drains like a host, answers, and then asks the terminal to exit.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: lists `unload_session` and the `unload_graceful` capability, and routes the command.
+
+### Why
+
+- oh-my-openagent#14313: moving or closing a terminal-hosted session needed a kill or TERM, which reopened as an interrupted run.
+
+### Why an extension could not handle it
+
+- The control endpoint's command set and the terminal's quit path are the interactive mode's own.
+
+### Expected merge conflict zones
+
+- LOW: `sessionControlContext()` in `interactive-mode.ts`.
+
+## 2026-11-19 - A peer delivery to an idle terminal starts its own turn and leaves the draft alone (senpi#7043)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the control surface answers `submissionInFlight()` (the host's open submission tickets) and `hasDraft()` (`hasComposerDraft()`: non-blank text or pending images) instead of one `draftHold()`; `composerHold()` became the boolean `hasComposerDraft()`, which also feeds `attachEditor`.
+- `packages/coding-agent/src/modes/interactive/session-control-lifecycle.ts`: `editorHold` reports `hold_reason: "draft"` only while a submission is in flight; a draft in the composer no longer holds admission.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: `TuiControlSurface` declares `submissionInFlight()` and `hasDraft()`; `get_state.editor_has_draft` is either of them, as before.
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: the `held_draft` refusal names the submitted input still on its way, not the user composing.
+
+### Why
+
+- A delivery from another session to an idle terminal with a half-typed draft was refused as `held_draft` and stayed queued with its sender until the person submitted or cleared the draft, so the delivery would run together with the person's prompt. Now it starts its own turn at once (the sender is answered `started`), and the draft stays in the composer to send on its own. Submitted input still holds admission, so a delivery never overtakes it.
+
+### Why an extension could not handle it
+
+- The composer state and the submission tickets are interactive-mode internals that feed the engine's admission gate; an extension draining deliveries only sees the gate's refusal.
+
+### Expected merge conflict zones
+
+- LOW: the `draftHold` line of `sessionControlContext`, the `composerHold` method and its `attachEditor` call site in `interactive-mode.ts`.
+
+## 2026-11-18 - `/trust` and the reload trust save await the asynchronous trust store (#6823 re-land)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `/trust` selector saves through the now asynchronous `ProjectTrustStore.setMany` and shows "Saved trust decision" once the save lands, or a warning when it fails; the save after `/reload` (`maybeSaveImplicitProjectTrustAfterReload`) awaits it.
+
+### Why
+
+- `ProjectTrustStore` writes are asynchronous so the RPC session path keeps no new synchronous fs calls (#6954).
+
+### Why an extension could not handle it
+
+- The `/trust` selector and reload belong to the interactive core.
+
+### Expected merge conflict zones
+
+- LOW: `showTrustSelector`, `maybeSaveImplicitProjectTrustAfterReload`.
+
+## 2026-11-17 - A terminal's session-control endpoint refuses expectedLeafId by name (senpi#6922)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: `expectedLeafId` is in `UNSERVED_INPUT_FIELDS`, so a `prompt` carrying it is refused with `unsupported_field` instead of being admitted with the guard silently dropped.
+
+### Why
+
+- That endpoint delivers through the session's external admission, which queues the text and starts the turn later, at a leaf an admission-time check never sees; refusing by name keeps the guard's promise honest.
+
+### Why an extension could not handle it
+
+- The terminal control endpoint's field allow-list is fixed in core before any extension sees the input.
+
+### Expected merge conflict zones
+
+- LOW: `UNSERVED_INPUT_FIELDS`.
+
+## 2026-11-18 - The attached TUI applies a start's model, thinking and prompts (senpi#6914)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/attach-startup.ts` (new): `applyAttachStartup(request, sessionId, startup)` sends `set_model` with `scope: "session"` (only this session's model, as a local `--model`; the device's saved default stays), then `set_thinking_level`, then each prompt as `prompt` with `streamingBehavior: "followUp"`. A host refusal rejects, so the prompts never run on a model the session refused.
+- `packages/coding-agent/src/modes/interactive/attach.ts`: `connect(address, ref, startup?)` applies the startup once the history is shown.
+- `packages/coding-agent/src/modes/interactive/run-attached-tui.ts`: takes `startup` and passes it to `connect`.
+
+### Why
+
+- senpi#6911 L1: a terminal start's command line becomes the attached session's own commands.
+
+### Why an extension could not handle it
+
+- The attached TUI loads no extensions.
+
+### Expected merge conflict zones
+
+- LOW: the end of `connect()` in `attach.ts`; the options of `runAttachedTui`.
+
+## 2026-11-17 - The attached TUI shows the session's model live (senpi#6909)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/attach.ts`: the status line names the session's model from `get_state`, and a `model_changed` record updates it, so a switch another client of the session makes shows at once.
+
+### Why
+
+- With a terminal attached to a session the desktop also drives, a model switch in either must show in the other.
+
+### Why an extension could not handle it
+
+- The attached TUI loads no extensions.
+
+### Expected merge conflict zones
+
+- LOW: `record()` and `showStatus()` in `attach.ts`.
+
 ## 2026-11-15 - Terminal control endpoint lists the settled flag (senpi#6768)
 
 ### What changed

@@ -9,8 +9,6 @@ import { fileURLToPath } from "node:url";
 import { WORKSPACE_PACKAGES } from "./release-packages.mjs";
 import { CHANGELOGS } from "./release-changelog.mjs";
 
-const MANIFEST = "packages/ai/src/providers/data/.manifest.json";
-const manifestText = (generatedAt) => `${JSON.stringify({ schemaVersion: 6, generatedAt, files: { "nvidia.json": "h1" } })}\n`;
 // "superseded" is what CI reports when a newer push cancels the run: the always() fan-in fails, and its workflow run
 // concludes cancelled.
 const ciCheckRuns = (ci, head) =>
@@ -29,15 +27,12 @@ const ciCheckRuns = (ci, head) =>
 		},
 	]);
 
-for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, forceTests = false, platformRed = false, ciBasisReceipt = false } of [
+for (const { mergeStatus, ci, forceTests = false, platformRed = false, ciBasisReceipt = false, dryRun = false } of [
 	{ mergeStatus: 0, ci: "success" },
 	{ mergeStatus: 1, ci: "success" },
 	{ mergeStatus: 0, ci: "failure" },
-	{ mergeStatus: 0, ci: "success", catalogDirty: true },
 	{ mergeStatus: 0, ci: "superseded" },
-	{ mergeStatus: 0, ci: "success", manifestStampOnly: true },
 	{ mergeStatus: 0, ci: "success", forceTests: true },
-	{ mergeStatus: 0, ci: "success", catalogDirty: true, forceTests: true },
 	// senpi#6834: a red macOS/Windows leg on main stops the release on the CI-evidence path and on one that runs its own suite.
 	{ mergeStatus: 0, ci: "success", platformRed: true },
 	{ mergeStatus: 0, ci: "success", forceTests: true, platformRed: true },
@@ -45,8 +40,10 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	// run is read once and not waited for, but a known-red run still stops the release (review LOW L2 on senpi#6861).
 	{ mergeStatus: 0, ci: "superseded", ciBasisReceipt: true },
 	{ mergeStatus: 0, ci: "failure", ciBasisReceipt: true },
+	// Review LOW L1 on senpi#6867: the dry run previews the refusal the live run makes on a red run, never "no CI wait".
+	{ mergeStatus: 0, ci: "failure", ciBasisReceipt: true, dryRun: true },
 ]) {
-	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""}${platformRed ? " and a red main platform run" : ""}${ciBasisReceipt ? " and a CI-basis receipt" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
+	it(`release CLI with CI ${ci}${forceTests ? " and --force-tests" : ""}${platformRed ? " and a red main platform run" : ""}${ciBasisReceipt ? " and a CI-basis receipt" : ""}${dryRun ? " in a dry run" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
 		// A pinned --sha must be 40 hex; every other case keeps the readable fixture name.
 		const head = ciBasisReceipt ? "f".repeat(40) : "fixture-sha";
@@ -61,30 +58,18 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 			for (const file of CHANGELOGS) {
 				writeFileSync(join(root, file), "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Fixture.\n");
 			}
-			if (manifestStampOnly) {
-				mkdirSync(dirname(join(root, MANIFEST)), { recursive: true });
-				writeFileSync(join(root, MANIFEST), manifestText("2026-10-08T09:00:00.000Z"));
-			}
 			const bin = join(root, "bin");
 			mkdirSync(bin);
 			const calls = join(root, "commands.jsonl");
 			for (const name of ["git", "npm", "node", "bun", "gh"]) {
 				const body = `
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...args]) + "\\n");
 if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "branch") process.stdout.write("main\\n");
-	if (args[0] === "status" && ${catalogDirty} && args.some((arg) => arg.startsWith("packages/ai/src/providers"))) {
-		process.stdout.write(" M packages/ai/src/providers/data/nvidia.json" + (args.includes("-z") ? "\\0" : "\\n"));
-	}
-	if (args[0] === "status" && ${manifestStampOnly} && args.some((arg) => arg.startsWith("packages/ai/src/providers")) && !existsSync(${JSON.stringify(join("RESTORED"))})) {
-		process.stdout.write(" M ${MANIFEST}" + (args.includes("-z") ? "\\0" : "\\n"));
-	}
-	if (args[0] === "show" && args[1] === "HEAD:${MANIFEST}") process.stdout.write(${JSON.stringify(manifestText("2026-10-01T00:00:00.000Z"))});
-	if (args[0] === "checkout" && args[2] === "${MANIFEST}") writeFileSync("RESTORED", "");
 	if (args[0] === "rev-parse" && args[1] === "origin/main") { process.stdout.write("fixture-main\\n"); process.exit(0); }
 	if (args[0] === "rev-parse") process.stdout.write("${head}\\n");
 	// A pinned release's commit is one of main's own first-parent commits (release-pin.mjs).
@@ -124,7 +109,7 @@ if (${JSON.stringify(name)} === "gh") {
 					chmodSync(join(bin, name), 0o755);
 				}
 			}
-			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : []), ...(ciBasisReceipt ? ["--sha", head, "--ci-basis-receipt", "rcpt-1"] : [])], {
+			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : []), ...(ciBasisReceipt ? ["--sha", head, "--ci-basis-receipt", "rcpt-1"] : []), ...(dryRun ? ["--dry-run"] : [])], {
 				cwd: root,
 				// Without npm_* (set when this runs under `npm run`), run-workspaces resolves the stubbed npm from PATH.
 				env: {
@@ -142,35 +127,11 @@ if (${JSON.stringify(name)} === "gh") {
 			const isScriptsStep = (args) => args[0] === "npm" && args[1] === "run" && args[2] === "test:scripts";
 			const isShard = (n) => (args) => JSON.stringify(args) === JSON.stringify(["npm", "run", "test", "--", `--shard=${n}/2`]);
 			const isForcedSuiteStep = (args) => isScriptsStep(args) || isShard(1)(args) || isShard(2)(args);
-			if (catalogDirty && !forceTests) {
-				// A changed catalog is never pushed to main untested (v2026.10.19-1): without --force-tests the release stops
-				// before it commits, tags or pushes anything.
-				assert.equal(result.status, 1, result.stderr);
-				assert.match(result.stderr, /dispatch with force_tests/);
-				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
-				return;
-			}
 			if (platformRed) {
 				assert.equal(result.status, 1, result.stderr);
 				assert.match(result.stderr, /ci\.yml.*macOS combined.*example\.test\/runs\/99/);
 				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
 				assert.equal(commands.some((args) => args[1] === "commit" && /^release: v/.test(args.at(-1))), false);
-				return;
-			}
-			if (catalogDirty && forceTests) {
-				// The catalog commit stays on the release; the forced suite runs after it, and main is pushed once, at the end.
-				assert.equal(result.status, 0, result.stderr);
-				const index = (predicate) => commands.findIndex(predicate);
-				const catalogCommit = index((args) => args[1] === "commit" && /regenerate the model catalog/.test(args.at(-1)));
-				const test = index(isScriptsStep);
-				const shards = [index(isShard(1)), index(isShard(2))];
-				const firstPush = index((args) => args[1] === "push");
-				assert.ok(catalogCommit >= 0 && catalogCommit < test && test < firstPush, JSON.stringify(commands));
-				assert.ok(shards.every((shard) => shard > test && shard < firstPush), JSON.stringify(commands));
-				assert.deepEqual(commands.filter((args) => args[1] === "push"), [
-					["git", "push", "origin", "main"],
-					["git", "push", "origin", "v2026.9.12-3"],
-				]);
 				return;
 			}
 			if (forceTests) {
@@ -193,6 +154,13 @@ if (${JSON.stringify(name)} === "gh") {
 				const checkRunReads = commands.filter((args) => args[0] === "gh" && String(args[2]).includes("check-runs"));
 				assert.equal(checkRunReads.length, 1, "the waived release reads CI once and never polls it");
 				assert.equal(commands.some(isForcedSuiteStep), false);
+				if (dryRun) {
+					assert.equal(result.status, 0, result.stderr);
+					assert.match(result.stdout, /\[dry-run\] the live run would refuse: CI failed on f{12}.*a ci_basis_receipt waives only the wait/);
+					assert.doesNotMatch(result.stdout, /no CI wait/);
+					assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
+					return;
+				}
 				if (ci === "failure") {
 					assert.equal(result.status, 1, result.stderr);
 					assert.match(result.stderr, /CI failed on f{12}.*a ci_basis_receipt waives only the wait/);
@@ -200,6 +168,8 @@ if (${JSON.stringify(name)} === "gh") {
 					return;
 				}
 				assert.equal(result.status, 0, result.stderr);
+				// Review LOW L2 on senpi#6867: the one read classified the run as superseded, not as a missing run.
+				assert.match(result.stdout, /test gate: the CI run for f{12} was cancelled/);
 				assert.match(result.stdout, new RegExp(`hosted CI wait waived by ci_basis_receipt rcpt-1 for the pinned commit ${head}`));
 				return;
 			}
@@ -212,17 +182,6 @@ if (${JSON.stringify(name)} === "gh") {
 				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag"), []);
 				return;
 			}
-			if (manifestStampOnly) {
-				// A regeneration that only re-stamped the manifest restores it and pushes no catalog commit.
-				assert.equal(result.status, 0, result.stderr);
-				assert.ok(commands.some((args) => args[1] === "checkout" && args[3] === MANIFEST), JSON.stringify(commands));
-				assert.equal(commands.some((args) => args[1] === "commit" && /regenerate the model catalog/.test(args.at(-1))), false);
-				assert.deepEqual(commands.filter((args) => args[1] === "push"), [
-					["git", "push", "origin", "main"],
-					["git", "push", "origin", "v2026.9.12-3"],
-				]);
-				return;
-			}
 			if (ci !== "success") {
 				// senpi#2943: red CI on the release commit stops the release before it commits, tags or pushes.
 				assert.equal(result.status, 1, result.stderr);
@@ -232,6 +191,8 @@ if (${JSON.stringify(name)} === "gh") {
 				return;
 			}
 			assert.equal(commands.some(isForcedSuiteStep), false);
+			// senpi#2287: the release ships the catalog main committed and CI tested; it never regenerates or re-checks it.
+			assert.equal(commands.some((args) => args.includes("generate-models") || args.includes("check:provider-defaults")), false, JSON.stringify(commands));
 			assert.ok(commands.some((args) => args[0] === "git" && args[1] === "merge"), result.stderr);
 			assert.equal(result.status, mergeStatus, result.stderr);
 			assert.deepEqual(commands.filter((args) => args[1] === "push"), mergeStatus === 0 ? [

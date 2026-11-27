@@ -46,6 +46,7 @@ import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
+import { exportSessionHtml } from "./engine/queries.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
@@ -80,7 +81,6 @@ import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
-import { exportFromFile } from "./core/export-html/index.ts";
 import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
@@ -93,6 +93,7 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
+import { recordOpenerRefusal, refusesApprovals } from "./core/opener-approvals.ts";
 import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
@@ -114,12 +115,17 @@ import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { startOpenTimer } from "./core/open-timing.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
-import { getSavedProjectTrust, hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
+import {
+	getSavedProjectTrustState,
+	hasTrustRequiringProjectResources,
+	ProjectTrustStore,
+} from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { takePresenterAccountAuthority } from "./presenter-authority-slot.ts";
+import { takeProgramResumeToken } from "./core/program-resume-token.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
@@ -138,11 +144,12 @@ const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP
  * `persistSeen` (a run a person reads) it is also recorded as seen, so later runs stay quiet until
  * the problem changes (senpi#3486).
  */
-export function collectAuthDiagnostics(
+export async function collectAuthDiagnostics(
 	authStorage: AuthStorage,
 	context: string,
 	options: { persistSeen: boolean },
-): AgentSessionRuntimeDiagnostic[] {
+): Promise<AgentSessionRuntimeDiagnostic[]> {
+	await authStorage.settleLoad();
 	return [
 		...authStorage.drainErrors().map((error) => error.message),
 		...authStorage.takePendingNotices(options).map((notice) => notice.message),
@@ -150,7 +157,10 @@ export function collectAuthDiagnostics(
 }
 
 /** The TUI shows auth problems at startup; credential notices are marked seen once shown (senpi#3486). */
-export function interactiveAuthNotices(authStorage: AuthStorage): { messages: string[]; markSeen: () => void } {
+export async function interactiveAuthNotices(
+	authStorage: AuthStorage,
+): Promise<{ messages: string[]; markSeen: () => void }> {
+	await authStorage.settleLoad();
 	const pending = authStorage.takePendingNotices({ persistSeen: false });
 	return {
 		messages: [
@@ -957,7 +967,12 @@ export function createCliRuntimeFactory(
 			label: `Loading ${APP_NAME}`,
 		});
 	const trustStore = new ProjectTrustStore(agentDir);
-	const projectTrustByCwd = new Map<string, boolean>();
+	// An answer this process gave a folder without saving it, with the trust store revision it was given under. It
+	// lives until the store is next written, by anyone, for any folder (#6823 review M1).
+	const projectTrustByCwd = new Map<
+		string,
+		{ readonly savedState: null | "no_inherit"; readonly revision: string; readonly trusted: boolean }
+	>();
 	const trustPromptMode: AppMode =
 		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : appMode;
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
@@ -980,10 +995,21 @@ export function createCliRuntimeFactory(
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
-		const savedProjectTrust = await getSavedProjectTrust(trustStore, cwd);
-		// The memo stands in for an unsaved answer only: a decision saved since (an RPC `set_project_trust`, senpi#6176)
-		// is what a fresh process would read, so it outranks what an earlier session of this process resolved.
-		const cachedProjectTrust = savedProjectTrust === null ? projectTrustByCwd.get(cwd) : undefined;
+		const savedState = await getSavedProjectTrustState(trustStore, cwd);
+		const savedProjectTrust = savedState === "no_inherit" ? null : savedState;
+		// The memo stands in for an unsaved answer only while it still answers what is saved. Given with nothing saved,
+		// it holds while nothing is saved for the folder (#6823 review L2); given under a `no_inherit` entry, only
+		// while the trust store is unchanged since, so no save in between, even one that restores the entry, can
+		// bring it back (#6823 review H1, M1), while with no save in between it holds for this process's later
+		// sessions of the folder (#6823 review L1). A saved decision always wins.
+		const trustRevision = await trustStore.revision();
+		const remembered = projectTrustByCwd.get(cwd);
+		const cachedProjectTrust =
+			remembered !== undefined &&
+			remembered.savedState === savedState &&
+			(savedState === null || remembered.revision === trustRevision)
+				? remembered.trusted
+				: undefined;
 		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
@@ -1047,7 +1073,8 @@ export function createCliRuntimeFactory(
 									),
 								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
 							});
-							projectTrustByCwd.set(cwd, trusted);
+							if (savedState === null || savedState === "no_inherit")
+								projectTrustByCwd.set(cwd, { savedState, revision: trustRevision, trusted });
 							return trusted;
 						},
 					}
@@ -1163,6 +1190,9 @@ export function createCliRuntimeFactory(
 			startupLoadingIndicator.setPhase("opening session");
 		}
 		markSwitch("sessionOptions");
+		// A labelled open fails here, before any session exists, when its refusal cannot be made durable. A runtime that
+		// replaces the session (new, switch, fork, clone) is built without the label (`replacementLaunchProfile`).
+		if (refusesApprovals(launchProfile?.sessionContext)) await recordOpenerRefusal(sessionManager);
 		const timer = startOpenTimer("runtime-session");
 		const created = await createAgentSessionFromServices({
 			services,
@@ -1214,6 +1244,8 @@ export function createCliRuntimeFactory(
 export async function main(args: string[], options?: MainOptions) {
 	// First statement: seals the slot before any extension or resource path can load code (D11, senpi#4249).
 	const presenterAccountAuthority = takePresenterAccountAuthority();
+	// Before anything can start a child that would inherit the OSC 7577 token (senpi#7493).
+	const programResumeToken = await takeProgramResumeToken();
 	resetTimings();
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.
@@ -1329,16 +1361,13 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (parsed.export) {
-		let result: string;
-		try {
-			const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
-			result = await exportFromFile(parsed.export, outputPath);
-		} catch (error: unknown) {
-			const message = error instanceof Error ? error.message : "Failed to export session";
-			console.error(chalk.red(`Error: ${message}`));
+		const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
+		const exported = await exportSessionHtml({ session: parsed.export, ...(outputPath ? { out: outputPath } : {}) });
+		if (exported.kind === "error") {
+			console.error(chalk.red(`Error: ${exported.error.message}`));
 			process.exit(1);
 		}
-		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
+		await printThenExit(() => console.log(`Exported to: ${exported.value.path}`), 0);
 	}
 
 	let appMode: AppMode = parsed.printPromptSizes
@@ -1425,7 +1454,7 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([
 			...services.diagnostics,
 			...collectSettingsDiagnosticsWithContext(services.settingsManager, "model listing"),
-			...collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true }),
+			...(await collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true })),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
@@ -1609,6 +1638,18 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const loadedExtensions = resourceLoader.getExtensions().extensions;
 	const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
+	// Before extensions load, a bare option can consume the next positional as a string value.
+	const booleanExtensionFlags = new Set<string>();
+	for (const name of parsed.unknownFlags.keys()) {
+		// applyExtensionFlagValues uses the first declaration when extensions share a name.
+		if (extensionFlags.find((flag) => flag.name === name)?.type === "boolean") {
+			booleanExtensionFlags.add(name);
+			parsed.unknownFlags.set(name, true);
+		}
+	}
+	if (booleanExtensionFlags.size > 0) {
+		parsed.messages = parseArgs(args, { booleanExtensionFlags }).messages;
+	}
 	if (parsed.help) {
 		await printThenExit(() => printHelp(extensionFlags), 0);
 	}
@@ -1669,7 +1710,7 @@ export async function main(args: string[], options?: MainOptions) {
 				})),
 		);
 		reportDiagnostics(
-			collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
+			await collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
 		);
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
@@ -1728,7 +1769,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const interactiveMode = new InteractiveMode(runtime, {
 			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
 			migratedProviders,
-			authNotices: interactiveAuthNotices(services.authStorage),
+			authNotices: await interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
@@ -1740,6 +1781,7 @@ export async function main(args: string[], options?: MainOptions) {
 			chrome: parsed.grokNeo ? "grok" : undefined,
 			tuiMode: parsed.tuiMode,
 			initialThemeSetting: parsed.useTheme,
+			programResumeToken,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();
@@ -1771,7 +1813,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessage,
 			initialImages,
 		});
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
+		reportDiagnostics(await collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
 		stopChildReaper();
 		stopThemeWatcher();
 		restoreStdout();

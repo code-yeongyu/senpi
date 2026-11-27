@@ -3,12 +3,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
+import { createEventBus } from "../../src/core/event-bus.ts";
+import htmlRenderExtension from "../../src/extensions/html-render/index.ts";
 import {
 	MAX_HANDED_PAGE_CHARACTERS,
 	MAX_HANDED_PAGES_CHARACTERS,
-	createShowHtmlPageTool,
-} from "../../src/core/extensions/builtin/html-render/tool.ts";
+} from "../../src/extensions/html-render/handed-pages.ts";
+import { createShowHtmlPageTool, writeHtmlPage } from "../../src/extensions/html-render/tool.ts";
+import { HOST_TOOL_ROUTE_CHANNEL } from "../../src/host-tools.ts";
 import type { ExtensionAPI, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 
@@ -23,7 +25,10 @@ const DATA_PREFIX = "data:image/png;base64,";
 type ShowHtmlPageTool = ReturnType<typeof createShowHtmlPageTool>;
 type Result = Awaited<ReturnType<ShowHtmlPageTool["execute"]>>;
 
-/** A session that records each returned result the way the agent session appends it. */
+/**
+ * A session that records each returned result the way the agent session appends it. A model call's context says
+ * `issuedByModel`, as the session sets it; a call a tool or an extension makes (`origin: "tool"`) does not.
+ */
 function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(new Map()), sessionId = randomUUID()) {
 	const entries: unknown[] = [];
 	const ctx = {
@@ -40,8 +45,9 @@ function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(ne
 			id: toolCallId,
 			message: { role: "toolResult", toolCallId, toolName: "show_html_page", ...result, isError: false },
 		});
-	const show = async (toolCallId: string, html: string) => {
-		const result = await tool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, ctx);
+	const show = async (toolCallId: string, html: string, origin: "model" | "tool" = "model") => {
+		const callCtx = { ...ctx, issuedByModel: origin === "model" };
+		const result = await tool.execute(toolCallId, { html, title: "Shot" }, undefined, undefined, callCtx);
 		const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
 		return { result, text };
 	};
@@ -52,14 +58,21 @@ function session(cwd: string, tool: ShowHtmlPageTool = createShowHtmlPageTool(ne
 function loadExtension() {
 	let tool: ShowHtmlPageTool | undefined;
 	const handlers = new Map<string, () => void>();
+	const events = createEventBus();
 	htmlRenderExtension({
 		registerTool: (registered: ShowHtmlPageTool) => {
 			tool = registered;
 		},
 		on: (event: string, handler: () => void) => handlers.set(event, handler),
+		events,
 	} as unknown as ExtensionAPI);
 	if (tool === undefined) throw new Error("show_html_page was not registered");
-	return { tool, emit: (event: string) => handlers.get(event)?.() };
+	return {
+		tool,
+		emit: (event: string) => handlers.get(event)?.(),
+		route: (execute: (toolCallId: string, args: { html: string; title: string }) => Promise<unknown>) =>
+			events.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page", execute }),
+	};
 }
 
 /** A page with one image whose inlined length is `target`, give or take under 4 characters. */
@@ -134,12 +147,17 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		const { record, show, entries } = session(tempDir);
 		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
 		const inlinedPerBudget = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize);
-		const outcomes: { inlined: boolean; text: string; inlinedLength: number }[] = [];
+		const outcomes: { inlined: boolean; text: string; resultText: unknown; inlinedLength: number }[] = [];
 		for (let index = 0; index < 8; index++) {
 			const { html, inlinedLength } = pageInlinedTo(tempDir, `page-${index}`, pageSize);
 			const { result, text } = await show(`call-${index}`, html);
 			record(`call-${index}`, result);
-			outcomes.push({ inlined: result.details.imagesInlined, text, inlinedLength });
+			outcomes.push({
+				inlined: result.details.imagesInlined,
+				text,
+				resultText: result.details.resultText,
+				inlinedLength,
+			});
 		}
 		const handedBeforeRefusal = outcomes
 			.slice(0, inlinedPerBudget)
@@ -151,6 +169,8 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		expect(outcomes[inlinedPerBudget]?.text).toContain(
 			`this session's pages already carry ${handedBeforeRefusal} of the ${MAX_HANDED_PAGES_CHARACTERS} characters`,
 		);
+		// senpi#6934: the details name the text the result carries, the over-budget one included.
+		expect(outcomes.map((outcome) => outcome.resultText)).toEqual(outcomes.map((outcome) => outcome.text));
 		const getMessages = JSON.stringify({
 			type: "response",
 			command: "get_messages",
@@ -195,6 +215,38 @@ describe("senpi#6907: a session's handed pages together stay under the RPC line 
 		const { result } = await session(tempDir).show("call-big-mention", html);
 
 		expect(result.details.html).toBe(html);
+	});
+});
+
+describe("senpi#5045: a page a host route serves rides the same transcript", () => {
+	let tempDir: string;
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-5045-"));
+	});
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("counts routed pages against the session budget and hands a routed page as written past it", async () => {
+		const extension = loadExtension();
+		extension.route((_toolCallId, args) => writeHtmlPage(args, tempDir));
+		const { show } = session(tempDir, extension.tool);
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		const pagesPerBudget = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize);
+		for (let index = 0; index < pagesPerBudget; index++) {
+			const { result } = await show(`routed-${index}`, pageInlinedTo(tempDir, `routed-${index}`, pageSize).html);
+			expect(result.details.imagesInlined).toBe(true);
+		}
+
+		const { html } = pageInlinedTo(tempDir, "over", pageSize);
+		const { result, text } = await show("over", html);
+
+		expect(result.details.imagesInlined).toBe(false);
+		expect(result.details.html).toBe(html);
+		expect(text).toContain("The page was shown to the reader inline above your reply.");
+		expect(text).toContain(
+			`of the ${MAX_HANDED_PAGES_CHARACTERS} characters of images a session can carry to a viewer`,
+		);
 	});
 });
 
@@ -267,13 +319,29 @@ describe("senpi#6910: nested calls, pages handed as written, and images a script
 		const nestedCount = Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize) + 1;
 		const nested: boolean[] = [];
 		for (let index = 1; index <= nestedCount; index++) {
-			const { result } = await show(`call-eval/${index}`, pageInlinedTo(tempDir, `nested-${index}`, pageSize).html);
+			const { html } = pageInlinedTo(tempDir, `nested-${index}`, pageSize);
+			const { result } = await show(`call-eval/${index}`, html, "tool");
 			nested.push(result.details.imagesInlined);
 		}
 
 		const { result } = await show("call-after", pageInlinedTo(tempDir, "after", pageSize).html);
 
 		expect(nested).toEqual(Array.from({ length: nestedCount }, () => true));
+		expect(result.details.imagesInlined).toBe(true);
+	});
+
+	// senpi#6915: pi.executeTool() gives its call the id `codemode-<uuid>`, with no `/`, yet no message records it.
+	it("a call an extension makes through pi.executeTool neither spends nor keeps the session's budget", async () => {
+		const { show } = session(tempDir);
+		const pageSize = MAX_HANDED_PAGE_CHARACTERS - 100_000;
+		for (let index = 0; index <= Math.floor(MAX_HANDED_PAGES_CHARACTERS / pageSize); index++) {
+			const { html } = pageInlinedTo(tempDir, `extension-${index}`, pageSize);
+			const { result } = await show(`codemode-${randomUUID()}`, html, "tool");
+			expect(result.details.imagesInlined).toBe(true);
+		}
+
+		const { result } = await show("call-after-extension", pageInlinedTo(tempDir, "after", pageSize).html);
+
 		expect(result.details.imagesInlined).toBe(true);
 	});
 

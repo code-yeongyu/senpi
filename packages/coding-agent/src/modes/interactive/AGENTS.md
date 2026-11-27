@@ -51,7 +51,7 @@ changes.md              Fork-specific interactive behavior
 - Themes remain JSON assets and are copied by package build scripts; do not symlink them.
 - Selectors resolve `Promise<T | null>` where `null` means canceled.
 - The TUI always runs its own local session; it never joins a multi-session host. Other sessions reach it only through a control endpoint an extension registers (`session-control-*.ts`, docs/rpc.md "Interactive sessions expose a control endpoint"); a TUI with no registrant opens no socket.
-- External deliveries never overtake the user: every editor submission holds admission until its input reaches the runtime (a ticket per submission, a hold per prompt/command), and a draft in the editor holds it too. A new submit path must claim or release its ticket.
+- External deliveries never overtake the user: every editor submission holds admission until its input reaches the runtime (a ticket per submission, a hold per prompt/command). A draft still in the editor never holds a delivery: an idle session starts the delivery's own turn and leaves the draft untouched (senpi#7043). A new submit path must claim or release its ticket.
 
 ## ANTI-PATTERNS
 

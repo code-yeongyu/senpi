@@ -4,8 +4,10 @@ import type { Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-wor
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { QueuedInput } from "../../core/agent-session.ts";
 import type { HoldKind } from "../../core/engine-turn-hold.ts";
+import type { EngineTurnCap } from "../../core/engine-turn-limit.ts";
 import type { PermissionMode } from "../../core/permission-mode.ts";
 import type { ProviderOrigin } from "../../core/provider-origin.ts";
+import type { RetryWait } from "../../core/retry-wait.ts";
 
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage } from "../../core/extensions/types.ts";
@@ -35,6 +37,11 @@ export interface RpcAuthProvider {
 	keyHint?: string;
 	/** Where the provider is defined, so a client can name the file or extension to edit (senpi#4328). */
 	origin?: ProviderOrigin;
+	/**
+	 * Random, non-secret id of the stored sign-in, new on every sign-in (senpi#4099); absent when none is stored or
+	 * it predates the id. Send it as `logout` `expectedLoginId` to sign out only this sign-in (senpi#7406).
+	 */
+	loginId?: string;
 }
 
 /**
@@ -151,6 +158,8 @@ export interface RpcSessionState extends Partial<PermissionMode> {
 	paused: boolean;
 	pausedNoticeCount: number;
 	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+	/** Present while the engine-turn cap pauses automatic turns: the `engine-paused` reason and its count (senpi#7138). */
+	engineTurnCap?: EngineTurnCap;
 	lifecycle: RpcSessionLifecycle;
 	model?: Model<any>;
 	/**
@@ -223,6 +232,7 @@ export interface RpcSessionState extends Partial<PermissionMode> {
 	usageTotals: UsageTotals;
 	contextUsage?: ContextUsage;
 	retryAttempt: number;
+	retryWait?: RetryWait;
 	isBashRunning: boolean;
 	/** Open question prompts awaiting an answer. Absent when none are pending. */
 	pendingQuestions?: RpcQuestionUiRequest[];

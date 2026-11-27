@@ -1,5 +1,51 @@
 # core/tools changes
 
+## 2026-11-22 - edit and write warn when a JS, TS or JSON file stops parsing (senpi#7256)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/syntax-check.ts` (new, worker-safe): `createSyntaxChecker({ parseScript? })` checks `.json` with `JSON.parse` and `.js .jsx .mjs .cjs .ts .tsx .mts .cts` with an injected `ScriptParser`; files over 1 MiB of text, unknown extensions, a missing parser and any parser failure that is not a syntax error give no verdict. Loaders: `.mjs` and `.cjs` parse as plain JS and `.mts`/`.cts` as TS, all without JSX; `.js` keeps JSX because React toolchains and Bun accept JSX in `.js` files, so JSX added to a `.js` file meant for plain Node gets no warning (a stated limitation). A leading BOM is not content: it is skipped before checking, and positions are counted after it. `parseBreakWarning` builds the one advisory block: it fires only when the content after the call does not parse and the content before it did (a newly created file counts as having parsed), and names the first syntax error's `line:column` when one is known. It is the single advisory boundary of both tools and returns a plain string or `undefined` for any input: every call into the checker or locator and every read of their result fields happens inside it, a failure there gives no warning and leaves the tool's success result as it is, and a position that is not a positive integer line and column is left out. For JSON, the message is always the `JSON.parse` message; `SyntaxChecker.locate` adds a position only when it is confirmed: the offset where strict parsing stops, and where V8 appends `at position N` to the message (only that trailing suffix is read, never input quoted earlier in the message, and never an offset past the content), the same offset.
+- `packages/coding-agent/src/core/tools/strict-json-offset.ts` (new, worker-safe): `strictJsonErrorOffset` scans the ECMA-404 grammar that `JSON.parse` implements and returns the first offset at which no valid JSON text can continue (the text length when it ends early). It is linear and keeps nesting in an array: about 25 ms for a 1 MiB file on Bun 1.4.5, about 130 ms for 1 MiB of nested `[`.
+- `packages/coding-agent/src/core/tools/text-position.ts` (new, worker-safe): `lineAndColumn` turns an offset into a 1-based line and UTF-16 column, counting a lone LF, a lone CR and a CRLF pair as one line break each (scripts also break at U+2028/U+2029, JSON does not), matching V8's JSON positions and Bun's script lines; `utf16IndexOfUtf8Offset` maps Bun's UTF-8 byte offsets to string indices.
+- `packages/coding-agent/src/core/tools/bun-syntax-check.ts` (new, local only): `createLocalSyntaxChecker(bun?)` uses `Bun.Transpiler#scan` for JS/TS when the `Bun` global is present (tests pass a stand-in). A `BuildMessage` is a syntax error and an `AggregateError` of them (several errors at once) reports its first; a `BuildMessage` for an exhausted parser stack, and anything else thrown, is no verdict. The position is recomputed from Bun's byte offset with `lineAndColumn` (Bun's own column is one short after a lone CR) and used where its line agrees with Bun's; otherwise Bun's own line and column stand (Bun puts an end-of-file error at the end of the last line). JSON needs nothing from the host; on Node only JSON is checked.
+- `packages/coding-agent/src/core/tools/edit-core.ts`: new `CoreEditToolOptions.checkSyntax` (default: JSON only). After the write, the BOM-stripped, LF-normalized content before and after the edit is checked and the warning, if any, is appended to the success text after a blank line. No extra file read; the written bytes, `isError` and `details` are unchanged.
+- `packages/coding-agent/src/core/tools/write-core.ts`: new `CoreWriteToolOptions.checkSyntax` (default: JSON only). The existing write baseline supplies the before content: `present` compares, `missing` treats the call as a new file (new-file warning text), `unavailable` (custom operations, unreadable file) gives no warning.
+- `packages/coding-agent/src/core/tools/edit.ts`, `packages/coding-agent/src/core/tools/write.ts`: the local tools pass `checkSyntax: createLocalSyntaxChecker()`.
+
+### Why
+
+- In a multi-harness build comparison, a model wrote garbled JavaScript three times and found out each time from a later runtime error. The result now tells the model at once, the way the reference harness's advisory parse warning does, without rejecting the edit (senpi#7234).
+- Review findings: a throwing checker made `write` reject after the file was on disk; a more lenient JSON parser could replace the strict error with a later one (`{"a": 0x1, "b": 2,}` was reported as a trailing comma); and a position could be read from input that V8 quotes in its message. Hence one advisory boundary, the strict message with a confirmed position only, and the anchored suffix.
+- Second review findings: formatting read the checker's result fields outside the boundary, so a throwing field still failed the call; a lone CR was not counted as a line break; and `.mjs` was parsed with JSX. An adversarial pass over the whole path also found that a BOM made valid JSON warn, that Bun's several-error `AggregateError` gave no verdict, and that Bun's parser-stack overflow on deeply nested valid code was reported as a syntax error.
+
+### Why an extension could not handle it
+
+- The edit and write result text is built inside the built-in tools, which are the only place holding both the before and after contents without a second read; an extension wrapping the tool would have to re-read the file before and after every call.
+
+### Expected merge conflict zones
+
+- LOW: the options interfaces and the returned `content` in the `execute` bodies of `edit-core.ts` and `write-core.ts`; the `createCore*ToolDefinition` option lists in `edit.ts` and `write.ts`.
+
+## 2026-11-18 - The local shell attests its spawned shell to the calling session (#6978)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/shell-operations.ts`: `BashOperations.exec` options take an optional `sessionId`, and `ShellExecHost` an optional `attestSessionSpawn(sessionId, pid)`. When both are present, the spawned shell's pid is attested on spawn and released on exit, alongside the host's own `onSpawn`/`onExit`.
+- `packages/coding-agent/src/core/tools/bash-core.ts` passes the session id whenever it exposes the session environment.
+- `packages/coding-agent/src/core/tools/bash.ts` (`createLocalShellOperations`) supplies `attestSessionSpawn` from `core/session-spawn-attestation.ts`; the worker-safe core imports nothing new.
+
+### Why
+
+- senpi#6972: a process a tool call started must be provable as that session's, not as whichever session its environment names.
+
+### Why an extension could not handle it
+
+- The pid exists only inside the core shell path's spawn callback.
+
+### Expected merge conflict zones
+
+- LOW: the `exec` option list in `shell-operations.ts` and the `createLocalShellOperations` host object in `bash.ts`.
+
 ## 2026-11-15 - The tool cores show the fs code a wrapped machine error keeps (senpi#6745)
 
 ### What changed

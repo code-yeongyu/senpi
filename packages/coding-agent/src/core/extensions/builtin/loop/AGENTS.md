@@ -84,7 +84,9 @@ status ticker, and persists the snapshot without a terminal reason. Terminal rea
 exactly `stopped | keepalive_exhausted | expired | tick_budget_exhausted | error` (there is
 deliberately no `session_closed`). `restore` re-arms suspended loops on the next session
 start, re-checking expiry. A store failure ends affected loops with `error` and tells the
-user — a schedule that cannot be persisted must not keep running.
+user — a schedule that cannot be persisted must not keep running. A graceful close
+(`session_shutdown` with `closed: true`, oh-my-openagent#14313) is the one exception: the session ended on
+request, so its loops end `stopped` before the snapshot is persisted and nothing re-arms on a reopen.
 
 ## MODEL SURFACE
 

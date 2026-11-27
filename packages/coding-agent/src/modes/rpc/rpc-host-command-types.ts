@@ -8,6 +8,8 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 
 import type { SessionKind } from "../../core/extensions/types.ts";
 
+import type { TelemetryConsent, TelemetryDeclaration } from "../../core/telemetry-consent.ts";
+
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse } from "./rpc-question-types.ts";
 import type { RpcHostResponse } from "./rpc-relocation-types.ts";
@@ -72,7 +74,8 @@ type RpcCommandBody =
 			 * `pi.sessionContext` and republished on `list_sessions { include_workers: true }`.
 			 * At most 32 keys matching `^[a-z][a-z0-9_]*$`, each value at most 16 KiB, at most
 			 * 32 KiB of JSON in total; anything else is refused with `invalid_session_context`.
-			 * The host never interprets them. Requires the host capability `session_context`.
+			 * The host interprets one: `approvals: "refuse"` declares that nobody answers this session's prompts
+			 * (see `docs/rpc.md`); every other label is opaque to it. Requires the host capability `session_context`.
 			 */
 			context?: Record<string, string>;
 			/**
@@ -132,6 +135,15 @@ type RpcCommandBody =
 			 * the session's existing env. Requires the host capability `session_env`.
 			 */
 			env?: Record<string, string>;
+			/**
+			 * This caller's live telemetry answer for the session (senpi#7446). Telemetry attributed to the session is
+			 * collected and delivered only while the host permits it AND every caller of the session answered
+			 * `granted`; an open without this field answers `unanswered`, so an older peer never grants. An open that
+			 * attaches to an existing session adds this caller's answer to it. Change it later with
+			 * `set_telemetry_consent`. Requires the host capability `telemetry_consent`; any other value is refused
+			 * with `invalid_launch_profile`.
+			 */
+			telemetry?: TelemetryDeclaration;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| RpcMoveSessionCommand
@@ -169,6 +181,22 @@ type RpcCommandBody =
 			clearQueue?: boolean;
 			children?: "refuse" | "detach";
 			force?: boolean;
+			/**
+			 * `"refuse"` (senpi#7004): a busy session holding admitted deliveries not yet written is refused
+			 * `work_pending` with their ids in `pending.deliveries`, with or without `interrupt`, and nothing is
+			 * interrupted. An idle session's are handed back either way. Absent: an interrupt hands them back
+			 * (`dropped.deliveries`). Capability `unload_refuse_deliveries`.
+			 */
+			deliveries?: "refuse";
+			/**
+			 * oh-my-openagent#14313: close without interrupting. New deliveries are refused `session_closing` at once,
+			 * queued input is handed back (`dropped`), the running turn ends on its own within `waitMs` (default 60 s,
+			 * at most 600 s), and monitors, loops and the goal stop cleanly instead of coming back on a reopen. A drain
+			 * that outlives `waitMs` is refused `turn_active` with `timed_out` and leaves the session open. Capability
+			 * `unload_graceful`; a terminal's control endpoint takes it too, and its terminal then exits.
+			 */
+			graceful?: boolean;
+			waitMs?: number;
 	  }
 	| {
 			id?: string;
@@ -184,6 +212,16 @@ type RpcCommandBody =
 			type: "get_subscription_limits";
 			/** An observing read, as on `get_protocol_info`. */
 			observe?: boolean;
+	  }
+	| {
+			id?: string;
+			/**
+			 * Which session FILE of this host carries `durableSessionId`, for a client whose session is closed and
+			 * unlisted so its routing key names nothing (senpi#6429). A read: it opens, claims and changes nothing.
+			 * Capability `find_session`.
+			 */
+			type: "find_session";
+			durableSessionId: string;
 	  }
 	| {
 			id?: string;
@@ -251,6 +289,19 @@ type RpcCommandBody =
 			type: "set_session_context";
 			sessionId: string;
 			patch: Record<string, string | number | boolean | null>;
+	  }
+	| {
+			id?: string;
+			/**
+			 * Change THIS connection's telemetry answer for a session it is attached to (senpi#7446), without
+			 * restarting the host or the session: `granted`, `declined` or `unanswered`. On a session a caller opened
+			 * the answer also stays with the session after the connection leaves, so a revocation outlives it.
+			 * Refused with `session_not_attached` from a connection that is not attached. Requires the host
+			 * capability `telemetry_consent`.
+			 */
+			type: "set_telemetry_consent";
+			sessionId: string;
+			consent: TelemetryConsent;
 	  }
 	| {
 			id?: string;

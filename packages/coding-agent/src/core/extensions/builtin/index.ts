@@ -21,7 +21,6 @@ import helpExtension from "./help/index.ts";
 import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
-import htmlRenderExtension from "./html-render/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
 import killGuardExtension from "./kill-guard/index.ts";
 import credentialProxyExtension from "./credential-proxy/index.ts";
@@ -47,6 +46,7 @@ import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
 import scheduleExtension from "./schedule/index.ts";
 import serviceTierExtension from "./service-tier.ts";
+import sessionLivenessExtension from "./session-liveness/index.ts";
 import terminalExtension from "./terminal/index.ts";
 import todowriteExtension from "./todotools/index.ts";
 import toolPairGuardExtension from "./tool-pair-guard/index.ts";
@@ -61,6 +61,13 @@ import websearchExtension from "./websearch/index.ts";
 export interface BuiltinExtensionFactory {
 	id: string;
 	factory: ExtensionFactory;
+	/** Internal builtins this one needs; the loader loads them whenever this one is selected. */
+	requires?: readonly string[];
+	/**
+	 * Not selectable: `enabledBuiltinExtensions` / `disabledBuiltinExtensions` never name it. It loads exactly when a
+	 * selected builtin `requires` it, at its own position in this list.
+	 */
+	internal?: true;
 }
 
 export const globalDefaultExtensionIds = ["diff", "files", "prompt-url-widget", "tps"] as const;
@@ -84,15 +91,19 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
+	// Internal, required by herdr and todowrite. Ahead of every builtin that publishes liveness (ask-user is the
+	// first), so its session_start fold is listening before any owner re-publishes its state there, whichever of
+	// its consumers is selected; behind the guards and policy above, which keep the first veto.
+	{ id: "session-liveness", factory: sessionLivenessExtension, internal: true },
 	{ id: "ask-user", factory: askUserExtension },
-	{ id: "herdr", factory: herdrExtension },
+	{ id: "herdr", factory: herdrExtension, requires: ["session-liveness"] },
 	{ id: "imagegen", factory: imageGenExtension },
 	// Follows imagegen so the native injector's bypass wiring observes the registered client tool.
 	{ id: "openai-image-gen", factory: openaiImageGenExtension },
 	{ id: "prompt-preset", factory: promptPresetExtension },
 	// Follows prompt-preset (both key on the prompt surface) so later message_end handlers see the scrubbed reply.
 	{ id: "chat-reply-scrub", factory: chatReplyScrubExtension },
-	{ id: "todowrite", factory: todowriteExtension },
+	{ id: "todowrite", factory: todowriteExtension, requires: ["session-liveness"] },
 	{ id: "redraws", factory: redrawsExtension },
 	{ id: "anthropic-web-search", factory: anthropicWebSearchExtension },
 	{ id: "anthropic-bash", factory: anthropicBashExtension },
@@ -132,9 +143,6 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "relocate-session", factory: relocateSessionExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
-	// HTML page rendering for standalone senpi (TUI/local); the desktop thread reaches the
-	// same capability through the desktop's MCP server instead.
-	{ id: "html-render", factory: htmlRenderExtension },
 	// Provider-neutral account listing; sits before the provider lanes so their
 	// dedicated commands (claude-account, cursor accounts) keep their own names.
 	{ id: "account", factory: accountExtension },

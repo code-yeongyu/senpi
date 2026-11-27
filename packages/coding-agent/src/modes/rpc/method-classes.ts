@@ -251,6 +251,7 @@ export const RPC_METHOD_CLASS = {
 	close_session: "thread",
 	unload_session: "thread",
 	set_session_context: "thread",
+	set_telemetry_consent: "thread",
 	attach_session: "thread",
 	// device_admin
 	// Moves where the session's tools run (onto another machine): it changes what the agent can reach.
@@ -263,6 +264,8 @@ export const RPC_METHOD_CLASS = {
 	reload: "device_admin",
 	check_reload_veto: "device_admin",
 	resolve_path: "device_admin",
+	// Answers a session file's path and its folder, which is what makes a path-naming open_session device_admin.
+	find_session: "device_admin",
 	login_start: "device_admin",
 	login_cancel: "device_admin",
 	login_api_key: "device_admin",

@@ -44,6 +44,12 @@ export const featureSettingsProperties = {
 		Type.Object({ advertiseHelpers: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
 	),
 	kernelTools: Type.Optional(Type.Object({ enabled: Type.Optional(Type.Boolean()) }, { additionalProperties: false })),
+	jsCells: Type.Optional(
+		Type.Object(
+			{ typescript: Type.Optional(Type.Boolean()), scope: Type.Optional(Type.Boolean()) },
+			{ additionalProperties: false },
+		),
+	),
 };
 
 const featureSettingsSchema = Type.Object(featureSettingsProperties);
@@ -99,6 +105,7 @@ export function pickFeatureSettings(input: CodemodeFeatureSettings): CodemodeFea
 		...(input.sandbox === undefined ? {} : { sandbox: input.sandbox }),
 		...(input.prompt === undefined ? {} : { prompt: input.prompt }),
 		...(input.kernelTools === undefined ? {} : { kernelTools: input.kernelTools }),
+		...(input.jsCells === undefined ? {} : { jsCells: input.jsCells }),
 	};
 }
 
@@ -139,4 +146,16 @@ export function resolveAdvertiseHelpers(settings: CodemodeFeatureSettings): bool
 
 export function resolveKernelToolsEnabled(settings: CodemodeFeatureSettings): boolean {
 	return settings.kernelTools?.enabled ?? true;
+}
+
+export interface ResolvedJsCells {
+	/** Run JS cells written in TypeScript with their types erased; the prompt says so. */
+	readonly typescript: boolean;
+	/** Install the `scope()` helper for `await using` cleanup; the prompt documents it. */
+	readonly scope: boolean;
+}
+
+/** Both off by default, so the kernel, its globals and the default eval prompt stay as they were. */
+export function resolveJsCells(settings: CodemodeFeatureSettings): ResolvedJsCells {
+	return { typescript: settings.jsCells?.typescript ?? false, scope: settings.jsCells?.scope ?? false };
 }

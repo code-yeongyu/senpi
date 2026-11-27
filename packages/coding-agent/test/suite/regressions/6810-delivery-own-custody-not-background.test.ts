@@ -134,8 +134,8 @@ describe("a delivery never counts its own custody as background work (senpi#6810
 	});
 
 	// A guard, not a #6810 regression proof (it passes on the pre-fix code too): counting the in-flight start as running
-	// must never strand a follow-up queued behind it.
-	it("starts a follow-up queued behind the in-flight delivery start once the session goes idle", async () => {
+	// must never strand a delivery admitted behind it (it joins that start, omo#14972).
+	it("writes a delivery admitted behind the in-flight delivery start before the session goes idle", async () => {
 		const gate = holdFirstTurnStart();
 		const h = await createBoundLifecycleHarness({ persistSession: true, extensionFactories: [gate.extension] });
 		harnesses.push(h);
@@ -143,8 +143,8 @@ describe("a delivery never counts its own custody as background work (senpi#6810
 
 		h.session.externalAdmission.admit({ delivery_id: "d1", text: "first", deliverAs: "followUp" });
 		await gate.entered;
-		const queued = h.session.externalAdmission.admit({ delivery_id: "d2", text: "second", deliverAs: "followUp" });
-		expect(queued.kind).toBe("queued");
+		const joined = h.session.externalAdmission.admit({ delivery_id: "d2", text: "second", deliverAs: "followUp" });
+		expect(joined.kind).toBe("steered");
 
 		const idle = nextSessionEvent(h, (event) => event.type === "agent_idle");
 		gate.release();

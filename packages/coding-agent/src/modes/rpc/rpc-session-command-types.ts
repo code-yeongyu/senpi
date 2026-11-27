@@ -66,6 +66,8 @@ export type RpcSessionCommand =
 			mode?: "continue" | "release";
 			message?: string;
 			effectId?: string;
+			/** Answer `stopped` and resume nothing while a person's Stop or a parent's run hold is live (senpi#7016). */
+			unlessStopped?: boolean;
 	  }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
@@ -340,7 +342,7 @@ export type RpcSessionCommand =
 	| {
 			id?: string;
 			type: "set_project_trust";
-			choice: "trust" | "trust_parent" | "do_not_trust";
+			choice: "trust" | "trust_parent" | "do_not_trust" | "no_inherit";
 			expectedCwd?: string;
 	  }
 	| { id?: string; type: "get_project_settings" }
@@ -387,9 +389,10 @@ export type RpcSessionCommand =
 	| { id?: string; type: "login_start"; provider: string; slotId?: string }
 	| { id?: string; type: "login_cancel"; provider: string }
 	| { id?: string; type: "login_api_key"; provider: string; key: string; region?: string }
-	| { id?: string; type: "logout"; provider: string; slotId?: string }
+	// `expectedLoginId` (a `get_auth_providers` row's `loginId`) signs out only that sign-in; else `stale_login` (senpi#7406).
+	| { id?: string; type: "logout"; provider: string; slotId?: string; expectedLoginId?: string }
 	// Checks a key with the provider's model list without storing it (desktop #2510).
-	| { id?: string; type: "verify_api_key"; provider: string; key: string }
+	| { id?: string; type: "verify_api_key"; provider: string; key: string; region?: string }
 
 	// Provider accounts (task 13) are additive. The desktop consumer contract
 	// lives in ../omo-desktop-app/packages/contracts/src/rpc.ts and is updated separately.

@@ -1,4 +1,5 @@
 /** The shapes the in-process session registry hands out: entries, launch profiles, rows and its typed error. */
+import type { RetryWait } from "../../core/retry-wait.ts";
 import type { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { AgentSessionLaunchProfile, AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type { EventLoopSlicer } from "../../core/event-loop-slicer.ts";
@@ -12,10 +13,13 @@ import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import type { SessionContextOverlay } from "./session-context-patch.ts";
 import type { PublishedSessionContext } from "./session-status.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
+import type { SessionTelemetryState } from "./session-router-telemetry.ts";
 
 /** The immutable flags selected when a routing session is opened. */
 export interface RpcSessionLaunchProfile extends AgentSessionLaunchProfile {
 	attended?: false;
+	/** Host-internal: a successor reopens a session that was live on its predecessor (senpi#7020). */
+	continued?: true;
 	sessionPath?: string;
 	/**
 	 * Durable session id chosen by the caller, applied ONLY when this open creates the session.
@@ -57,6 +61,8 @@ export interface RpcSessionEntry {
 	cwd: string;
 	/** Live attachments (open + later attaches). The runtime is disposed only when the last one closes. */
 	attachments: number;
+	/** The session's telemetry callers and the verdict its session last confirmed (senpi#7446); set by the first caller. */
+	telemetry?: SessionTelemetryState;
 	/**
 	 * Opt-in retention: a dropped connection only DETACHES from this session. The
 	 * entry stays open at zero attachments (still listed, still running its turn,
@@ -99,6 +105,7 @@ export class RpcSessionRegistryError extends Error {
 		| "invalid_path"
 		| "invalid_session_id"
 		| "session_not_held"
+		| "telemetry_update_unconfirmed"
 		| "open_failed";
 	/** Machine-readable context for the wire (`errorData`): who holds a path, when to retry. */
 	readonly detail?: Readonly<Record<string, unknown>>;
@@ -142,12 +149,19 @@ export interface RpcSessionRegistryOptions {
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
 export interface RpcSessionOpenOptions {
+	/** Host-only handle already issued while this file's writer was on a predecessor. */
+	readonly routedHandle?: string;
 	/** Router-owned park construction; never accepted directly from the wire. */
 	speculative?: boolean;
 	/** Refuse unless the registry already owns the path; never prepare or construct a writer. */
 	attachOnly?: boolean;
 	/** Keep the session alive when its last client disconnects (`open_session.retain_on_disconnect`). */
 	retainOnDisconnect?: boolean;
+	/**
+	 * No client asked for this open (a successor restoring its predecessor's sessions, senpi#7020): it counts no
+	 * attachment, since no connection could ever release one, and an attach it lands on is left as it is.
+	 */
+	unattached?: boolean;
 }
 
 /** One `list_sessions` row. `context` is published only to a listing that asked for workers. */
@@ -175,6 +189,8 @@ export interface RpcSessionRow {
 	settledBy?: ThreadSettledBy;
 	/** `running` while a turn is in flight (the `session_status` streaming state), else `idle`. */
 	activity: "running" | "idle";
+	/** senpi#7025: the auto-retry wait a running session sleeps through; absent when it is not waiting. */
+	waiting?: RetryWait;
 	/** The session's current model; absent while unknown (an opening session). */
 	model?: { provider: string; id: string };
 }
