@@ -1,13 +1,7 @@
 import type { DeliveryTicketId, ObligationKind, ObligationToken, WorkObligations } from "./session-lifecycle-types.ts";
 import { normalizeWaitItems, waitItemSignature } from "./lifecycle-wait-items.ts";
 import type { SessionEntry } from "./session-manager.ts";
-import {
-	closedCustody,
-	type CustodyPayload,
-	custodyIsOpen,
-	readWorkCustody,
-	type WorkCustodyRecord,
-} from "./work-custody-record.ts";
+import { type CustodyPayload, custodyIsOpen, readWorkCustody, type WorkCustodyRecord } from "./work-custody-record.ts";
 
 /** Custody keys the engine opens itself (senpi#3986): queued deliveries and published wake sources. */
 export const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
@@ -42,36 +36,31 @@ export class CustodyViolation extends Error {
 }
 
 export interface CustodyStore {
+	readonly entries: readonly SessionEntry[];
 	append(record: WorkCustodyRecord): void;
 	changed(): void;
 }
 
 /** One session's durable registry. A token never acknowledges its own delivery. */
 export class SessionWorkObligations implements WorkObligations {
-	/** Open records by id, in the order their first record was written. A closed record leaves it (senpi#7603). */
-	private readonly openRecords = new Map<string, WorkCustodyRecord>();
-	/** The id of the open record holding each ticket. */
-	private readonly openTickets = new Map<DeliveryTicketId, string>();
-	/** Tickets whose custody closed: all that admission and the ticket transitions read of a closed record. */
-	private readonly closedTickets = new Set<DeliveryTicketId>();
+	private readonly records = new Map<string, WorkCustodyRecord>();
 	private readonly unpersisted = new Map<string, WorkCustodyRecord>();
 	private readonly delivering = new Set<DeliveryTicketId>();
 	/** Engine delivery custody a send opened in this process and has not queued yet (senpi#6810). */
 	private readonly sending = new Set<string>();
 	private readonly publishedSources = new Set<string>();
 	private readonly store: CustodyStore;
-	/** `entries` is read here only: the restoration history is not kept for the session's life (senpi#7603). */
-	constructor(store: CustodyStore, entries: readonly SessionEntry[]) {
+	constructor(store: CustodyStore) {
 		this.store = store;
-		for (const entry of entries) {
+		for (const entry of store.entries) {
 			if (entry.type !== "custom" || entry.customType !== "work-custody") continue;
 			const record = readWorkCustody(entry.data);
-			if (record) this.keep(record);
+			if (record) this.records.set(record.id, record);
 		}
 	}
 
 	get active(): readonly WorkCustodyRecord[] {
-		return [...this.openRecords.values()];
+		return [...this.records.values()].filter(custodyIsOpen);
 	}
 
 	get activeCount(): number {
@@ -84,7 +73,7 @@ export class SessionWorkObligations implements WorkObligations {
 
 	open(key: string, kind: ObligationKind, detail?: string): ObligationToken {
 		const existing = this.active.find((record) => record.key === key);
-		if (existing) return this.token(existing);
+		if (existing) return this.token(existing.id);
 		const record: WorkCustodyRecord = {
 			id: crypto.randomUUID(),
 			key,
@@ -95,7 +84,7 @@ export class SessionWorkObligations implements WorkObligations {
 		if (key.startsWith(ENGINE_DELIVERY_KEY_PREFIX)) this.sending.add(record.id);
 		this.install(record);
 		this.store.changed();
-		return this.token(record);
+		return this.token(record.id);
 	}
 
 	/**
@@ -121,7 +110,7 @@ export class SessionWorkObligations implements WorkObligations {
 		this.publishedSources.add(key);
 		const current = this.active.find((record) => record.key === key);
 		if (activeCount <= 0) {
-			if (current) this.close(current, "passive");
+			if (current) this.close(current.id, "passive");
 			return;
 		}
 		const detail = normalizeWaitItems(items);
@@ -149,7 +138,7 @@ export class SessionWorkObligations implements WorkObligations {
 	retireRestoredSources(): void {
 		for (const record of this.active) {
 			if (record.key.startsWith(WAKE_SOURCE_KEY_PREFIX) && !this.publishedSources.has(record.key))
-				this.close(record, "passive");
+				this.close(record.id, "passive");
 		}
 	}
 
@@ -158,8 +147,9 @@ export class SessionWorkObligations implements WorkObligations {
 	 * message, a delivery): an unknown, closed, consumed or in-delivery ticket takes no new delivery.
 	 */
 	admission(ticketId: DeliveryTicketId): TicketAdmission {
-		const record = this.openTicket(ticketId);
-		if (!record) return this.closedTickets.has(ticketId) ? "closed" : "unknown";
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
+		if (!record) return "unknown";
+		if (!custodyIsOpen(record)) return "closed";
 		if (record.state === "consumed") return "consumed";
 		return this.delivering.has(ticketId) ? "delivering" : "admitted";
 	}
@@ -167,8 +157,8 @@ export class SessionWorkObligations implements WorkObligations {
 	queue(ticketId: DeliveryTicketId, payload: CustodyPayload): boolean {
 		const admission = this.admission(ticketId);
 		if (admission === "unknown") throw new CustodyViolation(ticketId);
-		const record = this.openTicket(ticketId);
-		if (admission !== "admitted" || !record) return false;
+		if (admission !== "admitted") return false;
+		const record = this.ticketRecord(ticketId);
 		// A restored queued ticket is re-sent plain; it keeps the item ids its batch was recorded with (senpi#4106).
 		const itemIds = payload.itemIds ?? (record.state === "queued" ? record.payload?.itemIds : undefined);
 		this.install({
@@ -185,7 +175,7 @@ export class SessionWorkObligations implements WorkObligations {
 
 	/** The item ids a queued ticket's batch was recorded with, if any. */
 	queuedItemIds(ticketId: DeliveryTicketId): readonly string[] | undefined {
-		const record = this.openTicket(ticketId);
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
 		return record?.state === "queued" ? record.payload?.itemIds : undefined;
 	}
 
@@ -195,44 +185,44 @@ export class SessionWorkObligations implements WorkObligations {
 	 */
 	endDelivery(ticketId: DeliveryTicketId): void {
 		if (!this.delivering.delete(ticketId)) return;
-		const record = this.openTicket(ticketId);
-		if (record && record.state !== "consumed") this.store.changed();
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
+		if (record && custodyIsOpen(record) && record.state !== "consumed") this.store.changed();
 	}
 
 	passive(ticketId: DeliveryTicketId): void {
 		const record = this.ticketRecord(ticketId);
-		if (record) this.close(record, "passive");
+		if (custodyIsOpen(record)) this.close(record.id, "passive");
 	}
 
 	consumed(ticketId: DeliveryTicketId, run: { readonly runId: string; readonly transcriptEntryId: string }): void {
 		const record = this.ticketRecord(ticketId);
-		if (!record || record.state === "consumed") return;
+		if (!custodyIsOpen(record) || record.state === "consumed") return;
 		this.install({ ...record, state: "consumed", ...run, delivery: undefined });
 		this.store.changed();
 	}
 
 	failed(ticketId: DeliveryTicketId): void {
 		const record = this.ticketRecord(ticketId);
-		if (!record || record.state === "consumed") return;
+		if (!custodyIsOpen(record) || record.state === "consumed") return;
 		this.install({ ...record, state: "queued", delivery: "failed" });
 		this.store.changed();
 	}
 
 	held(ticketId: DeliveryTicketId, noticeId: string): void {
 		const record = this.ticketRecord(ticketId);
-		if (record) this.close(record, "held", noticeId);
+		if (custodyIsOpen(record)) this.close(record.id, "held", noticeId);
 	}
 
 	retire(ticketId: DeliveryTicketId): void {
 		const record = this.ticketRecord(ticketId);
-		if (!record || record.state === "consumed") return;
+		if (!custodyIsOpen(record) || record.state === "consumed") return;
 		this.install({ ...record, state: "open", delivery: "retired", payload: undefined });
 		this.store.changed();
 	}
 
 	cancel(ticketId: DeliveryTicketId): void {
 		const record = this.ticketRecord(ticketId);
-		if (record && record.state !== "consumed") this.close(record, "cancelled");
+		if (custodyIsOpen(record) && record.state !== "consumed") this.close(record.id, "cancelled");
 	}
 
 	settleRun(runId: string): void {
@@ -258,9 +248,7 @@ export class SessionWorkObligations implements WorkObligations {
 		if (ended.length > 0) this.store.changed();
 	}
 
-	private install(next: WorkCustodyRecord): void {
-		// A closing record carries no payload forward (senpi#7603): nothing reads it once the record is closed.
-		const record = custodyIsOpen(next) ? next : closedCustody(next);
+	private install(record: WorkCustodyRecord): void {
 		try {
 			this.store.append(record);
 			this.unpersisted.delete(record.id);
@@ -268,24 +256,7 @@ export class SessionWorkObligations implements WorkObligations {
 			if (!(error instanceof Error)) throw error;
 			this.unpersisted.set(record.id, record);
 		}
-		this.keep(record);
-	}
-
-	/** Open custody stays whole; of a closed record only its ticket stays, and one without a ticket leaves. */
-	private keep(record: WorkCustodyRecord): void {
-		if (custodyIsOpen(record)) {
-			this.openRecords.set(record.id, record);
-			if (record.ticketId !== undefined) {
-				this.openTickets.set(record.ticketId, record.id);
-				this.closedTickets.delete(record.ticketId);
-			}
-			return;
-		}
-		this.openRecords.delete(record.id);
-		if (record.ticketId !== undefined) {
-			this.openTickets.delete(record.ticketId);
-			this.closedTickets.add(record.ticketId);
-		}
+		this.records.set(record.id, record);
 	}
 
 	/** A lifecycle publication cannot claim durability before its live custody is durable. */
@@ -296,39 +267,29 @@ export class SessionWorkObligations implements WorkObligations {
 		}
 	}
 
-	/** The open record a token holds; a token whose record closed holds nothing, named by the record's key. */
-	private owned(id: string, key: string): WorkCustodyRecord {
-		const record = this.openRecords.get(id);
-		if (!record) throw new CustodyViolation(key);
+	private owned(id: string): WorkCustodyRecord {
+		const record = this.records.get(id);
+		if (!record || !custodyIsOpen(record)) throw new CustodyViolation(record?.key ?? id);
 		return record;
 	}
 
-	private openTicket(ticketId: DeliveryTicketId): WorkCustodyRecord | undefined {
-		const id = this.openTickets.get(ticketId);
-		return id === undefined ? undefined : this.openRecords.get(id);
-	}
-
-	/** The open record of a ticket, or undefined for a closed one; a ticket this registry never held is a violation. */
-	private ticketRecord(ticketId: DeliveryTicketId): WorkCustodyRecord | undefined {
-		const record = this.openTicket(ticketId);
-		if (!record && !this.closedTickets.has(ticketId)) throw new CustodyViolation(ticketId);
+	private ticketRecord(ticketId: DeliveryTicketId): WorkCustodyRecord {
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
+		if (!record) throw new CustodyViolation(ticketId);
 		return record;
 	}
 
-	private close(
-		record: WorkCustodyRecord,
-		state: "settled" | "held" | "cancelled" | "passive",
-		noticeId?: string,
-	): void {
-		this.sending.delete(record.id);
+	private close(id: string, state: "settled" | "held" | "cancelled" | "passive", noticeId?: string): void {
+		const record = this.owned(id);
+		this.sending.delete(id);
 		this.install({ ...record, state, ...(noticeId === undefined ? {} : { noticeId }) });
 		this.store.changed();
 	}
 
-	private token({ id, key }: WorkCustodyRecord): ObligationToken {
+	private token(id: string): ObligationToken {
 		return {
 			transfer: (nextKey, kind) => {
-				const current = this.owned(id, key);
+				const current = this.owned(id);
 				if (nextKey === current.key) throw new CustodyViolation(nextKey);
 				const next = this.active.find((record) => record.key === nextKey) ?? {
 					id: crypto.randomUUID(),
@@ -344,18 +305,18 @@ export class SessionWorkObligations implements WorkObligations {
 				} finally {
 					this.store.changed();
 				}
-				return this.token(next);
+				return this.token(next.id);
 			},
 			ticket: () => {
-				const record = this.owned(id, key);
+				const record = this.owned(id);
 				if (record.ticketId) return record.ticketId;
 				const ticketId = crypto.randomUUID();
 				this.install({ ...record, state: "queued", ticketId });
 				this.store.changed();
 				return ticketId;
 			},
-			heldAsNotice: (noticeId) => this.close(this.owned(id, key), "held", noticeId),
-			close: (reason) => this.close(this.owned(id, key), reason === "consumed" ? "settled" : reason),
+			heldAsNotice: (noticeId) => this.close(id, "held", noticeId),
+			close: (reason) => this.close(id, reason === "consumed" ? "settled" : reason),
 		};
 	}
 }

@@ -15,7 +15,7 @@ const report = (patch: Partial<ChildLifecycleReport>): ChildLifecycleReport => (
 
 it("keeps a child terminal against a later report in the same run epoch", () => {
 	// Given a child that completed in run epoch 1.
-	const children = new LifecycleChildren({ append: () => {}, changed: () => {} }, []);
+	const children = new LifecycleChildren({ entries: [], append: () => {}, changed: () => {} });
 	children.report(report({ generation: 5, state: "done", terminal: "completed" }));
 
 	// When a higher generation in the same epoch reports it running again.
@@ -30,17 +30,15 @@ it("gives a child's terminal a completion id of its own, never its root's", () =
 	// Given a root and its child, both finishing their first epoch.
 	const terminalOf = (sessionId: string, spawnedBy?: SpawnedBy): SessionLifecycle => {
 		let latest: SessionLifecycle | undefined;
-		const ledger = new LifecycleLedger(
-			{
-				sessionId,
-				...(spawnedBy ? { spawnedBy } : {}),
-				append: () => {},
-				emit: (event) => {
-					latest = event.lifecycle;
-				},
+		const ledger = new LifecycleLedger({
+			sessionId,
+			...(spawnedBy ? { spawnedBy } : {}),
+			entries: [],
+			append: () => {},
+			emit: (event) => {
+				latest = event.lifecycle;
 			},
-			[],
-		);
+		});
 		ledger.releaseRestoreBarrier();
 		ledger.startRun("human");
 		ledger.update({ state: "done", waits: { children: 0, background: [], human: [] }, holds: [] });

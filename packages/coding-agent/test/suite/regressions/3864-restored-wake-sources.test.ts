@@ -14,7 +14,7 @@ function restoredFrom(record: WorkCustodyRecord): SessionWorkObligations {
 		parentId: null,
 		timestamp: "2026-10-22T00:00:00.000Z",
 	};
-	return new SessionWorkObligations({ append: () => {}, changed: () => {} }, [entry]);
+	return new SessionWorkObligations({ entries: [entry], append: () => {}, changed: () => {} });
 }
 const monitor: WorkCustodyRecord = {
 	id: "wake-1",

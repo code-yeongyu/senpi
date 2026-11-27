@@ -15,6 +15,7 @@ import type { SessionEntry } from "./session-manager.ts";
 export interface LifecyclePersistence {
 	readonly sessionId: string;
 	readonly spawnedBy?: SpawnedBy;
+	readonly entries: readonly SessionEntry[];
 	/** The run whose end the transcript holds (`lastRunEnd`), even if no idle record cleared its `runActive`. */
 	readonly endedRunId?: string;
 	append(record: LifecycleRecord): void;
@@ -39,11 +40,10 @@ export class LifecycleLedger {
 	interrupted = false;
 	lastTurnEnd: DurableTurnEnd | undefined;
 
-	/** `entries` is read here only: the restoration history is not kept for the session's life (senpi#7603). */
-	constructor(persistence: LifecyclePersistence, entries: readonly SessionEntry[]) {
+	constructor(persistence: LifecyclePersistence) {
 		this.persistence = persistence;
 		let restored: LifecycleRecord | undefined;
-		for (const entry of entries) {
+		for (const entry of persistence.entries) {
 			if (entry.type !== "custom" || entry.customType !== "session-lifecycle") continue;
 			const parsed = readLifecycleRecord(entry.data);
 			if (parsed?.sessionId === persistence.sessionId && (!restored || parsed.seq > restored.seq)) restored = parsed;
