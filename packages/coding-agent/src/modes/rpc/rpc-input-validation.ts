@@ -1,5 +1,6 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { isTelemetryConsent } from "../../core/telemetry-consent.ts";
 import { MAX_TOOL_BARRIER_ID_LENGTH, toolBarrierSpecError } from "../../core/tool-barrier.ts";
 import { admitExternalMessageFieldError } from "./admit-external-message-wire.ts";
 import { validatePauseCommand } from "./pause-command-validation.ts";
@@ -287,6 +288,25 @@ export function sessionPromptSurfaceError(value: unknown): string | undefined {
 export function sessionBrowserEngineError(value: unknown): string | undefined {
 	if (value === undefined || isBrowserEngine(value)) return undefined;
 	return `browserEngine must be "connected", "builtin" or "none".`;
+}
+
+/** Detail for a bare telemetry answer (`set_telemetry_consent.consent`) the host refuses. */
+export function sessionTelemetryConsentError(value: unknown): string | undefined {
+	if (isTelemetryConsent(value)) return undefined;
+	return `consent must be "granted", "declined" or "unanswered".`;
+}
+
+/** Detail for a telemetry answer (`open_session.telemetry`, `attach_session.telemetry`) the host refuses. */
+export function sessionTelemetryError(value: unknown): string | undefined {
+	if (value === undefined) return undefined;
+	if (
+		typeof value === "object" &&
+		value !== null &&
+		Object.keys(value).length === 1 &&
+		isTelemetryConsent((value as { consent?: unknown }).consent)
+	)
+		return undefined;
+	return `telemetry must be { consent: "granted" | "declined" | "unanswered" }.`;
 }
 
 const MAX_RETRY_FALLBACK_CHAINS = 32;

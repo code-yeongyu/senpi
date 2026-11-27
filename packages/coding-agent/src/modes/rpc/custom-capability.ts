@@ -196,6 +196,13 @@ export const SESSION_ENV_CAPABILITY = "session_env";
 export const RETRY_FALLBACK_PROFILE_CAPABILITY = "retry_fallback_profile";
 
 /**
+ * HOST capability: this host takes each caller's live telemetry answer (senpi#7446) on `open_session.telemetry`,
+ * `attach_session.telemetry` and `set_telemetry_consent`, and decides a session's telemetry from the host's own
+ * setting AND every caller of that session. A caller sends its answer only to a host that names this.
+ */
+export const TELEMETRY_CONSENT_CAPABILITY = "telemetry_consent";
+
+/**
  * SINGLE-SESSION capability: this `--mode rpc` process accepts `set_retry_fallback` (the
  * `open_session.retryFallback` shape) before its first turn, so a caller that spawns one process per
  * session can give it its own fallback chain without a settings file.

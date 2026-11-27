@@ -11,6 +11,14 @@ export function runInCell(cell, run) {
 	return cellRuns.run(cell, run);
 }
 
+/**
+ * Runs `run` with no cell in its async context, so the released-cell guards do not refuse it. Only teardown of what a
+ * cell itself acquired belongs here: cleaning up must still work after the cell was stopped.
+ */
+export function runOutsideCell(run) {
+	return cellRuns.exit(run);
+}
+
 export function currentCell() {
 	return cellRuns.getStore();
 }
