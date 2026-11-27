@@ -72,13 +72,13 @@ afterEach(async () => {
 	await rm(artifactsRoot, { recursive: true, force: true });
 });
 
-async function sessionCwd(): Promise<string> {
+async function sessionCwd(settings: Readonly<Record<string, unknown>> = {}): Promise<string> {
 	const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-status-"));
 	directories.push(cwd);
 	await mkdir(join(cwd, ".senpi"), { recursive: true });
 	await writeFile(
 		join(cwd, ".senpi", "codemode.json"),
-		JSON.stringify({ languages: { py: false, js: true, rb: false, jl: false }, cellTimeoutSeconds: 1 }),
+		JSON.stringify({ languages: { py: false, js: true, rb: false, jl: false }, cellTimeoutSeconds: 1, ...settings }),
 	);
 	return cwd;
 }
@@ -203,6 +203,30 @@ describe("detached eval cell footer status wiring", () => {
 		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · ticking probe (3s)" });
 
 		kernel.completeDeferredRun(result("tick-cell", "9"));
+		await vi.waitFor(() => expect(calls.at(-1)).toEqual({ key: "eval-cells", text: undefined }));
+
+		await pi.emit("session_shutdown", {}, ctx);
+	});
+
+	// senpi#7536: the session's statusTicker setting reaches the footer ticker, so equivalence runs record no timed ticks.
+	it("keeps the elapsed label still when the settings turn the status ticker off", async () => {
+		const cwd = await sessionCwd({ statusTicker: false });
+		const pi = new WiringPi();
+		const kernel = new FakeKernel([]);
+		vi.useFakeTimers();
+		senpiCodemode(pi, { createSessionManager: () => new WiringSessionManager(kernel) });
+		const calls: StatusCall[] = [];
+		const ctx = wiringContext(cwd, "rpc", calls, []);
+
+		await pi.emit("session_start", { reason: "startup" }, ctx);
+		await detachOne(pi, kernel, ctx, "still-cell", "still probe");
+		const shown = calls.length;
+		expect(calls.at(-1)).toEqual({ key: "eval-cells", text: "↗ js · still probe (1s)" });
+
+		await vi.advanceTimersByTimeAsync(3_000);
+		expect(calls).toHaveLength(shown);
+
+		kernel.completeDeferredRun(result("still-cell", "5"));
 		await vi.waitFor(() => expect(calls.at(-1)).toEqual({ key: "eval-cells", text: undefined }));
 
 		await pi.emit("session_shutdown", {}, ctx);

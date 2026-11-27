@@ -4,6 +4,7 @@ import type { Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-wor
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { QueuedInput } from "../../core/agent-session.ts";
 import type { HoldKind } from "../../core/engine-turn-hold.ts";
+import type { EngineTurnCap } from "../../core/engine-turn-limit.ts";
 import type { PermissionMode } from "../../core/permission-mode.ts";
 import type { ProviderOrigin } from "../../core/provider-origin.ts";
 import type { RetryWait } from "../../core/retry-wait.ts";
@@ -157,6 +158,8 @@ export interface RpcSessionState extends Partial<PermissionMode> {
 	paused: boolean;
 	pausedNoticeCount: number;
 	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+	/** Present while the engine-turn cap pauses automatic turns: the `engine-paused` reason and its count (senpi#7138). */
+	engineTurnCap?: EngineTurnCap;
 	lifecycle: RpcSessionLifecycle;
 	model?: Model<any>;
 	/**

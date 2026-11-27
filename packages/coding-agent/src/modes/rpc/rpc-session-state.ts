@@ -40,6 +40,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		paused: session.paused ?? false,
 		pausedNoticeCount: session.pausedNoticeCount ?? 0,
 		holds: session.holds ?? [],
+		...(session.engineTurnCap === undefined ? {} : { engineTurnCap: session.engineTurnCap }),
 		lifecycle: observeLifecycle(session.lifecycle),
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
