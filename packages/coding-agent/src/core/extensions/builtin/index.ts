@@ -11,6 +11,7 @@ import chatReplyScrubExtension from "./chat-reply-scrub/index.ts";
 import compactionExtension from "./compaction/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
 import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
+import deletePolicyExtension from "./delete-policy/index.ts";
 import diffExtension from "./diff.ts";
 import filesExtension from "./files.ts";
 import goalExtension from "./goal/index.ts";
@@ -136,6 +137,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "loop", factory: loopExtension },
 	// Durable counterpart of `loop`: writes job files a separate `senpi schedule run` fires later.
 	{ id: "schedule", factory: scheduleExtension },
+	{ id: "delete-policy", factory: deletePolicyExtension },
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	// After cache-keepalive: its warm pings move the cache expiry the hint waits for.
 	{ id: "handoff-hint", factory: handoffHintExtension },
