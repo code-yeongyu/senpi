@@ -217,6 +217,15 @@ export class ExternalAdmission {
 		return { kind: "queued", turn_epoch };
 	}
 
+	/**
+	 * The delivery is in this runtime's live set (senpi#7479): admitted and not yet settled, or written. A delivery a
+	 * clear or an interrupt took out unwritten is not, and its sender may redeliver it.
+	 */
+	holdsDelivery(deliveryId: string): boolean {
+		this.releaseRestored();
+		return this.pending.has(deliveryId) || this.emitted.has(deliveryId);
+	}
+
 	list(): AdmittedDeliveries {
 		this.releaseRestored();
 		const deliveries = { pending: [...this.pending.keys()], emitted: [...this.emitted] };

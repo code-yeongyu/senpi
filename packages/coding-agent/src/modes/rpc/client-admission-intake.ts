@@ -14,6 +14,7 @@ import {
 	HOST_MINTED_ID_PREFIX,
 	type RpcClientInput,
 } from "./client-admission-record.ts";
+import { deliveryUnder, messageDigest } from "./admission-id-book.ts";
 
 export type AdmissionHooks = {
 	/** The identity to stamp on the input: the client's, or the one the host minted for an id-less queued input. */
@@ -27,7 +28,10 @@ type ClientAdmissionIntake = {
 	hasIdentities: boolean;
 	readonly session: AgentSession;
 	readonly records: Map<string, ClientAdmissionRecord>;
-	readonly pending: Map<string, { readonly fingerprint: string; readonly result: Promise<ClientMessageAdmission> }>;
+	readonly pending: Map<
+		string,
+		{ readonly fingerprint: string; readonly messageDigest: string; readonly result: Promise<ClientMessageAdmission> }
+	>;
 	readonly save: (record: ClientAdmissionRecord) => void;
 };
 
@@ -51,6 +55,7 @@ export async function admitClientInput(
 		command.clientMessageId ??
 		`${HOST_MINTED_ID_PREFIX}${this.session.sessionManager.getSessionId()}:${randomUUID()}`;
 	const fingerprint = clientInputFingerprint(command);
+	const digest = messageDigest(command.message, command.images);
 	const pending = this.pending.get(clientMessageId);
 	const existing = this.records.get(clientMessageId);
 	if ((pending ?? existing)?.fingerprint !== undefined && (pending ?? existing)?.fingerprint !== fingerprint) {
@@ -58,9 +63,22 @@ export async function admitClientInput(
 	}
 	if (pending) return pending.result;
 	if (existing) return admissionSnapshot(existing);
+	// A delivery already admitted under this id (senpi#7479): the same message is that admission, answered in the
+	// prompt's words with nothing of the delivery itself; a different message is the conflict. Nothing runs.
+	const delivered = hostMinted ? undefined : deliveryUnder(this.session, clientMessageId);
+	if (delivered !== undefined) {
+		if (delivered.digest !== digest) throw new ClientMessageIdConflict(clientMessageId);
+		return {
+			clientMessageId,
+			durableSessionId: this.session.sessionManager.getSessionId(),
+			disposition: delivered.disposition,
+			state: delivered.disposition === "queued" ? "queued" : "completed",
+			...(delivered.turnId === undefined ? {} : { turnId: delivered.turnId }),
+		};
+	}
 
 	const result = Promise.withResolvers<ClientMessageAdmission>();
-	this.pending.set(clientMessageId, { fingerprint, result: result.promise });
+	this.pending.set(clientMessageId, { fingerprint, messageDigest: digest, result: result.promise });
 	// Joiners may attach later; the caller below still receives the original rejection.
 	void result.promise.catch(() => {});
 	try {
@@ -70,6 +88,7 @@ export async function admitClientInput(
 			clientMessageId,
 			durableSessionId: this.session.sessionManager.getSessionId(),
 			fingerprint,
+			messageDigest: digest,
 			...(hostMinted ? { hostMinted: true as const } : {}),
 		};
 		const disposition = await invoke({

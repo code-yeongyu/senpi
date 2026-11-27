@@ -4752,6 +4752,7 @@
       "clientMessageId": "host:<uuid:1>:<uuid:4>",
       "durableSessionId": "<uuid:1>",
       "fingerprint": "530642eecec62bca6bbf0acd2f0c00aeb858bb64386418d2f24ef9a57e6aca58",
+      "messageDigest": "af13a3f1d978d161236c2b56f1cebc8437843e783d160370d4b5e7f3c0c95d0f",
       "hostMinted": true,
       "state": "queued",
       "disposition": "queued",
@@ -4858,6 +4859,7 @@
       "clientMessageId": "host:<uuid:1>:<uuid:4>",
       "durableSessionId": "<uuid:1>",
       "fingerprint": "530642eecec62bca6bbf0acd2f0c00aeb858bb64386418d2f24ef9a57e6aca58",
+      "messageDigest": "af13a3f1d978d161236c2b56f1cebc8437843e783d160370d4b5e7f3c0c95d0f",
       "hostMinted": true,
       "state": "running",
       "disposition": "queued"
@@ -4946,6 +4948,7 @@
       "clientMessageId": "host:<uuid:1>:<uuid:4>",
       "durableSessionId": "<uuid:1>",
       "fingerprint": "530642eecec62bca6bbf0acd2f0c00aeb858bb64386418d2f24ef9a57e6aca58",
+      "messageDigest": "af13a3f1d978d161236c2b56f1cebc8437843e783d160370d4b5e7f3c0c95d0f",
       "hostMinted": true,
       "state": "completed",
       "disposition": "queued",

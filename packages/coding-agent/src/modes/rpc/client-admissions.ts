@@ -15,7 +15,7 @@ import type { EffectActor, EffectOutcome } from "./effect-record.ts";
 import { projectAdmission } from "./effect-status.ts";
 import { noteSessionEffect } from "./session-effect-status.ts";
 
-const sessions = new WeakMap<AgentSession, ClientAdmissions>();
+const sessions = new WeakMap<object, ClientAdmissions>();
 
 /** One ledger per runtime; the transcript, not an attachment or request id, owns its history. */
 /** The client (and abort effect) an `abortedBy` names. */
@@ -25,7 +25,7 @@ export class ClientAdmissions {
 	private readonly records = new Map<string, ClientAdmissionRecord>();
 	private readonly pending = new Map<
 		string,
-		{ readonly fingerprint: string; readonly result: Promise<ClientMessageAdmission> }
+		{ readonly fingerprint: string; readonly messageDigest: string; readonly result: Promise<ClientMessageAdmission> }
 	>();
 	private restoring = true;
 	/** How the current turn ended, read at its final `agent_end` and written by the `agent_idle` seal. */
@@ -131,6 +131,26 @@ export class ClientAdmissions {
 			sessions.set(session, admissions);
 		}
 		return admissions;
+	}
+
+	/**
+	 * The prompt this session admitted, or is admitting, under `id` (senpi#7479), read without building a ledger: a
+	 * ledger built here would restore queued input. A host-minted id is never a client's.
+	 */
+	static admittedUnder(
+		session: Pick<AgentSession, "sessionManager">,
+		id: string,
+	): { readonly messageDigest?: string; readonly turnId?: string } | undefined {
+		const ledger = sessions.get(session);
+		if (ledger === undefined || ledger.durableSessionId !== session.sessionManager.getSessionId()) return undefined;
+		const pending = ledger.pending.get(id);
+		if (pending !== undefined) return { messageDigest: pending.messageDigest };
+		const record = ledger.records.get(id);
+		if (record === undefined || record.hostMinted === true) return undefined;
+		return {
+			...(record.messageDigest === undefined ? {} : { messageDigest: record.messageDigest }),
+			...(record.turnId === undefined ? {} : { turnId: record.turnId }),
+		};
 	}
 
 	/** The newest record for `clientMessageId` in this session, for effect status queries. */
