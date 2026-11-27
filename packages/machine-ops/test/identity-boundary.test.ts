@@ -257,3 +257,51 @@ describe("streamed output holds only a tail that can still become a masked value
 		}
 	});
 });
+
+describe("an idle pause decides the same values as the whole text", () => {
+	const value = randomBytes(32).toString("base64");
+	const fields = Array.from({ length: 8 }, (_, i) => `"field${i}":"ordinary public value ${i}"`).join(",");
+	const record = `{"kind":"human","v":1,${fields},"secretKey":"${value}"}`;
+	const pretty = JSON.stringify(JSON.parse(record), null, 2);
+	const split = (text: string, at: string, offset: number) => {
+		const cut = text.indexOf(at) + offset;
+		return [text.slice(0, cut), text.slice(cut)];
+	};
+	it.each([
+		["a partial key before the pause", ...split(record, '"secretKey"', 5)],
+		["a pretty-printed record", ...split(pretty, '"secretKey"', 5)],
+		["the whole key before the pause", ...split(record, '"secretKey"', 11)],
+		["a separator of 60 spaces", `signing${" ".repeat(60)}`, `: ${value}\n`],
+		["a separator of 200 spaces", `signing${" ".repeat(200)}`, `: ${value}\n`],
+	])("%s", (_name, before, after) => {
+		const stream = new IdentityOutputStream();
+		const output = stream.push(before) + stream.flushIdle() + stream.push(after) + stream.finish();
+		expect(output).toBe(redactIdentityText(before + after));
+		if (before.length < 200) expect(output.includes(value)).toBe(false);
+	});
+	it("keeps a separator of 1,100 spaces consistent without a pause", () => {
+		const text = `signing${" ".repeat(1100)}: ${value}\n`;
+		const stream = new IdentityOutputStream();
+		expect(stream.push(text.slice(0, 1107)) + stream.push(text.slice(1107)) + stream.finish()).toBe(
+			redactIdentityText(text),
+		);
+	});
+	it("returns the held tail at exit with its original bytes", async () => {
+		const text = '{"secretKey":"x","label":"한글"';
+		let streamed = Buffer.alloc(0);
+		const result = await ops.process.exec(
+			{
+				command: `printf '%s' '${text}'`,
+				cwd: home,
+				onOutput: (chunk) => {
+					streamed = Buffer.concat([streamed, Buffer.from(chunk)]);
+				},
+			},
+			ctx,
+		);
+		// The undecided credential is released masked; every other byte is the child's own.
+		const expected = text.replace('"x"', '"[REDACTED]"');
+		expect(streamed.toString("utf8")).toBe(expected);
+		expect(Buffer.from(result.stdout).toString("utf8")).toBe(expected);
+	});
+});

@@ -39,6 +39,10 @@ export class IdentityOutputStream {
 		return this.release("", true);
 	}
 
+	finishBytes(): Buffer {
+		return Buffer.from(this.finish(), "latin1");
+	}
+
 	/** After a pause, release a held name or token prefix: alone it is public, and the
 	 * release context still masks a value that later completes it. */
 	flushIdle(): string {
@@ -61,8 +65,9 @@ export class IdentityOutputStream {
 		}
 		// Discriminators of a human record can precede its credential in released output.
 		const history = this.history.join("");
-		const context =
-			this.humanHeld || /secretkey|sealedkey|\\u/i.test(buf) ? history : history.slice(-RELEASE_CONTEXT);
+		// An idle flush can release part of a key name, so test the trigger across that boundary too.
+		const recent = history.slice(-RELEASE_CONTEXT);
+		const context = this.humanHeld || /secretkey|sealedkey|\\u/i.test(recent + buf) ? history : recent;
 		const all = context + buf;
 		const base = context.length;
 		const undecided: Undecided = { open: [], orphan: [] };

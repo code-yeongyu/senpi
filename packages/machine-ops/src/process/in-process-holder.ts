@@ -33,7 +33,7 @@ class InProcessTerminal implements HeldTerminal {
 
 	private settle(exit: HeldExit): void {
 		if (this.exit !== undefined) return;
-		this.emit(Buffer.from(this.output.finish()));
+		this.emit(this.output.finishBytes());
 		this.exit = exit;
 		for (const waiter of this.exitWaiters) waiter(exit);
 		this.exitWaiters.clear();

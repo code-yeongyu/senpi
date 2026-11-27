@@ -28,6 +28,8 @@ export type MachineOpCommand = (typeof MACHINE_OP_COMMANDS)[number];
 
 /** Advertised in `get_protocol_info` by a host that answers these records. */
 export const MACHINE_OP_CAPABILITY = "machine_op_v1";
+/** senpi#7528: this engine's file effects refuse protected identity files. */
+export const MACHINE_OP_IDENTITY_GUARD_CAPABILITY = "machine_op_identity_guard_v1";
 
 const COMMANDS: ReadonlySet<unknown> = new Set(MACHINE_OP_COMMANDS);
 export const isMachineOpCommand = (type: unknown): type is MachineOpCommand => COMMANDS.has(type);

@@ -31,7 +31,7 @@ interface ObjectScope {
 const NAME = "(?:signing|sealing)(?:_private_key|privatekey)?";
 const TOKEN = /tvk1:[a-z\d_=-]+|AGE-SECRET-KEY-1[a-z\d]+/gi;
 // A JSON/Python key, YAML `name: value`, `name=value`, `export NAME="value"` or `name<TAB>value`.
-const SEPARATOR = `["']?(?:\\s*[:=]|[ ]*\\t)\\s*["']?`;
+const SEPARATOR = `["']?(?:\\s{0,64}[:=]|[ ]{0,64}\\t)\\s{0,64}["']?`;
 const PRIVATE_VALUE = new RegExp(`(?<!\\w)${NAME}(${SEPARATOR})([a-z\\d+/_=-]+|\\[[\\d,\\s]{0,4096}\\])`, "gi");
 const NESTED_DEPTH = 8;
 
@@ -228,7 +228,7 @@ const NAMES = [
 	"sealingprivatekey",
 ];
 const PRIVATE_TAIL = new RegExp(
-	`(?<!\\w)${NAME}(["']?\\s*[:=\\t]?\\s*["']?)([a-z\\d+/_=-]{1,128}|\\[[\\d,\\s]{0,1024})?$`,
+	`(?<!\\w)${NAME}(["']?\\s{0,64}[:=\\t]?\\s{0,64}["']?)([a-z\\d+/_=-]{1,128}|\\[[\\d,\\s]{0,1024})?$`,
 	"i",
 );
 const TOKEN_TAIL = /(?:tvk1:[a-z\d_=-]|age-secret-key-1[a-z\d])[a-z\d_=-]*$/i;

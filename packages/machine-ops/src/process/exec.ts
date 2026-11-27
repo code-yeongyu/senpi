@@ -159,8 +159,8 @@ export async function runExec(req: ExecRequest, ctx: OpContext, deps: ExecDepend
 			if (clean.length) onData(clean, stream);
 		});
 		child[stream]?.once("end", () => {
-			const tail = redactor.finish();
-			if (tail) onData(Buffer.from(tail), stream);
+			const tail = redactor.finishBytes();
+			if (tail.length) onData(tail, stream);
 		});
 	}
 	const onAbort = () => {
