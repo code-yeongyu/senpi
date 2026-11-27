@@ -72,8 +72,16 @@ export function spawnRpc(
  * No wall-clock deadline of its own: host startup on a loaded machine can take longer than any
  * fixed readiness window (senpi#5340), and vitest's testTimeout is the outer bound.
  */
+/**
+ * Exit-aware readiness wait (senpi#5340, senpi#7141): the host's own stderr line or its exit settles it; it has no
+ * wall-clock budget of its own, vitest's testTimeout is the outer bound. A host that exited before the wait began
+ * rejects at once (no exit event would ever come). Only stderr written from the moment the wait starts is seen.
+ */
 export async function waitForStderr(child: ChildProcessWithoutNullStreams, text: string): Promise<void> {
 	let stderr = "";
+	const exitedBefore = (): string =>
+		`RPC host exited (${child.exitCode ?? child.signalCode}) before ${JSON.stringify(text)}: ${stderr}`;
+	if (child.exitCode !== null || child.signalCode !== null) throw new Error(exitedBefore());
 	await new Promise<void>((resolve, reject) => {
 		const onData = (chunk: Buffer) => {
 			stderr += chunk.toString("utf8");
@@ -84,7 +92,7 @@ export async function waitForStderr(child: ChildProcessWithoutNullStreams, text:
 		};
 		const onExit = () => {
 			cleanup();
-			reject(new Error(`RPC host exited before readiness: ${stderr}`));
+			reject(new Error(exitedBefore()));
 		};
 		const cleanup = () => {
 			child.stderr.off("data", onData);

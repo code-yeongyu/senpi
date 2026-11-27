@@ -118,23 +118,8 @@ export function waitForJsonLine(
 	});
 }
 
-export function waitForStderr(child: ChildProcessWithoutNullStreams, text: string): Promise<void> {
-	let stderr = "";
-	return new Promise<void>((resolve, reject) => {
-		const timer = setTimeout(() => {
-			child.stderr.off("data", onData);
-			reject(new Error(`Timed out waiting for ${JSON.stringify(text)}: ${stderr}`));
-		}, 30_000);
-		const onData = (chunk: Buffer): void => {
-			stderr += chunk.toString("utf8");
-			if (!stderr.includes(text)) return;
-			clearTimeout(timer);
-			child.stderr.off("data", onData);
-			resolve();
-		};
-		child.stderr.on("data", onData);
-	});
-}
+// One readiness wait for every socket-host fixture (senpi#7141).
+export { waitForStderr } from "./helpers/rpc-socket-host-support.ts";
 
 /** One probe on its OWN connection: the second one must observe the same identity. */
 export async function probeSocket(socketPath: string, id: string): Promise<RecordValue> {
