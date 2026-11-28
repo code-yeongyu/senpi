@@ -15,7 +15,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { VirtualTerminal } from "../../../../tui/test/virtual-terminal.ts";
 import { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
 import type { SessionControlAdmission } from "../../../src/core/extensions/types.ts";
-import { deliveryIdOf } from "../../../src/core/external-admission.ts";
+import { deliveryIdOf } from "../../../src/core/delivery-ids.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { controlData } from "../../helpers/session-control-client.ts";

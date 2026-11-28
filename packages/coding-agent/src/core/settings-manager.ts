@@ -23,7 +23,7 @@ import { createHash, randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
-import { dirname, join } from "path";
+import { dirname, join, relative } from "path";
 import lockfile from "proper-lockfile";
 import { isDeepStrictEqual } from "util";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
@@ -927,10 +927,14 @@ export class SettingsManager {
 		const keys = executableSettingPathsIn(this.projectSettings);
 		if (keys.length === 0 || savedProjectTrusted(cwd, agentDir)) return false;
 		this.projectSettings = withoutSettingPaths(this.projectSettings, keys);
-		const path = getSettingsPath(cwd, agentDir, "project");
+		// Named as the project knows it: the notice reaches every surface that shows settings errors (senpi#7633).
+		const file = relative(cwd, getSettingsPath(cwd, agentDir, "project"));
 		for (const key of keys)
 			this.errors.push(
-				toSettingsError("project", new Error(`project setting ${key} ignored: the project is not trusted`), path),
+				toSettingsError(
+					"project",
+					new Error(`project setting ${key} in ${file} ignored: the project is not trusted`),
+				),
 			);
 		return true;
 	}

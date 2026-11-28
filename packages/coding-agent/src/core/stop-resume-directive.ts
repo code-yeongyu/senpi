@@ -10,9 +10,15 @@ const DIRECTIVE =
 /** What a Resume continues: a person's Stop, an interrupted run, or a session the engine-turn cap paused (senpi#7138). */
 export type ResumeCause = "stop" | "interrupted" | "engine_turn_cap";
 
+/** A resume message's `details`: what it continues, and the held peer deliveries it carries (senpi#7628). */
+export interface StopResumeDetails {
+	readonly resumeCause?: ResumeCause;
+	readonly folded_delivery_ids?: readonly string[];
+}
+
 export function stopResumeDirective(
 	cause: ResumeCause = "stop",
-): Pick<CustomMessage, "customType" | "content" | "display" | "details"> {
+): Pick<CustomMessage<StopResumeDetails>, "customType" | "content" | "display" | "details"> {
 	// A person's go-ahead: it resets the engine-turn count (`resetsEngineTurnHistory`), as their message would.
 	if (cause === "engine_turn_cap")
 		return {
