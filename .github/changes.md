@@ -1,3 +1,39 @@
+## 2026-11-27 - CI runs the equivalence status-settings guard (senpi#7536)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the senpi-qa harness unit-test step also runs `.agents/skills/senpi-qa/scripts/lib/equivalence-codemode-settings.test.mjs`.
+
+### Why
+
+- The guard keeps every timer-driven codemode status setting off in the fused-equivalence cases (a per-second footer tick made E08's recorded event count depend on wall-clock time, senpi#7535); a guard CI never runs could not catch a new status setting.
+
+### Why an extension could not handle it
+
+- This is the CI workflow. Extensions do not run in it.
+
+### Expected merge conflict zones
+
+- LOW: the `node --test` line of the senpi-qa harness unit-test step in `.github/workflows/ci.yml`.
+
+## 2026-11-25 - The Windows compiled-extensions job installs no archive tool (senpi#7473)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `compiled-extensions-windows` job loses its `Install archive tool` step (`choco install zip` with four attempts), because `scripts/build-binaries.sh` now writes the Windows zip with the system bsdtar.
+
+### Why
+
+- The step made the job depend on the Chocolatey community feed. A slow feed (504 after about 3.3 min per attempt) used up the job's 6-minute limit on main at 58c99669b0, and retrying (senpi#3088, #3162) could not remove that dependency.
+
+### Why an extension could not handle it
+
+- This is the CI workflow. Extensions do not run in it.
+
+### Expected merge conflict zones
+
+- LOW: the steps of the `compiled-extensions-windows` job in `.github/workflows/ci.yml`.
+
 ## 2026-11-21 - Pilot exact npm tree caching for Linux coding-agent CI (senpi#7193)
 
 ### What changed

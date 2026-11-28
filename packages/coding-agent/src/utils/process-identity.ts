@@ -159,8 +159,11 @@ export async function readProcessIdentity(
 	platform: NodeJS.Platform = process.platform,
 	timeoutMs?: number,
 	isLive: (pid: number) => boolean = processIsLive,
-	/** Owner records cross launch environments; legacy pidfiles keep their existing local-time format. */
-	timeZone?: "UTC",
+	/**
+	 * Always UTC: a local rendering names two instants in a daylight-saving fall-back hour (omo#12108). Records an older
+	 * build wrote in local time are still read as local time by `processStartTimeMs`.
+	 */
+	timeZone: "UTC" = "UTC",
 ): Promise<ProcessIdentityResult> {
 	const command =
 		platform === "win32"
@@ -184,9 +187,7 @@ export async function readProcessIdentity(
 			{
 				windowsHide: true,
 				...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }),
-				...(platform === "win32" && timeZone === undefined
-					? {}
-					: { env: { ...process.env, LC_ALL: "C", LANG: "C", ...(timeZone ? { TZ: timeZone } : {}) } }),
+				env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: timeZone },
 			},
 			(error, stdout) => {
 				if (error) {
@@ -208,7 +209,7 @@ export async function readProcessIdentity(
 				const output = platform === "win32" ? snapshot : snapshot.slice(state.length).trim();
 				if (!output || (platform === "win32" && !/^\d+$/.test(output)))
 					return resolve({ kind: "error", error: new Error("invalid process identity output") });
-				resolve({ kind: "present", identity: timeZone && platform !== "win32" ? `${output} UTC` : output });
+				resolve({ kind: "present", identity: platform === "win32" ? output : `${output} ${timeZone}` });
 			},
 		).once("error", (error) => resolve({ kind: "error", error }));
 	});
@@ -247,9 +248,8 @@ export async function readProcessStartTime(
 	pid: number,
 	platform: NodeJS.Platform = process.platform,
 	timeoutMs?: number,
-	timeZone: "UTC" = "UTC",
 ): Promise<string | undefined> {
-	return readProcessIdentity(pid, platform, timeoutMs, undefined, timeZone).then((result) => {
+	return readProcessIdentity(pid, platform, timeoutMs, undefined, "UTC").then((result) => {
 		if (result.kind === "error") throw result.error;
 		return result.kind === "present" ? result.identity : undefined;
 	});

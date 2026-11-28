@@ -196,6 +196,15 @@ export const SESSION_ENV_CAPABILITY = "session_env";
 export const RETRY_FALLBACK_PROFILE_CAPABILITY = "retry_fallback_profile";
 
 /**
+ * HOST capability: this host honors `open_session.persona` (`{ appendSystemPrompt?, tools?, excludeTools? }`). The
+ * persona is that session's own: it narrows the host's tool flags (never widens them), its prompt is appended as
+ * literal text, a successor generation reopens the session with it, and an attach naming another persona is refused.
+ * A caller sends a persona only to a host that names this.
+ */
+export const SESSION_PERSONA_CAPABILITY = "session_persona";
+export const SESSION_RETIREMENT_CAPABILITY = "session_retirement";
+
+/**
  * HOST capability: this host takes each caller's live telemetry answer (senpi#7446) on `open_session.telemetry`,
  * `attach_session.telemetry` and `set_telemetry_consent`, and decides a session's telemetry from the host's own
  * setting AND every caller of that session. A caller sends its answer only to a host that names this.

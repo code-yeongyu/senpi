@@ -165,6 +165,10 @@ export class EngineTurnHold {
 		return this.notices.noticeCount;
 	}
 
+	get peerDeliveryCount(): number {
+		return this.notices.peerDeliveryCount;
+	}
+
 	start(): void {
 		if (!this.attended) this.addHold("unattended");
 		if (this.isHeld() && this.noticeCount > 0) this.showNotice();

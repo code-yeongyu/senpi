@@ -10,11 +10,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { acquireHostEnsureLock } from "../src/modes/rpc/host-ensure-lock.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readProcessStartTime } from "../src/utils/process-identity.ts";
 import { endpointScratch, heldRealHost, sweepEndpointScratches } from "./helpers/rpc-host-endpoint-scratch.ts";
 import { closeServer, deadEndpoint, listeningSocket, writeJson } from "./helpers/rpc-host-gc-fixtures.ts";
 import { fileWritten, gcMarkerPath, readGcMarker } from "./helpers/rpc-host-gc-pass-fixtures.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 afterEach(sweepEndpointScratches, 180_000);
 
@@ -52,7 +52,7 @@ describe.skipIf(process.platform === "win32")("budgeted gc pass scheduled by ens
 		expect(existsSync(live.endpointFile)).toBe(true);
 		expect(existsSync(target.endpointFile)).toBe(true);
 		expect(readdirSync(target.generationsDir)).not.toHaveLength(0);
-		expect(await probeHost({ socket: qa.legacy })).toBeDefined();
+		expect(await probeSandboxHost(qa, { socket: qa.legacy })).toBeDefined();
 	}, 180_000);
 
 	it("costs the awaited ensure nothing even when 40 worst-case candidates wait for the pass", async () => {

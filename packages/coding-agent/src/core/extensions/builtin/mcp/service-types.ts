@@ -85,11 +85,11 @@ export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted
 	mode?: ExtensionContext["mode"];
 	/**
 	 * Session history access, present on the real ExtensionContext. Only
-	 * getEntries is needed (attach-time promotion rehydration); keeping the
-	 * requirement narrow lets tests pass a two-line fake.
+	 * getEntries is required; the real session's reduceHistory lets promotion replay reuse its marker index instead
+	 * of rereading the history. Keeping the requirement narrow lets tests pass a two-line fake.
 	 */
 	sessionManager?: Pick<ExtensionContext["sessionManager"], "getEntries"> &
-		Partial<Pick<ExtensionContext["sessionManager"], "getSessionId">>;
+		Partial<Pick<ExtensionContext["sessionManager"], "getSessionId" | "reduceHistory">>;
 	/**
 	 * Extension-declared MCP servers. Read on every attach so reattach/reload
 	 * paths pick up the current declarations without caching them in the MCP

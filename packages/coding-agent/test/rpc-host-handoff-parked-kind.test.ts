@@ -8,7 +8,6 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { JsonlPeer, openedSessionId, type WireRecord } from "./helpers/rpc-generation-support.ts";
 import { MOCK_MODEL } from "./helpers/rpc-hermetic.ts";
 import {
@@ -22,6 +21,7 @@ import {
 	tracked,
 	trackSupervisor,
 } from "./helpers/rpc-host-endpoint-scratch.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 const FIXTURE_EXTENSION = join(import.meta.dirname, "helpers", "rpc-parked-preset-probe-extension.ts");
 
@@ -162,7 +162,7 @@ async function openSession(
 }
 
 async function handover(qa: EndpointScratch): Promise<void> {
-	const before = await probeHost({ socket: qa.legacy });
+	const before = await probeSandboxHost(qa, { socket: qa.legacy });
 	const result = await handoffHost({
 		socket: qa.legacy,
 		agentDir: qa.agentDir,
@@ -172,7 +172,7 @@ async function handover(qa: EndpointScratch): Promise<void> {
 	});
 	if (result.action !== "handoff") throw new Error(`handoff refused: ${JSON.stringify(result)}`);
 	trackSupervisor(result.pid);
-	const after = await probeHost({ socket: qa.legacy });
+	const after = await probeSandboxHost(qa, { socket: qa.legacy });
 	if (after?.instanceId === before?.instanceId) throw new Error("handoff kept the same host instance");
 }
 

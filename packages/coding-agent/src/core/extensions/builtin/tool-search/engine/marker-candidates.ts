@@ -1,5 +1,3 @@
-import type { EventLoopSlicer } from "../../../../event-loop-slicer.ts";
-
 const ACTIVATION_MARKER_PREFIX = "[tool_search:activated";
 
 /**
@@ -26,16 +24,4 @@ function holds(value: unknown, seen: Set<object>): boolean {
 		if (key.includes(ACTIVATION_MARKER_PREFIX) || holds(item, seen)) return true;
 	}
 	return false;
-}
-
-export async function activationMarkerCandidates(
-	messages: readonly unknown[],
-	slicer: EventLoopSlicer,
-): Promise<unknown[]> {
-	const candidates: unknown[] = [];
-	for (const message of messages) {
-		if (mayHoldActivationMarker(message)) candidates.push(message);
-		if (slicer.due) await slicer.yield();
-	}
-	return candidates;
 }

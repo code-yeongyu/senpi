@@ -10,7 +10,6 @@ import { writeHostSettings } from "../../../src/modes/rpc/host-daemon-state.ts";
 import * as hostEnsure from "../../../src/modes/rpc/host-ensure.ts";
 import { settledOpportunisticHostGc } from "../../../src/modes/rpc/host-gc-pass.ts";
 import * as hostProbe from "../../../src/modes/rpc/host-probe.ts";
-import { observeProtocolInfo } from "../../../src/modes/rpc/host-probe.ts";
 import { runHostSessionRequest } from "../../../src/modes/rpc/host-session-runner.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
 import * as ownershipLock from "../../../src/modes/rpc/ownership-safe-lock.ts";
@@ -18,6 +17,7 @@ import { RpcClient, RpcCommandError } from "../../../src/modes/rpc/rpc-client.ts
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { generationEnv, generationScratch, JsonlPeer } from "../../helpers/rpc-generation-support.ts";
 import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
+import { observeSandboxHost, sandboxRpcClient } from "../../helpers/rpc-sandbox-host.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-stopping-supervisor.ts");
 const cleanups: Array<() => Promise<void>> = [];
@@ -126,7 +126,7 @@ async function rig() {
 			return peer;
 		},
 		client: async () => {
-			const client = new RpcClient({ socketPath: qa.socket });
+			const client = sandboxRpcClient(qa);
 			clients.push(client);
 			await client.start();
 			return client;
@@ -177,7 +177,7 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 			});
 		// A public request proves ensure reached the stopping generation, not a scheduling delay.
 		await r.wait("public-probe", after);
-		expect(await observeProtocolInfo(r.qa.socket, 1_000)).toMatchObject({ lifecycle: "stopping" });
+		expect(await observeSandboxHost(r.qa, 1_000)).toMatchObject({ lifecycle: "stopping" });
 		expect(settled).toBe(false);
 		r.supervisor.send("exit");
 		await r.exit;
@@ -296,7 +296,7 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 	it("reports stopping through both discovery and host status while the child remains alive", async () => {
 		const r = await rig();
 		await r.stop();
-		expect(await observeProtocolInfo(r.qa.socket, 1_000)).toMatchObject({
+		expect(await observeSandboxHost(r.qa, 1_000)).toMatchObject({
 			instanceId: "stopping-generation",
 			lifecycle: "stopping",
 		});
@@ -323,7 +323,7 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 		).rejects.toMatchObject({ reason: "host_stopping" });
 		expect(r.supervisor.exitCode).toBeNull();
 		expect(r.messages).not.toContain("child-exited");
-		expect(await observeProtocolInfo(r.qa.socket, 1_000)).toMatchObject({
+		expect(await observeSandboxHost(r.qa, 1_000)).toMatchObject({
 			instanceId: "stopping-generation",
 			lifecycle: "stopping",
 		});
@@ -347,7 +347,7 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 		await r.wait("child-draining");
 		const client = await r.client();
 		await expect(client.openSession({ cwd: r.qa.cwd })).rejects.toMatchObject({ errorCode: "host_stopping" });
-		expect(await observeProtocolInfo(r.qa.socket, 1_000)).toMatchObject({ lifecycle: "stopping" });
+		expect(await observeSandboxHost(r.qa, 1_000)).toMatchObject({ lifecycle: "stopping" });
 		expect(r.messages).not.toContain("open-reached-child");
 	});
 });

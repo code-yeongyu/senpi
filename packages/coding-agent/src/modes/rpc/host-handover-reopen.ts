@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { sessionIdFromFile } from "../../core/foreign-session-holders.ts";
+import { readSessionRetirement, RetirementFault } from "../../core/session-retirement.ts";
 import { readdir } from "node:fs/promises";
 import { processIsLive } from "../../utils/process-identity.ts";
 import { createHostDaemonPaths, generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
@@ -109,6 +111,17 @@ export async function reopenHandoverParkedSessions(
 		await report(parked.length);
 		for (const entry of parked) {
 			sawAnyPark = true;
+			try {
+				const id = (await sessionIdFromFile(entry.sessionPath)) ?? entry.durableSessionId;
+				if (id && (await readSessionRetirement(agentDir, id))) {
+					await clearInheritedParkedSession(daemonDir, entry.sessionPath, holder?.hostInstance);
+					continue;
+				}
+			} catch (cause) {
+				if (!(cause instanceof RetirementFault)) throw cause;
+				if (cause.code === "retirement_store_unavailable") return done();
+				continue;
+			}
 			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
 		}
 		const remaining = (await inheritedParks(daemonDir, holder, writerAlive)).length;

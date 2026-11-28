@@ -16,6 +16,7 @@
  */
 
 import {
+	type AfterToolCallResult,
 	type AgentEvent,
 	type AgentTool,
 	type AgentToolCall,
@@ -53,14 +54,17 @@ export interface CursorExecBridgeOptions {
 	 * tool card for a synthesized call never resolves.
 	 */
 	emitEvent: (event: AgentEvent, runSignal: AbortSignal) => Promise<void>;
-	/** Same tool_result hook the local tool loop emits; plan-touch trackers listen here. */
+	/**
+	 * The session's tool_result chain, as the local tool loop runs it. Its answer replaces fields of the result exactly
+	 * as for a model-issued call (the prepared host's after-hook merge), so the frame carries what the chain decided.
+	 */
 	emitToolResult?: (event: {
 		toolName: string;
 		toolCallId: string;
 		args: unknown;
 		result: AgentToolResult<unknown>;
 		isError: boolean;
-	}) => Promise<void>;
+	}) => Promise<AfterToolCallResult | undefined>;
 	/** Called once a call that reached the prepared pipeline ended, on every path: run, blocked, aborted or thrown. */
 	settleToolCall?: (toolCallId: string) => void;
 	/** Run the session's vetoable extension preflight before tool execution. */
@@ -198,10 +202,10 @@ async function executeTool(
 					? { block: true, reason: preflight.reason || "Tool execution was blocked" }
 					: undefined;
 			},
-			afterToolCall: async ({ args: input, result, isError }) => {
-				await options.emitToolResult?.({ toolName, toolCallId, args: input, result, isError });
-				return undefined;
-			},
+			// An extension may replace the result (omo#12466: a memory guard denying what a walk found); the frame must
+			// answer with the replacement, never with the result it replaced.
+			afterToolCall: async ({ args: input, result, isError }) =>
+				options.emitToolResult?.({ toolName, toolCallId, args: input, result, isError }),
 			removedToolHints: {},
 		},
 		options.openBatchStore,

@@ -79,6 +79,7 @@ export async function rebindSessionFile(
 	const header = await readHeaderBeforeLock(source, target);
 	if (header === undefined) return target;
 	return withSessionMoveLock(source, header.id, () => moveSessionFile(source, target, cwd, options.beforeRename), {
+		destination: target,
 		...(options.moveLockWaitMs === undefined ? {} : { waitMs: options.moveLockWaitMs }),
 	});
 }

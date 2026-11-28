@@ -1,3 +1,4 @@
+import { isLifecycleBookkeeping } from "./lifecycle-bookkeeping.ts";
 import type { CompactionEntry, FileEntry, SessionEntry } from "./session-manager.ts";
 
 /**
@@ -9,7 +10,7 @@ import type { CompactionEntry, FileEntry, SessionEntry } from "./session-manager
  * branching to an old entry) already reload them, exactly as they do after a live compaction.
  */
 export interface LoadedTail {
-	/** The header, the non-message entries of the leaf's path before the kept window, and the window itself. */
+	/** The header, what a branch reader needs of the leaf's path before the kept window, and the window itself. */
 	readonly retained: FileEntry[];
 	/** Ids of the entries the mirror leaves out; a new entry must never reuse one. */
 	readonly trimmedIds: readonly string[];
@@ -76,11 +77,13 @@ export function planLoadedTail(entries: readonly FileEntry[]): LoadedTail | unde
 /**
  * Before the window, the mirror keeps the leaf path's non-message entries (model and thinking
  * changes, earlier compactions, custom state) and every label and session name, which describe
- * the whole session rather than one branch.
+ * the whole session rather than one branch. Lifecycle bookkeeping is left in the file: restoration
+ * folds it from the whole history, and a long-lived session writes more of it than of anything else
+ * (senpi#7596).
  */
 function keepsBeforeWindow(entry: SessionEntry, pathIds: ReadonlySet<string>): boolean {
 	if (entry.type === "label" || entry.type === "session_info") return true;
-	return entry.type !== "message" && pathIds.has(entry.id);
+	return entry.type !== "message" && !isLifecycleBookkeeping(entry) && pathIds.has(entry.id);
 }
 
 function leafPath(leaf: SessionEntry | undefined, byId: ReadonlyMap<string, SessionEntry>): SessionEntry[] {

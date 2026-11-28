@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
-import { probeProtocolInfo } from "../../../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
 import {
 	decideHostUnitPlacement,
@@ -30,6 +29,7 @@ import {
 } from "../../helpers/rpc-host-endpoint-scratch.ts";
 import { hostLifecycleEntry } from "../../helpers/rpc-generation-support.ts";
 import { processAlive, waitForPidGone } from "../../helpers/spawned-host-reaper.ts";
+import { probeSandboxHost } from "../../helpers/rpc-sandbox-host.ts";
 
 const CALLER = join(import.meta.dirname, "..", "..", "fixtures", "host-unit-caller.ts");
 
@@ -234,7 +234,7 @@ describe.skipIf(!reachable)(
 			const { pid } = JSON.parse(await firstLine(caller, () => stderr)) as { pid: number };
 			trackSupervisor(pid);
 
-			const instanceId = (await probeProtocolInfo(qa.legacy, 10_000))?.instanceId;
+			const instanceId = (await probeSandboxHost(qa, { socket: qa.legacy, timeoutMs: 10_000 }))?.instanceId;
 			if (instanceId === undefined) throw new Error("the ensured host did not answer get_protocol_info");
 			const ownUnit = `senpi-host-${instanceId}.scope`;
 			hostUnits.push(ownUnit);
@@ -243,7 +243,7 @@ describe.skipIf(!reachable)(
 			await closed(caller);
 
 			expect(processAlive(pid)).toBe(true);
-			const after = await probeProtocolInfo(qa.legacy, 10_000);
+			const after = await probeSandboxHost(qa, { socket: qa.legacy, timeoutMs: 10_000 });
 			expect(after?.instanceId).toBe(instanceId);
 
 			const status = await readHostStatus({ socket: qa.legacy, agentDir: qa.agentDir });
