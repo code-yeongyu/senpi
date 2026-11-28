@@ -242,10 +242,12 @@ export class JsonlSessionRepo
 	}
 
 	private async readSessionMetadata(file: FileInfo, context: Context): Promise<JsonlSessionMetadata | undefined> {
-		const lines = fileValue(
-			await this.fileSystem.readTextLines(file.path, { maxLines: 1 }, context),
-			`Failed to read session header ${file.path}`,
-		);
+		const read = await this.fileSystem.readTextLines(file.path, { maxLines: 1 }, context);
+		// A session file can be deleted or renamed after listDir returned it (the same race as
+		// #5272, one step later); a vanished file is skipped, every other read error still
+		// fails the listing.
+		if (!read.ok && read.error.code === "not_found") return undefined;
+		const lines = fileValue(read, `Failed to read session header ${file.path}`);
 		if (lines[0] === undefined) return undefined;
 		const parsedHeader = parseJsonlSessionHeader(lines[0]);
 		if (!parsedHeader.ok) return undefined;
