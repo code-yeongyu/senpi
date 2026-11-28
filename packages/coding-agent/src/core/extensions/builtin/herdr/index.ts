@@ -14,6 +14,13 @@ import { HerdrClient, type HerdrMethod } from "./herdr-client.ts";
  */
 const APP_TOKEN = "app";
 
+/**
+ * Herdr drops a reported resume command whenever its process probe names another agent in the pane. That happens
+ * when herdr cannot read this process's `HERDR_AGENT` hint (it skips processes in uninterruptible sleep) and finds
+ * a provider's `claude` child by name. An unchanged re-report is a no-op for herdr and restores a dropped command.
+ */
+const RESUME_REASSERT_MS = 5000;
+
 export interface HerdrDependencies {
 	getLoadedExtensionPaths: (ctx: ExtensionContext) => readonly string[];
 	readHeader: (path: string) => string;
@@ -53,6 +60,7 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 		let deferred = false;
 		let lastReport: string | undefined;
 		let title: string | undefined;
+		let resumeTimer: ReturnType<typeof setInterval> | undefined;
 		const subscriptions: Array<() => void> = [];
 		const pending = new Set<Promise<boolean>>();
 		const owns = (ctx: ExtensionContext) => !stopped && bound === ctx.sessionManager;
@@ -98,6 +106,15 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 				lastReport = undefined;
 			}
 		}
+		function reportResume(sessionStartSource?: string): Promise<boolean> {
+			if (!bound || stopped) return Promise.resolve(false);
+			return send("pane.report_agent_session", {
+				agent: "pi",
+				...sessionRef(),
+				resume_argv: [APP_COMMAND, "--session", bound.getSessionFile() ?? bound.getSessionId()],
+				session_start_source: sessionStartSource,
+			});
+		}
 		async function reportTitle(ctx: ExtensionContext): Promise<void> {
 			const next = ctx.sessionManager.getSessionName() ?? "";
 			if (title === next) return;
@@ -136,12 +153,10 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			if (!client) return publish();
 			// Herdr accepts a resume command only after this reporter holds the pane.
 			await Promise.all([reportTitle(ctx), publish()]);
-			await send("pane.report_agent_session", {
-				agent: "pi",
-				...sessionRef(),
-				resume_argv: [APP_COMMAND, "--session", bound.getSessionFile() ?? bound.getSessionId()],
-				session_start_source: _event.reason,
-			});
+			await reportResume(_event.reason);
+			if (stopped) return;
+			resumeTimer = setInterval(() => void reportResume(), RESUME_REASSERT_MS);
+			resumeTimer.unref();
 		});
 		pi.on("session_info_changed", (_event, ctx) => {
 			if (owns(ctx)) return reportTitle(ctx);
@@ -149,6 +164,7 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 		pi.on("session_shutdown", async (event, ctx) => {
 			if (!owns(ctx)) return;
 			stopped = true;
+			clearInterval(resumeTimer);
 			for (const unsubscribe of subscriptions) unsubscribe();
 			if (event.reason === "quit") ctx.ui.setProgramStatus?.(undefined);
 			// Drain before the host builds the successor runtime, or releases the pane.
