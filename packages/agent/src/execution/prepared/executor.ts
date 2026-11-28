@@ -1,4 +1,5 @@
 import { prepareAgentToolCall } from "../../agent-loop.ts";
+import { unknownToolErrorText } from "../../tool-name-alias.ts";
 import type { AgentTool } from "../../types.ts";
 import { canonicalDigest } from "../canonical-digest.ts";
 import type { ExecutionEntry, ExecutionEvent, ExecutionKey, LedgerReply } from "../ledger-types.ts";
@@ -110,7 +111,10 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 		}
 		if (!tool) {
 			const hint = pipeline.removedToolHint(call.name);
-			const text = hint === undefined ? `Tool ${call.name} not found` : `Tool ${call.name} not found. ${hint}`;
+			const text =
+				hint === undefined
+					? unknownToolErrorText(call.name, (request.context.tools ?? []).map((candidate) => candidate.name))
+					: `Tool ${call.name} not found. ${hint}`;
 			return stop(key, generation, { kind: "blocked", result: errorResult(text) });
 		}
 		const requestedName = tool.name === call.name ? undefined : call.name;
