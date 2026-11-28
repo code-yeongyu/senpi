@@ -173,7 +173,8 @@ export type SessionWorkerToHost =
 			operationFence: SharedArrayBuffer;
 			input: Omit<McpFormInput, "operationSignal" | "operationCurrent" | "presentationSignal">;
 	  }
-	| { type: "prepared"; request: number; sessionPath: string }
+	/** `sessionPath` is absent for a memory-only session (`persistence: "none"`, senpi#7567). */
+	| { type: "prepared"; request: number; sessionPath?: string }
 	| { type: "ready"; request: number; snapshot: WorkerSnapshot; bootstrap?: SessionBootstrap }
 	| { type: "result"; request: number; error?: string }
 	| { type: "reserve"; path: string; signal: SharedArrayBuffer }

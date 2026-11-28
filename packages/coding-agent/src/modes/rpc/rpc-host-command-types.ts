@@ -2,6 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { SessionPersona } from "../../core/session-persona.ts";
+import type { SessionPersistence } from "../../core/session-persistence.ts";
 
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 
@@ -137,6 +138,17 @@ type RpcCommandBody =
 			persona?: SessionPersona;
 			/** Explicitly reopen the retired identity. Ordinary opens never consume retirement. */
 			reopenRetired?: true;
+			/**
+			 * `none` is THIS session's `--no-session` (senpi#7567): it lives in memory only. No file is created or
+			 * appended at open, prompt, bash or close, `get_state.sessionFile` is absent, `list_sessions` marks its row
+			 * `persistence: "none"`, `find_session` never finds it, and it is gone when its last attachment closes (a
+			 * handoff closes it with `session_closed { reason: "not_persisted" }`). `switch_session` and
+			 * `import_session` on it are refused with `session_not_persisted`. It cannot be combined with `sessionPath`
+			 * or `retain_on_disconnect: true` (`invalid_launch_profile`); a `durableSessionId` lives as long as the
+			 * session. Default `file`. Requires the host capability `session_persistence_none`; any other value is
+			 * refused with `invalid_launch_profile`.
+			 */
+			persistence?: SessionPersistence;
 			/**
 			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
 			 * one session after the daemon's own allowlist, never merged into the host process or carried to
