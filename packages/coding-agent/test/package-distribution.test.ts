@@ -70,7 +70,9 @@ describe("package distribution entrypoints", () => {
 				excluded: false,
 			});
 		}
-		expect(packageJson.files).toContain("dist");
+		// What every export resolves to ships: the bundle and the declarations (scripts/senpi-publish-pack-checks.mjs
+		// checks each named file in the packed tarball).
+		expect(packageJson.files).toEqual(expect.arrayContaining(["dist/bundle", "dist/**/*.d.ts"]));
 	});
 
 	// Naming the executables one by one is how `bin.senpi` drifted: upstream moved `pi` onto the
@@ -84,12 +86,12 @@ describe("package distribution entrypoints", () => {
 	});
 
 	// The release build is the only producer of `dist/bundle/`: `bin.pi` points into it, the
-	// packed tarball ships whatever `dist` holds, and nothing else in the repo runs the bundler.
+	// packed tarball ships `dist/bundle`, and nothing else in the repo runs the bundler.
 	// Wiring it into the package `build` script is what makes a published tarball executable.
 	test("builds the bundle that bin.pi resolves to as part of the package build", () => {
 		expect(packageJson.scripts["build:bundle"]).toContain("scripts/build-coding-agent-bundle.mjs");
 		expect(packageJson.scripts.build).toContain("build:bundle");
-		expect(packageJson.files).toContain("dist");
+		expect(packageJson.files).toContain("dist/bundle");
 	});
 
 	// Regression for #9132, expressed on the fork's distribution shape: internal experimental
