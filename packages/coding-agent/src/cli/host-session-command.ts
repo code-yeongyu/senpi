@@ -130,9 +130,9 @@ export function parseHostSessionArgs(args: readonly string[]): ParsedHostSession
 }
 
 function parseModel(text: string): { provider: string; id: string } | string {
-	const parts = text.split("/");
-	if (parts.length !== 2 || !parts[0] || !parts[1]) return "Model must be provider/id.";
-	return { provider: parts[0], id: parts[1] };
+	const slash = text.indexOf("/");
+	if (slash <= 0 || slash === text.length - 1) return "Model must be provider/id.";
+	return { provider: text.slice(0, slash), id: text.slice(slash + 1) };
 }
 
 function integer(text: string, minimum: number): number | null {
