@@ -1,5 +1,7 @@
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import type { HistoryReducer } from "../../core/session-history-reduce.ts";
+import type { SessionManager } from "../../core/session-manager.ts";
 import { CLIENT_ADMISSION_ENTRY, clientAdmissionRecordSchema } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { effectCrashPoint } from "./effect-crash-point.ts";
@@ -23,39 +25,32 @@ import { noteSessionEffect } from "./session-effect-status.ts";
 
 const ledgers = new WeakMap<AgentSession, EffectLedger>();
 
-const latestCache = new WeakMap<
-	AgentSession,
-	{ readonly entries: number; readonly latest: EffectStatus | undefined }
->();
-
-/**
- * The session's most recent effect receipt, read from the transcript tail WITHOUT opening a ledger:
- * answering a status subscriber must never seal a stale receipt or restore queued input as a side effect.
- */
-export function latestSessionEffect(session: AgentSession): EffectStatus | undefined {
-	const entries = session.sessionManager.getEntries();
-	const cached = latestCache.get(session);
-	if (cached?.entries === entries.length) return cached.latest;
-	let latest: EffectStatus | undefined;
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry?.type !== "custom") continue;
+/** The newest well-formed effect or admission receipt, folded over the whole history in append order. */
+const latestEffectHistory: HistoryReducer<EffectStatus | undefined> = {
+	initial: () => undefined,
+	add: (latest, entry) => {
+		if (entry.type !== "custom") return latest;
 		if (entry.customType === RPC_EFFECT_ENTRY) {
 			const parsed = rpcEffectRecordSchema.safeParse(entry.data);
-			if (parsed.success) {
-				latest = projectEffect(parsed.data);
-				break;
-			}
-		} else if (entry.customType === CLIENT_ADMISSION_ENTRY) {
-			const parsed = clientAdmissionRecordSchema.safeParse(entry.data);
-			if (parsed.success) {
-				latest = projectAdmission(parsed.data);
-				break;
-			}
+			return parsed.success ? projectEffect(parsed.data) : latest;
 		}
-	}
-	latestCache.set(session, { entries: entries.length, latest });
-	return latest;
+		if (entry.customType === CLIENT_ADMISSION_ENTRY) {
+			const parsed = clientAdmissionRecordSchema.safeParse(entry.data);
+			return parsed.success ? projectAdmission(parsed.data) : latest;
+		}
+		return latest;
+	},
+};
+
+/**
+ * The session's most recent effect receipt, read WITHOUT opening a ledger: answering a status subscriber must never
+ * seal a stale receipt or restore queued input as a side effect. It folds through `reduceHistory`, so a status
+ * publish never rebuilds the full history of a released idle session (senpi#6682).
+ */
+export function latestSessionEffect(session: {
+	readonly sessionManager: Pick<SessionManager, "reduceHistory">;
+}): EffectStatus | undefined {
+	return session.sessionManager.reduceHistory(latestEffectHistory);
 }
 
 export type EffectBegin = { readonly replay: EffectStatus } | { readonly record: RpcEffectRecord };

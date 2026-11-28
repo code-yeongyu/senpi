@@ -8734,9 +8734,9 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/effect-ledger.ts#latestCache": {
-			"class": "per-copy-safe",
-			"reason": "derived-value cache; a split only recomputes or misses"
+		"packages/coding-agent/src/modes/rpc/effect-ledger.ts#latestEffectHistory": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/effect-ledger.ts#ledgers": {
 			"class": "per-copy-safe",

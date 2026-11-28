@@ -99,8 +99,8 @@ it("lists an idle compacted session's flag without materializing its trimmed his
 
 	dataOf(await owner.request({ type: "set_session_archived", sessionId, archived: false }));
 	await owner.waitFor(archiveStatus(subscriptionId, sessionId, false));
-	// The status stream's effect-receipt read (`latestSessionEffect`) loads the history on its own; release it again.
-	manager.dropMaterializedCaches();
+	// The status update read the newest effect receipt without loading the history (senpi#6682).
+	expect(manager.holdsMaterializedHistory()).toBe(false);
 	expect((await listedRow(owner, (row) => row.sessionId === sessionId)).archived).toBe(false);
 	expect(manager.holdsMaterializedHistory()).toBe(false);
 	manager.getEntries();
