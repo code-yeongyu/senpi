@@ -1,5 +1,6 @@
 import { homedir, hostname, userInfo } from "node:os";
 import { redactGeneratedValues } from "./share-entropy.ts";
+import { redactFlagSecrets } from "./share-redaction-flags.ts";
 import { isSensitiveKeyName } from "./share-sensitive-key.ts";
 
 /**
@@ -221,6 +222,7 @@ export function redactShareText(text: string, context: ShareRedactionContext, ta
 			return replaced;
 		},
 	);
+	result = redactFlagSecrets(result, () => count(tally, "credential"));
 	result = redactGeneratedValues(result, () => count(tally, "credential"));
 
 	result = result.replace(EMAIL, () => {

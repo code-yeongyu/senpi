@@ -986,8 +986,8 @@
       "packages/coding-agent/src/core/settings-manager.ts": ["DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports shannonBitsPerChar, readsAsWords, looksGenerated, joinedLooksGenerated
       "packages/coding-agent/src/core/share/share-entropy.ts": ["joinedLooksGenerated", "looksGenerated", "readsAsWords", "shannonBitsPerChar"],
-      // pre-existing at origin main aceb1cc1d9: unused exports prepareShare, describeShare
-      "packages/coding-agent/src/core/share/share-session.ts": ["describeShare", "prepareShare"],
+      // pre-existing at origin main aceb1cc1d9: unused export describeShare (prepareShare is now used by the #3577 regression test)
+      "packages/coding-agent/src/core/share/share-session.ts": ["describeShare"],
       // pre-existing at origin main aceb1cc1d9: unused exports EMPTY_SKILL_ALLOWED_SET
       "packages/coding-agent/src/core/skill-access.ts": ["EMPTY_SKILL_ALLOWED_SET"],
       // pre-existing at origin main aceb1cc1d9: unused exports CLAIM_MS
