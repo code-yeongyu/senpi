@@ -15,7 +15,12 @@ import {
 } from "@earendil-works/pi-tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
-import { removeToolMedia, toolMediaRoot, toolMediaScopeOfSessionFile } from "../../rpc/tool-media-store.ts";
+import {
+	removeToolMedia,
+	toolMediaRoot,
+	toolMediaScopeOfSessionFile,
+	trashToolMedia,
+} from "../../rpc/tool-media-store.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
@@ -575,6 +580,13 @@ function withMediaOutcome<T extends object>(result: T, mediaError: string | unde
 	return mediaError === undefined ? result : { ...result, mediaError };
 }
 
+function tryTrash(path: string): string | undefined {
+	const result = spawnSync("trash", path.startsWith("-") ? ["--", path] : [path], { encoding: "utf-8" });
+	if (result.status === 0 || !existsSync(path)) return undefined;
+	const details = [result.error?.message, result.stderr?.trim().split("\n")[0]].filter(Boolean).join(" · ");
+	return `trash: ${details.slice(0, 200) || `exit ${result.status ?? result.signal}`}`;
+}
+
 /**
  * Delete a session file, trying the `trash` CLI first, then falling back to unlink. The session's
  * tool images go with it; when they cannot be removed the session is still deleted (its id is gone
@@ -585,46 +597,36 @@ export async function deleteSessionFile(
 ): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string; mediaError?: string }> {
 	// The header is read before the file goes: the media directory is named after the session id.
 	const mediaScope = await toolMediaScopeOfSessionFile(sessionPath);
-	const removeMedia = (): string | undefined => {
+	const removeMedia = (method: "trash" | "unlink"): string | undefined => {
 		if (mediaScope === undefined) return undefined;
+		let location = sessionPath;
 		try {
-			removeToolMedia(mediaScope);
+			location = toolMediaRoot(mediaScope);
+			if (method === "trash") {
+				trashToolMedia(mediaScope, (root) => {
+					const error = tryTrash(root);
+					if (error !== undefined) throw new Error(error);
+				});
+			} else removeToolMedia(mediaScope);
 			return undefined;
 		} catch (cause) {
 			const reason = cause instanceof Error ? cause.message : String(cause);
-			return `${toolMediaRoot(mediaScope)}: ${reason}`;
+			return `${location}: ${reason}`;
 		}
 	};
 	// Try `trash` first (if installed)
-	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
-	const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
-
-	const getTrashErrorHint = (): string | null => {
-		const parts: string[] = [];
-		if (trashResult.error) {
-			parts.push(trashResult.error.message);
-		}
-		const stderr = trashResult.stderr?.trim();
-		if (stderr) {
-			parts.push(stderr.split("\n")[0] ?? stderr);
-		}
-		if (parts.length === 0) return null;
-		return `trash: ${parts.join(" · ").slice(0, 200)}`;
-	};
-
-	// If trash reports success, or the file is gone afterwards, treat it as successful
-	if (trashResult.status === 0 || !existsSync(sessionPath)) {
-		return withMediaOutcome({ ok: true, method: "trash" }, removeMedia());
+	const trashErrorHint = tryTrash(sessionPath);
+	if (trashErrorHint === undefined) {
+		return withMediaOutcome({ ok: true, method: "trash" }, removeMedia("trash"));
 	}
 
 	// Fallback to permanent deletion
 	try {
 		await unlink(sessionPath);
-		return withMediaOutcome({ ok: true, method: "unlink" }, removeMedia());
+		return withMediaOutcome({ ok: true, method: "unlink" }, removeMedia("unlink"));
 	} catch (err) {
 		const unlinkError = err instanceof Error ? err.message : String(err);
-		const trashErrorHint = getTrashErrorHint();
-		const error = trashErrorHint ? `${unlinkError} (${trashErrorHint})` : unlinkError;
+		const error = `${unlinkError} (${trashErrorHint})`;
 		return { ok: false, method: "unlink", error };
 	}
 }
