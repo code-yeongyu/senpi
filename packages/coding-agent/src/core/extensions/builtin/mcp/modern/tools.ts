@@ -47,7 +47,7 @@ export async function callModernTool(
 	options?: RequestOptions,
 ) {
 	const { CallToolResultSchema, ResultSchema } = await loadMcpSdkTypes();
-	const validate = outputSchema === undefined ? undefined : compileModernSchema(outputSchema);
+	const validate = outputSchema === undefined ? undefined : compileModernSchema(outputSchema, params.name);
 	const raw = await client.request({ method: "tools/call", params }, ResultSchema, options);
 	const parsed = callResult.safeParse(raw);
 	if (!parsed.success) throw new McpMrtrError("MCP_MRTR_INVALID_RESULT");

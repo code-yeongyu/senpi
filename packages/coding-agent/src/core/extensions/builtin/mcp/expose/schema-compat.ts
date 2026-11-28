@@ -1,4 +1,5 @@
 import { type ImageContent, type TextContent, registerToolArgumentValidator } from "@earendil-works/pi-ai";
+import type { ValidateFunction } from "ajv";
 import { type TSchema, Type } from "typebox";
 import { compileModernSchema } from "../modern/tool-schema.ts";
 import { buildMcpToolNames, type McpToolNameEntry } from "./naming.ts";
@@ -44,9 +45,15 @@ export type McpMappedToolResult =
 
 const PERMISSIVE_OBJECT_SCHEMA = { type: "object", properties: {} } as const;
 
-export function convertJsonSchemaToTypeBox(schema: unknown, modern = false): SchemaConversionResult {
+export function convertJsonSchemaToTypeBox(schema: unknown, modern = false, toolName?: string): SchemaConversionResult {
 	if (modern && (typeof schema === "boolean" || isRecord(schema))) {
-		const validate = compileModernSchema(schema);
+		let compiled: ValidateFunction | undefined;
+		const validate: { (value: unknown): boolean; errors?: ValidateFunction["errors"] } = (value) => {
+			compiled ??= compileModernSchema(schema, toolName);
+			const valid = compiled(value);
+			validate.errors = compiled.errors;
+			return valid;
+		};
 		// TypeBox/tool APIs require an object container. allOf preserves the exact
 		// boolean constraint; provider-specific object adaptation happens in pi-ai.
 		const parameters = Type.Unsafe<unknown>(

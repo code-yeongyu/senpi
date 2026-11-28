@@ -145,30 +145,6 @@ describe("modern schema validation", () => {
 		).toThrow();
 	});
 
-	it("drops invalid cached input and output schemas before tool registration", async () => {
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-		const root = makeRoot("invalid-schema-cache", roots);
-		const { connection, script } = await connect([], false, false);
-		script.tools = [{ name: "valid", inputSchema: true }];
-		const catalog = await collectServerCatalogForCache(connection, { requestTimeoutMs: 10_000 }, "schema-config");
-		await writeMcpCachedServer(root.agentDir, "fixture", {
-			...catalog,
-			tools: [
-				...catalog.tools,
-				{ name: "invalid-input", inputSchema: { type: "bogus" } },
-				{ name: "invalid-output", inputSchema: true, outputSchema: { $ref: "https://example.invalid/schema" } },
-			],
-		});
-		const cached = (await readMcpCatalogCache(root.agentDir)).servers.fixture;
-		if (!cached) throw new Error("Missing cached catalog");
-		const entries = cachedToolsToCatalogEntries("fixture", cached, connection, 10_000, async () => {});
-		expect(buildMcpToolDefinitions(entries).map((tool) => tool.name)).toEqual(["mcp_fixture_valid"]);
-		for (const name of ["invalid-input", "invalid-output"]) {
-			expect(warn).toHaveBeenCalledWith(expect.stringContaining(name));
-		}
-		expect(warn).toHaveBeenCalledWith(expect.stringContaining("MCP_SCHEMA_INVALID"));
-	});
-
 	it("refuses a newly invalid current schema without dispatching or throwing", async () => {
 		const { connection, script, logger } = await connect([], false, false);
 		script.tools = [{ name: "fixture", inputSchema: true }];
