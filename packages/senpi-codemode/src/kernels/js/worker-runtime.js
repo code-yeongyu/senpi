@@ -9,6 +9,7 @@ import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect
 import { installScopeHelper } from "./worker-scope.js";
 import { INJECTED_GROUP } from "./worker-cwd.js";
 import { installShellCapture } from "./worker-shell-capture.js";
+import { installStdinGuard } from "./worker-stdin-guard.js";
 import { bindKernelBun } from "./worker-webview.js";
 import { createWorkpool } from "./workpool.js";
 import { createHandleHelpers } from "./handles.js";
@@ -238,7 +239,9 @@ export class JsWorkerRuntime {
 				this.#onShellWaitChange?.();
 			},
 		});
+		const restoreStdinGuard = installStdinGuard();
 		globalThis.__senpi_restore_console__ = () => {
+			restoreStdinGuard();
 			console.log = originalLog;
 			console.error = originalError;
 			process.stdout.write = originalStdoutWrite;
