@@ -131,9 +131,10 @@ import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from 
 import { emitUserActivity } from "../../core/extensions/user-activity.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import {
-	checkSessionHolders,
+	admitSessionHolders,
 	describeSessionHolders,
 	SESSION_HOLDER_LOOKUP_FAILED,
+	type SessionAdmission,
 	sessionHolderWarning,
 	stopSessionHolders,
 	takeOverRefusal,
@@ -325,6 +326,7 @@ import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { interactiveErrorText } from "./required-compaction-wording.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
+import { ProgramResumeReporter, programResumeTarget } from "./program-resume-reporter.ts";
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
 import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
 import type { TuiControlContext } from "./session-control-lifecycle.ts";
@@ -951,6 +953,8 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 	/** Terminal implementation. Defaults to the current process terminal. */
 	terminal?: Terminal;
+	/** The terminal's OSC 7577 token, taken out of the environment at startup; enables resume reports (senpi#7493). */
+	programResumeToken?: string;
 }
 
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
@@ -1080,6 +1084,7 @@ export class InteractiveMode {
 	/** The OSC 7501 report last written while a status is active; undefined once cleared. */
 	private programStatusSequence: string | undefined = undefined;
 	private programStatusClosed = false;
+	private programResume: ProgramResumeReporter | undefined;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -1236,6 +1241,14 @@ export class InteractiveMode {
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
+		if (options.programResumeToken !== undefined && process.stdout.isTTY) {
+			this.programResume = new ProgramResumeReporter({
+				token: options.programResumeToken,
+				pid: process.pid,
+				now: Date.now,
+				write: (sequence) => this.ui.terminal.write(sequence),
+			});
+		}
 		this.optimisticUserEchoes = new OptimisticUserEchoController((text) => this.renderPendingUserEcho(text));
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
@@ -3020,6 +3033,7 @@ export class InteractiveMode {
 		this.updateAvailableProviderCount();
 		this.updateEditorBorderColor();
 		this.updateTerminalTitle();
+		this.programResume?.sync(programResumeTarget(this.sessionManager));
 	}
 
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
@@ -5615,6 +5629,7 @@ export class InteractiveMode {
 
 			case "message_end":
 				if (event.message.role === "user") break;
+				this.programResume?.sync(programResumeTarget(this.sessionManager));
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingReveal.stop();
@@ -5733,6 +5748,7 @@ export class InteractiveMode {
 			}
 
 			case "agent_end":
+				this.programResume?.sync(programResumeTarget(this.sessionManager));
 				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(false);
 				}
@@ -6995,6 +7011,8 @@ export class InteractiveMode {
 		this.themeController.disableAutoSync();
 		await this.ui.terminal.drainInput(1000);
 
+		// The user ended the session: drop the resume record. Signal shutdowns above keep it for the terminal's restart.
+		this.programResume?.clear();
 		this.stop({ restoreStderr: false });
 		try {
 			await this.sessionControlHost?.disposeActive();
@@ -7218,6 +7236,8 @@ export class InteractiveMode {
 			process.removeListener("SIGINT", ignoreSigint);
 			takeOverInteractiveStderr();
 			this.ui.start();
+			// Another program may have replaced the terminal's record while this one was stopped.
+			this.programResume?.sync(programResumeTarget(this.sessionManager), { refresh: true });
 			this.resumeQuestionMouseCapture();
 			this.ui.requestRender(true);
 		});
@@ -7986,6 +8006,12 @@ export class InteractiveMode {
 		const created = create(done);
 		dispose = created.dispose;
 		this.disposeActiveSelector();
+		// A selector is usually taller than the editor and can push the last status row above the screen. The
+		// status its choice reports ("Model: ...") must then append a row: rewriting that row in place changes a
+		// row above the screen, which the renderer can only show by replaying the whole transcript
+		// (sisyphuslabs/doriterm#2745).
+		this.lastStatusSpacer = undefined;
+		this.lastStatusText = undefined;
 		this.activeSelectorToken = token;
 		this.activeSelectorDispose = dispose;
 		this.editorContainer.clear();
@@ -8635,6 +8661,10 @@ export class InteractiveMode {
 						await this.applyFavoriteSelection(favoriteIds, allModels, true, await favoritePatternSnapshot);
 					},
 				},
+				{
+					rowsBelow: (width) =>
+						this.widgetContainerBelow.render(width).length + this.footerContainer.render(width).length,
+				},
 			);
 			return {
 				component: selector,
@@ -9132,8 +9162,29 @@ export class InteractiveMode {
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
 		// A session another live process holds must not get a second writer here (senpi#5744): the restored
-		// lifecycle would read that process's live run as interrupted and the next input would run it again.
-		const holderCheck = await checkSessionHolders(sessionPath);
+		// lifecycle would read that process's live run as interrupted and the next input would run it again. The check
+		// claims the session first (senpi#5988), so a start racing this resume finds one of the two as the holder.
+		const admission = await admitSessionHolders(sessionPath);
+		try {
+			return await this.resumeAdmittedSession(sessionPath, admission, options);
+		} finally {
+			await admission.release();
+		}
+	}
+
+	private async resumeAdmittedSession(
+		sessionPath: string,
+		admission: SessionAdmission,
+		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
+	): Promise<{ cancelled: boolean }> {
+		const holderCheck = admission.check;
+		const stillOpen = "Not resumed: the session is still open in another process; quit it there, then /resume again.";
+		const knownHeld =
+			"holders" in holderCheck ? holderCheck.holders.length === 0 && !admission.claimed : admission.heldElsewhere;
+		if (knownHeld && !(await admission.retake())) {
+			this.showWarning(stillOpen);
+			return { cancelled: true };
+		}
 		if ("holders" in holderCheck && holderCheck.holders.length > 0) {
 			const takeOver = "Take over (stop it there)";
 			const refusal = takeOverRefusal(holderCheck.holders);
@@ -9154,10 +9205,8 @@ export class InteractiveMode {
 				);
 				return { cancelled: true };
 			}
-			if (!stopped) {
-				this.showWarning(
-					"Not resumed: the session is still open in another process; quit it there, then /resume again.",
-				);
+			if (!stopped || !(await admission.retake())) {
+				this.showWarning(stillOpen);
 				return { cancelled: true };
 			}
 		}

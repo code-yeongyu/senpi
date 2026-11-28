@@ -59,7 +59,9 @@ export function parkedEntryFromProfile(
 			: {}),
 		...(profile?.autoTitle !== undefined ? { autoTitle: profile.autoTitle } : {}),
 		...(profile?.retryFallback !== undefined ? { retryFallback: profile.retryFallback } : {}),
+		...(profile?.persona !== undefined ? { persona: profile.persona } : {}),
 		...(profile?.sessionEnv !== undefined ? { sessionEnv: profile.sessionEnv } : {}),
+		...(profile?.telemetryConsent !== undefined ? { telemetryConsent: profile.telemetryConsent } : {}),
 	};
 }
 
@@ -84,7 +86,9 @@ export function parkedOpenCommand(entry: HandoverParkedEntry): OpenSessionComman
 		...(entry.sessionContext !== undefined ? { context: entry.sessionContext } : {}),
 		...(entry.autoTitle !== undefined ? { auto_title: entry.autoTitle } : {}),
 		...(entry.retryFallback !== undefined ? { retryFallback: entry.retryFallback } : {}),
+		...(entry.persona !== undefined ? { persona: entry.persona } : {}),
 		...(entry.sessionEnv !== undefined ? { env: { ...entry.sessionEnv } } : {}),
+		...(entry.telemetryConsent !== undefined ? { telemetry: { consent: entry.telemetryConsent } } : {}),
 		retain_on_disconnect: entry.retainOnDisconnect,
 	};
 	return command;

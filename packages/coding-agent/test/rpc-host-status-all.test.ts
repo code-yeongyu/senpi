@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, daemonDirectoryName, generationPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { listHostEndpoints } from "../src/modes/rpc/host-endpoints.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { LOOP_LAG_ERROR_MS_ENV, LOOP_LAG_WARN_MS_ENV } from "../src/modes/rpc/loop-lag-watchdog.ts";
 import { HeldAnthropicModel, JsonlPeer, openedSessionId } from "./helpers/rpc-generation-support.ts";
@@ -32,6 +31,7 @@ import {
 } from "./helpers/rpc-host-endpoint-scratch.ts";
 import { daemonTreeDigest, killEndpointUnclean } from "./helpers/rpc-host-endpoints.ts";
 import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 // A host's loop-lag watchdog writes into its own daemon directory while it runs: a heartbeat every fifth of
 // the error threshold, and warnings and stall evidence when its loop lags (senpi#2932). A case that proves a
@@ -255,7 +255,7 @@ describe.skipIf(process.platform === "win32")("host status --all against real ho
 		tracked.models.push(held);
 		const qa = endpointScratch("rows", held.origin);
 		await realHost(qa, qa.legacy);
-		const instanceId = (await probeHost({ socket: qa.legacy }))?.instanceId;
+		const instanceId = (await probeSandboxHost(qa, { socket: qa.legacy }))?.instanceId;
 		const sessionPath = join(realpathSync(qa.sessionDir), "worker.jsonl");
 		const client = await JsonlPeer.connect(qa.legacy);
 		tracked.peers.push(client);

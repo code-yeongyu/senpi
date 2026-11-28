@@ -1,3 +1,4 @@
+import type { TelemetryCallersVerdict } from "../../core/telemetry-consent.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
@@ -116,7 +117,10 @@ export class SessionWorkerClient {
 		this.worker.on("error", (error: unknown) => this.fail(error instanceof Error ? error.message : String(error)));
 	}
 
-	async prepare(configuration: CliRuntimeConfiguration, profile: RpcSessionLaunchProfile): Promise<string> {
+	async prepare(
+		configuration: CliRuntimeConfiguration,
+		profile: RpcSessionLaunchProfile,
+	): Promise<string | undefined> {
 		// The host's poller feeds only the host's store and the isolate reads its own copy, so the isolate starts
 		// from the host's records and then receives each change (senpi#3695). Subscribing before the request is
 		// posted keeps a change that lands in between ordered after the snapshot.
@@ -144,6 +148,12 @@ export class SessionWorkerClient {
 	async setBrowserEngine(engine: BrowserEngine): Promise<void> {
 		const result = await this.request({ type: "browser_engine", engine });
 		if (result.type !== "result") throw new Error("Invalid worker browser_engine response");
+	}
+
+	/** The callers' half of the worker session's telemetry decision (senpi#7446), as the host recomputes it. */
+	async setTelemetryCallers(verdict: TelemetryCallersVerdict): Promise<void> {
+		const result = await this.request({ type: "telemetry_callers", verdict });
+		if (result.type !== "result") throw new Error("Invalid worker telemetry_callers response");
 	}
 
 	/** Moves the worker's live session to another permission preset (a later `open_session.permissionPreset`). */
@@ -281,6 +291,14 @@ export class SessionWorkerClient {
 		this.post({ type: "close" });
 		this.closeTimer = setTimeout(() => this.quarantine(), graceMs);
 		return this.exited;
+	}
+
+	/**
+	 * Ends this worker because the host cannot prove it runs the stricter telemetry policy its callers now require
+	 * (senpi#7446). A stopped worker collects and delivers nothing, which is the deny-safe outcome.
+	 */
+	failClosed(reason: string): void {
+		this.fail(reason);
 	}
 
 	quarantine(): void {
@@ -569,7 +587,11 @@ export class SessionWorkerClient {
 	private fail(error: string): void {
 		if (this.stopped) return;
 		this.acceptance?.retire("worker_failed");
-		this.callbacks.failure(error);
+		try {
+			this.callbacks.failure(error);
+		} catch {
+			// A failure report that itself fails (a closed stderr) must never keep this worker running (senpi#7446).
+		}
 		this.terminalFailure = error;
 		if (this.writer && this.sessionId) {
 			this.writer.enqueue(this.sessionId, { type: "session_error", error });

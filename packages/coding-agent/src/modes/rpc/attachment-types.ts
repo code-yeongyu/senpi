@@ -1,3 +1,5 @@
+import type { TelemetryDeclaration } from "../../core/telemetry-consent.ts";
+
 /** Live-only, identity-fenced attachment commands owned by the multi-session host. */
 export type RpcAttachmentCommand =
 	| {
@@ -13,6 +15,11 @@ export type RpcAttachmentCommand =
 			readonly takeover?: true;
 			/** The taking client's stable identity, kept across its reconnects; required with `takeover`. */
 			readonly holder?: string;
+			/**
+			 * This caller's live telemetry answer while it is attached (senpi#7446), as on `open_session.telemetry`;
+			 * an attach without it answers `unanswered`. Requires the host capability `telemetry_consent`.
+			 */
+			readonly telemetry?: TelemetryDeclaration;
 	  }
 	| { readonly id?: string; readonly type: "release_attachment"; readonly sessionId: string }
 	| {

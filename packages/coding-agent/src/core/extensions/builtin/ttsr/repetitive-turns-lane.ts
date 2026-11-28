@@ -1,3 +1,4 @@
+import type { HistoryReducer } from "../../../session-history-reduce.ts";
 import {
 	createRepetitiveTurnsState,
 	isNearDuplicateOfPreviousTurn,
@@ -22,23 +23,21 @@ export function collectAssistantText(message: { readonly content: unknown }): st
 
 const RESTORED_TURN_LIMIT = 8;
 
-interface SessionEntrySource {
-	readonly sessionManager: { getEntries(): readonly unknown[] };
-}
-
-export function readPersistedAssistantTexts(ctx: SessionEntrySource): string[] {
-	const texts: string[] = [];
-	for (const entry of ctx.sessionManager.getEntries()) {
-		if (typeof entry !== "object" || entry === null) continue;
-		if (!("type" in entry) || entry.type !== "message") continue;
-		const message: unknown = Reflect.get(entry, "message");
-		if (typeof message !== "object" || message === null) continue;
-		if (Reflect.get(message, "role") !== "assistant") continue;
-		const text = collectAssistantText({ content: Reflect.get(message, "content") });
-		if (text !== null) texts.push(text);
-	}
-	return texts.slice(-RESTORED_TURN_LIMIT);
-}
+/**
+ * The last assistant texts of a session's history, which the cross-turn lane restores from. Folded, so a rebuilt
+ * extension reads only the entries appended since instead of the whole history (senpi#7607).
+ */
+export const persistedAssistantTexts: HistoryReducer<string[]> = {
+	initial: () => [],
+	add: (texts, entry) => {
+		if (entry.type !== "message" || entry.message.role !== "assistant") return texts;
+		const text = collectAssistantText(entry.message);
+		if (text === null) return texts;
+		texts.push(text);
+		if (texts.length > RESTORED_TURN_LIMIT) texts.shift();
+		return texts;
+	},
+};
 
 export class RepetitiveTurnsLane {
 	#state: RepetitiveTurnsState = createRepetitiveTurnsState();

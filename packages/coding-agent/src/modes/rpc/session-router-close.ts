@@ -1,4 +1,5 @@
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
+import { describeRetirementFailure, recordRetirement } from "../../core/session-retirement.ts";
 import { RPC_ERROR_UNKNOWN_SESSION } from "./rpc-types.ts";
 
 import type { RpcSessionBinding } from "./session-binding.ts";
@@ -99,6 +100,24 @@ export async function close(
 	try {
 		if (owner !== undefined) releaseOwnerAttachment(host, owner, command.sessionId);
 		if (claim.finalizer) {
+			const entry = host.registry.peek(command.sessionId);
+			const agentDir = host.registry.agentDir ?? host.defaults.agentDir;
+			const id =
+				entry?.runtime?.session.sessionId ?? entry?.worker?.snapshot?.state.sessionId ?? entry?.durableSessionId;
+			// Only an explicit `retire: true` retires: a plain close still reopens from its file with a plain open.
+			if (command.retire === true && agentDir && id && (entry?.runtime?.session.sessionFile ?? entry?.sessionPath)) {
+				try {
+					await recordRetirement(agentDir, id, "requested");
+				} catch (cause) {
+					await finalizeClose(host, command.sessionId, host.bindings.get(command.sessionId));
+					// Raw error text names host paths: the host log keeps it, the client reads the typed fault (senpi#7622).
+					const failure = describeRetirementFailure(cause);
+					process.stderr.write(
+						`senpi rpc close_session ${command.sessionId} kept no retirement: ${failure.hostLog}\n`,
+					);
+					return error(command.id, command.type, "retirement_failed", failure.errorData);
+				}
+			}
 			// An explicit close ends the session for good: drop any handover-parked record entry, or
 			// the session would come back on the next host start (MEDIUM-1, senpi#3282 review). Awaited only when a record
 			// exists, so a host without one starts the teardown in the same tick as the claim.

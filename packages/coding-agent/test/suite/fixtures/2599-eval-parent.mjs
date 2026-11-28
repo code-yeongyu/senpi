@@ -59,8 +59,13 @@ if (process.env.SENPI_ARGV_REPRO_PARENT_PID) {
 					},
 					1,
 				);
-				const code = await runPasses(dir, { watch: false, exec: undefined, pollSeconds: 1, timeoutSeconds: 20, concurrency: 1 });
-				if (code !== 0) throw new Error(`Schedule pass exited ${code}`);
+				const emit = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
+				const succeeded = await runPasses(
+					dir,
+					{ watch: false, exec: undefined, pollSeconds: 1, timeoutSeconds: 20, concurrency: 1 },
+					emit,
+				);
+				if (!succeeded) throw new Error("Schedule pass failed");
 			}
 		} catch (error) {
 			launchError = error.message;

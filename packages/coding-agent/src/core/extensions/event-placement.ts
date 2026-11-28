@@ -43,6 +43,7 @@ export const EXTENSION_EVENT_PLACEMENT = {
 	agent_before_settle: "loop",
 	agent_settled: "split",
 	session_control_wake: "loop",
+	external_message_admitted: "loop",
 	ui_prompt_start: "runtime",
 	ui_prompt_end: "runtime",
 	turn_start: "split",
@@ -62,6 +63,7 @@ export const EXTENSION_EVENT_PLACEMENT = {
 	input: "split",
 	input_disposition: "loop",
 	tool_call: "runtime",
+	tool_call_ready: "runtime",
 	tool_result: "runtime",
 } as const satisfies Record<ExtensionEvent["type"], ExtensionEventPlacement>;
 

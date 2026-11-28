@@ -46,6 +46,7 @@ import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
+import { exportSessionHtml } from "./engine/queries.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
@@ -80,7 +81,6 @@ import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
-import { exportFromFile } from "./core/export-html/index.ts";
 import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
@@ -93,6 +93,7 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
+import { recordOpenerRefusal, refusesApprovals } from "./core/opener-approvals.ts";
 import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
@@ -106,6 +107,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
+import { personaToolsUnsupported, withSessionPersona } from "./core/session-persona.ts";
 import { assertValidSessionId, SessionManager, sessionFileNameId } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
@@ -113,7 +115,8 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { startOpenTimer } from "./core/open-timing.ts";
-import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
+import { armStartupStallNotice, isStdioRpcLaunch, RPC_STARTUP_STALL_DEADLINE_MS } from "./core/startup-stall-notice.ts";
+import { lastTimedPhase, printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import {
 	getSavedProjectTrustState,
 	hasTrustRequiringProjectResources,
@@ -124,6 +127,7 @@ import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { takePresenterAccountAuthority } from "./presenter-authority-slot.ts";
+import { takeProgramResumeToken } from "./core/program-resume-token.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
@@ -142,11 +146,12 @@ const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP
  * `persistSeen` (a run a person reads) it is also recorded as seen, so later runs stay quiet until
  * the problem changes (senpi#3486).
  */
-export function collectAuthDiagnostics(
+export async function collectAuthDiagnostics(
 	authStorage: AuthStorage,
 	context: string,
 	options: { persistSeen: boolean },
-): AgentSessionRuntimeDiagnostic[] {
+): Promise<AgentSessionRuntimeDiagnostic[]> {
+	await authStorage.settleLoad();
 	return [
 		...authStorage.drainErrors().map((error) => error.message),
 		...authStorage.takePendingNotices(options).map((notice) => notice.message),
@@ -154,7 +159,10 @@ export function collectAuthDiagnostics(
 }
 
 /** The TUI shows auth problems at startup; credential notices are marked seen once shown (senpi#3486). */
-export function interactiveAuthNotices(authStorage: AuthStorage): { messages: string[]; markSeen: () => void } {
+export async function interactiveAuthNotices(
+	authStorage: AuthStorage,
+): Promise<{ messages: string[]; markSeen: () => void }> {
+	await authStorage.settleLoad();
 	const pending = authStorage.takePendingNotices({ persistSeen: false });
 	return {
 		messages: [
@@ -1090,6 +1098,7 @@ export function createCliRuntimeFactory(
 				noContextFiles: parsed.noContextFiles,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
+				appendSystemPromptText: launchProfile?.persona?.appendSystemPrompt,
 				extensionFactories,
 			},
 		});
@@ -1141,11 +1150,20 @@ export function createCliRuntimeFactory(
 		// Multi-session opens carry their per-session startup choices here rather
 		// than through process argv. This deliberately feeds the same resolver as
 		// --provider/--model/--thinking, preserving classic flag semantics.
+		if (
+			personaToolsUnsupported(launchProfile?.persona, {
+				...parsed,
+				defaultTools: settingsManager.getDefaultTools(),
+			})
+		)
+			throw new Error(
+				"persona_tools_unsupported: this host restricts its built-in tools by default (--no-builtin-tools or settings defaultTools) without --tools, so open_session.persona.tools cannot be applied without risking a wider tool set",
+			);
 		const runtimeParsed: Args =
 			launchProfile === undefined
 				? parsed
 				: {
-						...parsed,
+						...withSessionPersona(parsed, launchProfile.persona),
 						...(launchProfile.creationModel === undefined
 							? {}
 							: {
@@ -1184,6 +1202,9 @@ export function createCliRuntimeFactory(
 			startupLoadingIndicator.setPhase("opening session");
 		}
 		markSwitch("sessionOptions");
+		// A labelled open fails here, before any session exists, when its refusal cannot be made durable. A runtime that
+		// replaces the session (new, switch, fork, clone) is built without the label (`replacementLaunchProfile`).
+		if (refusesApprovals(launchProfile?.sessionContext)) await recordOpenerRefusal(sessionManager);
 		const timer = startOpenTimer("runtime-session");
 		const created = await createAgentSessionFromServices({
 			services,
@@ -1235,10 +1256,21 @@ export function createCliRuntimeFactory(
 export async function main(args: string[], options?: MainOptions) {
 	// First statement: seals the slot before any extension or resource path can load code (D11, senpi#4249).
 	const presenterAccountAuthority = takePresenterAccountAuthority();
+	// Before anything can start a child that would inherit the OSC 7577 token (senpi#7493).
+	const programResumeToken = await takeProgramResumeToken();
 	resetTimings();
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.
 	recordTiming("processStart->main", Math.round(process.uptime() * 1000));
+	// A stdio RPC client sees nothing until startup ends, so a stall names its last phase on stderr (senpi#7556).
+	const rpcStartupStall = isStdioRpcLaunch(args)
+		? armStartupStallNotice({
+				deadlineMs: RPC_STARTUP_STALL_DEADLINE_MS,
+				label: `${APP_NAME} rpc`,
+				lastPhase: lastTimedPhase,
+				write: (line) => void process.stderr.write(line),
+			})
+		: undefined;
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
 	const offlineMode =
 		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
@@ -1350,16 +1382,13 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (parsed.export) {
-		let result: string;
-		try {
-			const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
-			result = await exportFromFile(parsed.export, outputPath);
-		} catch (error: unknown) {
-			const message = error instanceof Error ? error.message : "Failed to export session";
-			console.error(chalk.red(`Error: ${message}`));
+		const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
+		const exported = await exportSessionHtml({ session: parsed.export, ...(outputPath ? { out: outputPath } : {}) });
+		if (exported.kind === "error") {
+			console.error(chalk.red(`Error: ${exported.error.message}`));
 			process.exit(1);
 		}
-		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
+		await printThenExit(() => console.log(`Exported to: ${exported.value.path}`), 0);
 	}
 
 	let appMode: AppMode = parsed.printPromptSizes
@@ -1446,7 +1475,7 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([
 			...services.diagnostics,
 			...collectSettingsDiagnosticsWithContext(services.settingsManager, "model listing"),
-			...collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true }),
+			...(await collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true })),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
@@ -1702,7 +1731,7 @@ export async function main(args: string[], options?: MainOptions) {
 				})),
 		);
 		reportDiagnostics(
-			collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
+			await collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
 		);
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
@@ -1753,6 +1782,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
+		rpcStartupStall?.ready();
 		await runRpcMode(runtime, toolRuntime);
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
@@ -1761,7 +1791,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const interactiveMode = new InteractiveMode(runtime, {
 			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
 			migratedProviders,
-			authNotices: interactiveAuthNotices(services.authStorage),
+			authNotices: await interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
@@ -1773,6 +1803,7 @@ export async function main(args: string[], options?: MainOptions) {
 			chrome: parsed.grokNeo ? "grok" : undefined,
 			tuiMode: parsed.tuiMode,
 			initialThemeSetting: parsed.useTheme,
+			programResumeToken,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();
@@ -1804,7 +1835,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessage,
 			initialImages,
 		});
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
+		reportDiagnostics(await collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
 		stopChildReaper();
 		stopThemeWatcher();
 		restoreStdout();

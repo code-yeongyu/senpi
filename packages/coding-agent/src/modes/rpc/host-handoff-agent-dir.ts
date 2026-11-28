@@ -45,6 +45,22 @@ export async function foreignAgentDirRefusal(
 		: { action: "refuse", reason: "foreign_agent_dir", upgradeable: false, detail };
 }
 
+/**
+ * The same refusal from local evidence alone, before any dial (omo#15197): the socket's own default layout and the
+ * registration there. It only ever refuses: missing or ambiguous evidence answers `undefined`, and the dial decides.
+ */
+export async function localForeignAgentDirRefusal(
+	socket: string,
+	callerAgentDir: string,
+): Promise<ForeignAgentDirRefusal | undefined> {
+	const hostAgentDir = await layoutAgentDir(socket);
+	if (hostAgentDir === undefined) return undefined;
+	const detail = await agentDirMismatch(socket, callerAgentDir, hostAgentDir);
+	return detail === undefined
+		? undefined
+		: { action: "refuse", reason: "foreign_agent_dir", upgradeable: false, detail };
+}
+
 /** Why a client of `callerAgentDir` may not replace the host of `hostAgentDir`, or `undefined` when both are one directory. */
 export async function agentDirMismatch(
 	socket: string,

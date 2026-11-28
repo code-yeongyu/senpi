@@ -129,7 +129,9 @@ it.skipIf(process.platform === "win32").each(["park", "exit"] as const)(
 				});
 			} else {
 				model.release();
-				await client.waitFor((r) => r.type === "message_end" && r.sessionId === sessionId);
+				// The next prompt needs the held turn to be over, not just its message: `message_end` arrives while the turn
+				// is still settling, and a prompt then is refused as streaming (senpi#7388).
+				await client.waitFor((r) => r.type === "agent_end" && r.sessionId === sessionId);
 				await observer.waitFor(
 					(r) => r.type === "session_closed" && r.sessionId === old && r.reason === "handoff_parked",
 					60_000,

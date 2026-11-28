@@ -10,7 +10,6 @@ import { join } from "node:path";
 import { engineBuildIdentity } from "../../src/core/engine-build-identity.ts";
 import { daemonEnvironment } from "../../src/modes/rpc/host-daemon-env.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
-import { probeHost } from "../../src/modes/rpc/host-probe.ts";
 import { socketHostLaunchProfile } from "../../src/modes/rpc/protocol-identity.ts";
 import { computeRuntimeBuildId } from "../../src/modes/rpc/runtime-build-id.ts";
 import {
@@ -24,6 +23,7 @@ import {
 	type WireRecord,
 } from "./rpc-generation-support.ts";
 import { writeRpcModelsJson } from "./rpc-hermetic.ts";
+import { probeSandboxHost } from "./rpc-sandbox-host.ts";
 
 export interface HandoverBuild {
 	readonly hostArgs: readonly string[];
@@ -74,7 +74,7 @@ async function startRigIn(qa: GenerationScratch, modelOrigin: string | undefined
 		env: generationEnv(qa),
 		_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
 	});
-	const host = await probeHost({ socket: qa.socket });
+	const host = await probeSandboxHost(qa);
 	if (host?.instanceId === undefined || host.generation === undefined) throw new Error("build A did not answer");
 	return { qa, firstPid: ensured.pid, instanceId: host.instanceId, generation: host.generation, buildA, buildB };
 }

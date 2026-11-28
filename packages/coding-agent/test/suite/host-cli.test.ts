@@ -37,6 +37,7 @@ const STATUS_FIELDS = [
 	"pointer",
 	"processStartTime",
 	"reachable",
+	"refusal",
 	"rss_mb",
 	"runtimeBuildId",
 	"session_rows",
@@ -170,6 +171,7 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 			"current",
 			"engineVersion",
 			"generation",
+			"host_footprint_mb",
 			"host_rss_mb",
 			"instanceId",
 			"pid",
@@ -190,6 +192,7 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		// `number | null` by contract: a platform that cannot answer `ps` still reports the field.
 		expect(generation.rss_mb === null || typeof generation.rss_mb === "number").toBe(true);
 		expect(generation.host_rss_mb === null || typeof generation.host_rss_mb === "number").toBe(true);
+		expect(generation.host_footprint_mb === null || typeof generation.host_footprint_mb === "number").toBe(true);
 	}, 120_000);
 
 	it("answers a socket nobody serves with the same shape and a refusal code", async () => {

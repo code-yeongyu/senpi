@@ -8,7 +8,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/index.ts";
 import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/types.ts";
-import { deliveryIdOf } from "../../../src/core/external-admission.ts";
+import { deliveryIdOf } from "../../../src/core/delivery-ids.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 interface Scene {

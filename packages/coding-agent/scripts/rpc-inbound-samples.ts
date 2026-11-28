@@ -55,6 +55,7 @@ export const RPC_INBOUND_SAMPLES = {
 	subscribe_sessions: { type: "subscribe_sessions", sessions: { ids: [SAMPLE_ID] } },
 	unsubscribe_sessions: { type: "unsubscribe_sessions", subscriptionId: SAMPLE_ID },
 	set_session_context: { type: "set_session_context", sessionId: SAMPLE_ID, patch: { sample: "rpc-inbound" } },
+	set_telemetry_consent: { type: "set_telemetry_consent", sessionId: SAMPLE_ID, consent: "declined" },
 	warm: { type: "warm" },
 	attach_session: { type: "attach_session", sessionId: SAMPLE_ID, durableSessionId: SAMPLE_ID },
 	release_attachment: { type: "release_attachment", sessionId: SAMPLE_ID },

@@ -510,36 +510,6 @@ function assertRequestAuth(
 	if (!hasRequestAuth(apiKey, headers)) throw new Error(`No API key for provider: ${provider}`);
 }
 
-const CLAUDE_OAUTH_TOKEN_MARKER = "sk-ant-oat";
-
-/**
- * A Claude OAuth token (`sk-ant-oat...`) offered as an API key. senpi no longer sends such a token
- * to the Messages API while presenting itself as Claude Code (senpi#5131); the subscription path is
- * the `anthropic-subscription` provider, which runs the official Claude Code CLI.
- */
-export class ClaudeOAuthTokenRefusedError extends Error {
-	readonly code = "claude_oauth_token_refused";
-	readonly provider: string;
-	readonly modelId: string;
-
-	constructor(provider: string, modelId: string) {
-		super(
-			`${provider}/${modelId}: a Claude OAuth token (${CLAUDE_OAUTH_TOKEN_MARKER}...) is not accepted as an API key; senpi does not send Claude subscription tokens to the Anthropic API directly. For a Claude Pro/Max subscription sign in with /login anthropic-subscription (or set CLAUDE_CODE_OAUTH_TOKEN) and use anthropic-subscription/${modelId}; otherwise use an Anthropic API key.`,
-		);
-		this.name = "ClaudeOAuthTokenRefusedError";
-		this.provider = provider;
-		this.modelId = modelId;
-	}
-}
-
-export function isClaudeOAuthTokenRefusedError(error: unknown): error is ClaudeOAuthTokenRefusedError {
-	return error instanceof ClaudeOAuthTokenRefusedError;
-}
-
-function assertNotClaudeOAuthToken(model: Model<"anthropic-messages">, apiKey: string | undefined): void {
-	if (apiKey?.includes(CLAUDE_OAUTH_TOKEN_MARKER)) throw new ClaudeOAuthTokenRefusedError(model.provider, model.id);
-}
-
 /**
  * Anthropic SDK client that never runs the SDK's own credential chain
  * (ANTHROPIC_PROFILE config files, federation env vars). Without this, every
@@ -1346,7 +1316,6 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				const optionsHeaders = providerHeadersToRecord(options?.headers);
 				const federation = getAnthropicFederation(model, apiKey, optionsHeaders, options?.env);
 				if (!federation) assertRequestAuth(model.provider, apiKey, optionsHeaders);
-				assertNotClaudeOAuthToken(model, apiKey);
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
@@ -1932,8 +1901,12 @@ function cannotDisableThinking(
 	model: Model<"anthropic-messages">,
 	compat: { supportsDisabledThinking: boolean },
 ): boolean {
-	if (!compat.supportsDisabledThinking) return true;
+	if (!compat.supportsDisabledThinking || isKimiK31Pro(model)) return true;
 	return matchesModelMarker(model, DISABLED_THINKING_REJECTING_MODEL_MARKERS);
+}
+
+function isKimiK31Pro(model: Model<"anthropic-messages">): boolean {
+	return /(?:^|\/)(?:kimi-)?k3\.1-pro(?:-highspeed)?$/i.test(model.id);
 }
 
 /**
@@ -2028,7 +2001,6 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	if (!getAnthropicFederation(model, apiKey, optionsHeaders, options?.env)) {
 		assertRequestAuth(model.provider, apiKey, optionsHeaders);
 	}
-	assertNotClaudeOAuthToken(model, apiKey);
 
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
@@ -2489,7 +2461,10 @@ function buildParams(
 			// Default to "summarized" so Opus 4.7 and Mythos Preview behave like
 			// older Claude 4 models (whose API default is also "summarized").
 			const display: AnthropicThinkingDisplay = options.thinkingDisplay ?? "summarized";
-			if (supportsAdaptiveThinking(model)) {
+			if (options.effort === "low" && isKimiK31Pro(model)) {
+				// The Pro floor is effort-only, including when the agent raised a carried-over off level.
+				params.output_config = { effort: "low" };
+			} else if (supportsAdaptiveThinking(model)) {
 				// Adaptive thinking: Claude decides when and how much to think.
 				params.thinking = { type: "adaptive", display } as MessageCreateParamsStreaming["thinking"];
 				if (options.effort) {

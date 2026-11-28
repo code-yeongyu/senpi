@@ -1,7 +1,6 @@
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseHostArgs } from "../src/cli/host-command.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { runHostRequest } from "../src/modes/rpc/host-runner.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { signalGeneration } from "../src/modes/rpc/host-stop.ts";
@@ -23,6 +22,7 @@ import {
 	type HandoverRig,
 	startHandoverRig,
 } from "./helpers/rpc-idle-handover-support.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
@@ -87,7 +87,7 @@ describe.skipIf(process.platform === "win32")("conditional idle handover refusal
 
 		expect(answer).toMatchObject({ operation_id: "op-1", state: "handover_blocked" });
 		expect(String(answer.reason)).toContain("successor_unavailable");
-		const after = await probeHost({ socket: host.qa.socket });
+		const after = await probeSandboxHost(host.qa);
 		expect(after?.instanceId).toBe(host.instanceId);
 		expect(after?.runtimeBuildId).toBe(host.buildA.runtimeBuildId);
 		expect(processAlive(host.firstPid)).toBe(true);
@@ -112,7 +112,7 @@ describe.skipIf(process.platform === "win32")("conditional idle handover refusal
 		);
 
 		expect(answer).toMatchObject({ operation_id: "op-1", state: "handover_blocked" });
-		const after = await probeHost({ socket: host.qa.socket });
+		const after = await probeSandboxHost(host.qa);
 		expect(after?.instanceId).toBe(host.instanceId);
 		expect(after?.runtimeBuildId).toBe(host.buildA.runtimeBuildId);
 		expect(processAlive(host.firstPid)).toBe(true);
@@ -195,6 +195,6 @@ describe.skipIf(process.platform === "win32")("conditional idle handover refusal
 			exitCode: 0,
 			payload: { action: "handover_completed", runtimeBuildId: host.buildA.runtimeBuildId },
 		});
-		expect((await probeHost({ socket: host.qa.socket }))?.instanceId).toBe(host.instanceId);
+		expect((await probeSandboxHost(host.qa))?.instanceId).toBe(host.instanceId);
 	}, 120_000);
 });

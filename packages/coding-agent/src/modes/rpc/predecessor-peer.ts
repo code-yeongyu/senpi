@@ -24,6 +24,15 @@ export class RouteTimedOut extends Error {
 		super("predecessor_request_timeout");
 	}
 }
+const ROUTE_GONE_CODES: readonly unknown[] = ["ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE"];
+/**
+ * The predecessor's route endpoint ended before it proved itself: its socket is gone or refused, or it closed the
+ * connection inside the handshake as it exited (a reset with the successor's frame unread, or a write into a closed
+ * peer). Only the handshake was sent, so nothing reached the predecessor (senpi#7202).
+ */
+export function routeEndpointGone(cause: unknown): boolean {
+	return cause instanceof Error && "code" in cause && ROUTE_GONE_CODES.includes(cause.code);
+}
 export interface RouteEndpoint {
 	socket: string;
 	launchId: string;

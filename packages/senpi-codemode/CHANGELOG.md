@@ -12,6 +12,97 @@
 
 ### Removed
 
+## [2026.11.28-1] - 2026-11-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.28] - 2026-11-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.27] - 2026-11-27
+
+### Breaking Changes
+
+### Added
+
+- Source files an eval cell writes without a `write` or `edit` call go through the write hooks when the cell settles, and the cell result lists them with what the hooks appended, such as diagnostics ([#7276](https://github.com/code-yeongyu/senpi/pull/7276))
+- `jsCells.typescript` (off by default): a JS eval cell written in TypeScript runs with its types erased in place, so bindings persist and errors keep the submitted line and column; constructs that generate runtime code are refused with their position ([#7489](https://github.com/code-yeongyu/senpi/pull/7489)).
+- `jsCells.scope` (off by default): `await using s = scope()` with `s.serve`, `s.spawn`, `s.tempDir` and `s.monitor` closes what a cell opened when the block exits, and a stopped or timed-out cell's scoped watches are stopped by the host ([#7489](https://github.com/code-yeongyu/senpi/pull/7489)).
+- `statusTicker` setting (default `true`): `false` stops the once-per-second refresh of a detached cell's elapsed label in the footer status, which still shows on detach, updates when the set of detached cells changes, and clears when the last one settles ([#7536](https://github.com/code-yeongyu/senpi/pull/7536))
+
+### Changed
+
+### Fixed
+
+- A JS eval cell with a block holding `using` / `await using` followed by a statement on the same line, or ending in a bare `using` declaration, now runs and disposes its resources instead of failing with `Unexpected identifier 'using'` ([#7489](https://github.com/code-yeongyu/senpi/pull/7489)).
+
+### Removed
+
+## [2026.11.26] - 2026-11-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.25] - 2026-11-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.24] - 2026-11-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.22-2] - 2026-11-22
 
 ### Breaking Changes

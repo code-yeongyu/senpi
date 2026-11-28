@@ -2594,6 +2594,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/ai/src/utils/retry.ts#HTTP_408_REASON_PHRASE": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
 		"packages/ai/src/utils/retry.ts#NON_QUOTA_NON_RETRYABLE_PATTERN": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
@@ -3057,6 +3061,10 @@
 		"packages/coding-agent/src/core/auth-storage.ts#KIND_LABEL": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/auth-storage.ts#localAsyncAuthLocks": {
+			"class": "realm-registry",
+			"reason": "local-async-auth-locks/v1: the async auth-store lock holders of every copy are registered here, so a synchronous writer in any copy sees that its own realm holds the lock and fails fast instead of spinning on a lock only its blocked event loop can release (design 3.2, 3.3)"
 		},
 		"packages/coding-agent/src/core/auth-storage.ts#sharedAuthFileReadState": {
 			"class": "per-copy-safe",
@@ -4059,6 +4067,10 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/config-reload/reload-queue.ts#processReloadScheduler": {
+			"class": "realm-registry",
+			"reason": "config-reload-scheduler/v1: every copy serving sessions on the host event loop must share the same reload queue"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts#ROUTINE_SETTINGS_KEYS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -4275,15 +4287,15 @@
 			"class": "per-copy-safe",
 			"reason": "counter or id sequence for this copy's own objects; a split cannot collide across them"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#OPEN_ENDED_WAKE_SOURCES": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#OPEN_ENDED_WAKE_SOURCES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#REPRESENTED_WAKE_SOURCES": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#REPRESENTED_WAKE_SOURCES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts#WAKE_SOURCE_LABELS": {
+		"packages/coding-agent/src/core/extensions/builtin/session-liveness/state.ts#WAKE_SOURCE_LABELS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -5771,6 +5783,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/tool-search/activation-history.ts#activationMarkers": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history marker list"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/tool-search/engine/bm25.ts#DEFAULT_BM25_PRECISION": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -6366,15 +6382,7 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/external-admission.ts#writtenDeliveryIds": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/generated-shim-banner.ts#ACCEPTED_SHIM_BANNERS": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/generated-shim-banner.ts#ACCEPTED_SHIM_BANNER_PREFIXES": {
+		"packages/coding-agent/src/core/delivery-ids.ts#writtenDeliveryIds": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -6518,9 +6526,21 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_ENTRY_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_BOOKKEEPING_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/lifecycle-delivery.ts#lifecycleDeliveryEntries": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-history.ts#foldedSlots": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
 		"packages/coding-agent/src/core/lifecycle-history.ts#lifecycleHistory": {
 			"class": "constant",
@@ -6707,6 +6727,10 @@
 			"reason": "timing attribution only, no A1-A3 decision; a split costs timing attribution: work entered by another copy is not marked speculative",
 			"ground": "ii"
 		},
+		"packages/coding-agent/src/core/opener-approvals.ts#refusalRecords": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/output-guard.ts#rawStdoutWriteTail": {
 			"class": "per-copy-safe",
 			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
@@ -6875,10 +6899,6 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/resource-loader.ts#LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
 		"packages/coding-agent/src/core/resource-loader.ts#VENDORED_BUILTIN_EXTENSION_PACKAGES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -6906,6 +6926,10 @@
 		"packages/coding-agent/src/core/retry-fallback/log.ts#SENSITIVE_TEXT": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/retry-fallback/log.ts#retirements": {
+			"class": "realm-registry",
+			"reason": "fallback-log-retirements/v1: two copies starting on one agent dir share one first-start removal per log path, so the later one cannot delete lines the earlier one wrote (senpi#6351)"
 		},
 		"packages/coding-agent/src/core/retry-fallback/log.ts#unsettledLoggers": {
 			"class": "per-copy-safe",
@@ -6966,10 +6990,6 @@
 		"packages/coding-agent/src/core/session-manager.ts#DEFERRED_FILE_LOAD": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
-		},
-		"packages/coding-agent/src/core/session-manager.ts#LIFECYCLE_ENTRY_TYPES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
 		},
 		"packages/coding-agent/src/core/session-manager.ts#SETUP_ENTRY_TYPES": {
 			"class": "constant",
@@ -7319,6 +7339,10 @@
 			"class": "per-copy-safe",
 			"reason": "install-once guard or handle for a hook this copy installs; holds no A1-A3 asset"
 		},
+		"packages/coding-agent/src/core/startup-stall-notice.ts#realClock": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/subscription-limits/limit-store.ts#subscriptionLimits": {
 			"class": "per-copy-safe",
 			"reason": "observed subscription-limit store; a split only delays one copy learning a limit, not A1-A3 (design 3.3)"
@@ -7331,6 +7355,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/telemetry-consent.ts#TELEMETRY_CONSENTS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/subscription-limits/usage-poller.ts#running": {
 			"class": "per-copy-safe",
 			"reason": "install-once guard or handle for a hook this copy installs; holds no A1-A3 asset"
@@ -7338,6 +7366,10 @@
 		"packages/coding-agent/src/core/timings.ts#ENABLED": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/timings.ts#lastPhase": {
+			"class": "per-copy-safe",
+			"reason": "last startup phase this copy's time() closed, read through this copy's module API; a split only hides one copy's phase from the other, holds no A1-A3 asset"
 		},
 		"packages/coding-agent/src/core/timings.ts#timingNamespaces": {
 			"class": "per-copy-safe",
@@ -8156,10 +8188,6 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/interactive/provider-error-reason.ts#STATUS_SOURCES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts#RISKY_MODEL_FAMILIES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -9166,6 +9194,18 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#SessionPersona": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#TelemetryConsent": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#TelemetryDeclaration": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#Secret": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
@@ -9744,6 +9784,14 @@
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
 		},
+		"packages/coding-agent/src/private-fd-token-handoff.ts#DESCRIPTOR_ENV": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/private-fd-token-handoff.ts#DESCRIPTOR_FLAGS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/private-fds.ts#WINDOWS_PRIVATE_FD_PAIR_PROVEN": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -9944,6 +9992,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/machine-ops/src/files/automount-trigger.ts#active": {
+			"class": "per-copy-safe",
+			"reason": "trigger lookup holding a derived-value cache of the mount table, plus the child-resolver options (swapped only by tests); a split only re-reads the table"
+		},
 		"packages/machine-ops/src/files/bounded-realpath.ts#RESOLUTION_TIMED_OUT": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
@@ -9963,6 +10015,10 @@
 		"packages/machine-ops/src/files/mutation-queue.ts#fileMutationQueue": {
 			"class": "realm-registry",
 			"reason": "file-mutation-queue/v1: any copy's edit, write, patch or remote-hand operation on one file must queue, and the stuck-holder diagnostics see every copy (design 3.2, 3.3)"
+		},
+		"packages/machine-ops/src/files/privacy-protected.ts#DARWIN_PROTECTED_FOLDERS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/machine-ops/src/files/realpath-without-open.ts#MISSING_PATH_CODES": {
 			"class": "constant",
@@ -10870,34 +10926,6 @@
 			"class": "per-copy-safe",
 			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
 		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#CONTROL_PAREN_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#DECLARATION_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#EXPRESSION_PREFIX_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#REGEX_PREFIX_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#STATEMENT_CONTINUATION_KEYWORDS": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#UNSHADOWABLE": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
-		"packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js#shadowedNames": {
-			"class": "per-copy-safe",
-			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
-		},
 		"packages/senpi-codemode/src/kernels/js/worker-kill-guard.js#SPAWNERS": {
 			"class": "per-copy-safe",
 			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
@@ -11630,7 +11658,7 @@
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/predecessor-discovery.ts#GONE_CODES": {
+		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#ROUTE_GONE_CODES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -11645,6 +11673,166 @@
 		"packages/coding-agent/src/modes/rpc/predecessor-peer.ts#PREDECESSOR_REQUEST_TIMEOUT_MS": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_POLL_SECONDS": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_TIMEOUT_SECONDS": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/cli/schedule-command.ts#DEFAULT_CONCURRENCY": {
+			"class": "constant",
+			"reason": "value read from a frozen defaults literal at load; never written after load"
+		},
+		"packages/coding-agent/src/core/engine-paused.ts#enginePauseHistory": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history state"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/ttsr/follow-up-limit.ts#correctedRules": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history state"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/ttsr/injected-history.ts#injectedTtsrRules": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history state"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/ttsr/repetitive-turns-lane.ts#persistedAssistantTexts": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history state"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#TRUST_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#LOCAL_FLAG": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#SETUP_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata derived from a literal at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#ENDPOINT_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#PRESENTER_FLAGS": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#HOST_JSON": {
+			"class": "constant",
+			"reason": "command metadata data literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata-flags.ts#HOST_SHARED": {
+			"class": "constant",
+			"reason": "command metadata lookup literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/metadata.ts#ENGINE_COMMANDS": {
+			"class": "constant",
+			"reason": "exported command metadata literal; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#config": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#schedule": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-config.ts#queries": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-host.ts#host": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-packages.ts#packages": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/exported-packages.ts#models": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/coding-agent/src/engine/index.ts#engine": {
+			"class": "constant",
+			"reason": "exported namespace of engine functions built at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/js-source-scan.js#REGEX_PREFIX_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/js-source-scan.js#EXPRESSION_PREFIX_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#CONTROL_PAREN_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#BLOCK_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/last-expression.js#STATEMENT_CONTINUATION_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#UNSHADOWABLE": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#shadowedNames": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/persist-declarations.js#DECLARATION_KEYWORDS": {
+			"class": "per-copy-safe",
+			"reason": "kernel-side module evaluated inside the JS kernel worker or child process, not in the engine realm"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_ONLY_STATEMENTS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#DECLARABLE": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_SYNTAX": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#TYPE_SUFFIX_EXPRESSIONS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#UNSUPPORTED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/erase-types.ts#MEMBER_MODIFIER_RE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/js/typescript-cell.ts#AsyncFunction": {
+			"class": "constant",
+			"reason": "intrinsic constructor read at load; never written after load"
+		},
+		"packages/senpi-codemode/src/bridge/reserved.ts#SCOPE_MONITOR_OP": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#ownClaims": {
+			"class": "per-copy-safe",
+			"reason": "the session start claims this copy took and their refresh timers; the claim files themselves coordinate processes"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#UNPROVEN_CLAIM_STALE_MS": {
+			"class": "constant",
+			"reason": "numeric constant computed from another constant at load; never written"
 		}
 	}
 }

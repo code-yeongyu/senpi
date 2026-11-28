@@ -1,4 +1,15 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +68,49 @@ describe("fallback log generations from before the shared registry", () => {
 		await logger.settled();
 
 		expect(readFileSync(join(agentDir, "logs", "fallback.log"), "utf8")).toContain("first_line");
+	});
+
+	it.each(["same path", "symlink alias"])("shares first-start cleanup for the %s (#6351)", async (path) => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-fallback-generations-"));
+		dirs.push(root);
+		const agentDir = join(root, "agent");
+		const logs = join(agentDir, "logs");
+		mkdirSync(agentDir);
+		let secondDir = agentDir;
+		if (path === "symlink alias") {
+			secondDir = join(root, "alias");
+			symlinkSync(agentDir, secondDir, "junction");
+		} else {
+			mkdirSync(logs);
+			writeFileSync(join(logs, "fallback.log"), "old generation\n");
+		}
+		const release = Promise.withResolvers<void>();
+		const missing = Object.assign(new Error("marker absent"), { code: "ENOENT" });
+		// Any overlapping probe sees the missing marker. Hold the second result until the first logger flushes.
+		const probe = vi
+			.spyOn(fsPromises, "access")
+			.mockRejectedValueOnce(missing)
+			.mockImplementationOnce(async () => {
+				await release.promise;
+				throw missing;
+			});
+		syncBuiltinESMExports();
+		try {
+			const first = createFallbackLogger(agentDir);
+			const second = createFallbackLogger(secondDir);
+			first.info("from_first");
+			second.info("from_second");
+			await first.settled();
+			release.resolve();
+			await second.settled();
+			const lines = readFileSync(join(logs, "fallback.log"), "utf8").trimEnd().split("\n");
+			expect(lines.map((line) => JSON.parse(line).event)).toEqual(["from_first", "from_second"]);
+			expect(probe).toHaveBeenCalledTimes(1);
+		} finally {
+			release.resolve();
+			probe.mockRestore();
+			syncBuiltinESMExports();
+		}
 	});
 
 	it("keeps a line logged during the first-start removal, in order, after the removed generations", async () => {
@@ -127,5 +181,53 @@ describe("fallback log generations from before the shared registry", () => {
 		expect(warning).toContain("removal failed: ERR_FS_EISDIR");
 		expect(warning).not.toContain(agentDir);
 		expect(warning).not.toContain("blocked");
+	});
+
+	it("still retires older logs and warns when the canonical lookup fails", async () => {
+		const { agentDir, logs } = agentDirWithLogs({ "fallback.log": "old generation\n" });
+		const lookup = vi.spyOn(realpathSync, "native").mockImplementationOnce(() => {
+			throw Object.assign(new Error(`cannot resolve ${logs}`), { code: "EACCES" });
+		});
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const logger = createFallbackLogger(agentDir);
+			logger.info("still_logged");
+			await logger.settled();
+
+			const text = readFileSync(join(logs, "fallback.log"), "utf8");
+			const entries = text
+				.trimEnd()
+				.split("\n")
+				.map((line) => JSON.parse(line));
+			expect(entries).toEqual([
+				expect.objectContaining({ event: "still_logged" }),
+				expect.objectContaining({
+					event: "retire_generations_failed",
+					errorMessage: "removal failed: EACCES",
+				}),
+			]);
+			expect(text).not.toContain(agentDir);
+		} finally {
+			lookup.mockRestore();
+			error.mockRestore();
+		}
+	});
+
+	it("runs the removal again on the next start once the obstruction is gone", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-fallback-generations-"));
+		dirs.push(agentDir);
+		const logs = join(agentDir, "logs");
+		mkdirSync(join(logs, "fallback.log.1", "blocked"), { recursive: true });
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		await createFallbackLogger(agentDir).settled();
+		error.mockRestore();
+		expect(existsSync(join(logs, ".fallback-log-v2"))).toBe(false);
+
+		rmSync(join(logs, "fallback.log.1"), { recursive: true, force: true });
+		writeFileSync(join(logs, "fallback.log.1"), "rotated before the fix\n");
+		await createFallbackLogger(agentDir).settled();
+
+		expect(existsSync(join(logs, "fallback.log.1"))).toBe(false);
+		expect(existsSync(join(logs, ".fallback-log-v2"))).toBe(true);
 	});
 });

@@ -1,26 +1,26 @@
 import { getKeybindings } from "@earendil-works/pi-tui";
 
-import { enginePauseSinceLastTurn } from "../../../engine-paused.ts";
+import { enginePauseHistory } from "../../../engine-paused.ts";
 import { createSessionLogger } from "../../../session-log.ts";
 import type { AgentEndEvent, ExtensionAPI, ExtensionContext, MessageUpdateEvent } from "../../types.ts";
 import { appendRuleActivation, registerRuleActivationRenderer } from "../rule-activation/index.ts";
-import { parseRuleActivationDetails, RULE_ACTIVATION_ENTRY_TYPE } from "../rule-activation/types.ts";
 import { BUILTIN_TTSR_RULES } from "./builtin-rules.ts";
 import { registerTtsrCommands, type TtsrPublicState } from "./commands.ts";
 import { claimAbort, createGenerationState, markUserCancelled } from "./coordinator.ts";
 import { REPETITIVE_TURNS_RULE_NAME } from "./detectors/repetitive-turns.ts";
 import { discoverTtsrRulesSync } from "./discovery.ts";
 import {
-	ruleAlreadyCorrected,
+	correctedRules,
 	TTSR_LOOP_STOPPED_ENTRY_TYPE,
 	TTSR_LOOP_STOPPED_EVENT,
 	ttsrLoopStoppedNotice,
 } from "./follow-up-limit.ts";
+import { injectedTtsrRules } from "./injected-history.ts";
 import { TtsrManager } from "./manager.ts";
 import { getTtsrStreamDelta } from "./message-update.ts";
 import { REPETITIVE_TURNS_RULE_CONTENT } from "./prompts.ts";
 import { buildNudgeMessage, type TtsrNudgeMessage } from "./remediation.ts";
-import { collectAssistantText, RepetitiveTurnsLane, readPersistedAssistantTexts } from "./repetitive-turns-lane.ts";
+import { collectAssistantText, persistedAssistantTexts, RepetitiveTurnsLane } from "./repetitive-turns-lane.ts";
 import { compileRuleCondition } from "./rule-condition.ts";
 import { buildStreamRemediation } from "./stream-remediation.ts";
 import {
@@ -119,19 +119,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		repetitiveTurns.configure(new Set(disabledRules));
 		const settings = { ...DEFAULT_TTSR_SETTINGS, enabled: !disabled, disabledRules };
 		manager = new TtsrManager(settings, (pattern) => compileRuleCondition(pattern).regex);
-		const injectedNames = ctx.sessionManager.getEntries().flatMap((entry) => {
-			if (entry.type !== "custom") return [];
-			if (entry.customType === RULE_ACTIVATION_ENTRY_TYPE) {
-				const details = parseRuleActivationDetails(entry.data);
-				return details?.kind === "ttsr" ? [...details.rules] : [];
-			}
-			if (entry.customType !== TTSR_INJECTION_CUSTOM_TYPE) return [];
-			const data = entry.data;
-			if (typeof data !== "object" || data === null || !("rules" in data)) return [];
-			const rules = (data as { rules?: unknown }).rules;
-			return Array.isArray(rules) ? rules.filter((rule): rule is string => typeof rule === "string") : [];
-		});
-		manager.restoreInjected(injectedNames);
+		manager.restoreInjected(ctx.sessionManager.reduceHistory(injectedTtsrRules));
 		for (const rule of BUILTIN_TTSR_RULES) {
 			manager.addRule(rule);
 		}
@@ -140,7 +128,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 			manager.addRule(rule);
 		}
 		watcher = new StreamWatcher(manager, disabledRules);
-		repetitiveTurns.restoreFromHistory(readPersistedAssistantTexts(ctx));
+		repetitiveTurns.restoreFromHistory(ctx.sessionManager.reduceHistory(persistedAssistantTexts));
 		if (ctx.mode === "tui") {
 			try {
 				ctx.ui.onTerminalInput((data) => {
@@ -281,13 +269,13 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		const nudge = pendingNudge;
 		pendingNudge = null;
 		const [rule] = nudge.details.rules;
-		if (rule !== undefined && ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) {
+		if (rule !== undefined && ctx.sessionManager.reduceHistory(correctedRules).has(rule)) {
 			const logger = createSessionLogger(ctx.agentDir);
 			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, { rules: nudge.details.rules, at: Date.now() });
 			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: nudge.details.rules });
 			ctx.ui.notify(ttsrLoopStoppedNotice(rule), "warning");
 			try {
-				if (!enginePauseSinceLastTurn(ctx.sessionManager.getEntries())) {
+				if (!ctx.sessionManager.reduceHistory(enginePauseHistory)) {
 					pi.appendEntry("engine-paused", {
 						reason: "repetition",
 						rule,

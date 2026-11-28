@@ -80,6 +80,7 @@ import {
 	resolveTranscriptTools,
 	type TranscriptContext,
 } from "../utils/transcript.ts";
+import { withTransportActivity } from "../utils/transport-activity-fetch.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -587,7 +588,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				normalizedContext,
 				clientAuth.apiKey,
 				clientAuth.headers,
-				options?.fetch,
+				withTransportActivity(options?.fetch, options?.onTransportActivity),
 				cacheSessionId,
 				compat,
 			);

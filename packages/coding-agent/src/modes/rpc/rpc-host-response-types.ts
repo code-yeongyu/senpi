@@ -116,7 +116,7 @@ export type RpcHostCommandResponse =
 			 * Which session file of this host carries the durable id (senpi#6429). `open` says an engine holds it now.
 			 * `ambiguous` names no file: two of them carry that id. `unknown`: no session file of this host does.
 			 */
-			data: { found: { sessionPath: string; cwd: string; open: boolean } } | { ambiguous: true } | { unknown: true };
+			data: import("./find-session.ts").FindSessionAnswer;
 	  }
 	| {
 			id?: string;
@@ -157,6 +157,7 @@ export type RpcHostCommandResponse =
 					attachments: number;
 					/** The session outlives its last attachment; absent from hosts older than this field. */
 					retain_on_disconnect?: boolean;
+					retirement?: import("../../core/session-retirement.ts").SessionRetirement;
 					/** Milliseconds since the session's idle window was last refreshed. */
 					idleMs?: number;
 					/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
@@ -190,4 +191,5 @@ export type RpcHostCommandResponse =
 			command: "set_session_context";
 			success: true;
 			data: { context: Readonly<Record<string, string | number | boolean>> };
-	  };
+	  }
+	| { id?: string; type: "response"; command: "set_telemetry_consent"; success: true };

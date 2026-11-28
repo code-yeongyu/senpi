@@ -14,10 +14,12 @@
  * session file is gone is dropped, never retried.
  */
 import { createHash } from "node:crypto";
+import { isTelemetryConsent, type TelemetryConsent } from "../../core/telemetry-consent.ts";
 import { existsSync, renameSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
+import { type SessionPersona, sessionPersonaError } from "../../core/session-persona.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { parsePermissionPresetName } from "../../core/extensions/builtin/permission-system/cli.ts";
@@ -60,8 +62,12 @@ export interface HandoverParkedEntry {
 	readonly contextOverlay?: SessionContextOverlay;
 	readonly autoTitle?: boolean;
 	readonly retryFallback?: SessionRetryFallbackProfile;
+	/** The session's instructions and tool policy (omo#13057): a successor never reopens it with a wider tool surface. */
+	readonly persona?: SessionPersona;
 	/** The session's own caller env (senpi#4381); it follows the session, never the generation's process. */
 	readonly sessionEnv?: SessionEnv;
+	/** The standing telemetry answer of the session's callers (senpi#7446); a reopen never grants by losing it. */
+	readonly telemetryConsent?: TelemetryConsent;
 	/**
 	 * The host instance that wrote the park. Its own reopen watch skips it: the park is for the NEXT
 	 * generation, and a host reopening what it just idle-parked races the client's reopen (senpi#3485).
@@ -116,7 +122,9 @@ export function isHandoverParkedEntry(value: unknown): value is HandoverParkedEn
 		(record.contextOverlay === undefined || !("refusal" in applyContextPatch(undefined, record.contextOverlay))) &&
 		sessionAutoTitleError(record.autoTitle) === undefined &&
 		sessionRetryFallbackError(record.retryFallback) === undefined &&
+		sessionPersonaError(record.persona) === undefined &&
 		sessionEnvShapeError(record.sessionEnv) === undefined &&
+		(record.telemetryConsent === undefined || isTelemetryConsent(record.telemetryConsent)) &&
 		(record.model === undefined ||
 			(typeof record.model === "object" &&
 				record.model !== null &&

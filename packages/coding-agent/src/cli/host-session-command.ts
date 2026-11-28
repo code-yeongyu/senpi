@@ -5,7 +5,7 @@ import { DEFAULT_HOST_LAUNCH_SPEC, HostLaunchSpecError, loadHostLaunchSpec } fro
 import { HOST_EXIT_ERROR, HOST_EXIT_USAGE } from "../modes/rpc/host-outcome.ts";
 import { type HostSessionRequest, runHostSessionRequest } from "../modes/rpc/host-session-runner.ts";
 import { withRpcKeyRoot } from "../modes/rpc/rpc-auth-client.ts";
-import { resolveHostSocket } from "./host-command.ts";
+import { resolveHostSocket } from "../engine/host.ts";
 import { emit } from "./host-emit.ts";
 
 const USAGE = `usage: ${APP_NAME} host session <command> [--socket <path>] [--rpc-key-root <dir>] [--json]

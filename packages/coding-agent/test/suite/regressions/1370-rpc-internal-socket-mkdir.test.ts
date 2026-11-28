@@ -334,8 +334,9 @@ describe("createInternalSocketPath", () => {
 		expect(internal.secretPath).toBe(join(dir, "secret"));
 	});
 
-	it("keeps the posix internal directory in the OS temp dir", async () => {
-		const internal = await createInternalSocketPath(join(tmpdir(), "senpi-hlc-unused"), "linux");
+	it("falls back to the OS temp dir when the daemon dir is too deep for the posix socket path", async () => {
+		// senpi#7452: the hop normally lives in the daemon dir; one too deep for sun_path keeps the temp-dir placement.
+		const internal = await createInternalSocketPath(join(tmpdir(), "d".repeat(120)), "linux");
 
 		const dir = internal.dir;
 		if (dir === undefined) throw new Error("expected an internal socket directory");

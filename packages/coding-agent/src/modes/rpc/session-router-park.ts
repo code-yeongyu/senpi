@@ -1,6 +1,7 @@
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { withoutOpenTiming } from "../../core/open-timing.ts";
 import { outsideCommand } from "./command-authority.ts";
+import { declareTelemetry } from "./session-router-telemetry.ts";
 import { runSetThinkingLevel } from "./effect-commands.ts";
 import { runSetModel } from "./handlers-model.ts";
 import { runSetPermissionPreset } from "./permission-preset-command.ts";
@@ -15,6 +16,7 @@ import { open } from "./session-router-open.ts";
 import { validatedOpenProfile } from "./session-router-open-profile.ts";
 import { holdOpenConnection, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
 import { syncRetainedRecord } from "./session-router-residency.ts";
+import { RpcSessionRegistryError } from "./session-registry-types.ts";
 
 type ParkCommand = Extract<RpcCommand, { type: "park_session" }>;
 type ClaimCommand = Extract<RpcCommand, { type: "claim_session" }>;
@@ -103,6 +105,10 @@ async function claimReady(
 		command.env !== undefined ||
 		command.auto_title !== undefined ||
 		command.retryFallback !== undefined ||
+		// A parked session was built without the caller's persona; it is never handed out as one (omo#13057).
+		command.persona !== undefined ||
+		// Claiming a park persists it; a memory-only session is always built fresh (senpi#7567).
+		command.persistence === "none" ||
 		(owner !== undefined && host.writer.compactSelection(owner)?.selected)
 	)
 		return miss();
@@ -154,6 +160,10 @@ async function claimReady(
 		if (host.draining || host.drainExitRequested) return miss();
 		entry.acceptance?.applyTranscript(runtime.session.sessionManager.drainTranscript());
 		ownOpen(host, claimed, owner);
+		if (
+			(await declareTelemetry(host, claimed.sessionId, owner, command.telemetry?.consent, "answer")) !== "confirmed"
+		)
+			throw new RpcSessionRegistryError("telemetry_update_unconfirmed");
 		host.bindings
 			.get(claimed.sessionId)
 			?.setClientCapabilities?.(

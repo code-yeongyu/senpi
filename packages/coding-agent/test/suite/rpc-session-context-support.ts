@@ -67,6 +67,8 @@ interface OpenFields {
 	readonly retryFallback?: { modelFallback: boolean; fallbackChains: Record<string, string[]> };
 	readonly env?: Record<string, string>;
 	readonly spawnedBy?: { parentSessionId: string; rootSessionId: string; taskId: string };
+	readonly retain_on_disconnect?: boolean;
+	readonly telemetry?: { consent: "granted" | "declined" | "unanswered" };
 }
 
 /**
@@ -110,6 +112,8 @@ export async function contextHost(
 		additionalProviders?: readonly Provider[];
 		/** Global settings written to `<agentDir>/settings.json` before the host starts. */
 		globalSettings?: Record<string, unknown>;
+		/** Observes the host's telemetry containment last resort instead of exiting (senpi#7446). */
+		onTelemetryContainmentLost?: (sessionId: string) => void;
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-context-"));
@@ -226,6 +230,9 @@ export async function contextHost(
 		{
 			now: () => clock.now,
 			idleEvictionMs: options.idleEvictionMs,
+			...(options.onTelemetryContainmentLost
+				? { onTelemetryContainmentLost: options.onTelemetryContainmentLost }
+				: {}),
 		},
 	);
 	let serial = 0;
@@ -267,6 +274,18 @@ export async function contextHost(
 			const outcome = z.object({ success: z.boolean(), error: z.string().optional() }).parse(record);
 			if (outcome.success) throw new Error("open_session unexpectedly succeeded");
 			return outcome.error ?? "";
+		},
+		/** The launch profile the host keeps for a session (what a park or handover records). */
+		profile(sessionId: string) {
+			const profile = registry.peek(sessionId)?.profile;
+			if (profile === undefined) throw new Error(`no session ${sessionId}`);
+			return profile;
+		},
+		/** The tools the session's model can call now. */
+		activeTools(sessionId: string): string[] {
+			const session = registry.peek(sessionId)?.runtime?.session;
+			if (session === undefined) throw new Error(`no runtime for ${sessionId}`);
+			return session.getActiveToolNames();
 		},
 		/** The system prompt the session's runtime currently holds. */
 		systemPrompt(sessionId: string): string {

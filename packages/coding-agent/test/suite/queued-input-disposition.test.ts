@@ -2,6 +2,7 @@ import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { QueuedInputDispositions } from "../../src/core/queued-input-dispositions.ts";
+import { handleClientInput } from "../../src/modes/rpc/client-input-handler.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
 
 const harnesses: Harness[] = [];
@@ -9,7 +10,7 @@ afterEach(() => {
 	for (const h of harnesses.splice(0).reverse()) h.cleanup();
 });
 
-async function streamingHarness() {
+async function streamingHarness(onQueued?: () => Promise<void>) {
 	const entered = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
 	const log: string[] = [];
@@ -22,6 +23,7 @@ async function streamingHarness() {
 				});
 				pi.on("input_disposition", (event) => {
 					log.push(`${textById.get(event.inputId)}:${event.disposition}`);
+					if (event.disposition === "queued") return onQueued?.();
 				});
 				pi.on("message_start", (event) => {
 					if (event.message.role === "user") log.push(`${getMessageText(event.message)}:message_start`);
@@ -52,6 +54,50 @@ async function streamingHarness() {
 }
 
 describe("input_disposition for input queued while a turn runs (senpi#4482)", () => {
+	// senpi#7579: the tool finishes while extension notification of the queued steer is still pending.
+	it("answers the RPC prompt before announcing or delivering its queued input", async () => {
+		const notifying = Promise.withResolvers<void>();
+		const notified = Promise.withResolvers<void>();
+		const delivered = Promise.withResolvers<void>();
+		const { h, entered, release } = await streamingHarness(() => {
+			notifying.resolve();
+			return notified.promise;
+		});
+		const frames: unknown[] = [];
+		h.session.subscribe((event) => {
+			if (event.type === "queue_update" && event.steering.includes("queued input")) frames.push(event.type);
+			if (
+				event.type === "message_start" &&
+				event.message.role === "user" &&
+				getMessageText(event.message) === "queued input"
+			) {
+				frames.push(event.type);
+				delivered.resolve();
+			}
+		});
+		const running = h.session.prompt("start");
+		await entered.promise;
+		const admission = handleClientInput(
+			h.session,
+			{ id: "steering", type: "prompt", streamingBehavior: "steer", message: "queued input" },
+			{ output: (frame) => frames.push(frame), promptCalls: new Set() },
+		);
+		try {
+			await notifying.promise;
+			release.resolve();
+			await delivered.promise;
+		} finally {
+			notified.resolve();
+			release.resolve();
+			await Promise.all([admission, running]);
+		}
+		expect(frames).toEqual([
+			expect.objectContaining({ id: "steering", success: true, data: { disposition: "queued" } }),
+			"queue_update",
+			"message_start",
+		]);
+	});
+
 	it.each([
 		["steer", (h: Harness) => h.session.steer("queued input")],
 		["follow-up", (h: Harness) => h.session.followUp("queued input")],

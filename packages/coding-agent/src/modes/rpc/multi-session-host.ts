@@ -37,6 +37,7 @@ import { listenForSuccessor } from "./predecessor-endpoint.ts";
 import { authRecord } from "./rpc-auth-proof.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
+import { guardInternalHop } from "./host-internal-hop-guard.ts";
 import { hostWatchdogBinding, internalHostTransport } from "./host-internal-transport.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
@@ -624,14 +625,21 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		socket.once("close", detach);
 		socket.once("error", () => detach());
 	};
-	const server = createServer((socket) => {
-		const arrivedBeforeDrain = !draining && !shuttingDown;
-		admit(socket, (stream = socket, proof) => serve(stream, arrivedBeforeDrain, proof));
-	});
+	const createListener = (): Server => {
+		const listener = createServer((socket) => {
+			const arrivedBeforeDrain = !draining && !shuttingDown;
+			admit(socket, (stream = socket, proof) => serve(stream, arrivedBeforeDrain, proof));
+		});
+		listener.on("error", (cause) => {
+			if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
+		});
+		return listener;
+	};
+	const server = createListener();
+	// Listeners the hop guard bound after the hop entry vanished (senpi#7452); each still holds its own inode.
+	const reboundServers: Server[] = [];
 	let stopRoute: (() => Promise<void>) | undefined;
-	server.on("error", (cause) => {
-		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);
-	});
+	let stopHopGuard: (() => void) | undefined;
 	// Long-lived hosts outlive many session workers, and a terminated worker thread
 	// takes its children's exit watchers with it (measured: every spawn API leaks
 	// that way). The reaper claims those abandoned children; it never touches one a
@@ -646,6 +654,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		presenterControl?.dispose();
 		if (presenterDir) await rm(presenterDir, { recursive: true, force: true });
 		stopChildReaper();
+		stopHopGuard?.();
 		// A handover that completed at once drains this host; its caller still gets the answer.
 		await handoverAnswered();
 		// On Windows, destroying named-pipe sockets does not always make libuv's
@@ -667,7 +676,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			await closeShieldedEndpoint(socketPath, () =>
 				process.platform === "win32"
 					? Promise.race([closeServer(server), delay(WINDOWS_SHUTDOWN_HARD_EXIT_MS)])
-					: closeServer(server),
+					: Promise.all([server, ...reboundServers].map(closeServer)).then(() => undefined),
 			);
 			cancelForce();
 			// Ownership-checked: unlink only the entry THIS process bound. After a
@@ -737,10 +746,16 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					// shutdown's ownership check has nothing to prove with and leaves the
 					// public socket behind.
 					beforeCleanup: async () => {
+						stopHopGuard?.();
 						supervisorPublicIdentity ??= await readSocketIdentityFile(supervisorPublicOwnerFile);
 					},
 				}
-			: watchdogConfig && { ...watchdogConfig, cleanupPaths: crashCleanupPaths };
+			: watchdogConfig && {
+					...watchdogConfig,
+					cleanupPaths: crashCleanupPaths,
+					// The guard must not re-create the scratch directory the watchdog is about to remove (senpi#7452).
+					beforeCleanup: async () => stopHopGuard?.(),
+				};
 	armHostWatchdog(watchdog, (reason, cleanup) => {
 		process.stderr.write(`senpi rpc host: ${reason}; shutting down\n`);
 		// Enter shutdown before killing session-owned child processes. The Windows
@@ -756,6 +771,28 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	boundIdentity = await (hostWatchdogBinding() === undefined
 		? bindRegisteredEndpoint({ agentDir: options.agentDir, socket: socketPath, log: hostLog }, bind)
 		: bind());
+	if (process.platform !== "win32" && watchdogConfig?.scratchDir === dirname(socketPath))
+		stopHopGuard = guardInternalHop({
+			socketPath,
+			identity: boundIdentity,
+			...(watchdogConfig.ppid === undefined
+				? {}
+				: { owner: { pid: watchdogConfig.ppid, processStartTime: watchdogConfig.processStartTime } }),
+			bind: async () => {
+				const listener = createListener();
+				const identity = await listen(listener, socketPath, secret);
+				reboundServers.push(listener);
+				return identity;
+			},
+			onRebound: (identity) => {
+				boundIdentity = identity;
+				hostLog(`internal hop ${socketPath} was gone; re-bound it`);
+			},
+			onLost: (reason) => {
+				hostLog(`${reason}; draining so the supervisor can be replaced`);
+				drainForHandoff();
+			},
+		});
 	// A key record that cannot be published safely ends this host: held connections are refused, never served keyless.
 	await transport.publish(() => shutdown(1));
 	const drainFile = hostChildDrainRequestFile();

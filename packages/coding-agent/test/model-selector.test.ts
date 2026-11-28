@@ -181,4 +181,41 @@ describe("model selector", () => {
 			expect(rendered).toContain("Could not refresh 2 model catalogs (openai, anthropic); showing cached models.");
 		});
 	});
+
+	// sisyphuslabs/doriterm#2745: a picker taller than the screen minus the footer pushed its top rows into
+	// scrollback, and closing it made the renderer clear the scrollback and replay the whole transcript.
+	it("fits on a phone-height screen with the rows below it, and grows back when the screen gets taller", async () => {
+		const models = Array.from({ length: 30 }, (_, index) => ({
+			id: `model-${String(index).padStart(2, "0")}`,
+			name: `Model ${index}`,
+			reasoning: true,
+		}));
+		harness = await createHarness({ models });
+		vi.spyOn(harness.session.modelRuntime, "refresh").mockResolvedValue({ aborted: false, errors: new Map() });
+		const terminal = { rows: 22 };
+		const rowsBelow = 3;
+		const selector = new ModelSelectorComponent(
+			{ requestRender: () => {}, terminal } as unknown as TUI,
+			harness.getModel("model-00"),
+			harness.settingsManager,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+			undefined,
+			undefined,
+			{ rowsBelow: () => rowsBelow },
+		);
+		const modelRows = (lines: string[]) => lines.filter((line) => /model-\d\d \[/.test(stripAnsi(line))).length;
+
+		const phone = selector.render(44);
+		expect(phone.length).toBeLessThanOrEqual(terminal.rows - rowsBelow);
+		expect(stripAnsi(phone.join("\n"))).toContain("→   model-00 [");
+
+		terminal.rows = 60;
+		const tall = selector.render(44);
+		expect(tall.length).toBeLessThanOrEqual(terminal.rows - rowsBelow);
+		expect(modelRows(tall)).toBe(Math.floor(terminal.rows / 2));
+		selector.dispose();
+	});
 });

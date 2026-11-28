@@ -2,6 +2,7 @@ import { serializeJsonLine } from "./jsonl.ts";
 import { type FrozenFrames, FrozenFramesCursor, type LegacyViewCursor } from "./legacy-view-cursor.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { carriesMedia, omitNormalInlineMedia } from "./media-placeholders.ts";
+import { compactDelta, demoteToDeltaOnly } from "./session-event-writer-compaction.ts";
 
 /**
  * A replayable snapshot line.
@@ -13,13 +14,21 @@ import { carriesMedia, omitNormalInlineMedia } from "./media-placeholders.ts";
  * `mayCarryMedia` is the type gate taken at acceptance: a record whose type cannot carry
  * media (every `message_update` partial) replays its `line` with no parse at all; only
  * media-bearing records parse their frozen line, once.
+ * `deltaOnlyLine` is the delta-only form of a compact `*_delta` update (senpi#4239): once a newer record of the same
+ * message arrives, that form replaces the record, so the store holds every delta but only the newest cumulative partial.
  */
 type SnapshotRecord = {
 	readonly line: string;
 	placeholderLine?: string;
 	readonly hasMessage: boolean;
 	readonly mayCarryMedia: boolean;
+	readonly deltaOnlyLine?: string;
 };
+
+/** A superseded delta keeps its delta and position; its cumulative fields are null, so it carries no media either. */
+function supersededRecord(deltaOnlyLine: string): SnapshotRecord {
+	return { line: deltaOnlyLine, placeholderLine: deltaOnlyLine, hasMessage: false, mayCarryMedia: false };
+}
 
 /** The placeholder variant of a remembered record, derived and memoized on first use. */
 function snapshotPlaceholderLine(record: SnapshotRecord): string {
@@ -47,6 +56,8 @@ export class LegacyReplayStore {
 	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
 	private readonly lifecycleSnapshots = new Map<string, SnapshotRecord>();
 	private readonly pendingQuestions = new Map<string, Map<string, Record<string, unknown>>>();
+	/** Index of the newest record of the session's active message that carries its cumulative `message`. */
+	private readonly snapshotAt = new Map<string, number>();
 	private cursors = 0;
 
 	/** Legacy views of either source not yet released: zero once every barrier ended (R3.C6.4 accounting). */
@@ -64,6 +75,10 @@ export class LegacyReplayStore {
 			placeholderLine,
 			hasMessage: value.message != null,
 			mayCarryMedia: carriesMedia(value),
+			deltaOnlyLine:
+				value.message != null && compactDelta(value) !== undefined
+					? serializeJsonLine(demoteToDeltaOnly(value))
+					: undefined,
 		};
 		if (value.type === "session_lifecycle") {
 			this.lifecycleSnapshots.set(sessionId, record);
@@ -88,15 +103,41 @@ export class LegacyReplayStore {
 		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
 		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
 			this.sessionSnapshots.set(sessionId, [record]);
-		} else if (this.sessionSnapshots.has(sessionId)) {
-			this.sessionSnapshots.get(sessionId)?.push(record);
+			if (record.hasMessage) this.snapshotAt.set(sessionId, 0);
+			else this.snapshotAt.delete(sessionId);
+		} else {
+			const records = this.sessionSnapshots.get(sessionId);
+			if (records) {
+				const owned = record.hasMessage ? this.supersedeSnapshot(sessionId, records) : records;
+				owned.push(record);
+				if (record.hasMessage) this.snapshotAt.set(sessionId, owned.length - 1);
+			}
 		}
-		if (value.type === "message_end") this.sessionSnapshots.delete(sessionId);
+		if (value.type === "message_end") {
+			this.sessionSnapshots.delete(sessionId);
+			this.snapshotAt.delete(sessionId);
+		}
+	}
+
+	/**
+	 * A newer record carries the message, so the previous snapshot, when it is a compact delta, keeps only its delta.
+	 * Records that carry no message (tool events) never supersede it. A frozen cursor reads the array and length it
+	 * froze, so while any cursor is open the store rewrites a copy. Returns the array to append to.
+	 */
+	private supersedeSnapshot(sessionId: string, records: SnapshotRecord[]): SnapshotRecord[] {
+		const at = this.snapshotAt.get(sessionId);
+		const previous = at === undefined ? undefined : records[at];
+		if (at === undefined || previous?.deltaOnlyLine === undefined) return records;
+		const owned = this.cursors > 0 ? [...records] : records;
+		owned[at] = supersededRecord(previous.deltaOnlyLine);
+		if (owned !== records) this.sessionSnapshots.set(sessionId, owned);
+		return owned;
 	}
 
 	forget(sessionId: string): void {
 		this.pendingQuestions.delete(sessionId);
 		this.sessionSnapshots.delete(sessionId);
+		this.snapshotAt.delete(sessionId);
 		this.lifecycleSnapshots.delete(sessionId);
 	}
 

@@ -886,7 +886,7 @@ Paths in `~/.senpi/agent/settings.json` resolve relative to `~/.senpi/agent`. Pa
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `packages` | array | `[]` | npm/git packages to load resources from |
-| `enabledBuiltinExtensions` | string[] | all builtins | Optional allowlist of builtin extension ids to load |
+| `enabledBuiltinExtensions` | string[] | all builtins | Optional allowlist of builtin extension ids to load; an internal builtin (`session-liveness`) loads with the builtins that need it and is never named here or in `disabledBuiltinExtensions` |
 | `disabledBuiltinExtensions` | string[] | `[]` | Builtin extension ids to skip; overrides `enabledBuiltinExtensions` |
 | `extensions` | string[] | `[]` | Local extension file paths or directories |
 | `skills` | string[] | `[]` | Local skill file paths or directories |

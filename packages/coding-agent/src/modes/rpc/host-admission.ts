@@ -63,3 +63,16 @@ export function hostStoppingResponse(id: unknown, command: string, admission: Ho
 		errorData: { instanceId: admission.protocol().instanceId },
 	};
 }
+
+/** The supervisor could not reach its host for this connection (senpi#7388): the request was never delivered. */
+export function hostUnavailableResponse(id: unknown, command: string, detail: string): object {
+	return {
+		...(typeof id === "string" ? { id } : {}),
+		type: "response",
+		command,
+		success: false,
+		error: `host_unavailable: ${detail}`,
+		errorCode: "host_unavailable",
+		errorData: { reason: "internal_connection_failed", detail },
+	};
+}

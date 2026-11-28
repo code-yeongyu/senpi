@@ -3,7 +3,7 @@
 // Copyright (c) 2025-2026 Can Bölük
 // https://github.com/can1357/oh-my-pi
 
-import { getTodoMarker, sanitizeTodoText } from "./todo-format.ts";
+import { getTodoMarker, isIncompleteTodo, sanitizeTodoText } from "./todo-format.ts";
 import { nextActionableTask } from "./todo-query.ts";
 import type { TodoItem, TodoPhase } from "./todo-types.ts";
 
@@ -25,6 +25,9 @@ export type TodoWidgetModel = {
 	readonly phaseName: string;
 	readonly rows: readonly TodoWidgetRow[];
 };
+
+/** Whether the session is working or has live background work; only then is an item drawn as active. */
+type TodoWidgetLiveness = { readonly working: boolean };
 
 function getActivePhase(phases: readonly TodoPhase[]): TodoPhase | undefined {
 	const activeTask = nextActionableTask(phases);
@@ -48,7 +51,27 @@ function taskRow(task: TodoItem): TodoWidgetRow {
 	return { kind: "task", task };
 }
 
-export function getTodoWidgetModel(phases: readonly TodoPhase[]): TodoWidgetModel | undefined {
+function pausedRow(row: TodoWidgetRow): TodoWidgetRow {
+	return row.kind === "task" && row.task.status === "in_progress" ? taskRow({ ...row.task, status: "pending" }) : row;
+}
+
+export function getTodoWidgetModel(
+	phases: readonly TodoPhase[],
+	liveness: TodoWidgetLiveness,
+): TodoWidgetModel | undefined {
+	const window = getActivePhaseWindow(phases);
+	if (!window) return undefined;
+	if (liveness.working) return window;
+	// Not working: no row carries the active mark and the title says so (senpi#1146).
+	const openCount = phases.reduce((count, phase) => count + phase.tasks.filter(isIncompleteTodo).length, 0);
+	const [, ...body] = window.rows;
+	return {
+		phaseName: window.phaseName,
+		rows: [label(`Todo · paused · ${openCount} open`), ...body.map(pausedRow)],
+	};
+}
+
+function getActivePhaseWindow(phases: readonly TodoPhase[]): TodoWidgetModel | undefined {
 	const activePhase = getActivePhase(phases);
 	if (!activePhase) return undefined;
 	const header = [label("Todo"), label(sanitizeTodoText(activePhase.name))];
@@ -86,8 +109,11 @@ export function getTodoWidgetModel(phases: readonly TodoPhase[]): TodoWidgetMode
 	};
 }
 
-export function getTodoWidgetLines(phases: readonly TodoPhase[]): string[] | undefined {
-	const model = getTodoWidgetModel(phases);
+export function getTodoWidgetLines(
+	phases: readonly TodoPhase[],
+	liveness: TodoWidgetLiveness = { working: true },
+): string[] | undefined {
+	const model = getTodoWidgetModel(phases, liveness);
 	if (!model) return undefined;
 	return model.rows.map((row) => (row.kind === "label" ? row.text : formatTask(row.task)));
 }

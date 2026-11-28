@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SESSION_CONTROL_DELIVERY_TYPE } from "../../src/core/extensions/types.ts";
-import { deliveryIdOf } from "../../src/core/external-admission.ts";
+import { deliveryIdOf } from "../../src/core/delivery-ids.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const harnesses: Harness[] = [];
@@ -64,7 +64,7 @@ describe("external message admission", () => {
 		const idle = nextEvent(target, "agent_idle");
 		expect(admission.admit({ delivery_id: "d-idle", text: "hello from A", deliverAs: "followUp" })).toEqual({
 			kind: "started",
-			turn_epoch: 0,
+			turn_epoch: 1,
 		});
 		expect(admission.list().pending).toEqual(["d-idle"]);
 		expect(admission.admit({ delivery_id: "d-idle", text: "hello from A", deliverAs: "followUp" }).kind).toBe(

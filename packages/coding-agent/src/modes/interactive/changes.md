@@ -1,3 +1,130 @@
+## 2026-11-27 - /resume claims the session before it checks for holders (senpi#5988)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleResumeSession` admits the target through `admitSessionHolders` (claim, then check) and releases the claim in a `finally`; the body it wrapped moved unchanged into `resumeAdmittedSession`, which retakes the claim after a take-over and refuses with the existing "still open" warning when it cannot.
+
+### Why
+
+- The check and the switch were check-then-act across processes: a CLI start racing a /resume could pass its own check before this process published its holder record, and both became writers of one session.
+
+### Why an extension could not handle it
+
+- The holder check of /resume is core interactive control flow; no extension hook runs between the check and the runtime switch.
+
+### Expected merge conflict zones
+
+- LOW: `handleResumeSession` and the new `resumeAdmittedSession` in `interactive-mode.ts`; the `foreign-session-holders.ts` import list.
+
+## 2026-11-26 - OSC 7577 Program Resume reports (senpi#7493)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a new `programResumeToken` option creates a `ProgramResumeReporter` (new fork-only `program-resume-reporter.ts`) when stdout is a TTY. `syncProgramResume()` runs after every session rebind (startup, new, resume, fork), on assistant `message_end` and on `agent_end`, so the terminal's record follows the session once its file is written; the SIGCONT handler re-reports with a fresh time; an interactive quit in `shutdown()` sends `clear=1` before `stop()`. Signal shutdowns (SIGHUP/SIGTERM) and dead-terminal exits send nothing.
+
+### Why
+
+- A terminal that implements the OSC 7577 Program Resume Protocol (rev 0.5) can bring the agent session back after the terminal restarts, with the command `[APP_COMMAND, "--session", <absolute session file>]` and the session cwd. The protocol forbids clearing on SIGHUP/SIGTERM, because that is when the record is needed.
+
+### Why an extension could not handle it
+
+- The report must be written to the TUI's own terminal at session rebind, on SIGCONT and at the quit/signal split of `shutdown()`, none of which the extension API exposes; the token also has to be taken before any extension or tool child starts.
+
+### Expected merge conflict zones
+
+- LOW: `InteractiveModeOptions`, the `rebindCurrentSession()` tail, the `message_end`/`agent_end` cases, the `handleCtrlZ()` SIGCONT handler and the interactive-quit branch of `shutdown()` each gain one line.
+
+## 2026-11-25 - The attached terminal answers for its own telemetry (senpi#7446)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/attach.ts`, `run-attached-tui.ts`: `--attach` sends the terminal user's own install-telemetry setting as its `attach_session.telemetry` answer.
+
+### Why
+
+- An attach without an answer is `unanswered`, which would turn a session's telemetry off for as long as its own user looks at it.
+
+### Why an extension could not handle it
+
+- The attach request is built by the attached terminal client before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `attach_session` request in `attach.ts`.
+
+## 2026-11-25 - Config selector writes through shared resource overrides (senpi#7450)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/config-selector.ts`: the global toggle and the project-local inherit/load/unload override logic moved to `src/core/resource-overrides/`; the component delegates to it. Rendering and key handling are unchanged.
+
+### Why
+
+- `engine.config.setResource` writes the same settings the TUI's space press writes, so both go through one implementation (senpi#7450).
+
+### Why an extension could not handle it
+
+- The config selector is the built-in `config` command's TUI.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `ResourceList` toggle and override methods, now delegations.
+
+## 2026-11-25 - The control endpoint's input receipt names the engine-turn cap (senpi#7138)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: a `held` disposition carries `engineTurnCap` when the cap stopped the delivery's turn.
+
+### Why
+
+- The receipt otherwise reads `held` with nothing naming why (senpi#7138).
+
+### Why an extension could not handle it
+
+- The receipt is built by the engine's control endpoint command.
+
+### Expected merge conflict zones
+
+- LOW: the `admitted` helper in the input command.
+
+## 2026-11-24 - A model switch from the picker no longer replays the transcript (senpi#7411)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/model-selector.ts`: an optional `layout.rowsBelow(width)` constructor argument; when it is given, `render()` caps the model list so the picker plus the rows below it fit the terminal height (at least one model), and lets a capped list grow back when the screen gets taller.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the model picker gets `rowsBelow` from the rendered height of `widgetContainerBelow` plus `footerContainer`; `showSelector` clears `lastStatusSpacer`/`lastStatusText`, so the first status after a selector appends a row instead of rewriting the previous status row.
+
+### Why
+
+- A picker taller than the screen pushed its top rows into scrollback, and the status after the choice rewrote a status row the picker had pushed off screen. Either way the frame changed a row above the screen while the line count changed, so the renderer cleared the scrollback and replayed the whole transcript: a full-screen flash, worst over a remote link, and a shifted screen on a phone (sisyphuslabs/doriterm#2745).
+
+### Why an extension could not handle it
+
+- The picker's sizing and the status-row collapse are core interactive-mode behavior; no extension hook sizes a built-in selector or owns the status row anchor.
+
+### Expected merge conflict zones
+
+- LOW: `ModelSelectorComponent` constructor signature and `updateList()` window sizing; `showSelector()` body and the `new ModelSelectorComponent(...)` call in `showModelSelector`.
+
+## 2026-11-22 - Match model-family warnings at name boundaries (senpi#2753)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts` distinguishes actual Qwen and MiniMax family names from unrelated words: the name must not follow a letter, digit, or combining mark and must not be followed by a letter or combining mark. These boundaries apply across scripts and still allow version suffixes.
+
+### Why
+
+- A false warning on an unrelated model undermines the notice for models it is meant to identify.
+
+### Why an extension could not handle it
+
+- The interactive model-selection surface invokes the warning directly.
+
+### Expected merge conflict zones
+
+- LOW: the family predicate in `packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts`. The warning text and rendering are unchanged.
+
 ## 2026-11-14 - The terminal control endpoint refuses an `interrupt` `background` other than `"stop"`
 
 ### What changed

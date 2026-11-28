@@ -12,6 +12,166 @@
 
 ### Removed
 
+## [2026.11.28-1] - 2026-11-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Settings that name an executable or a command line stay ignored from an untrusted project after the settings are reloaded or the project trust is set again; before, a reload read them back ([#7636](https://github.com/code-yeongyu/senpi/pull/7636))
+
+### Removed
+
+## [2026.11.28] - 2026-11-28
+
+### Breaking Changes
+
+### Added
+
+- `open_session.persona` (`appendSystemPrompt`, `tools`, `excludeTools`) gives a host session the instructions and tool policy `--append-system-prompt`, `--tools` and `--exclude-tools` give a process, narrowing the host's own flags only; hosts advertise it as `session_persona` ([#7570](https://github.com/code-yeongyu/senpi/pull/7570))
+- RPC hosts report why a session is paused, since when, and how many peer deliveries wait behind the hold ([#7583](https://github.com/code-yeongyu/senpi/issues/7583)).
+
+### Changed
+
+- A paused session holds at most 64 peer deliveries; further ones are refused with `held_deliveries_full` and stay with their sender. An unattended resume delivers consecutive held messages from one sender in one turn ([#7588](https://github.com/code-yeongyu/senpi/issues/7588)).
+
+### Fixed
+
+- Two simultaneous starts of one existing session (`--session`, `--continue`, `--resume`, `--rebind`, or `--session-id` naming an existing session) no longer both become writers: admission claims the session exclusively, and a rebind carries that claim to the new path, so exactly one start is admitted and the other is refused (exit 76) or offered take-over, as a later start is. `/resume` and the RPC host see a start that is still loading as a holder, and a crashed or frozen start does not pin the session. ([#7559](https://github.com/code-yeongyu/senpi/pull/7559))
+- A session move that runs longer than 30 seconds keeps openers out until it finishes: the move lock is judged by the mover's process identity, not its age ([#3979](https://github.com/code-yeongyu/senpi/issues/3979)).
+- On macOS, a find or grep started from the home directory (or `/`) no longer reads `~/Desktop`, `~/Documents`, `~/Downloads`, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `/Volumes`, `/Network` or `/System/Volumes` (also when the search starts under `/System/Volumes/Data`, the data volume's second path to the home folders), so it no longer raises macOS privacy prompts; start the search inside one of those folders to search it ([#7562](https://github.com/code-yeongyu/senpi/pull/7562), [oh-my-openagent#15240](https://github.com/code-yeongyu/oh-my-openagent/issues/15240))
+- A result an extension's `tool_result` handler replaced now reaches the model on the Cursor exec path too, and images in those results are resized under the model's input limits as on the agent loop ([#7563](https://github.com/code-yeongyu/senpi/pull/7563))
+- A shared RPC host no longer keeps every cumulative partial of an in-flight message for late peers; retention per streaming session is linear in the message instead of quadratic ([#7565](https://github.com/code-yeongyu/senpi/pull/7565))
+- A `--mode rpc` engine that has not finished startup within 10 s writes a stderr line naming its last completed startup phase every 10 s, so a client that sees no output can tell where startup stands ([#7566](https://github.com/code-yeongyu/senpi/pull/7566))
+- The RPC client refuses a host that challenges under a launch with no key record under the key root (`host_identity_unproven`, naming the record and `SENPI_RPC_KEY_ROOT`) instead of continuing unauthenticated ([#7568](https://github.com/code-yeongyu/senpi/pull/7568))
+- `senpi host status` reports `refusal` for a host that answered but could not be proven; handoff, handover, stop and drain answer such a host with a typed refusal ([#7568](https://github.com/code-yeongyu/senpi/pull/7568))
+- Multi-session hosts no longer restore retired sessions automatically. Hosts advertise `session_retirement`; `close_session` with `retire: true` or `retireSession()` retires a session, and an explicit `open_session` with `reopenRetired: true` reopens one ([#7581](https://github.com/code-yeongyu/senpi/pull/7581)).
+- A resumed session presents every held peer message to the model in admission order, including after restart, instead of presenting only the last one ([#7588](https://github.com/code-yeongyu/senpi/issues/7588)).
+- A resend of a held peer delivery after a restart is answered `already_admitted` instead of being held and shown twice ([#7588](https://github.com/code-yeongyu/senpi/issues/7588)).
+- Settings that name an executable or a command line (`shellPath`, `shellCommandPrefix`, `npmCommand`, `externalEditor`, CLI provider enable flags and executable paths) are honoured only from global settings or a trusted project. Project trust defaults to false, and an ignored project key is reported with its reason ([#7595](https://github.com/code-yeongyu/senpi/pull/7595))
+- Shared RPC sessions now ignore default extension shims generated under another product name, and a generated shim always loads this installation's own builtin. A user edit reloads one session at a time, and a reload that does not finish within 60 seconds no longer holds up the other sessions ([#7599](https://github.com/code-yeongyu/senpi/pull/7599)).
+- A compacted session no longer keeps every lifecycle bookkeeping record in memory. Records written before the compaction window stay in the session file, and lifecycle restoration folds them to the newest record per session and per custody id. On a 100 MB session whose turns each leave five such records, a branch read walks 5 entries where it walked 80,005, and the RPC host's live heap for that session falls from 179 MB to 97 MB ([#7596](https://github.com/code-yeongyu/senpi/issues/7596)).
+- Restoring promoted MCP and extension tools after an extension reload no longer rereads the whole session file: the session keeps the promotions it has seen, so a replay reads only entries appended since. A compaction ends that: the next replay after it rereads the file once, as before. A session with no searchable tools reads nothing. The first replay after a session opens checks every entry for promotions in one pass without yielding to the event loop, about 0.16 s on a 300 MiB session ([#7602](https://github.com/code-yeongyu/senpi/pull/7602))
+- Process start times read from `ps` (the terminal lease probe and orphan reaper on macOS, the RPC host's session-admission snapshot, every host identity probe) are rendered and read in UTC, so a process started in the repeated hour of a daylight-saving fall-back is one instant to every reader: a live lease owner is no longer taken for a recycled pid ([#7613](https://github.com/code-yeongyu/senpi/pull/7613), oh-my-openagent#12108).
+- A long-lived session no longer keeps the payload of every closed work-custody record in memory: the registry and the history fold keep only a closed record's identity, ticket admission no longer scans every record the session ever wrote, and admission answers and the session file are unchanged ([#7621](https://github.com/code-yeongyu/senpi/pull/7621))
+
+### Removed
+
+## [2026.11.27] - 2026-11-27
+
+### Breaking Changes
+
+### Added
+
+- `ctx.reportToolResult()` lets a tool run the session's `tool_result` handlers for work it already did, without running a tool: the event carries `parentToolCallId` and an id of the form `<calling id>/reported-<n>` ([#7276](https://github.com/code-yeongyu/senpi/pull/7276))
+- `@code-yeongyu/senpi/engine`: typed functions for the package, model, config, schedule, query and host lifecycle commands, plus `ENGINE_COMMANDS` metadata of their flags ([#7460](https://github.com/code-yeongyu/senpi/pull/7460))
+- A shared host decides each session's telemetry from the host's own setting AND every caller of that session: `open_session.telemetry`, `attach_session.telemetry` and `set_telemetry_consent` carry each caller's live answer, extensions read `ctx.telemetryPermitted`, an older peer that sends no answer never grants telemetry events, and provider attribution headers are removed by any caller's decline ([#7465](https://github.com/code-yeongyu/senpi/pull/7465))
+- A worker session that does not confirm a revoked telemetry answer within 2 s is ended. If it is not seen to exit within a further 2 s, the host sends `host_telemetry_containment` to every connection and exits with code 79; embedders may observe that exit code ([#7465](https://github.com/code-yeongyu/senpi/pull/7465))
+- Interactive mode tells a terminal that supports the OSC 7577 Program Resume Protocol how to reopen the current session after the terminal restarts, and keeps the terminal's token away from every tool and child process ([#7494](https://github.com/code-yeongyu/senpi/pull/7494))
+
+### Changed
+
+### Fixed
+
+- A peer message the engine-turn cap keeps from starting a turn is answered `held` with `engineTurnCap` instead of `started`; `get_state` shows the cap, and `resume_session` continues the session with one turn (or, in release mode, names the cap) instead of answering `not_paused` ([#7444](https://github.com/code-yeongyu/senpi/pull/7444))
+- An external message admitted to an idle session is answered with the turn it starts, not the one before it, and a steer that names that turn is accepted before the turn begins ([#7481](https://github.com/code-yeongyu/senpi/pull/7481))
+- A host supervisor whose host child had exited without the exit being observed (for example after a drain whose successor never took over) no longer holds the RPC socket forever, closing every client and refusing every new host with "address already in use". It now ends the generation and gives the socket up, and it never signals a pid it cannot prove is still its own child ([#7525](https://github.com/code-yeongyu/senpi/pull/7525))
+- The todo widget no longer marks an item in progress while the session is idle: the active mark is drawn only while a turn is active or background work is live, and otherwise the title reads `Todo · paused · N open` with the open count ([#7527](https://github.com/code-yeongyu/senpi/pull/7527)).
+- The todo widget and the herdr pane report now read one session liveness watcher, so a child known only from its task record keeps the todo item active, and a question still pending after a reload keeps the session blocked ahead of running work ([#7527](https://github.com/code-yeongyu/senpi/pull/7527)).
+
+### Removed
+
+## [2026.11.26] - 2026-11-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A supervised RPC host keeps its private hop socket in its own daemon directory instead of the shared temp directory, the hop reaper never removes a directory whose socket is still being listened on, and a host whose hop disappears anyway re-binds it, or drains so the supervisor can be replaced, instead of staying reachable to no new client ([#7453](https://github.com/code-yeongyu/senpi/pull/7453))
+- A message another session sends while a previous message's turn is still starting now joins that turn, so messages sent together reach an idle session in one turn, in the order they were sent ([#7461](https://github.com/code-yeongyu/senpi/pull/7461)).
+
+### Removed
+
+## [2026.11.25] - 2026-11-25
+
+### Breaking Changes
+
+### Added
+
+- RPC `get_auth_providers` rows carry `loginId`, and `logout` accepts `expectedLoginId`: a sign-out confirmed for one sign-in is refused with `errorCode: "stale_login"` instead of removing a newer sign-in ([#7407](https://github.com/code-yeongyu/senpi/pull/7407))
+
+### Changed
+
+- RPC tool-image persistence (`persistToolImage`) takes an optional directory-creation step, so the symlink re-check that runs right after a call directory is created can be exercised without mocking `node:fs`; the default step and the write behaviour are unchanged ([#7378](https://github.com/code-yeongyu/senpi/pull/7378))
+
+### Fixed
+
+- A second Claude subscription account is no longer lost when an OmO session still running an older engine rewrites the Claude accounts: the next start re-links every signed-in account to its own login instead of asking it to sign in again ([#5597](https://github.com/code-yeongyu/senpi/pull/5597))
+- `verify_api_key` accepts the same optional `region` as `login_api_key`, so a Kimi Code key is checked on the host for its region instead of the catalog host ([#5649](https://github.com/code-yeongyu/senpi/issues/5649)).
+- Sign in with ChatGPT started over RPC (`login_start`) no longer fails with "requires a device ID"; it gets this installation's device ID, as the TUI does ([#7133](https://github.com/code-yeongyu/senpi/pull/7133))
+- RPC subscribers receive the current terminal monitor and wake-source snapshots even if they subscribe after startup or attach to an already open session on a shared host ([#7212](https://github.com/code-yeongyu/senpi/pull/7212)).
+- Claude re-sign-in requirements now reach clients as `sign_in_required` with the affected account labels, distinct from rejected credentials ([#7214](https://github.com/code-yeongyu/senpi/pull/7214)).
+- Accounts whose OAuth refresh grant was explicitly refused now ask for a new sign-in instead of retrying every 15 minutes ([#7221](https://github.com/code-yeongyu/senpi/pull/7221)).
+- Starting two sessions in one process preserves both sessions' fallback log events during first-start cleanup, even when one session uses a symlink to the same agent directory ([#7263](https://github.com/code-yeongyu/senpi/pull/7263)).
+- Synchronous credential writes no longer stall the event loop while a local asynchronous operation holds the same store lock ([#7279](https://github.com/code-yeongyu/senpi/pull/7279)).
+- The main-model warning no longer flags unrelated words containing `qwen` or `minimax`, including labels with decomposed accents. Actual family models on custom providers still show the warning ([#7295](https://github.com/code-yeongyu/senpi/pull/7295)).
+- An abandoned or failed MCP OAuth sign-in on a new redirect URI no longer signs the existing MCP login out ([#7333](https://github.com/code-yeongyu/senpi/pull/7333)).
+- A provider disabled in `models.json` stays disabled for every request, after any refresh, and when `models.json` later fails to load ([#7358](https://github.com/code-yeongyu/senpi/pull/7358)).
+- DeepSeek DSML leakage now triggers a bounded resample, and a manual continue gets a fresh stream-rule correction budget ([#4621](https://github.com/code-yeongyu/senpi/issues/4621)).
+- A client of the RPC host whose connection to the host process cannot be set up gets an `host_unavailable` refusal naming the cause, instead of a bare connection reset, whether or not the hop to the host carries an internal key. The host supervisor logs the cause once per outage, not once per refused client ([#7396](https://github.com/code-yeongyu/senpi/pull/7396))
+- RPC `login_start` sends a device-code login's user code: a `device_code` event (`userCode`, `verificationUri`, `intervalSeconds`, `expiresInSeconds`) now precedes the verification URL's `auth_login_url`, so a client such as the desktop's GitHub Copilot sign-in can show the code to enter (sisyphuslabs/omo-desktop-app#8413) ([#7404](https://github.com/code-yeongyu/senpi/pull/7404))
+- Switching the model from `/model` no longer clears the scrollback and replays the whole transcript, which flashed the screen (worst over a remote connection) and shifted it on a phone. The model picker now fits the screen, the startup header keeps its first value, and the switch's status line is appended instead of rewriting a row above the screen ([#7411](https://github.com/code-yeongyu/senpi/pull/7411), sisyphuslabs/doriterm#2745)
+- A client the RPC host supervisor refuses with `host_unavailable` no longer counts as an attached client, so it can no longer keep an otherwise idle host from exiting ([#7425](https://github.com/code-yeongyu/senpi/issues/7425))
+
+### Removed
+
+## [2026.11.24] - 2026-11-24
+
+### Breaking Changes
+
+### Added
+
+- `edit` and `write` results warn when a JS, TS or JSON file that parsed before the call no longer parses after it (or a newly written one does not parse), naming the first syntax error, with its line and column where the position is confirmed (for JSON, always the strict `JSON.parse` error; CR, CRLF and LF each count as one line break); `.mjs`/`.cjs`/`.mts`/`.cts` are checked without JSX while `.js` accepts it; the change is still applied, and a failing syntax checker never fails the call ([#7256](https://github.com/code-yeongyu/senpi/pull/7256))
+
+### Changed
+
+### Fixed
+
+- Host status reports the measured memory footprint for each generation ([#7210](https://github.com/code-yeongyu/senpi/pull/7210)).
+- A session opened with `open_session.context.approvals = "refuse"` (an agent-created thread nobody attaches to) refuses a tool call its permission preset would ask about, with a reason the model reads, instead of waiting forever on a dialog no client answers. The engine writes and syncs a record of it to the session file before the session starts (the open fails if it cannot), so every later open of that file keeps refusing; a session the connection later replaces it with (`new_session`, `switch_session`, `fork`, `clone`) starts without it, and a labelled open that attaches to a running session or claims a parked one records it before it answers ([#7270](https://github.com/code-yeongyu/senpi/pull/7270))
+- An `open_session` that names only a session file no longer fails with "a filesystem step did not answer in time" on a loaded host: when the moved-path probe times out, the file is found the way the host then opens it ([#7389](https://github.com/code-yeongyu/senpi/pull/7389))
+
+### Removed
+
+## [2026.11.23] - 2026-11-23
+
+### Breaking Changes
+
+### Added
+
+- On a model without image input, an image returned by a tool is described by the `look_at` vision model and the description takes the image's place in the tool result ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+
+### Changed
+
+### Fixed
+
+- On macOS, tool calls that name a path under `/home` (an automount that may never answer) no longer leave filesystem threads stuck. Enough of them used to stall every file operation in the engine while the session kept running. Such paths are now resolved in a short-lived child process with a deadline, so a working automounter still mounts them and the path policy sees where their symlinks lead; a path whose automount never answers is refused instead ([#7158](https://github.com/code-yeongyu/senpi/pull/7158))
+- An RPC host's idle shutdown no longer recreates a removed agent/endpoint directory when writing its terminal crash record ([#7220](https://github.com/code-yeongyu/senpi/pull/7220)).
+- The placeholder for an image a model cannot see names `look_at` and says it takes the file path, whenever `look_at` is available ([#7260](https://github.com/code-yeongyu/senpi/pull/7260))
+- Claude, GLM and Kimi prompt presets tell the model to edit source files with the file-editing tool the session offers (`edit`/`write` or `apply_patch`), as direct calls rather than from `eval` cell code, and keep routing a call fed by an earlier result to a direct tool call ([#7275](https://github.com/code-yeongyu/senpi/pull/7275))
+- Reopening a session right after an RPC host handover no longer fails with `read ECONNRESET` when the previous generation exits during the successor's connection to it; the open falls back to the local reopen ([#7365](https://github.com/code-yeongyu/senpi/pull/7365))
+- A custom `models.json` provider using `anthropic-messages` with an `sk-ant-oat...` token as `apiKey` (for example a self-hosted Anthropic-compatible proxy) works again: the key is sent as a plain `x-api-key` instead of failing before any request ([#7392](https://github.com/code-yeongyu/senpi/pull/7392))
+
+### Removed
+
 ## [2026.11.22-2] - 2026-11-22
 
 ### Breaking Changes
