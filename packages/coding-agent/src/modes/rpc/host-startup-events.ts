@@ -16,6 +16,8 @@ import {
 } from "./host-startup-wire.ts";
 
 const MAX_STARTUP_EVENTS_PER_PRODUCER = 32;
+/** Progress records are counted apart: one per `STARTUP_PROGRESS_INTERVAL_MS` over the decision budget, with room. */
+const MAX_STARTUP_PROGRESS_PER_PRODUCER = 256;
 
 /** The only role allowed to report each milestone; the controller completes the remaining phases itself. */
 const STARTUP_MILESTONE_PRODUCER: Readonly<Partial<Record<StartupMilestone, StartupProducerRole>>> = {
@@ -37,12 +39,14 @@ export type StartupIngressResult = "accepted" | "ignored" | "discarded" | "proto
 
 /**
  * Feeds one producer stream's records into the controller. Wrong-attempt records are discarded
- * without renewing anything; duplicate sequence numbers are ignored; an unknown milestone, a record
+ * without renewing anything; duplicate sequence numbers are ignored; a progress record extends the current
+ * phase only when this producer owns it, and is ignored otherwise; an unknown milestone, a record
  * for a phase another role owns, a sequence gap or an over-limit record fails the attempt.
  */
 export function startupEventIngress(controller: StartupController, binding: StartupBinding, role: StartupProducerRole) {
 	let lastSeq = 0;
 	let records = 0;
+	let progressRecords = 0;
 	const failProtocol = (reason: string): StartupIngressResult => {
 		controller.fail(new Error(`RPC host startup protocol failure (${role}): ${reason}`));
 		return "protocol_failure";
@@ -55,6 +59,13 @@ export function startupEventIngress(controller: StartupController, binding: Star
 		if (record.role !== role) return failProtocol(`record claims role ${String(record.role)}`);
 		if (record.seq <= lastSeq) return "ignored";
 		if (record.seq !== lastSeq + 1) return failProtocol(`sequence gap after ${lastSeq}`);
+		if (record.milestone === "progress") {
+			progressRecords += 1;
+			if (progressRecords > MAX_STARTUP_PROGRESS_PER_PRODUCER) return failProtocol("too many progress records");
+			lastSeq = record.seq;
+			if (STARTUP_MILESTONE_PRODUCER[controller.phase] !== role) return "ignored";
+			return controller.progress() === "accepted" ? "accepted" : "ignored";
+		}
 		records += 1;
 		if (records > MAX_STARTUP_EVENTS_PER_PRODUCER) return failProtocol("too many records");
 		lastSeq = record.seq;
@@ -140,6 +151,6 @@ function sameBinding(candidate: unknown, binding: StartupBinding): boolean {
 	);
 }
 
-function isProducerMilestone(value: unknown): value is StartupMilestone {
+function isProducerMilestone(value: unknown): value is Exclude<StartupMilestone, "progress"> {
 	return typeof value === "string" && Object.hasOwn(STARTUP_MILESTONE_PRODUCER, value);
 }

@@ -81,7 +81,15 @@ export function beginStartupAttempt(options: {
 		coordinated,
 		get env(): Readonly<Record<string, string>> {
 			if (!coordinated) return {};
-			return { [HOST_STARTUP_EVENTS_ENV]: encodeStartupHandOff({ binding, role: "supervisor", budgetMs, fillers }) };
+			return {
+				[HOST_STARTUP_EVENTS_ENV]: encodeStartupHandOff({
+					binding,
+					role: "supervisor",
+					budgetMs,
+					fillers,
+					progress: true,
+				}),
+			};
 		},
 		stdio(base) {
 			if (!coordinated) return [...base];

@@ -23,8 +23,20 @@ export const STARTUP_ATTEMPT_FILE = "startup-attempt.json";
 export const ADOPTION_GRANT_FILE = "adoption-grant.json";
 
 export type StartupProducerRole = "supervisor" | "host";
-/** `host_opaque`: the supervisor's declaration, made before it spawns a host child that cannot report. */
-export type StartupMilestone = StartupPhase | "host_opaque";
+/**
+ * `host_opaque`: the supervisor's declaration, made before it spawns a host child that cannot report.
+ * `progress`: a producer's event loop is still turning through its startup; it completes nothing, and only
+ * extends the current phase when that producer owns it.
+ */
+export type StartupMilestone = StartupPhase | "host_opaque" | "progress";
+
+/** A coordinated producer reports `progress` this often while it starts. */
+export const STARTUP_PROGRESS_INTERVAL_MS = 2_000;
+/**
+ * The CPU a producer must have spent since its last tick for that tick to count as progress: a producer parked on an
+ * await that never resolves spends almost none, so its phase keeps its plain allowance.
+ */
+export const STARTUP_PROGRESS_MIN_CPU_MS = 50;
 
 export interface StartupBinding {
 	readonly attempt: string;
@@ -43,6 +55,11 @@ export interface StartupHandOff {
 	readonly budgetMs: number;
 	/** The filler slots this process inherited (see `withStartupPipe` in `private-fd-startup-fillers.ts`); its startup stub closes them first. */
 	readonly fillers?: readonly number[];
+	/**
+	 * The launcher reads `progress` records. A launcher built before them fails the attempt on one (it may be the old
+	 * host of a handover), so a producer reports progress only when this is set.
+	 */
+	readonly progress?: true;
 }
 
 export function encodeStartupHandOff(handOff: StartupHandOff): string {
@@ -54,7 +71,7 @@ export function parseStartupHandOff(value: string | undefined): StartupHandOff |
 	try {
 		const parsed: unknown = JSON.parse(value);
 		if (typeof parsed !== "object" || parsed === null) return undefined;
-		const { binding, role, budgetMs, fillers } = parsed as Record<string, unknown>;
+		const { binding, role, budgetMs, fillers, progress } = parsed as Record<string, unknown>;
 		if (role !== "supervisor" && role !== "host") return undefined;
 		if (typeof budgetMs !== "number" || !Number.isFinite(budgetMs) || budgetMs <= 0) return undefined;
 		if (typeof binding !== "object" || binding === null) return undefined;
@@ -63,7 +80,13 @@ export function parseStartupHandOff(value: string | undefined): StartupHandOff |
 		const slots = Array.isArray(fillers)
 			? fillers.filter((slot): slot is number => Number.isInteger(slot) && slot >= 3 && slot < STARTUP_EVENT_FD)
 			: [];
-		return { binding: binding as StartupBinding, role, budgetMs, fillers: slots };
+		return {
+			binding: binding as StartupBinding,
+			role,
+			budgetMs,
+			fillers: slots,
+			...(progress === true && { progress }),
+		};
 	} catch {
 		return undefined;
 	}

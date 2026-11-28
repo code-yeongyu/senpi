@@ -17,6 +17,9 @@ import {
 	parseStartupHandOff,
 	relayStartupLine,
 	STARTUP_EVENT_FD,
+	STARTUP_PROGRESS_INTERVAL_MS,
+	STARTUP_PROGRESS_MIN_CPU_MS,
+	type StartupProducerRole,
 	type StartupHandOff,
 	type StartupMilestone,
 	startupEventLine,
@@ -69,7 +72,6 @@ function write(state: BeaconState, line: string): void {
 }
 
 const state = captured();
-const reporter = state ? startupReporter((line) => write(state, line)) : undefined;
 
 /**
  * The supervisor's one writer to its startup pipe. Its own milestones and its host child's relayed records come from
@@ -152,9 +154,73 @@ export function startupHandOff(): StartupHandOff | undefined {
 }
 
 export function reportStartupMilestone(milestone: StartupMilestone): void {
-	if (state && reporter)
-		reporter.report(startupEventLine(state.handOff.binding, state.handOff.role, ++state.seq, milestone), milestone);
+	beacon?.reportMilestone(milestone);
 }
+
+/** The last milestone each producer reports: its startup work is over, so its progress reports end there. */
+const LAST_STARTUP_MILESTONE: Readonly<Record<StartupProducerRole, StartupMilestone>> = {
+	supervisor: "public_published",
+	host: "host_runtime",
+};
+
+function processCpuMs(): number {
+	const { user, system } = process.cpuUsage();
+	return (user + system) / 1000;
+}
+
+/**
+ * The producer's progress reports, for a launcher whose hand-off says it reads them (undefined otherwise). Every
+ * `STARTUP_PROGRESS_INTERVAL_MS` it reports `progress` when this process spent at least `STARTUP_PROGRESS_MIN_CPU_MS`
+ * of CPU since the last tick: a slow start that is working spends it, while a loop that is wedged never ticks and one
+ * parked on an await that never resolves spends almost none, so the launcher fails either at its plain deadlines.
+ * Reports end at the producer's last milestone or at the attempt's decision budget; neither timer keeps the process alive.
+ */
+export function startStartupProgress(
+	handOff: StartupHandOff,
+	report: () => void,
+	cpuMs: () => number = processCpuMs,
+): { milestone(milestone: StartupMilestone): void } | undefined {
+	if (handOff.progress !== true) return undefined;
+	let spent = cpuMs();
+	const ticker = setInterval(() => {
+		const now = cpuMs();
+		if (now - spent >= STARTUP_PROGRESS_MIN_CPU_MS) report();
+		spent = now;
+	}, STARTUP_PROGRESS_INTERVAL_MS);
+	const stop = (): void => {
+		clearInterval(ticker);
+		clearTimeout(expiry);
+	};
+	const expiry = setTimeout(stop, handOff.budgetMs);
+	ticker.unref();
+	expiry.unref();
+	return {
+		milestone(milestone) {
+			if (milestone === LAST_STARTUP_MILESTONE[handOff.role]) stop();
+		},
+	};
+}
+
+/**
+ * One coordinated producer's reports on its startup pipe: its milestones, in `startupReporter`'s phase order, and its
+ * progress heartbeat, which the producer's own last milestone ends.
+ */
+export function createStartupBeacon(
+	producer: { readonly handOff: StartupHandOff; seq: number },
+	emit: (line: string) => void,
+	cpuMs: () => number = processCpuMs,
+) {
+	const reporter = startupReporter(emit);
+	const reportMilestone = (milestone: StartupMilestone): void => {
+		const { binding, role } = producer.handOff;
+		reporter.report(startupEventLine(binding, role, ++producer.seq, milestone), milestone);
+		progress?.milestone(milestone);
+	};
+	const progress = startStartupProgress(producer.handOff, () => reportMilestone("progress"), cpuMs);
+	return { reporter, reportMilestone };
+}
+
+const beacon = state ? createStartupBeacon(state, (line) => write(state, line)) : undefined;
 
 /** The environment value for the host child a coordinated supervisor spawns, or undefined when uncoordinated. */
 export function hostChildStartupHandOff(fillers: readonly number[]): string | undefined {
@@ -163,9 +229,9 @@ export function hostChildStartupHandOff(fillers: readonly number[]): string | un
 
 /** The supervisor relays its host child's startup pipe verbatim inside relay frames; it never writes a host milestone itself. */
 export function relayHostStartupEvents(stream: Readable | null | undefined): void {
-	if (!reporter || !stream) {
+	if (!beacon || !stream) {
 		stream?.resume();
 		return;
 	}
-	reporter.relay(stream);
+	beacon.reporter.relay(stream);
 }
