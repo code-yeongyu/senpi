@@ -46,7 +46,15 @@ try {
 				return result.valueRepr;
 			};
 			try {
-				if (scenario === "lifetime") {
+				if (scenario === "ecoqos") {
+					const fixture = new URL("./worker-power-preference.mjs", import.meta.url).href;
+					assert.equal(
+						await run(`const w = new Worker(${JSON.stringify(fixture)}, {env: {}}); try {
+							return await new Promise((resolve, reject) => { w.onmessage = e => resolve(e.data); w.onerror = e => reject(Error(e.message)); });
+						} finally { w.terminate(); }`),
+						JSON.stringify({ status: "skipped", reason: "opted-out" }),
+					);
+				} else if (scenario === "lifetime") {
 					await writeFile(
 						script,
 						`

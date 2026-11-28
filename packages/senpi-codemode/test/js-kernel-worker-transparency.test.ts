@@ -2,11 +2,14 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-it.each(["lifetime", "frames", "transfer", "worker-data", "error", "close"])(
+it.each(["lifetime", "frames", "transfer", "worker-data", "error", "close", "ecoqos"])(
 	"preserves Worker %s through real Bun eval",
 	async (scenario) => {
 		const driver = fileURLToPath(new URL("./fixtures/permission-worker-driver.ts", import.meta.url));
-		const child = spawn("bun", [driver, scenario], { stdio: ["ignore", "pipe", "pipe"] });
+		const child = spawn("bun", [driver, scenario], {
+			stdio: ["ignore", "pipe", "pipe"],
+			...(scenario === "ecoqos" ? { env: { ...process.env, SENPI_KEEP_POWER_THROTTLING: "1" } } : {}),
+		});
 		let stdout = "";
 		let stderr = "";
 		child.stdout.on("data", (data) => {
