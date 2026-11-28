@@ -14,6 +14,22 @@
 		"tui"
 	],
 	"bindings": {
+		"packages/ai/src/providers/100milionseek.models.ts#ONE_HUNDRED_MILIONSEEK_CLASSIFIER_MODELS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/ai/src/providers/100milionseek.models.ts#ONE_HUNDRED_MILIONSEEK_IMAGE_MODELS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/ai/src/providers/100milionseek.models.ts#ONE_HUNDRED_MILIONSEEK_MODELS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/ai/src/providers/100milionseek.models.ts#values": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/agent/src/agent-loop.ts#ABORTED": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"

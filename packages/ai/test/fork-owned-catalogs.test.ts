@@ -12,12 +12,14 @@ import { getBuiltinModel, getBuiltinModels, getBuiltinProviders } from "../src/p
  * every call that names it stops type-checking.
  */
 describe("fork-owned provider catalogs", () => {
-	it("keeps a fork-owned provider out of the generated aggregate", () => {
+	it("keeps fork-owned providers out of the generated aggregate", () => {
 		expect(Object.keys(MODELS)).not.toContain("kimi-coding");
+		expect(Object.keys(MODELS)).not.toContain("100milionseek");
 	});
 
 	it("still lists it as a built-in provider", () => {
 		expect(getBuiltinProviders()).toContain("kimi-coding");
+		expect(getBuiltinProviders()).toContain("100milionseek");
 	});
 
 	it("still reads its models by id", () => {
@@ -30,5 +32,18 @@ describe("fork-owned provider catalogs", () => {
 		const models = getBuiltinModels("kimi-coding");
 		expect(models.length).toBeGreaterThan(0);
 		expect(models.every((model) => model.provider === "kimi-coding")).toBe(true);
+	});
+
+	it("ships the 100milionseek free model without a generated data shard", () => {
+		const model = getBuiltinModel("100milionseek", "deepseek-v4.1-flash-free");
+		expect(model).toMatchObject({
+			provider: "100milionseek",
+			api: "openai-completions",
+			baseUrl: "https://100milionseek.top/v1",
+			contextWindow: 198000,
+			maxTokens: 64000,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		});
+		expect(getBuiltinModels("100milionseek")).toHaveLength(1);
 	});
 });

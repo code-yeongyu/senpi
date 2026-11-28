@@ -1,6 +1,8 @@
 import { CLASSIFIER_MODELS, IMAGE_MODELS, MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
 import type { AnyModel, Api, ClassifierApi, ClassifierModel, ImageApi, ImageModel, Model } from "../types.ts";
+import { oneHundredMilionseekProvider } from "./100milionseek.ts";
+import { ONE_HUNDRED_MILIONSEEK_MODELS } from "./100milionseek.models.ts";
 import { alibabaTokenPlanProvider } from "./alibaba-token-plan.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
@@ -63,6 +65,7 @@ export { ollamaProvider, radiusProvider };
  * read below must see them exactly like a generated one.
  */
 const FORK_OWNED_CATALOGS = {
+	"100milionseek": ONE_HUNDRED_MILIONSEEK_MODELS,
 	"kimi-coding": KIMI_CODING_MODELS,
 } as const;
 
@@ -211,6 +214,7 @@ export function getAllBuiltinModels<TProvider extends BuiltinProvider>(provider:
 /** All built-in providers, freshly constructed. */
 export function builtinProviders(): Provider[] {
 	return [
+		oneHundredMilionseekProvider(),
 		alibabaTokenPlanProvider(),
 		amazonBedrockProvider(),
 		antLingProvider(),

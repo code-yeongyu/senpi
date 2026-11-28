@@ -58,6 +58,7 @@ describe("builtin providers", () => {
 		const providers = models.getProviders();
 		expect(providers.length).toBe(builtinProviders().length);
 		expect(providers.map((p) => p.id)).toContain("anthropic");
+		expect(providers.map((p) => p.id)).toContain("100milionseek");
 		expect(providers.map((p) => p.id)).toContain("bai");
 		expect(providers.map((p) => p.id)).toContain("ollama");
 

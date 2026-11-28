@@ -69,6 +69,7 @@ export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-
 export type ClassifierApi = KnownClassifierApi | (string & {});
 
 export type KnownProvider =
+	| "100milionseek"
 	| "alibaba-token-plan"
 	| "amazon-bedrock"
 	| "ant-ling"
