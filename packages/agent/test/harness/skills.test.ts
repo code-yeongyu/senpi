@@ -54,6 +54,25 @@ Use this skill.
 		expect(skills[0]?.filePath).toBe(join(root, "skills-link/example/SKILL.md"));
 	});
 
+	it("stops when a linked directory points at its own parent", async () => {
+		// senpi#5102: a link back up the tree must not re-enter the walk; the canonical-path
+		// ancestry guard loads each skill once and terminates instead of recursing to the path limit.
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		await env.createDir("skills/example", { recursive: true }, BACKGROUND_CONTEXT);
+		await env.writeFile(
+			"skills/example/SKILL.md",
+			"---\nname: example\ndescription: Example skill\n---\nUse this skill.",
+			BACKGROUND_CONTEXT,
+		);
+		await symlink(join(root, "skills"), join(root, "skills", "loop"));
+
+		const { skills, diagnostics } = await loadSkills(env, "skills", BACKGROUND_CONTEXT);
+
+		expect(skills.filter((skill) => skill.name === "example")).toHaveLength(1);
+		expect(diagnostics).toEqual([]);
+	});
+
 	it("preserves source info for sourced skills", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
