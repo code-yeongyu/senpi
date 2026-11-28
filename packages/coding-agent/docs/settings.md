@@ -896,6 +896,18 @@ Paths in `~/.senpi/agent/settings.json` resolve relative to `~/.senpi/agent`. Pa
 
 Arrays support glob patterns and exclusions. Use `!pattern` to exclude. Use `+path` to force-include an exact path and `-path` to force-exclude an exact path.
 
+#### Disable TTSR stream rules
+
+If you use the desktop or another host that cannot pass `--ttsr-disabled`, add `"ttsr"` to `disabledBuiltinExtensions` in `~/.senpi/agent/settings.json`:
+
+```json
+{
+  "disabledBuiltinExtensions": ["ttsr"]
+}
+```
+
+This skips the whole TTSR builtin, including its detectors, user-defined stream rules, and `/ttsr` command. The setting applies when a session starts and when it reloads its configuration. To re-enable TTSR, remove `"ttsr"` from the list and reload; if you use `enabledBuiltinExtensions`, keep `"ttsr"` in that allowlist.
+
 #### packages
 
 String form loads all resources from a package:
