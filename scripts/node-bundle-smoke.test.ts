@@ -11,13 +11,26 @@ import { z } from "zod";
 const repo = resolve(import.meta.dir, "..");
 const cli = join(repo, "packages/coding-agent/dist/bundle/cli.js");
 const manifest = z
-	.object({ version: z.string(), exports: z.record(z.string(), z.unknown()) })
+	.object({ version: z.string(), exports: z.record(z.string(), z.object({ import: z.string().optional() })) })
 	.parse(JSON.parse(readFileSync(join(repo, "packages/coding-agent/package.json"), "utf8")));
 const version = manifest.version;
-// Subpaths that are programs, not libraries: `./rpc-entry` and `./program-resume-startup` run on import, `./bun-runtime`
-// registers Bun-only modules inside a standalone Bun isolate; `./client` is the unpublished remote client.
-const PROGRAM_SUBPATHS = new Set(["./rpc-entry", "./program-resume-startup", "./bun-runtime", "./client"]);
-const librarySubpaths = Object.keys(manifest.exports).filter((subpath) => !PROGRAM_SUBPATHS.has(subpath));
+// Subpaths that are programs or launcher entries, not libraries: they run on import or exist only for a launcher that has
+// not started the engine (`./bun-runtime` registers Bun-only modules inside a standalone Bun isolate); `./client` is the
+// unpublished remote client. A data export (no `import` condition) is not a module either.
+const PROGRAM_SUBPATHS = new Set([
+	"./rpc-entry",
+	"./program-resume-startup",
+	"./cli",
+	"./valid-cwd",
+	"./private-fd-startup-release",
+	"./session-worker",
+	"./kill-guard-command",
+	"./bun-runtime",
+	"./client",
+]);
+const librarySubpaths = Object.entries(manifest.exports)
+	.filter(([subpath, conditions]) => conditions.import !== undefined && !PROGRAM_SUBPATHS.has(subpath))
+	.map(([subpath]) => subpath);
 // `bin.pi` ships this one file, and whichever runtime installed the package executes it: npm
 // installs run it on Node through its shebang, `bun install -g` runs the same file on Bun.
 const runtimes = ["node", "bun"] as const;

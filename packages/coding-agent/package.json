@@ -75,6 +75,45 @@
 		"./tools-core": {
 			"types": "./dist/tools-core.d.ts",
 			"import": "./dist/tools-core.js"
+		},
+		"./cli": {
+			"import": "./dist/cli.js"
+		},
+		"./valid-cwd": {
+			"import": "./dist/valid-cwd.js"
+		},
+		"./private-fd-startup-release": {
+			"import": "./dist/private-fd-startup-release.js"
+		},
+		"./session-worker": {
+			"import": "./dist/modes/rpc/session-worker.js"
+		},
+		"./kill-guard-command": {
+			"types": "./dist/cli/kill-guard-command.d.ts",
+			"import": "./dist/cli/kill-guard-command.js"
+		},
+		"./kill-guard": {
+			"types": "./dist/core/kill-guard/index.d.ts",
+			"import": "./dist/core/kill-guard/index.js"
+		},
+		"./host-probe": {
+			"types": "./dist/modes/rpc/host-probe.d.ts",
+			"import": "./dist/modes/rpc/host-probe.js"
+		},
+		"./supervisor-route": {
+			"types": "./dist/modes/rpc/supervisor-route.d.ts",
+			"import": "./dist/modes/rpc/supervisor-route.js"
+		},
+		"./config": {
+			"types": "./dist/config.d.ts",
+			"import": "./dist/config.js"
+		},
+		"./model-coverage": {
+			"types": "./dist/model-coverage.d.ts",
+			"import": "./dist/model-coverage.js"
+		},
+		"./runtime-manifest.json": {
+			"default": "./dist/bundle/runtime-manifest.json"
 		}
 	},
 	"files": [
