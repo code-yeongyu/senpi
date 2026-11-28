@@ -1,9 +1,10 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, type Stats, statSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { APP_COMMAND, APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
 import { pathsPointToSameLocation } from "./legacy-dir-copy.ts";
 import { readLegacyPiAgentDirRecord, writeLegacyPiAgentDirRecord } from "./migrations-state.ts";
+import { ensureAgentDir } from "./utils/ensure-agent-dir.ts";
 
 /**
  * After the one-time copy, `~/.pi/agent` belongs to upstream pi and is never written here. A user
@@ -150,7 +151,7 @@ function importOne(file: string, dirs: LegacyPiDirs, now: Date): LegacyPiImporte
 	const from = join(dirs.piAgentDir, file);
 	const to = join(dirs.agentDir, file);
 	if (fileStat(from) === undefined) return { file, reason: `${from} does not exist` };
-	mkdirSync(dirs.agentDir, { recursive: true });
+	ensureAgentDir(dirs.agentDir);
 	let backupPath: string | undefined;
 	if (fileStat(to) !== undefined) {
 		backupPath = `${to}.bak-${backupSuffix(now)}`;

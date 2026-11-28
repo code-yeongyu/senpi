@@ -29,6 +29,7 @@ import {
 	isBundledNode,
 } from "./config.ts";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
+import { ensureAgentDir } from "./utils/ensure-agent-dir.ts";
 import { runtimeExecArgv } from "./utils/runtime-exec-argv.ts";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
@@ -221,6 +222,10 @@ async function spawnFullCli(): Promise<number> {
 if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {
 	await printThenExit(() => console.log(DISPLAY_VERSION));
 }
+
+// Before the help fast path's trust lookup and the runtime snapshot, either of which may be the first to write under
+// the agent dir: it must never get the umask's group bits, or the RPC host refuses it as a key root (senpi#6560).
+ensureAgentDir(getAgentDir());
 
 // Help is static text plus the flags extensions registered, so a launch that already knows those
 // flags must not import the engine graph to print them. The import stays dynamic for the same
