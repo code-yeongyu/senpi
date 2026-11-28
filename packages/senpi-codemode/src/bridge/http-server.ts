@@ -97,11 +97,9 @@ async function handleRequest(
 		return;
 	}
 	const auth = parseBearerToken(request.headers.authorization);
-	if (
-		route !== "/permission_check" &&
-		route !== "/kill_guard_check" &&
-		(!auth || !verifyBridgeToken(token, auth).ok)
-	) {
+	// Every route, including the kernels' synchronous permission and kill-guard checks, requires the bridge token
+	// (senpi#5359): any local process can reach the loopback port.
+	if (!auth || !verifyBridgeToken(token, auth).ok) {
 		sendJson(response, 401, { ok: false, error: transportError("unauthorized", "Bridge authorization failed") });
 		return;
 	}

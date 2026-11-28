@@ -35,7 +35,7 @@ class CellPermissionError(RuntimeError):
         super().__init__(f"Cell operation refused: {identity}: {reason}")
 
 
-def initialize(config, port):
+def initialize(config, port, bridge_token):
     # The mapping and captured I/O never enter the user namespace.
     with open(config["path"], "rb") as file:
         words = mmap.mmap(file.fileno(), config["size"], access=mmap.ACCESS_READ)
@@ -49,6 +49,7 @@ def initialize(config, port):
                                                    None, ": ", ", ", False, False, True)
     decode = getattr(json.JSONDecoder(), "scan_once")
     monotonic = time.monotonic
+    authorization = b"Authorization: Bearer " + bridge_token.encode() + b"\r\n"
     socket_type = _socket.socket
     family, stream = socket.AF_INET, socket.SOCK_STREAM
     connect, sendall, recv = socket_type.connect, socket_type.sendall, socket_type.recv
@@ -99,7 +100,7 @@ def initialize(config, port):
                 remaining()
                 connect(sock, ("127.0.0.1", port))
                 remaining()
-                sendall(sock, b"POST /permission_check HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                sendall(sock, b"POST /permission_check HTTP/1.1\r\nHost: 127.0.0.1\r\n" + authorization +
                              b"Connection: close\r\nContent-Type: application/json\r\nContent-Length: " +
                              str(len(payload)).encode() + b"\r\n\r\n" + payload)
                 response = bytearray()

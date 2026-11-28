@@ -2,7 +2,7 @@
 
 Installed for every kernel the host starts with the guard on, independent of permission enforcement: a subprocess
 call, a shell string or a signal that could reach a kill-family command is sent to the host's judge over the bridge
-(`/kill_guard_check`, no permission token) before it runs, and a refusal raises PermissionError. A cheap prefilter
+(`/kill_guard_check`, with the bridge token and no permission token) before it runs, and a refusal raises PermissionError. A cheap prefilter
 keeps every other call local. The host decides from this kernel's vantage (its own process group, its own pid).
 """
 import builtins
@@ -25,7 +25,7 @@ REACHES_KILL = KILL_FAMILY | SHELLS
 DEADLINE_SECONDS = 6.0
 
 
-def install(port, protected):
+def install(port, protected, bridge_token):
     """Wraps the cell-visible process and signal APIs; `protected` is the host's protected pid list."""
     if getattr(subprocess.Popen.__init__, "__senpi_kill_guard__", False):
         return
@@ -34,12 +34,13 @@ def install(port, protected):
     create_connection = socket.create_connection
     inside = contextvars.ContextVar("senpi_kill_guard_inside", default=False)
     protected = frozenset(protected)
+    authorization = b"Authorization: Bearer " + bridge_token.encode() + b"\r\n"
 
     def ask(request):
         payload = dumps({**request, "vantagePid": getpid()}).encode()
         deadline = monotonic() + DEADLINE_SECONDS
         with create_connection(("127.0.0.1", port), timeout=DEADLINE_SECONDS) as sock:
-            sock.sendall(b"POST /kill_guard_check HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
+            sock.sendall(b"POST /kill_guard_check HTTP/1.1\r\nHost: 127.0.0.1\r\n" + authorization + b"Connection: close\r\n"
                          b"Content-Type: application/json\r\nContent-Length: " + str(len(payload)).encode() +
                          b"\r\n\r\n" + payload)
             response = bytearray()
