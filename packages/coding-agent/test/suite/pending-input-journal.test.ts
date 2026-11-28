@@ -14,11 +14,7 @@ import {
 	PendingInputNotDurableError,
 	SessionPendingInputJournal,
 } from "../../src/core/pending-input-journal.ts";
-import {
-	PENDING_INPUT_TRANSITION,
-	PendingInputStore,
-	PendingInputStoreUnavailableError,
-} from "../../src/core/pending-input-store.ts";
+import { PENDING_INPUT_TRANSITION, PendingInputStore } from "../../src/core/pending-input-store.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
 // senpi#3549: the session JSONL is the pending-input journal; admission is on disk before the first message.
@@ -349,7 +345,7 @@ describe("session pending-input journal", () => {
 		expect(again.read("c-2").status).toBe("admitted");
 	});
 
-	it("fails a write whose sync failed, refuses further writes, and stays reopenable", async () => {
+	it("recovers the next write from disk after a failed sync without a cursor gap (#4045)", async () => {
 		const dir = sessionDir();
 		const manager = SessionManager.create(dir, dir);
 		let syncs = 0;
@@ -371,13 +367,15 @@ describe("session pending-input journal", () => {
 		await expect(store.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2" })).rejects.toBeInstanceOf(
 			PendingInputAppendUncertainError,
 		);
-		await expect(store.submit({ ...SUBMIT, clientMessageId: "c-3", fingerprint: "fp3" })).rejects.toBeInstanceOf(
-			PendingInputStoreUnavailableError,
-		);
+		await expect(store.submit({ ...SUBMIT, clientMessageId: "c-3", fingerprint: "fp3" })).resolves.toMatchObject({
+			outcome: "admitted",
+		});
+		const records = await new SessionPendingInputJournal(manager).read();
+		expect(records.map((record) => record.cursor)).toEqual(records.map((_record, index) => index + 1));
 		const reopened = await storeOver(SessionManager.open(manager.getSessionFile() ?? "", dir), "life-2");
 		expect(reopened.read("c-1").status).toBe("admitted");
 		expect(reopened.read("c-2").status).toBe("admitted");
-		expect(reopened.read("c-3").status).toBe("not_admitted");
+		expect(reopened.read("c-3").status).toBe("admitted");
 	});
 
 	it("skips the directory sync on Windows, where a directory handle cannot be flushed", async () => {
