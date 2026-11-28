@@ -52,6 +52,18 @@ describe("privacyProtectedDirs", () => {
 		}
 		assert.deepEqual(privacyProtectedDirs("linux", "/home/u").paths, []);
 	});
+
+	// Bun's os.homedir() keeps the home it saw first, Node's reads HOME on every call; the guard must follow HOME on both.
+	it("follows HOME as it is when called", () => {
+		const savedHome = process.env.HOME;
+		process.env.HOME = "/tmp/privacy-walk-home-now";
+		try {
+			assert.ok(privacyProtectedDirs("darwin").paths.includes("/tmp/privacy-walk-home-now/Music"));
+		} finally {
+			if (savedHome === undefined) delete process.env.HOME;
+			else process.env.HOME = savedHome;
+		}
+	});
 });
 
 // On macOS the data volume is also mounted at /System/Volumes/Data, so /System/Volumes/Data/Users/<me>/Desktop is the
