@@ -47,6 +47,14 @@ export interface BoundedRetryContinuation {
 	 * of the run, so the watchdog is cleared (senpi#2804).
 	 */
 	onStreamStarted?(listener: () => void): () => void;
+	/**
+	 * Subscribes to transport bytes (keep-alives) of the retried request; returns the unsubscribe. Before the request
+	 * streams, each byte proves the provider alive, so the watchdog restarts its bound from it, as the agent loop's own
+	 * start guard does (senpi#5018).
+	 */
+	onTransportActivity?(listener: () => void): () => void;
+	/** Caps how long keep-alives alone may hold the retried request before its first stream event; unset or non-positive leaves them unbounded. */
+	keepAliveTimeoutMs?: number;
 }
 
 export function createProviderTimeoutRetryPlan({
@@ -85,11 +93,14 @@ export async function runBoundedRetryContinuation({
 	abortActive,
 	timeoutMs,
 	onStreamStarted,
+	onTransportActivity,
+	keepAliveTimeoutMs,
 }: BoundedRetryContinuation): Promise<void> {
 	// The watchdog bounds only the wait for the retried request to start streaming: a retry that streams
 	// and then works for a long time (a long answer, tool calls, further turns) is not a wedged retry.
 	let streamStarted = false;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let unsubscribeActivity: (() => void) | undefined;
 	const unsubscribe =
 		timeoutMs === undefined
 			? undefined
@@ -105,14 +116,27 @@ export async function runBoundedRetryContinuation({
 			return;
 		}
 
-		timer = setTimeout(() => {
-			if (!streamStarted && getActiveSignal() === ownedSignal) {
-				abortActive();
-			}
-		}, timeoutMs);
+		const bound = timeoutMs;
+		const keepAliveDeadline =
+			keepAliveTimeoutMs !== undefined && keepAliveTimeoutMs > 0 ? Date.now() + keepAliveTimeoutMs : undefined;
+		const arm = (delayMs: number) => {
+			clearTimeout(timer);
+			timer = setTimeout(() => {
+				if (!streamStarted && getActiveSignal() === ownedSignal) {
+					abortActive();
+				}
+			}, delayMs);
+		};
+		arm(bound);
+		unsubscribeActivity = onTransportActivity?.(() => {
+			if (streamStarted) return;
+			const untilKeepAliveCap = keepAliveDeadline === undefined ? bound : keepAliveDeadline - Date.now();
+			arm(Math.max(0, Math.min(bound, untilKeepAliveCap)));
+		});
 		await continuation;
 	} finally {
 		clearTimeout(timer);
 		unsubscribe?.();
+		unsubscribeActivity?.();
 	}
 }

@@ -105,3 +105,75 @@ describe("bounded retry continuation", () => {
 		expect(aborted).toBe(false);
 	});
 });
+
+describe("bounded retry continuation with keep-alive bytes (#5018)", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	function keepAliveAttempt(
+		keepAliveTimeoutMs: number | undefined,
+		keepAliveEveryMs: number | undefined,
+		respondsAfterMs: number,
+	) {
+		const controller = new AbortController();
+		const listeners = new Set<() => void>();
+		let aborted = false;
+		let pings: ReturnType<typeof setInterval> | undefined;
+		const continuation = runBoundedRetryContinuation({
+			continueRun: () =>
+				new Promise<void>((resolve) => {
+					if (keepAliveEveryMs !== undefined)
+						pings = setInterval(() => {
+							for (const listener of listeners) listener();
+						}, keepAliveEveryMs);
+					setTimeout(() => {
+						clearInterval(pings);
+						resolve();
+					}, respondsAfterMs);
+					controller.signal.addEventListener("abort", () => {
+						clearInterval(pings);
+						resolve();
+					});
+				}),
+			getActiveSignal: () => controller.signal,
+			abortActive: () => {
+				aborted = true;
+				controller.abort();
+			},
+			timeoutMs: STREAM_RETRY_TIMEOUT_MS,
+			keepAliveTimeoutMs,
+			onTransportActivity: (listener) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			},
+		});
+		return { continuation, aborted: () => aborted };
+	}
+
+	it("does not abort a retried request that keeps receiving keep-alives past the watchdog bound and then answers", async () => {
+		const respondsAfterMs = STREAM_RETRY_TIMEOUT_MS * 4;
+		const attempt = keepAliveAttempt(undefined, STREAM_RETRY_TIMEOUT_MS / 3, respondsAfterMs);
+		await vi.advanceTimersByTimeAsync(respondsAfterMs + 1);
+		await attempt.continuation;
+		expect(attempt.aborted()).toBe(false);
+	});
+
+	it("still aborts a retried request that receives no bytes at the watchdog bound", async () => {
+		const attempt = keepAliveAttempt(undefined, undefined, STREAM_RETRY_TIMEOUT_MS * 4);
+		await vi.advanceTimersByTimeAsync(STREAM_RETRY_TIMEOUT_MS + 1);
+		await attempt.continuation;
+		expect(attempt.aborted()).toBe(true);
+	});
+
+	it("caps keep-alive-only silence at the keep-alive bound", async () => {
+		const keepAliveTimeoutMs = STREAM_RETRY_TIMEOUT_MS * 2;
+		const attempt = keepAliveAttempt(keepAliveTimeoutMs, STREAM_RETRY_TIMEOUT_MS / 3, STREAM_RETRY_TIMEOUT_MS * 10);
+		await vi.advanceTimersByTimeAsync(keepAliveTimeoutMs + 1);
+		await attempt.continuation;
+		expect(attempt.aborted()).toBe(true);
+	});
+});

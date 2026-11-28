@@ -12214,6 +12214,8 @@ export class AgentSession {
 						),
 					),
 				timeoutMs: retryTimeoutMs,
+				keepAliveTimeoutMs: this.agent.streamKeepAliveTimeoutMs,
+				onTransportActivity: (listener) => this.agent.onTransportActivity(listener),
 				onStreamStarted: (listener) => {
 					const unsubscribe = this.agent.subscribe((event) => {
 						if (event.type !== "message_start" || event.message.role !== "assistant") return;

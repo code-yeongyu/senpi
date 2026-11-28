@@ -351,6 +351,7 @@ export class Agent {
 	public streamStartTimeoutMs?: number;
 	/** Optional bound on how long keep-alives alone may hold a provider request without content. */
 	public streamKeepAliveTimeoutMs?: number;
+	private readonly transportActivityListeners = new Set<() => void>();
 	/** Optional cap for provider-requested retry delays. */
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
@@ -430,6 +431,16 @@ export class Agent {
 	 * `agent_end` is the final emitted event for a run, but the agent does not
 	 * become idle until all awaited listeners for that event have settled.
 	 */
+	/**
+	 * Bytes the provider reports for the active request (SSE pings, keep-alive comments), before or between assistant
+	 * events. A caller that bounds a request's wait (the session retry watchdog) reads these as liveness. Returns the
+	 * unsubscribe.
+	 */
+	onTransportActivity(listener: () => void): () => void {
+		this.transportActivityListeners.add(listener);
+		return () => this.transportActivityListeners.delete(listener);
+	}
+
 	subscribe(listener: (event: AgentEvent, signal: AbortSignal) => Promise<void> | void): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
@@ -816,6 +827,9 @@ export class Agent {
 			timeoutMs: this.timeoutMs,
 			streamStartTimeoutMs: this.streamStartTimeoutMs,
 			streamKeepAliveTimeoutMs: this.streamKeepAliveTimeoutMs,
+			onTransportActivity: () => {
+				for (const listener of this.transportActivityListeners) listener();
+			},
 			initialRequestTimeoutMs: options.initialRequestTimeoutMs,
 			initialRequestStreamStartTimeoutMs: options.initialRequestStreamStartTimeoutMs,
 			maxRetryDelayMs: this.maxRetryDelayMs,
