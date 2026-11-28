@@ -755,17 +755,25 @@ export class McpService {
 	 * of the retired connection, which refuse every call (senpi#2597 regression 2514). Let the startup connect settle and
 	 * publish first, then reconnect: the reconnect still applies the saved-sign-in rule the startup connect does not
 	 * (senpi#6538), so a manual reconnect reports needs_auth. That startup connect may itself meet a rotated grant and
-	 * re-key again; follow the connection that is current, a bounded number of times, then reconnect it.
+	 * re-key again; follow the connection that is current, up to a bound, and reconnect it only once it is settled and
+	 * current. Past the bound the reconnect throws, naming the way back, instead of acting on a moving target.
 	 */
 	async #reconnectRekeyed(rekeyed: McpConnectionEntry): Promise<void> {
 		let entry = rekeyed;
-		for (let hop = 0; hop < MAX_REKEY_HOPS; hop++) {
+		for (let hop = 1; ; hop++) {
 			await entry.startupCatalogClaim?.settled().catch(() => undefined);
 			await this.#attachQueue;
 			if (this.#disposed) return;
 			const current = this.#entryForName(entry.name);
 			if (current === undefined) return;
 			if (current === entry) break;
+			// senpi#7648: past the bound, reconnecting would act on a connection whose startup has not settled (or that the
+			// next re-key retires) and could resolve quietly; say what happened and name the way back instead.
+			if (hop >= MAX_REKEY_HOPS) {
+				throw new Error(
+					`MCP server ${entry.name} kept re-keying its credentials during the reconnect (${hop} times in a row); run /mcp reconnect ${entry.name} again.`,
+				);
+			}
 			entry = current;
 		}
 		await reconnectMcpNow(entry.connection);
