@@ -3770,7 +3770,7 @@ registrant opens no socket and writes no registry directory.
     (`admitExternalMessage`), so input the user submitted and the runtime has not taken yet holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
     steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
-    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run; or with `engineTurnCap`: recorded behind the engine-turn cap, senpi#7138); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run; or with `engineTurnCap`: recorded behind the engine-turn cap, senpi#7138); `held_draft` (the user's submitted input has not reached the runtime yet), `turn_conflict` and `held_deliveries_full` (the session already holds 64 peer deliveries while paused) are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3831,16 +3831,20 @@ registrant opens no socket and writes no registry directory.
   - `held` with `engineTurnCap` (`{ reason, count }`, the `engine-paused` reason) instead of `holds`: the
     engine-turn cap stops the turn the delivery would start (senpi#7138). The delivery is recorded without a turn,
     and the turn a person's message or Resume starts answers it; do not send it again.
-  - `held_deliveries_full`: the session already holds 64 peer deliveries while paused (one a log records twice
-    counts once). Nothing is written and the delivery stays with its sender; send it again once the session is
-    resumed. A `delivery_id` the session already holds still answers `already_admitted`.
   - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
     its entry and it is not admissible again yet (see `failed` below).
+
+  While the session already holds 64 peer deliveries (one a log records twice counts once), the call throws an
+  error whose `code` is `held_deliveries_full` instead: nothing is written and the delivery stays with its sender;
+  send it again once the session is resumed. A `delivery_id` the session already holds still answers
+  `already_admitted`.
 
   The delivery becomes a `custom` transcript entry, `customType: "session_control_delivery"`, whose `details`
   carry the `delivery_id`. A resume that releases several held deliveries of one sender as one turn writes one
   entry for them: `details.delivery_id` names the first, `details.folded_delivery_ids` the others in admission
-  order, and `details.chain_count` is the highest hop among them. `listAdmittedDeliveries()` reports `pending`
+  order, and `details.chain_count` is the highest hop among them. The Resume after a Stop or an interrupted run
+  carries every held delivery in its one `session-resumed` entry, whose `details.folded_delivery_ids` names them
+  all. `listAdmittedDeliveries()` reports `pending`
   (held by the runtime) and `emitted` (entry written, for every delivery the entry carries) for the life of the
   process. When the session file refuses a delivery's entry (`EACCES`,
   `ENOSPC`), the delivery is settled as `failed: [{ delivery_id, error }]` (listed only while non-empty): it is no

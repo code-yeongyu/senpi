@@ -5,7 +5,9 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { heldNoticeDeliveryIds } from "./engine-turn-hold-notices.ts";
 import { isSessionControlDeliveryDetails, SESSION_CONTROL_DELIVERY_TYPE } from "./extensions/session-control-types.ts";
+import type { CustomMessage } from "./messages.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
+import { STOP_RESUME_CUSTOM_TYPE } from "./stop-resume-directive.ts";
 
 export function deliveryIdOf(message: AgentMessage): string | undefined {
 	if (message.role !== "custom" || message.customType !== SESSION_CONTROL_DELIVERY_TYPE) return undefined;
@@ -13,15 +15,25 @@ export function deliveryIdOf(message: AgentMessage): string | undefined {
 }
 
 /**
- * Every delivery a message's entry settles: its own, then the ones a folded turn carries after it (senpi#7628). The
- * message may come back from durable custody on disk, so only a list of string ids counts as folded.
+ * Every delivery a message's entry settles (senpi#7628): a delivery's own, then the ones a folded turn carries after it,
+ * or every held delivery the one message of a Resume after a Stop carries. The message may come back from durable
+ * custody on disk, so only a list of string ids counts as carried.
  */
+export function deliveryIdsIn(message: Pick<CustomMessage, "customType" | "details">): readonly string[] {
+	if (message.customType === STOP_RESUME_CUSTOM_TYPE) return carriedDeliveryIds(message.details);
+	if (message.customType !== SESSION_CONTROL_DELIVERY_TYPE || !isSessionControlDeliveryDetails(message.details))
+		return [];
+	return [message.details.delivery_id, ...carriedDeliveryIds(message.details)];
+}
+
 export function deliveryIdsOf(message: AgentMessage): readonly string[] {
-	if (message.role !== "custom" || message.customType !== SESSION_CONTROL_DELIVERY_TYPE) return [];
-	if (!isSessionControlDeliveryDetails(message.details)) return [];
-	const folded: unknown = message.details.folded_delivery_ids;
-	const others = Array.isArray(folded) ? folded.filter((id): id is string => typeof id === "string") : [];
-	return [message.details.delivery_id, ...others];
+	return message.role === "custom" ? deliveryIdsIn(message) : [];
+}
+
+function carriedDeliveryIds(details: unknown): string[] {
+	if (typeof details !== "object" || details === null || !("folded_delivery_ids" in details)) return [];
+	const carried: unknown = details.folded_delivery_ids;
+	return Array.isArray(carried) ? carried.filter((id): id is string => typeof id === "string") : [];
 }
 
 /**

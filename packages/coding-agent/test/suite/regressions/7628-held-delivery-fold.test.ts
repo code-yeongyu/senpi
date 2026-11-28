@@ -20,17 +20,17 @@ function heldNoticeWritten(h: Harness): Promise<void> {
 	});
 }
 
-/**
- * A session left unattended with `chainCounts.length` peer deliveries from one speaker held: a person's Stop kept
- * them as held notices, and lifting the Stop leaves the unattended hold, whose resume is the one that folds the run.
- */
-async function unattendedWithHeldDeliveries(chainCounts: readonly (number | undefined)[]) {
+/** A session whose person's Stop kept `chainCounts.length` peer deliveries from one speaker as held notices. */
+async function stoppedWithHeldDeliveries(
+	chainCounts: readonly (number | undefined)[],
+	options: { readonly unattended?: boolean } = {},
+) {
 	const h = await createHarness({ persistSession: true });
 	harnesses.push(h);
 	await h.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
 	h.setResponses([fauxAssistantMessage([fauxText("read them")])]);
 	const hold = h.session["_engineTurnHold"];
-	hold.addHold("unattended");
+	if (options.unattended === true) hold.addHold("unattended");
 	hold.addHold("session_hold", { key: "session_hold:1", data: { localSeq: 1 } });
 	const ids: string[] = [];
 	for (const [index, chainCount] of chainCounts.entries()) {
@@ -43,8 +43,14 @@ async function unattendedWithHeldDeliveries(chainCounts: readonly (number | unde
 		);
 		await written;
 	}
-	hold.release(["session_hold:1"], "resume_session");
 	return { h, ids };
+}
+
+/** Lifting the Stop leaves the unattended hold, whose resume is the one that folds the run. */
+async function unattendedWithHeldDeliveries(chainCounts: readonly (number | undefined)[]) {
+	const held = await stoppedWithHeldDeliveries(chainCounts, { unattended: true });
+	held.h.session["_engineTurnHold"].release(["session_hold:1"], "resume_session");
+	return held;
 }
 
 function deliveryEntries(h: Harness) {
@@ -64,6 +70,20 @@ it("settles every delivery a folded turn carries as emitted, once each", async (
 
 	expect(h.faux.state.callCount).toBe(1);
 	expect(deliveryEntries(h)).toHaveLength(1);
+	expect(h.session.externalAdmission.list()).toEqual({ pending: [], emitted: ids });
+	expect(emitted).toEqual(ids);
+});
+
+// A person's Resume after a Stop carries the held deliveries inside its one resume message: that entry settles them.
+it("settles every held delivery a Resume after a Stop carries in its one message", async () => {
+	const { h, ids } = await stoppedWithHeldDeliveries([undefined, undefined]);
+	const emitted: string[] = [];
+	h.session.externalAdmission.onEmitted((id) => emitted.push(id));
+
+	expect(await h.session.resumeSessionRequest({})).toMatchObject({ resumed: true, turnStarted: true });
+
+	expect(h.faux.state.callCount).toBe(1);
+	expect(deliveryEntries(h)).toEqual([]);
 	expect(h.session.externalAdmission.list()).toEqual({ pending: [], emitted: ids });
 	expect(emitted).toEqual(ids);
 });
