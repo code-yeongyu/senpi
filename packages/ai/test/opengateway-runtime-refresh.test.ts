@@ -175,6 +175,31 @@ describe("OpenGateway runtime catalog refresh", () => {
 		expect(later.getModel("opengateway", RETIRED_MODEL)).toBeUndefined();
 	});
 
+	it("keeps the shipped catalog when the stored list is empty (#5255)", async () => {
+		const store = new InMemoryModelsStore();
+		await store.write("opengateway", { models: [], checkedAt: Date.now() });
+		const models = await configuredRuntime(store);
+		await models.refresh({ providers: ["opengateway"], allowNetwork: false });
+		expect(catalogIds(models).sort()).toEqual([...SHIPPED_IDS].sort());
+	});
+
+	it("restores snapshot-only ids without downgrading shipped vision metadata (#5255)", async () => {
+		const vision = SHIPPED.find((model) => model.input.includes("image"));
+		if (!vision) throw new Error("expected a shipped vision model");
+		const store = new InMemoryModelsStore();
+		await store.write("opengateway", {
+			models: [
+				{ ...vision, input: ["text"] },
+				{ ...vision, id: NEW_MODEL },
+			],
+			checkedAt: Date.now(),
+		});
+		const models = await configuredRuntime(store);
+		await models.refresh({ providers: ["opengateway"], allowNetwork: false });
+		expect(models.getModel("opengateway", vision.id)?.input).toEqual(vision.input);
+		expect(models.getModel("opengateway", NEW_MODEL)).toBeDefined();
+	});
+
 	it("ignores a persisted refresh taken before the shipped catalog was generated", async () => {
 		const store = new InMemoryModelsStore();
 		const stale = { ...Object.values(OPENGATEWAY_MODELS)[0], id: "acme/from-an-older-release" };
