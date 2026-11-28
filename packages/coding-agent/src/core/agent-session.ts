@@ -5199,6 +5199,11 @@ export class AgentSession {
 		return isSessionBusySnapshot(this.activitySnapshot);
 	}
 
+	/** A fresh occupancy snapshot for clients that may have missed extension wake events. */
+	get ownedActivity(): { readonly busy: boolean; readonly wakeSources: Readonly<Record<string, number>> } {
+		return { busy: this.isSessionBusy, wakeSources: this._wakeSources.sourceCounts };
+	}
+
 	// =========================================================================
 	// Read-only State Access
 	// =========================================================================

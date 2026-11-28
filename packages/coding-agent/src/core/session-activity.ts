@@ -55,6 +55,10 @@ export class WakeSourceTracker {
 		return [...this.counts.keys()];
 	}
 
+	get sourceCounts(): Readonly<Record<string, number>> {
+		return Object.fromEntries(Array.from(this.counts, ([name, state]) => [name, state.activeCount]));
+	}
+
 	/** Live obligation counts; publishers without a kind remain background work. */
 	get activeCounts(): { readonly children: number; readonly background: number } {
 		let children = 0;
