@@ -173,6 +173,7 @@ export function createPathIdentityResolver(options: ResolverHostOptions = {}): P
 		const id = nextId++;
 		const budget = soft ? RULE_FILL_DEADLINE_MS : deadlineMs;
 		return new Promise<ResolverValue>((resolve, reject) => {
+			// A pending request owns process liveness until its reply or deadline; the idle worker does not.
 			const timer = setTimeout(() => {
 				const entry = settle(id);
 				if (!entry) return;
@@ -185,7 +186,6 @@ export function createPathIdentityResolver(options: ResolverHostOptions = {}): P
 				breakers.recordTimeout(key);
 				lifecycle.retire(`resolver stalled on ${key}`);
 			}, budget);
-			timer.unref?.();
 			pending.set(id, { key, soft, resolve, reject, timer });
 			transport.post({ ...request, id } as ResolverRequest);
 		});

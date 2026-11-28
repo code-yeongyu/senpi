@@ -67,6 +67,8 @@ export function workerTransport(entry: string | URL): ResolverTransport {
 		post: (request) => worker.postMessage(request),
 		onMessage: (handler) => {
 			worker.on("message", handler);
+			// Adding a message listener refs the port again, even after Worker.unref().
+			worker.unref();
 		},
 		onError: (handler) => {
 			worker.on("error", handler);
