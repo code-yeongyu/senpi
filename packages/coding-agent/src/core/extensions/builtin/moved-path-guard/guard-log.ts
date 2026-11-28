@@ -1,6 +1,7 @@
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
+import { redactLogText } from "../../../sensitive-output.ts";
 
 export type GuardLogEvent = "breadcrumb_ignored" | "marker_newer" | "call_bound_reached";
 
@@ -35,7 +36,8 @@ export function logGuardEvent(level: "debug" | "warn", event: GuardLogEvent, det
 	const key = `${event}\0${JSON.stringify(reason)}`;
 	if (reported.has(key)) return;
 	reported.add(key);
-	const line = `${JSON.stringify({ ts: new Date().toISOString(), level, event, ...details })}\n`;
+	const redacted = Object.fromEntries(Object.entries(details).map(([name, value]) => [name, redactLogText(value)]));
+	const line = `${JSON.stringify({ ts: new Date().toISOString(), level, event, ...redacted })}\n`;
 	pending = pending.then(() => append(line)).catch(() => undefined);
 }
 

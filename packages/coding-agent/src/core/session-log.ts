@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { APP_NAME } from "../config.ts";
 import { envValue } from "./brand.ts";
 import { rotateLogIfNeeded } from "./log-file-rotation.ts";
+import { redactLogText } from "./sensitive-output.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_STRING_LENGTH = 200;
@@ -11,8 +12,6 @@ const BLOCKED_KEY =
 	/^(?:__proto__|constructor|prototype|headers?|env(?:ironment)?|authorization|credential(?:s)?|password|secret|token|api_?key|client_?secret)$/i;
 const ALLOWED_DATA_KEY =
 	/^(?:action|attemptId|disposition|stage|error|mode|count|willRetry|deferAdmission|delivered|restored|cause|accepted|skipped|rejectionCause|reason|durationMs|kind|retryable|phase|op|bytes|generation|requestId|tokens|tokensBefore|tokensAfter|contextWindow|attempt|aborted|sessionId|role|provider|model|source|actor|from|to|duringTurn|persistDefault|extension|handlerEvent|queuedId|ageMs|seat|until|shared|toolCallId|parentToolCallId|toolName|thresholdMs|elapsedMs|queueDepth|queueHead)$/;
-const SENSITIVE_TEXT =
-	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 
 export interface SessionLogger {
 	debug(event: string, data?: Record<string, unknown>): void;
@@ -105,6 +104,6 @@ function serializeValue(value: unknown): unknown {
 }
 
 function safeText(value: string): string {
-	const redacted = value.replace(SENSITIVE_TEXT, "$1[redacted]");
+	const redacted = redactLogText(value);
 	return redacted.length <= MAX_STRING_LENGTH ? redacted : `${redacted.slice(0, MAX_STRING_LENGTH - 3)}...`;
 }
