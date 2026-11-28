@@ -10,6 +10,7 @@ import type {
 	TextContent,
 	UserMessage,
 } from "@earendil-works/pi-ai";
+import { streamInternalModel } from "../../../internal-model-request.ts";
 import type { ExtensionContext } from "../../types.ts";
 import type { NormalizedLookAtArgs } from "./arguments.ts";
 import { loadLookAtInputs } from "./image-input.ts";
@@ -81,7 +82,13 @@ export async function runLookAt(
 		};
 		const streamRunner =
 			dependencies.streamRunner ??
-			((model, context, options) => ctx.modelRegistry.modelRuntime.streamSimple(model, context, options));
+			((model, context, options) =>
+				streamInternalModel(ctx.modelRegistry.modelRuntime, model, context, options, {
+					source: "vision analysis",
+					agentDir: ctx.agentDir,
+					settings: ctx.sessionSettings,
+					notify: (event) => ctx.ui.notify(`Vision model fallback: ${event.from} -> ${event.to}`, "warning"),
+				}));
 		const reasoning = toStreamReasoning(resolved.thinkingLevel);
 		const response = await streamRunner(
 			resolved.model,

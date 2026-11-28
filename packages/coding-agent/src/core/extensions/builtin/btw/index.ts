@@ -1,4 +1,5 @@
 import { isKeyRelease, matchesKey } from "@earendil-works/pi-tui";
+import { streamInternalModel } from "../../../internal-model-request.ts";
 import { convertToLlm, filterContextExcludedMessages } from "../../../messages.ts";
 import { buildSessionContext } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
@@ -124,10 +125,19 @@ export default function btwExtension(pi: ExtensionAPI) {
 						sessionId,
 						thinkingLevel: thinkingLevel === "off" ? undefined : thinkingLevel,
 						streamFn: (streamModel, streamContext, options) =>
-							ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, {
-								...options,
-								cwd: ctx.cwd,
-							}),
+							streamInternalModel(
+								ctx.modelRegistry.modelRuntime,
+								streamModel,
+								streamContext,
+								{ ...options, cwd: ctx.cwd },
+								{
+									source: "side query",
+									agentDir: ctx.agentDir,
+									settings: ctx.sessionSettings,
+									notify: (event) =>
+										ctx.ui.notify(`Side query model fallback: ${event.from} -> ${event.to}`, "warning"),
+								},
+							),
 					},
 					context,
 					{
