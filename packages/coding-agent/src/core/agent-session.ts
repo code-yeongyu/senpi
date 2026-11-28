@@ -12911,8 +12911,29 @@ export class AgentSession {
 					void (async () => {
 						let outcome: "completed" | "failed" | "aborted" = "failed";
 						let compactionCompleted = false;
+						// Delivered once, after the operation settles: a throwing callback is the caller's own failure, never
+						// a second terminal callback or a compaction failure (senpi#7482 review).
+						let terminal:
+							| { readonly kind: "complete"; readonly result: CompactionResult }
+							| { readonly kind: "error"; readonly error: Error }
+							| undefined;
+						// Never throws: a throwing error listener must not cost the caller its terminal callback.
+						const reportCompactFailure = (failure: unknown) => {
+							try {
+								runner.emitError({
+									extensionPath: RUNTIME_EXTENSION_PATH,
+									event: "compact",
+									error: failure instanceof Error ? failure.message : String(failure),
+								});
+							} catch (reportError) {
+								console.error("extension compaction failure could not be reported", failure, reportError);
+							}
+						};
 
+						// One lifetime finally over the operation and the callback, so neither a throwing observer nor a
+						// throwing callback skips the admission release and the queue recovery (senpi#7482 review).
 						try {
+							try {
 							await this._abortActiveAgentAndRetry("system");
 							this._emit({
 								type: "compaction_start",
@@ -12930,31 +12951,44 @@ export class AgentSession {
 							if (execution.accepted) {
 								outcome = "completed";
 								compactionCompleted = true;
-								options?.onComplete?.(execution.result);
+								terminal = { kind: "complete", result: execution.result };
 							} else {
 								outcome = "failed";
-								options?.onError?.(new CompactionRejectedError(execution.rejectionCause));
+								terminal = { kind: "error", error: new CompactionRejectedError(execution.rejectionCause) };
 							}
 						} catch (error) {
 							outcome = isCompactionExecutionAborted(error) ? "aborted" : "failed";
-							if (!compactionExecutionOwnsTerminalTransition(error)) {
-								return;
-							}
-							const message = error instanceof Error ? error.message : String(error);
-							const aborted = isCompactionExecutionAborted(error);
-							this._emit({
-								type: "compaction_end",
-								reason: "extension",
-								result: undefined,
-								aborted,
-								willRetry: false,
-								requestId,
-								errorMessage: aborted
-									? undefined
-									: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() }),
-							});
 							const err = error instanceof Error ? error : new Error(String(error));
-							options?.onError?.(err);
+							// A newer generation that owns the terminal event emits it; this request still ended, so its
+							// caller hears that either way, or it waits forever for a compaction that never reports (senpi#7482).
+							terminal = { kind: "error", error: err };
+							if (compactionExecutionOwnsTerminalTransition(error)) {
+								const aborted = isCompactionExecutionAborted(error);
+								try {
+									this._emit({
+										type: "compaction_end",
+										reason: "extension",
+										result: undefined,
+										aborted,
+										willRetry: false,
+										requestId,
+										errorMessage: aborted
+											? undefined
+											: formatCompactionFailure("compaction", err.message, {
+													model: this._compactionFailureModel(),
+												}),
+									});
+								} catch (observerError) {
+									reportCompactFailure(observerError);
+								}
+							}
+						}
+						try {
+							if (terminal?.kind === "complete") options?.onComplete?.(terminal.result);
+							else if (terminal !== undefined) options?.onError?.(terminal.error);
+						} catch (callbackError) {
+							reportCompactFailure(callbackError);
+						}
 						} finally {
 							if (
 								this._compactionAbortController === controller &&
@@ -12963,8 +12997,6 @@ export class AgentSession {
 								this._compactionAbortController = undefined;
 							}
 							this._releasePendingCompactionAdmission(admission, outcome);
-							// A throwing onComplete consumer overwrites outcome in the catch
-							// block, so recovery keys off whether compaction itself succeeded.
 							if (compactionCompleted) this._resumeQueuedMessagesAfterCompaction();
 						}
 					})();
