@@ -10303,14 +10303,20 @@ export class AgentSession {
 		}
 		const previousTier = this._currentServiceTier;
 		const previousFastMode = this.isFastModeActive();
-		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
-
-		// Apply thinking level and provenance from the favorite projection or remembered preference.
-		this._setThinkingLevel(thinking.level, false, thinking.selection, cycle.origin);
-		if (modelIdentityChanged) this.agent.state.reasoningBaseline = undefined;
-		this._thinkingLevelSource = thinking.source;
-
+		const previousThinkingLevel = this.agent.state.thinkingLevel;
+		const previousThinkingSelection = this.agent.state.thinkingSelection;
+		const previousThinkingLevelSource = this._thinkingLevelSource;
 		const previousSystemPrompt = this.agent.state.systemPrompt;
+		this._currentServiceTier = this._resolveServiceTier(next.model, next.serviceTier);
+		const rollback = () => {
+			this.agent.state.model = currentModel;
+			this.agent.state.systemPrompt = previousSystemPrompt;
+			this.agent.state.thinkingLevel = previousThinkingLevel;
+			this.agent.state.thinkingSelection = previousThinkingSelection;
+			this._thinkingLevelSource = previousThinkingLevelSource;
+			this.agent.state.reasoningBaseline = previousReasoningBaseline;
+			this._currentServiceTier = previousTier;
+		};
 		try {
 			const systemPromptChange = await this._emitModelSelect(next.model, currentModel, "cycle");
 			// #1526: the `model_select` hook may have grown the system prompt, so the
@@ -10322,10 +10328,7 @@ export class AgentSession {
 			// in-memory selection rolls back exactly as the catch below would.
 			const postHookDeferral = this._projectSwitchDeferral(next.model, liveContextTokens);
 			if (postHookDeferral !== undefined) {
-				if (currentModel) this.agent.state.model = currentModel;
-				this.agent.state.systemPrompt = previousSystemPrompt;
-				this.agent.state.reasoningBaseline = previousReasoningBaseline;
-				this._currentServiceTier = previousTier;
+				rollback();
 				this._admitSwitchCompactionRequired(next.model, postHookDeferral, cycle.persistDefault, cycle.origin);
 				return {
 					model: currentModel,
@@ -10335,6 +10338,10 @@ export class AgentSession {
 				};
 			}
 			this._assertModelUsableForSwitch(next.model, liveContextTokens);
+			// The setter writes to the session journal, so only apply thinking after admission.
+			this._setThinkingLevel(thinking.level, false, thinking.selection, cycle.origin);
+			if (modelIdentityChanged) this.agent.state.reasoningBaseline = undefined;
+			this._thinkingLevelSource = thinking.source;
 			const duringTurn = this.isStreaming;
 			this.sessionManager.appendModelChange(
 				next.model.provider,
@@ -10383,11 +10390,7 @@ export class AgentSession {
 			}
 			return cycleResult;
 		} catch (error) {
-			if (currentModel) this.agent.state.model = currentModel;
-			else delete (this.agent.state as { model?: Model<Api> }).model;
-			this.agent.state.systemPrompt = previousSystemPrompt;
-			this.agent.state.reasoningBaseline = previousReasoningBaseline;
-			this._currentServiceTier = previousTier;
+			rollback();
 			throw error;
 		}
 	}

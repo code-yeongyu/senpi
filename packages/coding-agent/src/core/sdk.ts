@@ -40,7 +40,11 @@ import { sessionAffinityStreamOptions } from "./session-affinity-key.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
-import type { ThinkingLevelSource } from "./session-thinking-memory.ts";
+import {
+	deriveSessionModelThinkingLevels,
+	modelThinkingKey,
+	type ThinkingLevelSource,
+} from "./session-thinking-memory.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import {
 	canStartOn,
@@ -320,7 +324,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// Check if session has existing data to restore
 	const existingSession = sessionManager.buildSessionContext();
 	const hasExistingSession = existingSession.messages.length > 0;
-	const hasThinkingEntry = sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
+	const branch = sessionManager.getBranch();
+	const thinkingEntries = branch.filter((entry) => entry.type === "thinking_level_change");
+	const hasThinkingEntry = thinkingEntries.length > 0;
 
 	let model = options.model;
 	let initialModelProvenance = options.initialModelProvenance;
@@ -340,9 +346,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// Assistant messages name the physical model that answered, so a virtual selection is only in
 	// model_change entries. Every physical selection keeps the session context's restore rules
 	// (fallback windows, explicit selections, legacy provider ids).
-	const branchSelection = getBranchSelection(sessionManager.getBranch(), (provider, modelId) =>
-		modelRuntime.getModel(provider, modelId),
-	);
+	const branchSelection = getBranchSelection(branch, (provider, modelId) => modelRuntime.getModel(provider, modelId));
 	const branchSelectionModel =
 		branchSelection && modelRuntime.getModel(branchSelection.provider, branchSelection.modelId);
 	const sessionModel =
@@ -399,12 +403,26 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		initialThinkingSelection;
 	let thinkingLevelSource: ThinkingLevelSource = "explicit";
 
-	// An exact-session thinking entry wins over settings unless a real legacy alias already
-	// selected a level. Old entries have no provenance, including Cursor's synthetic off.
-	if (thinkingLevel === undefined && hasExistingSession && hasThinkingEntry) {
-		thinkingLevel = existingSession.thinkingLevel as ThinkingLevel;
-		thinkingSelection = existingSession.thinkingSelection;
-		thinkingLevelSource = "session";
+	if (thinkingLevel === undefined && hasExistingSession && model) {
+		const { provider, id } = model;
+		const remembered = deriveSessionModelThinkingLevels(thinkingEntries)[modelThinkingKey(model)];
+		if (remembered !== undefined) {
+			thinkingLevel = remembered;
+			thinkingSelection = thinkingEntries.findLast(
+				(entry) => entry.provider === provider && entry.modelId === id && entry.thinkingLevel === remembered,
+			)?.thinkingSelection;
+			thinkingLevelSource = "session";
+		} else if (
+			sessionModel?.provider === provider &&
+			sessionModel.modelId === id &&
+			hasThinkingEntry &&
+			thinkingEntries.every((entry) => entry.provider === undefined && entry.modelId === undefined)
+		) {
+			// Old journals did not tag thinking entries. Keep their projection for the saved model only.
+			thinkingLevel = existingSession.thinkingLevel as ThinkingLevel;
+			thinkingSelection = existingSession.thinkingSelection;
+			thinkingLevelSource = "session";
+		}
 	}
 	if (thinkingLevel === undefined && model) {
 		const remembered = settingsManager.getModelThinkingLevel(model.provider, model.id);
@@ -608,9 +626,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// Restore messages if session has existing data
 	if (hasExistingSession) {
 		agent.state.messages = existingSession.messages;
-		if (!hasThinkingEntry) {
-			sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection, undefined, model);
-		}
 	}
 
 	const sessionStartEvent = initialModelProvenance
@@ -720,12 +735,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 		throw error;
 	}
-	// Save the initial model and thinking level of a new session only once it has been admitted,
-	// so a refused startup pick never lands in the session log (senpi#3333).
-	if (!hasExistingSession) {
-		if (model) {
-			sessionManager.appendModelChange(model.provider, model.id);
-		}
+	// Write the startup selection only after admission, including the initial level for older sessions.
+	if (!hasExistingSession && model) {
+		sessionManager.appendModelChange(model.provider, model.id);
+	}
+	if (!hasExistingSession || !hasThinkingEntry) {
 		sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection, undefined, model);
 	}
 	sessionRef.current = session;
