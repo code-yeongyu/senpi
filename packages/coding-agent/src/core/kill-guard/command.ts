@@ -3,7 +3,15 @@ import {
 	type BashCommandSegment,
 	bestEffortCommandLines,
 } from "../extensions/builtin/permission-system/bash-command-segments.ts";
-import { judgeKill, judgeTargets, type KillTarget, refuseAll } from "./kill.ts";
+import {
+	judgeKill,
+	judgeTargets,
+	type KillTarget,
+	PROCPS_MISREAD,
+	procpsSignalNumber,
+	refuseAll,
+	refuseProcpsTarget,
+} from "./kill.ts";
 import { judgeSelecting } from "./selecting.ts";
 import { situationOf } from "./situation.ts";
 import type { KillGuardContext, KillGuardVerdict, SignalCall } from "./types.ts";
@@ -87,6 +95,13 @@ function judgeUnparsed(command: string): KillGuardVerdict {
 		if (name !== "kill") continue;
 		const signalThenAll = (second === "--" || /^-[A-Za-z0-9]+$/.test(second ?? "")) && third === "-1";
 		if (second === "-1" || signalThenAll) return refuseAll();
+		// `kill -9 -1429035` / `kill -1429035`: procps reads the target by its first digit.
+		if (second !== undefined && PROCPS_MISREAD.test(second) && !procpsSignalNumber(second.slice(1))) {
+			return refuseProcpsTarget(second);
+		}
+		if (/^-[A-Za-z0-9]+$/.test(second ?? "") && third !== undefined && PROCPS_MISREAD.test(third)) {
+			return refuseProcpsTarget(third);
+		}
 	}
 	if (lines.some(([name]) => KILL_FAMILY.has(name ?? ""))) return defer("the command cannot be parsed before it runs");
 	return ALLOW;
