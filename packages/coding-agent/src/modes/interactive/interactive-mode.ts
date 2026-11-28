@@ -7017,6 +7017,8 @@ export class InteractiveMode {
 		try {
 			await this.sessionControlHost?.disposeActive();
 			await this.runtimeHost.dispose({ processExit: true, endActiveRun: true });
+			// A contended settings write can outlive both terminal drain and session teardown.
+			await this.settingsManager.flush();
 		} finally {
 			restoreInteractiveStderr();
 		}
