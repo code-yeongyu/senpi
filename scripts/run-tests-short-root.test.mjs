@@ -17,7 +17,7 @@ test("a long inherited temp path still gives tests room for an owned fallback so
 		const runner = fileURLToPath(new URL("./run-tests.mjs", import.meta.url));
 		const result = spawnSync(process.execPath, [runner, process.execPath, "-e", `
 			const fs = require("node:fs"), path = require("node:path"), net = require("node:net");
-			const directory = path.join(require("node:os").tmpdir(), "senpi-rpc-00000000", "tui");
+			const directory = path.join(require("node:os").tmpdir(), "senpi-rpc-00000000");
 			const socket = path.join(directory, "t-0000000000000000.sock");
 			if (Buffer.byteLength(socket) > 103) throw new Error("owned socket exceeds sun_path");
 			fs.mkdirSync(directory, { recursive: true });

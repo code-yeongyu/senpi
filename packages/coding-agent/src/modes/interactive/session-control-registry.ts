@@ -27,7 +27,9 @@ const REGISTRY_LOCK_WAIT_MS = 5_000;
 
 /**
  * `<agentDir>/rpc/tui/t-<16hex>.sock`, or - when the agent directory is too deep for `sun_path` -
- * the same name under `/tmp/senpi-rpc-<sha256(agentDir)[:8]>/tui/`. The fallback root is
+ * the same name directly in `<tmpdir>/senpi-rpc-<sha256(agentDir)[:8]>/`, or in `/tmp/senpi-rpc-<8hex>/` when
+ * even that is too long. The directory holds only TUI sockets and their secrets, so it has no `tui/` level: every
+ * byte it saves keeps the socket inside an owned temp root a little longer (senpi#3758). The fallback root is
  * predictable, so it is used only when it is a real directory owned by this user with no group or
  * other access; anything else fails the registration instead of binding into it. On win32 the path is only the
  * logical address (the listener binds a named pipe hashed from it), so it never moves (senpi#4267).
@@ -44,13 +46,10 @@ export async function resolveTuiSocket(agentDir: string, instanceId: string): Pr
 	// Test launchers supply a short owned TMPDIR. A normal user's long macOS temp path
 	// still needs the original short system fallback to fit sun_path.
 	const root =
-		Buffer.byteLength(join(scopedRoot, "tui", name)) <= MAX_SOCKET_PATH_BYTES
-			? scopedRoot
-			: join("/tmp", fallbackName);
-	const tuiRoot = join(root, "tui");
-	await makePrivateDirectory(tuiRoot);
-	for (const directory of [root, tuiRoot]) await assertPrivateDirectory(directory);
-	const fallback = join(tuiRoot, name);
+		Buffer.byteLength(join(scopedRoot, name)) <= MAX_SOCKET_PATH_BYTES ? scopedRoot : join("/tmp", fallbackName);
+	await makePrivateDirectory(root);
+	await assertPrivateDirectory(root);
+	const fallback = join(root, name);
 	if (Buffer.byteLength(fallback) > MAX_SOCKET_PATH_BYTES) {
 		throw new Error(`socket path ${fallback} exceeds ${MAX_SOCKET_PATH_BYTES} bytes`);
 	}
