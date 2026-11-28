@@ -19,8 +19,10 @@ import { closeSync, createReadStream, openSync, writeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
-import { Worker } from "node:worker_threads";
 import { scanDrainText } from "./process-drain-scan.js";
+
+// The CJS object: an ESM import here would fix Bun's worker_threads namespace before cell ownership patches it (senpi#4527).
+const { Worker } = process.getBuiltinModule("node:worker_threads");
 
 // Captured before any cell runs, so a cell that later replaces these never sees a frame being built.
 const stringify = JSON.stringify;

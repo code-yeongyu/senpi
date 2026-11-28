@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pathToFileURL } from "node:url";
-import { MessageChannel, parentPort } from "node:worker_threads";
 import { authorityDecision } from "./permission-authority.mjs";
 import { createPermissionRequester } from "./permission-slots.mjs";
 import { createCodePermissionGuard } from "./interpose-code.js";
+
+// The CJS object: an ESM import here would fix Bun's worker_threads namespace before cell ownership patches it (senpi#4527).
+const { MessageChannel, parentPort } = process.getBuiltinModule("node:worker_threads");
 
 let initialized = false;
 
