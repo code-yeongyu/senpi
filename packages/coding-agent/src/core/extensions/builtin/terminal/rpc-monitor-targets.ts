@@ -17,9 +17,12 @@ export type RpcTarget =
 	| { readonly kind: "task"; readonly taskId: string }
 	| { readonly kind: "remote"; readonly device: string; readonly session: string };
 
-// `<device>/<session>` or `<device>/*`: one `/`, no leading `/`, not a `.jsonl` path, not a drive letter.
+// `<device>/<session>` or `<device>/*`: one `/`, no leading `/`, not a `.jsonl` path in any case, not a drive
+// letter, and not a relative or home path (`./s`, `../s`, `~/s`, `.omo/s`: a first segment starting with `.` or `~`).
 const REMOTE_TARGET = /^(?<device>[^/]+)\/(?<session>[^/]+)$/;
 const DRIVE_LETTER = /^[A-Za-z]:$/;
+const JSONL_PATH = /\.jsonl$/i;
+const RELATIVE_OR_HOME_SEGMENT = /^[.~]/;
 
 export type RpcEvents = "all" | readonly string[];
 
@@ -52,7 +55,7 @@ export function parseRpcTarget(
 }
 
 function isRemoteShape(target: string, device: string): boolean {
-	return !target.endsWith(".jsonl") && !DRIVE_LETTER.test(device);
+	return !JSONL_PATH.test(target) && !DRIVE_LETTER.test(device) && !RELATIVE_OR_HOME_SEGMENT.test(device);
 }
 
 /** `["session_status", "effect_status"]` for children, `["session_status"]` otherwise. */

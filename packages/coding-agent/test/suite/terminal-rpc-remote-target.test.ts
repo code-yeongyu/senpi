@@ -32,6 +32,11 @@ describe("remote rpc target parsing (oh-my-openagent#12719)", () => {
 		cleanups.push(unregister);
 		expect(parseRpcTarget("devB/s1", undefined)).toEqual({ kind: "remote", device: "devB", session: "s1" });
 		expect(parseRpcTarget(" devB/* ", undefined)).toEqual({ kind: "remote", device: "devB", session: "*" });
+		expect(parseRpcTarget("relay-peer/s-0123", undefined)).toEqual({
+			kind: "remote",
+			device: "relay-peer",
+			session: "s-0123",
+		});
 		unregister();
 		expect(parseRpcTarget("devB/s1", undefined)).toHaveProperty("error");
 	});
@@ -45,6 +50,12 @@ describe("remote rpc target parsing (oh-my-openagent#12719)", () => {
 			["/abs/dir/s.jsonl", { kind: "id", id: "/abs/dir/s.jsonl" }],
 			["/abs/s", { kind: "id", id: "/abs/s" }],
 			["rel/s.jsonl", { kind: "id", id: "rel/s.jsonl" }],
+			// senpi#6243: relative and home paths, and a `.jsonl` path in any case, are local session paths.
+			["rel/s.JSONL", { kind: "id", id: "rel/s.JSONL" }],
+			["./s", { kind: "id", id: "./s" }],
+			["../s", { kind: "id", id: "../s" }],
+			["~/s", { kind: "id", id: "~/s" }],
+			[".omo/s", { kind: "id", id: ".omo/s" }],
 			["C:/Users/s.jsonl", { kind: "id", id: "C:/Users/s.jsonl" }],
 			["C:/s", { kind: "id", id: "C:/s" }],
 		];

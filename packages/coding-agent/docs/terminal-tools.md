@@ -190,7 +190,8 @@ detached (`changed while detached`, `closed (gone while detached)`, `host ... re
 
 A session on another device is `<device>/<session>` (or `<device>/*` for every session there) when an
 extension registered a remote source with `pi.registerRpcRemoteSource`; without one such a target is
-refused. Its lines read exactly like local ones. A lost device is said once
+refused. A relative or home path (`./s`, `../s`, `~/s`, `.omo/s`) and any `.jsonl` path stay local session
+paths. Its lines read exactly like local ones. A lost device is said once
 (`rpc device <device> unreachable (<reason>); re-watching`), the resync after the gap reports each change
 once, each settled turn the resync names is reported once (`rpc <label> turn <id> settled while detached`)
 while a live turn end is rendered as it arrives, and an
