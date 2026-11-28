@@ -1,5 +1,6 @@
 import { once } from "node:events";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HerdrClient, herdrSocketTarget } from "../../src/core/extensions/builtin/herdr/herdr-client.ts";
@@ -23,6 +24,22 @@ afterEach(async () => {
 });
 
 describe("herdr lifecycle reporter (senpi#1645)", () => {
+	it.skipIf(process.platform === "win32")("binds the advertised socket even with a long TMPDIR", async () => {
+		const root = mkdtempSync(join(tmpdir(), "herdr-deep-"));
+		try {
+			const deep = join(root, "nested".repeat(22));
+			mkdirSync(deep);
+			vi.stubEnv("TMPDIR", deep);
+			const f = await herdrReporterFixture();
+			expect(statSync(join(f.dir, "sock")).isSocket()).toBe(true);
+			await f.start();
+			expect(f.requests[0]?.method).toBe("pane.report_metadata");
+		} finally {
+			await cleanupHerdrReporterFixtures();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("sends the exact ordered lifecycle transcript over NDJSON", async () => {
 		const f = await herdrReporterFixture();
 		await f.start();
