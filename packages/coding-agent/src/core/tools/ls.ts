@@ -109,10 +109,12 @@ export function createLsToolDefinition(
 						const ops = options?.operations ?? machineLsOperations(machine, signal);
 						const dirPath = resolveToCwd(path || ".", ctx?.cwd || cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
+						let canonicalDir: string | undefined;
 						if (filesystemPolicy) {
+							canonicalDir = await canonicalizeFilesystemPath(dirPath);
 							const decision = await filesystemPolicy({
 								operation: "enumerate",
-								canonicalPath: await canonicalizeFilesystemPath(dirPath),
+								canonicalPath: canonicalDir,
 								toolName: "ls",
 							});
 							if (!decision.allow) throw new Error(decision.reason);
@@ -138,6 +140,14 @@ export function createLsToolDefinition(
 						} catch (e: any) {
 							reject(new Error(`Cannot read directory: ${e.message}`));
 							return;
+						}
+
+						// An entry a policy prunes is dropped before anything is counted, as if it did not exist (omo#12466).
+						if (canonicalDir !== undefined) {
+							const dir = canonicalDir;
+							const excludesEntry = filesystemPolicy?.entryExclusionBelow?.(dir, "ls");
+							if (excludesEntry)
+								entries = entries.filter((entry) => !excludesEntry(nodePath.join(dir, entry), "ls"));
 						}
 
 						// Sort alphabetically, case-insensitive.

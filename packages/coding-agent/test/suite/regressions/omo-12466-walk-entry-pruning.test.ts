@@ -1,0 +1,186 @@
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
+import { describe, expect, it } from "vitest";
+import { makeTempDir } from "../../../../../scripts/vitest-temp.ts";
+import type { FilesystemPolicy } from "../../../src/core/extensions/types.ts";
+import { composeFilesystemPolicies } from "../../../src/core/tools/filesystem-policy.ts";
+import { createFindToolDefinition } from "../../../src/core/tools/find.ts";
+import { createGrepToolDefinition } from "../../../src/core/tools/grep/index.ts";
+import { createLsToolDefinition } from "../../../src/core/tools/ls.ts";
+
+// omo#12466: a filesystem policy prunes walked entries (the memory guard leaves out every memory identity but the
+// caller's). A pruned entry must leave no trace: each tool answers exactly what it answers on the same tree without
+// that entry. Synthetic names only: "late-id" stands for an identity that appeared while a walk ran.
+const FOREIGN = "synthetic-foreign-line";
+const ALLOW = { allow: true } as const;
+
+function memoryTree(withLateIdentity: boolean): string {
+	const root = realpathSync(makeTempDir(join(tmpdir(), "omo-12466-walk-")));
+	for (const file of ["a.md", "b.md", "c.md"]) {
+		mkdirSync(join(root, "agents", "global", "repo"), { recursive: true });
+		writeFileSync(join(root, "agents", "global", "repo", file), `synthetic own line in ${file}\n`);
+	}
+	if (withLateIdentity) {
+		mkdirSync(join(root, "agents", "late-id", "repo"), { recursive: true });
+		for (const file of ["a.md", "b.md", "c.md", "d.md"])
+			writeFileSync(join(root, "agents", "late-id", "repo", file), `${FOREIGN} synthetic own line in ${file}\n`);
+	}
+	return root;
+}
+
+function pruning(root: string, excludesEntry: FilesystemPolicy["excludesEntry"]) {
+	const policies: FilesystemPolicy[] = [{ check: () => ALLOW, ...(excludesEntry ? { excludesEntry } : {}) }];
+	const policy = composeFilesystemPolicies(policies);
+	if (!policy) throw new Error("no composed policy");
+	return { root, policy };
+}
+
+const lateIdentity = (root: string) => (canonicalPath: string) =>
+	canonicalPath === join(root, "agents", "late-id") || canonicalPath.startsWith(join(root, "agents", "late-id") + sep);
+
+function comparable(value: unknown, root: string): unknown {
+	const text = JSON.stringify(value)
+		.replaceAll(root, "<root>")
+		.replace(/elapsedMs=\d+/g, "elapsedMs=0");
+	return JSON.parse(text, (key, field) => (key === "elapsedMs" ? 0 : field));
+}
+
+async function find(root: string, policy: ReturnType<typeof pruning>["policy"], limit: number) {
+	const tool = createFindToolDefinition(root, { filesystemPolicy: policy });
+	return tool.execute("find", { pattern: "**/*.md", path: root, limit }, undefined, undefined, undefined as never);
+}
+
+async function ls(root: string, policy: ReturnType<typeof pruning>["policy"], limit: number) {
+	const tool = createLsToolDefinition(root, { filesystemPolicy: policy });
+	return tool.execute("ls", { path: join(root, "agents"), limit }, undefined, undefined, undefined as never);
+}
+
+async function grep(root: string, policy: ReturnType<typeof pruning>["policy"], mode: "content" | "count" | "files") {
+	const tool = createGrepToolDefinition(root, { filesystemPolicy: policy });
+	return tool.execute("grep", { pattern: "synthetic", path: root, mode }, undefined, undefined, undefined as never);
+}
+
+describe("a policy that prunes walked entries (omo#12466)", () => {
+	it("find answers as if the pruned identity did not exist, limit notice included", async () => {
+		const late = memoryTree(true);
+		const clean = memoryTree(false);
+
+		// fd returns the first `limit` entries it meets in no fixed order, so a partial page is compared by its shape:
+		// line count, details and notices. The full page is compared line for line.
+		const lines = (result: Awaited<ReturnType<typeof find>>) =>
+			(result.content[0]?.type === "text" ? result.content[0].text : "").trim().split("\n").sort();
+		for (const limit of [2, 3, 10]) {
+			const pruned = await find(late, pruning(late, lateIdentity(late)).policy, limit);
+			const reference = await find(clean, pruning(clean, undefined).policy, limit);
+
+			expect(JSON.stringify(pruned)).not.toContain(FOREIGN);
+			expect(JSON.stringify(pruned)).not.toContain("late-id");
+			expect(lines(pruned).every((line) => line.startsWith("agents/global/"))).toBe(true);
+			expect(lines(pruned)).toHaveLength(lines(reference).length);
+			expect(comparable(pruned.details ?? null, late)).toEqual(comparable(reference.details ?? null, clean));
+			expect(pruned.content.slice(1)).toEqual(reference.content.slice(1));
+			if (limit >= 3) expect(lines(pruned)).toEqual(lines(reference));
+		}
+	});
+
+	it("ls answers as if the pruned identity did not exist, limit notice included", async () => {
+		const late = memoryTree(true);
+		const clean = memoryTree(false);
+
+		for (const limit of [1, 10]) {
+			const pruned = await ls(late, pruning(late, lateIdentity(late)).policy, limit);
+			const reference = await ls(clean, pruning(clean, undefined).policy, limit);
+
+			expect(JSON.stringify(pruned)).not.toContain("late-id");
+			expect(comparable(pruned, late)).toEqual(comparable(reference, clean));
+		}
+	});
+
+	it("grep answers as if the pruned identity did not exist, counts and scan statistics included", async () => {
+		const late = memoryTree(true);
+		const clean = memoryTree(false);
+
+		for (const mode of ["content", "count", "files"] as const) {
+			const pruned = await grep(late, pruning(late, lateIdentity(late)).policy, mode);
+			const reference = await grep(clean, pruning(clean, () => false).policy, mode);
+
+			expect(JSON.stringify(pruned)).not.toContain(FOREIGN);
+			expect(JSON.stringify(pruned)).not.toContain("late-id");
+			expect(comparable(pruned, late)).toEqual(comparable(reference, clean));
+		}
+	});
+
+	it("excludes an entry when a policy's filter throws, and when any one policy excludes it", async () => {
+		const late = memoryTree(true);
+		const clean = memoryTree(false);
+		const throwing = composeFilesystemPolicies([
+			{ check: () => ALLOW, excludesEntry: () => false },
+			{
+				check: () => ALLOW,
+				excludesEntry: (canonicalPath) => {
+					if (lateIdentity(late)(canonicalPath)) throw new Error("synthetic filter failure");
+					return false;
+				},
+			},
+		]);
+		if (!throwing) throw new Error("no composed policy");
+
+		const pruned = await grep(late, throwing, "content");
+		const reference = await grep(clean, pruning(clean, () => false).policy, "content");
+
+		expect(JSON.stringify(pruned)).not.toContain(FOREIGN);
+		expect(comparable(pruned, late)).toEqual(comparable(reference, clean));
+	});
+
+	it("offers no filter below a root where prunesBelow says nothing is pruned, and prunes when it throws", () => {
+		const exclude = () => true;
+		const never = composeFilesystemPolicies([
+			{ check: () => ALLOW, excludesEntry: exclude, prunesBelow: () => false },
+		]);
+		const throwing = composeFilesystemPolicies([
+			{
+				check: () => ALLOW,
+				excludesEntry: exclude,
+				prunesBelow: () => {
+					throw new Error("synthetic prunesBelow failure");
+				},
+			},
+		]);
+		const unanswered = composeFilesystemPolicies([{ check: () => ALLOW, excludesEntry: exclude }]);
+
+		expect(never?.entryExclusionBelow?.("/synthetic/root", "grep")).toBeUndefined();
+		expect(throwing?.entryExclusionBelow?.("/synthetic/root", "grep")?.("/synthetic/root/a", "grep")).toBe(true);
+		expect(unanswered?.entryExclusionBelow?.("/synthetic/root", "grep")?.("/synthetic/root/a", "grep")).toBe(true);
+	});
+
+	it("find takes a single walk of the requested size when nothing below its root can be pruned", async () => {
+		const clean = memoryTree(false);
+		const asked: number[] = [];
+		const policy = composeFilesystemPolicies([
+			{ check: () => ALLOW, excludesEntry: () => true, prunesBelow: () => false },
+		]);
+		if (!policy) throw new Error("no composed policy");
+		const tool = createFindToolDefinition(clean, {
+			filesystemPolicy: policy,
+			operations: {
+				exists: () => true,
+				glob: (_pattern, _cwd, { limit }) => {
+					asked.push(limit);
+					return [join(clean, "agents", "global", "repo", "a.md")];
+				},
+			},
+		});
+
+		const result = await tool.execute(
+			"find",
+			{ pattern: "**/*.md", path: clean, limit: 1 },
+			undefined,
+			undefined,
+			undefined as never,
+		);
+
+		expect(asked).toEqual([1]);
+		expect(JSON.stringify(result)).toContain("a.md");
+	});
+});

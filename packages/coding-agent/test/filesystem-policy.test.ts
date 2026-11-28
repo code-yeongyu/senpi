@@ -62,7 +62,9 @@ describe("extension filesystem policies", () => {
 			check: () => ALLOW,
 		};
 		const extension = await loadExtensionFromFactory(
-			(pi) => pi.registerFilesystemPolicy(policy),
+			(pi) => {
+				pi.registerFilesystemPolicy(policy);
+			},
 			process.cwd(),
 			createEventBus(),
 			createExtensionRuntime(),

@@ -77,6 +77,7 @@ import type {
 	ExtensionSide,
 	ExtensionVirtualModel,
 	FilesystemPolicy,
+	FilesystemPolicyRegistration,
 	LazyToolActivator,
 	LoadExtensionsResult,
 	ProviderHookOptions,
@@ -618,11 +619,18 @@ function createExtensionAPI(
 			extension.childModules = modules;
 		},
 
-		registerFilesystemPolicy(policy: FilesystemPolicy): void {
+		registerFilesystemPolicy(policy: FilesystemPolicy): FilesystemPolicyRegistration {
 			runtime.assertActive();
+			// Recording it would report a policy no tool consults (omo#15251): refuse loudly instead.
+			if (runtime.filesystemPoliciesComposed) {
+				const reason = `Extension "${extension.path}" registered a filesystem policy after the session's tools composed their policies, so it would never apply; register it while the extension loads.`;
+				console.warn(`[extensions] ${reason}`);
+				return { applied: false, reason };
+			}
 			const policies = extension.filesystemPolicies ?? [];
 			policies.push(policy);
 			extension.filesystemPolicies = policies;
+			return { applied: true, entryPruning: true };
 		},
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
