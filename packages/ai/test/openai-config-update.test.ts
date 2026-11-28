@@ -70,6 +70,7 @@ describe("OpenAI mid-session configuration updates", () => {
 		["openai", "gpt-6.2-astra"],
 		["openai", "gpt-6.2-sol"],
 		["chatgpt-subscription", "gpt-6.2-astra"],
+		["chatgpt-subscription", "gpt-6.2-astra-ultrafast"],
 		["chatgpt-subscription", "gpt-6.2-sol-ultrafast"],
 	] as const)("emits the update for flagged %s/%s", (provider, id) => {
 		expect(convert(catalogModel(provider, id), updateThenUser)).toMatchObject([
@@ -135,6 +136,7 @@ describe("configuration_update catalog flag", () => {
 			"gpt-6.1-sol-ultrafast",
 			"gpt-6.2-astra",
 			"gpt-6.2-astra-fast",
+			"gpt-6.2-astra-ultrafast",
 			"gpt-6.2-sol",
 			"gpt-6.2-sol-fast",
 			"gpt-6.2-sol-ultrafast",

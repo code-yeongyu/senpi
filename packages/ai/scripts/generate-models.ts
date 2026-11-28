@@ -4545,7 +4545,10 @@ async function generateModels() {
 	// Clone after metadata application, just like the Priority variants above.
 	const codexUltrafastVariants: Model<Api>[] = [];
 	for (const model of allModels) {
-		if (model.provider !== "chatgpt-subscription" || (model.id !== "gpt-6.1-sol" && model.id !== "gpt-6.2-sol")) {
+		if (
+			model.provider !== "chatgpt-subscription" ||
+			!["gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"].includes(model.id)
+		) {
 			continue;
 		}
 		codexUltrafastVariants.push({
