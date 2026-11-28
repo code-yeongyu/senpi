@@ -2480,6 +2480,17 @@ def _read_control(commands: queue.SimpleQueue[tuple[str, Any]]) -> None:
     commands.put(("eof", None))
 
 
+# CPython collects a child whose Popen handle was dropped only when a later Popen starts, so a kernel that goes idle
+# keeps it as a zombie that pid-liveness checks still read as alive (senpi#7246). subprocess._cleanup waits only on
+# those dropped handles: a handle a cell still holds, and a child from os.fork, os.spawn* or pty.fork, keeps its exit
+# status for its owner. The main thread runs it between messages, never while a cell is executing.
+_DISCARDED_CHILD_REAP_SECONDS = 1.0
+
+
+def _reap_discarded_children() -> None:
+    subprocess._cleanup()
+
+
 def main() -> None:
     emit_status("kernel-startup", force=True, stage="host-init")
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -2489,7 +2500,11 @@ def main() -> None:
     threading.Thread(target=_read_control, args=(commands,), name="senpi-control-reader", daemon=True).start()
     host_closed = False
     while True:
-        kind, payload = commands.get()
+        try:
+            kind, payload = commands.get(timeout=_DISCARDED_CHILD_REAP_SECONDS)
+        except queue.Empty:
+            _reap_discarded_children()
+            continue
         if kind == "eof":
             break
         if kind == "malformed":
@@ -2501,6 +2516,7 @@ def main() -> None:
                 break
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — process boundary serializes malformed input and interrupts.
             emit({"type": "init-failed", "error": bridge_error(exc)})
+        _reap_discarded_children()
     # Reaching here without a close frame means the host's pipe hit EOF: it is gone,
     # so retire any subprocess the last cell left running before the interpreter exits.
     if not host_closed:
