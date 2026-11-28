@@ -24,11 +24,13 @@ import { basename, join } from "node:path";
 import { createHostDaemonPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { type HostEndpointEntry, listHostEndpoints } from "./host-endpoints.ts";
 import { gcEndpoint } from "./host-gc.ts";
+import { type HuskProbe, reapHusk, sweepReapLeftovers } from "./host-gc-husk.ts";
 import {
 	type HostGcPassMarker,
 	type HostGcSkipEntry,
 	nextSkip,
 	readHostGcPassMarker,
+	sweepStagedMarkers,
 	writeHostGcPassMarker,
 } from "./host-gc-pass-marker.ts";
 import {
@@ -50,13 +52,15 @@ export interface OpportunisticGcOptions {
 	readonly maxEndpoints?: number;
 	readonly minIntervalMs?: number;
 	readonly now?: () => number;
+	/** Process liveness (and, when given, a clock) for directories nothing names; `now` is the clock otherwise. */
+	readonly husk?: Partial<HuskProbe>;
 }
 
 export type OpportunisticGcOutcome =
 	| { readonly ran: false }
 	| { readonly ran: true; readonly marker: HostGcPassMarker };
 
-type NamedEndpoint = HostEndpointEntry & { readonly socket: string; readonly name: string };
+type NamedEndpoint = HostEndpointEntry & { readonly name: string };
 
 export async function gcHostEndpointsOpportunistically(
 	options: OpportunisticGcOptions,
@@ -70,6 +74,9 @@ export async function gcHostEndpointsOpportunistically(
 	if (previous !== undefined && startedAt - previous.completedAt < minIntervalMs) return { ran: false };
 	if (process.platform !== "win32")
 		await gcRpcPublicKeys(options.agentDir, { deadline: startedAt + budgetMs, maxRecords: maxEndpoints });
+	const husk = { ...options.husk, now: options.husk?.now ?? now };
+	await sweepStagedMarkers(options.agentDir, husk.pidLive);
+	await sweepReapLeftovers(join(options.agentDir, "rpc-host-daemon"), husk);
 	const candidates = await gcCandidates(options);
 	const present = new Set(candidates.map((endpoint) => endpoint.name));
 	const skip: Record<string, HostGcSkipEntry> = {};
@@ -92,9 +99,11 @@ export async function gcHostEndpointsOpportunistically(
 		}
 		examined += 1;
 		cursor = endpoint.name;
-		const outcome = await gcEndpoint(endpoint.socket, endpoint.dir, { staleEngine: {} }).catch(
-			() => ({ removed: false }) as const,
-		);
+		const judged =
+			endpoint.socket === null
+				? reapHusk(endpoint.dir, husk).then((removed) => ({ removed }))
+				: gcEndpoint(endpoint.socket, endpoint.dir, { staleEngine: {} });
+		const outcome = await judged.catch(() => ({ removed: false }) as const);
 		// A stopped stale host leaves a dead endpoint the next pass collects without waiting out a backoff.
 		if ("stopped" in outcome) delete skip[endpoint.name];
 		else if (outcome.removed) {
@@ -130,8 +139,8 @@ async function gcCandidates(options: OpportunisticGcOptions): Promise<readonly N
 	const candidates: NamedEndpoint[] = [];
 	for (const endpoint of await listHostEndpoints(options.agentDir)) {
 		const name = basename(endpoint.dir);
-		if (endpoint.socket === null || name === targetName || sameEndpoint(endpoint.socket, options.exclude)) continue;
-		candidates.push({ ...endpoint, socket: endpoint.socket, name });
+		if (name === targetName || (endpoint.socket !== null && sameEndpoint(endpoint.socket, options.exclude))) continue;
+		candidates.push({ ...endpoint, name });
 	}
 	return candidates;
 }

@@ -46,6 +46,7 @@ import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { listHostEndpoints } from "./host-endpoints.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { type EndpointInUse, endpointInUse, type SocketSilence, socketSiblings } from "./host-gc-evidence.ts";
+import { type HuskProbe, reapHusk, sweepReapLeftovers } from "./host-gc-husk.ts";
 import { judgeStaleEngine, type StaleEngineKeep, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { stopHost } from "./host-stop.ts";
 import { gcRpcPublicKeys } from "./rpc-public-key.ts";
@@ -76,8 +77,11 @@ export interface HostGcEntry<Reason extends string> {
 	readonly error?: string;
 }
 
+/** Why an endpoint was removed: its socket proved silent, or it was a husk past the horizon (`host-gc-husk.ts`). */
+export type HostGcRemovedReason = SocketSilence | "identity_unknown_expired";
+
 export interface HostGcResult {
-	readonly removed: readonly HostGcEntry<SocketSilence>[];
+	readonly removed: readonly HostGcEntry<HostGcRemovedReason>[];
 	/** Present only when a run stopped a stale older-engine host (`staleEngine`). */
 	readonly stopped?: readonly (HostGcEntry<"stale_old_engine"> & { readonly pid: number })[];
 	readonly kept: readonly HostGcEntry<HostGcKeptReason>[];
@@ -88,6 +92,8 @@ export interface HostGcOptions {
 	readonly kinds?: readonly EndpointKind[];
 	/** Also stop running stale older-engine hosts; `{}` judges against this build. */
 	readonly staleEngine?: StaleEngineOptions;
+	/** Clock and process liveness for judging directories nothing names; the real ones when absent. */
+	readonly husk?: Partial<HuskProbe>;
 	readonly _test?: {
 		/** Runs inside an endpoint's ensure lock, before any evidence is read. */
 		readonly afterLockAcquired?: (socket: string) => Promise<void>;
@@ -106,16 +112,24 @@ export function gcHostEndpoints(agentDir: string, options: HostGcOptions = {}): 
 
 async function gcHostEndpointsInKeyRoot(agentDir: string, options: HostGcOptions = {}): Promise<HostGcResult> {
 	if (process.platform !== "win32") await gcRpcPublicKeys(agentDir);
-	const removed: HostGcEntry<SocketSilence>[] = [];
+	const removed: HostGcEntry<HostGcRemovedReason>[] = [];
 	const stopped: (HostGcEntry<"stale_old_engine"> & { readonly pid: number })[] = [];
 	const kept: HostGcEntry<HostGcKeptReason>[] = [];
 	const wanted = (kind: EndpointKind): boolean => options.kinds === undefined || options.kinds.includes(kind);
 	const legacy = wanted("rpc_host") ? await legacyFlatDirectory(agentDir) : undefined;
 	if (legacy !== undefined) kept.push({ socket: null, dir: legacy, reason: "legacy_layout" });
+	if (wanted("rpc_host")) await sweepReapLeftovers(join(agentDir, "rpc-host-daemon"), options.husk);
 	for (const endpoint of await listHostEndpoints(agentDir)) {
 		if (!wanted(endpoint.endpoint_kind)) continue;
 		if (endpoint.socket === null) {
-			kept.push({ socket: null, dir: endpoint.dir, reason: "unknown_identity" });
+			const husk = { socket: null, dir: endpoint.dir };
+			try {
+				if (await reapHusk(endpoint.dir, options.husk))
+					removed.push({ ...husk, reason: "identity_unknown_expired" });
+				else kept.push({ ...husk, reason: "unknown_identity" });
+			} catch (error: unknown) {
+				kept.push({ ...husk, reason: "failed", error: error instanceof Error ? error.message : String(error) });
+			}
 			continue;
 		}
 		const entry = { socket: endpoint.socket, dir: endpoint.dir };

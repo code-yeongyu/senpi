@@ -22,7 +22,7 @@
  * Where those files LIVE, and the modes they are written with, belong to `host-daemon-state.ts`;
  * this module reads and writes through its primitives and never builds a path of its own.
  */
-import { rename, rm } from "node:fs/promises";
+import { mkdir, rename, rm } from "node:fs/promises";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
@@ -38,6 +38,7 @@ import {
 	createGenerationDirectory,
 	generationPaths,
 	HOST_DAEMON_LAYOUT,
+	HostDaemonStateError,
 	type HostDaemonPaths,
 	type HostGenerationPaths,
 	sameEndpoint,
@@ -152,6 +153,12 @@ export async function writeGenerationRecord(
 	const generation = generationPaths(paths, registration.instanceId);
 	const writer: HostPidFileWriter = { pid: process.pid, startTime: await thisProcessStartTime() };
 	const { build } = registration;
+	// A registration runs under the endpoint's ensure lock and its identity record follows in the same locked step (the
+	// TUI registrant writes the generation before `endpoint.json` on purpose), so it may create the endpoint directory.
+	// Writers without that lock never do (senpi#7564): `createGenerationDirectory` itself only works inside an endpoint.
+	await mkdir(paths.dir, { recursive: true, mode: 0o700 }).catch((cause: unknown) => {
+		throw new HostDaemonStateError(paths.dir, cause);
+	});
 	await createGenerationDirectory(generation);
 	await writeStateFile(generation.pidFile, {
 		...registration.record,

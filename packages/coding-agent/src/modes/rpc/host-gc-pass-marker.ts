@@ -7,11 +7,15 @@
  * It lives in the flat daemon directory beside `layout.json`; `listHostEndpoints` only lists 16-hex
  * directories, so the file is never mistaken for an endpoint. Written by rename, so a reader sees the
  * previous record or the next one, never a torn one; a record that does not parse reads as "no pass
- * has run yet".
+ * has run yet". The staged `gc-last-run.json.<pid>.tmp` never outlives its writer (senpi#7564): a process that
+ * exits between the write and the rename (a short-lived CLI under its unref'd pass) unlinks it on exit, and a
+ * pass removes any whose writer is no longer running (SIGKILL).
  */
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { type HuskProbe, processRecordLive } from "./host-gc-husk.ts";
 
 export const GC_SKIP_INITIAL_BACKOFF_MS = 10 * 60_000;
 export const GC_SKIP_MAX_BACKOFF_MS = 24 * 60 * 60_000;
@@ -55,8 +59,27 @@ export async function readHostGcPassMarker(agentDir: string): Promise<HostGcPass
 export async function writeHostGcPassMarker(agentDir: string, marker: HostGcPassMarker): Promise<void> {
 	const path = hostGcPassMarkerPath(agentDir);
 	const staged = `${path}.${process.pid}.tmp`;
-	await writeFile(staged, `${JSON.stringify(marker)}\n`, { mode: 0o600 });
-	await rename(staged, path);
+	const discardStaged = (): void => rmSync(staged, { force: true });
+	process.once("exit", discardStaged);
+	try {
+		await writeFile(staged, `${JSON.stringify(marker)}\n`, { mode: 0o600 });
+		await rename(staged, path);
+	} finally {
+		process.removeListener("exit", discardStaged);
+	}
+}
+
+/** Removes every staged marker whose writer is no longer running; a live writer's is still being renamed in. */
+export async function sweepStagedMarkers(
+	agentDir: string,
+	pidLive: HuskProbe["pidLive"] = processRecordLive,
+): Promise<void> {
+	const flatDir = join(agentDir, "rpc-host-daemon");
+	for (const name of await readdir(flatDir).catch(() => [] as string[])) {
+		const pid = /^gc-last-run\.json\.(\d+)\.tmp$/.exec(name)?.[1];
+		if (pid === undefined || (await pidLive({ pid: Number(pid), processStartTime: null }))) continue;
+		await rm(join(flatDir, name), { force: true });
+	}
 }
 
 /** The next skip for an endpoint that stayed uncollectable: 10 min first, doubling, capped at 24 h. */
