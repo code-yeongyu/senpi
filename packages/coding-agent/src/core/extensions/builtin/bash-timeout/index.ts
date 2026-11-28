@@ -1,3 +1,4 @@
+import { bashSchema } from "../../../tools/bash-schema.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { isEvalOnlyRouting } from "../eval-only-routing.ts";
@@ -42,13 +43,20 @@ export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 	pi.on(
 		"before_agent_start",
 		async (event, ctx) => {
-			if (activeSharedSections(ctx) !== "full") return undefined;
+			const bash = pi.getAllTools?.().find((tool) => tool.name === "bash");
+			const coreBash = bash?.parameters === bashSchema;
+			if (activeSharedSections(ctx) !== "full") {
+				if (!coreBash) return undefined;
+				return {
+					systemPrompt: `${event.systemPrompt}\nBash commands without an explicit timeout are killed after ${defaults.defaultSeconds}s.`,
+				};
+			}
 			// A session with no `bash` tool has nothing this policy can describe. A host that exposes
 			// only the handler surface (no getAllTools) keeps the policy, as the terminal section does.
-			if (typeof pi.getAllTools === "function" && !pi.getAllTools().some((tool) => tool.name === "bash")) {
+			if (typeof pi.getAllTools === "function" && !bash) {
 				return undefined;
 			}
-			const foregroundWindowSeconds = resolveWindow(ctx);
+			const foregroundWindowSeconds = coreBash ? undefined : resolveWindow(ctx);
 			const prompt = buildBashTimeoutPrompt(defaults, {
 				...(foregroundWindowSeconds === undefined ? {} : { foregroundWindowSeconds }),
 				evalOnly: isEvalOnlyRouting(pi),
