@@ -1,3 +1,104 @@
+## 2026-11-28 - The public extension loader resolves generated default shims (#7597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/generated-default-shim.ts` (new) resolves a generated default-extension shim in any agent dir to this process's in-process builtin factory, skips one whose target is gone, and leaves every other file to the regular import.
+- `packages/coding-agent/src/core/extensions/loader.ts` `discoverAndLoadExtensions` loads with that resolver, as `DefaultResourceLoader` does.
+
+### Why
+
+- Without it, the public loader imported a generated shim's URL, which can be another installation's builtin and its whole module graph.
+
+### Why an extension could not handle it
+
+- The loader picks the module for a discovered extension path before any extension runs.
+
+### Expected merge conflict zones
+
+- The `loadExtensions` call at the end of `discoverAndLoadExtensions` and the loader's import block.
+
+## 2026-11-27 - The runner's project-trust function defaults to false (senpi#6362)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `isProjectTrustedFn` defaults to `() => false` until the runtime binds the real decision.
+
+### Why
+
+- An extension that reads project settings before binding must not see an unbound runner as trusted.
+
+### Why an extension could not handle it
+
+- The default lives in the runner that every extension context reads.
+
+### Expected merge conflict zones
+
+- LOW: the `isProjectTrustedFn` field initializer in `runner.ts`.
+
+## 2026-11-25 - `ctx.telemetryPermitted` (senpi#7446)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.telemetryPermitted` and `ExtensionContextActions.getTelemetryPermitted`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the getter, `false` on a runner with no session.
+
+### Why
+
+- An exporter has to apply the session's decision when it collects an event and again before it delivers a buffered one, so a revocation also drops what was buffered.
+
+### Why an extension could not handle it
+
+- The decision combines the host's setting with every caller's live answer, which only the host holds.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` next to `sessionEnv` and `getSessionEnv`; `runner.ts` next to `getSessionEnvFn`.
+
+## 2026-11-25 - ExternalAdmissionResult names the engine-turn cap (senpi#7138)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `ExternalAdmissionResult` gains the optional `engine_turn_cap` (`held` only), and the `held` kind's doc covers a delivery the engine-turn cap stopped.
+
+### Why
+
+- `pi.session.admitExternalMessage` answered `started` for a delivery the cap kept from starting a turn (senpi#7138).
+
+### Why an extension could not handle it
+
+- This is the public admission result type itself.
+
+### Expected merge conflict zones
+
+- LOW: the `ExternalAdmissionResult` interface and the `ExternalAdmissionKind` doc comment.
+
+## 2026-11-22 - A tool can run the tool_result handlers for work it already did (senpi#7232)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionToolContext.reportToolResult(report)` runs the session's `tool_result` handlers for a result the calling tool reports (`toolName`, `input`, `content`, optional `details` and `isError`). No tool runs and no `tool_call` handler is asked. The event carries the id `<calling id>/reported-<n>` and `parentToolCallId`; it emits no `tool_execution_*` event and leaves no `nestedCalls` record. It resolves to `{ toolCallId, result, failures }` and never rejects for a handler failure.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createToolContext()` defines `reportToolResult` and numbers the reports of one call. `emitToolResult()` also hands each handler that threw, timed out or was interrupted to the new dispatch option `onHandlerFailure`, in addition to the extension error listeners.
+- `packages/coding-agent/src/core/extensions/reported-tool-result.ts` (new, fork-only): the `ReportedToolResult`, `ReportedToolResultFailure` and `ReportedToolResultOutcome` types and `emitReportedToolResult()`, which builds the event.
+- `packages/coding-agent/src/core/extensions/two-sided-forwarding.ts` (fork-only): `ToolEventDispatchOptions.onHandlerFailure`.
+- `packages/coding-agent/src/core/extensions/types.ts`: new observe-only event `tool_call_ready` (`ToolCallReadyEvent`: `toolCallId`, `toolName`, optional `parentToolCallId`, `input`) with its `pi.on` overload and `ExtensionEvent` member. `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolCallReady()` fires it with a deep copy of the arguments the call runs with, awaited before the tool runs under the call's and the turn's abort (an abort blocks the call); `emitToolCall()` calls it once the whole chain let the call run, and not when it serves one forwarded handler (`only`), whose chain ends where the call runs. A blocked call gets none. The session and loopless callers that skip `emitToolCall()` without a `tool_call` handler call `emitToolCallReady()` instead (see the core and RPC entries). `packages/coding-agent/src/core/extensions/index.ts` re-exports `ToolCallReadyEvent`. `packages/coding-agent/src/core/extensions/event-placement.ts` (fork-only): `tool_call_ready` is a `runtime` event.
+
+### Why
+
+- A codemode cell writes files without a `write` or `edit` call (its `write()` helper, `fs`, a child process, a Python cell), so those files skipped diagnostics and every other write hook. In a multi-harness build comparison, agents wrote most of their source that way.
+- The existing way to reach the hooks, `ctx.executeTool("write", ...)`, writes the file a second time: it can overwrite a change made in between, asks for permission again for a file that is already on disk, and can be blocked by a `tool_call` guard, which would hide the hook output. Running only the `tool_result` chain for the content on disk has none of those failure modes.
+
+### Why an extension could not handle it
+
+- A `tool_call` handler may redirect a call by mutating `event.input` (`tool_execution_start` is emitted before that chain runs), and handler order across extensions is load order, so no handler can be sure it sees the final arguments. Only the runner knows when the chain ended.
+- `tool_result` dispatch belongs to the runner: an extension can register a handler, but nothing public lets one run the other extensions' handlers, and the per-handler deadline, abort handling and hook lifecycle events live inside `emitToolResult()`.
+
+### Expected merge conflict zones
+
+- LOW: `ExtensionToolContext` in `types.ts` (one method after `executeTool`, one import line).
+- LOW: `createToolContext()` in `runner.ts` (one property, one counter, one import line).
+- LOW: the end of `emitToolCall()` in `runner.ts` (one `emit` call); the `ToolCallEvent` block, the `ExtensionEvent` union and the `pi.on` overloads in `types.ts` (one interface, one member, one overload).
+- MEDIUM: the three failure branches inside the `emitToolResult()` handler loop in `runner.ts` (one added call each), the same lines senpi#7073 and oh-my-openagent#14354 touched.
+
 ## 2026-11-22 - Scope snapshot delivery to the subscribing client (senpi#4669)
 
 ### What changed

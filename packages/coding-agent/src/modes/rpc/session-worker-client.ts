@@ -117,7 +117,10 @@ export class SessionWorkerClient {
 		this.worker.on("error", (error: unknown) => this.fail(error instanceof Error ? error.message : String(error)));
 	}
 
-	async prepare(configuration: CliRuntimeConfiguration, profile: RpcSessionLaunchProfile): Promise<string> {
+	async prepare(
+		configuration: CliRuntimeConfiguration,
+		profile: RpcSessionLaunchProfile,
+	): Promise<string | undefined> {
 		// The host's poller feeds only the host's store and the isolate reads its own copy, so the isolate starts
 		// from the host's records and then receives each change (senpi#3695). Subscribing before the request is
 		// posted keeps a change that lands in between ordered after the snapshot.

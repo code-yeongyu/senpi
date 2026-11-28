@@ -139,6 +139,9 @@ class WorkerEventWriter extends SessionEventWriter {
 					record.type === "question_resolved" ||
 					record.type === "question_updated" ||
 					record.type === "auto_retry_start" ||
+					record.type === "session_paused" ||
+					record.type === "session_resumed" ||
+					record.type === "session_notice" ||
 					record.type === "auto_retry_end" ||
 					(record.type === "extension_ui_request" && "method" in record && record.method === "question"))
 					? workerSnapshot(entry)
@@ -260,6 +263,12 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			for (const limits of message.subscriptionLimits) subscriptionLimits.adopt(limits);
 			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
 			const profile = resolveMovedProfile(message.profile);
+			// A memory-only session is named by no file, here or on the host (senpi#7567).
+			if (profile.persistence === "none") {
+				prepared = { ...message, profile };
+				send({ type: "prepared", request: message.request });
+				return;
+			}
 			const path =
 				profile.sessionPath ??
 				join(

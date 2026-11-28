@@ -10,9 +10,26 @@ import type {
 	SessionControlActions,
 	SessionControlRegistration,
 } from "./extensions/session-control-types.ts";
+import { MAX_HELD_PEER_DELIVERIES } from "./engine-turn-hold-notices.ts";
 import type { ExternalAdmission } from "./external-admission.ts";
 import type { SessionManager } from "./session-manager.ts";
 import { RELOCATION_NOT_OFFERED, type SessionRelocationHost } from "./session-relocation.ts";
+
+/**
+ * `pi.session.admitExternalMessage` past the held cap (senpi#7628): nothing was written and the delivery stays with the
+ * caller. A throw, as once admission is closed, because a caller that knows only the kinds that admit would read a new
+ * answer kind as admitted and drop the delivery.
+ */
+class HeldDeliveriesFullError extends Error {
+	readonly code = "held_deliveries_full" as const;
+
+	constructor() {
+		super(
+			`held_deliveries_full: the session already holds ${MAX_HELD_PEER_DELIVERIES} peer deliveries while paused; resume it first`,
+		);
+		this.name = "HeldDeliveriesFullError";
+	}
+}
 
 export interface ControlEndpointHost {
 	register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration>;
@@ -73,7 +90,11 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 			await Promise.all(registrations.map((registration) => registration.dispose()));
 		},
 		admissionGate: () => deps.admission.gate(),
-		admitExternalMessage: (input) => deps.admission.admit(input),
+		admitExternalMessage: (input) => {
+			const answer = deps.admission.admit(input);
+			if (answer.kind === "held_deliveries_full") throw new HeldDeliveriesFullError();
+			return answer;
+		},
 		listAdmittedDeliveries: () => deps.admission.list(),
 		persistHeaderNow: () => deps.sessionManager.persistHeaderNow(),
 		relocationOffered: () => deps.relocationHost()?.offered() ?? false,

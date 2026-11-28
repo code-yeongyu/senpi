@@ -215,8 +215,14 @@ export const REVIEWED_FIELDS = {
 			"kind",
 			"modelId",
 			"permissionPreset",
+			// `persona` (omo#13057) is prompt text and tool names that only narrow the session this open creates (the caller
+			// could open it with every tool): no path, credential or process, class unchanged. Its text is never read as a file.
+			"persona",
+			// `persistence` (senpi#7567) only narrows what the open writes: `none` writes nothing. No path or credential, class unchanged.
+			"persistence",
 			"promptSurface",
 			"provider",
+			"reopenRetired",
 			"retain_on_disconnect",
 			"retry",
 			"retryFallback",
@@ -233,7 +239,8 @@ export const REVIEWED_FIELDS = {
 	},
 	fork: { fields: ["admissionId", "entryId", "id", "position", "sessionId", "type"] },
 	clone: { fields: ["admissionId", "id", "sessionId", "type"] },
-	close_session: { fields: ["admissionId", "id", "sessionId", "type"] },
+	// `retire` (senpi#7577) only narrows what may reopen the session the caller is already closing: class unchanged.
+	close_session: { fields: ["admissionId", "id", "retire", "sessionId", "type"] },
 	unload_session: {
 		// `deliveries` (senpi#7004) only chooses whether a busy session's unwritten deliveries refuse the unload: no path,
 		// credential or process, so the class stays `thread`. `graceful` and `waitMs` (oh-my-openagent#14313) only choose to

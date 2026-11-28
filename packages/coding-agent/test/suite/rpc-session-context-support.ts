@@ -281,6 +281,12 @@ export async function contextHost(
 			if (profile === undefined) throw new Error(`no session ${sessionId}`);
 			return profile;
 		},
+		/** The tools the session's model can call now. */
+		activeTools(sessionId: string): string[] {
+			const session = registry.peek(sessionId)?.runtime?.session;
+			if (session === undefined) throw new Error(`no runtime for ${sessionId}`);
+			return session.getActiveToolNames();
+		},
 		/** The system prompt the session's runtime currently holds. */
 		systemPrompt(sessionId: string): string {
 			const prompt = registry.peek(sessionId)?.runtime?.session.systemPrompt;

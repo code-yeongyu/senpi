@@ -133,7 +133,11 @@ import type { ReportedToolResult, ReportedToolResultOutcome } from "./reported-t
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
-import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
+import type {
+	ExternalMessageAdmittedEvent,
+	SessionControlActions,
+	SessionControlWakeEvent,
+} from "./session-control-types.ts";
 import type { SessionDialogApi } from "./session-dialog-api.ts";
 import type { UserActivityKind } from "./user-activity.ts";
 import type { RunBackgroundJob } from "../run-background-jobs.ts";
@@ -2434,6 +2438,7 @@ export type ExtensionEvent =
 	| AgentBeforeSettleEvent
 	| AgentSettledEvent
 	| SessionControlWakeEvent
+	| ExternalMessageAdmittedEvent
 	| UIPromptStartEvent
 	| UIPromptEndEvent
 	| TurnStartEvent
@@ -2899,6 +2904,11 @@ export interface ExtensionAPI {
 	on(
 		event: "session_control_wake",
 		handler: ExtensionHandler<SessionControlWakeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "external_message_admitted",
+		handler: ExtensionHandler<ExternalMessageAdmittedEvent>,
 		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(

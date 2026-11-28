@@ -671,9 +671,8 @@ export class McpService {
 	}
 
 	#rehydrateFromSessionHistory(binding: McpSessionBinding): void {
-		const entries = binding.context.sessionManager?.getEntries() ?? [];
-		if (entries.length === 0) return;
-		this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(entries);
+		const manager = binding.context.sessionManager;
+		if (manager) this.#toolSearchFor(binding)?.maybeRehydrateFromSessionHistory(manager);
 	}
 
 	async handleSessionShutdown(event: SessionShutdownEvent): Promise<void> {
@@ -736,13 +735,40 @@ export class McpService {
 			await entry.onCredentialsChanged?.();
 			return;
 		}
+		if (entry !== stale) {
+			await this.#reconnectRekeyed(entry);
+			return;
+		}
 		await reconnectMcpNow(entry.connection);
 		// A re-key that lands during the reconnect retires the connection it acted on, which then returns quietly. Act once
 		// more on the connection that is current, so the caller learns its real state (needs_auth included).
 		await this.#attachQueue;
 		if (this.#disposed) return;
 		const current = this.#entryForName(name);
-		if (current !== undefined && current !== entry) await reconnectMcpNow(current.connection);
+		if (current !== undefined && current !== entry) await this.#reconnectRekeyed(current);
+	}
+
+	/**
+	 * A connection a credentials re-key just built runs its own startup connect, and that connect publishes the sessions'
+	 * tools once its catalog lands. Its catalog read holds only while the connection's generation is unchanged, so
+	 * reconnecting it now renews the transport under that read: the catalog is dropped and the sessions keep the offers
+	 * of the retired connection, which refuse every call (senpi#2597 regression 2514). Let the startup connect settle and
+	 * publish first, then reconnect: the reconnect still applies the saved-sign-in rule the startup connect does not
+	 * (senpi#6538), so a manual reconnect reports needs_auth. That startup connect may itself meet a rotated grant and
+	 * re-key again; follow the connection that is current, a bounded number of times, then reconnect it.
+	 */
+	async #reconnectRekeyed(rekeyed: McpConnectionEntry): Promise<void> {
+		let entry = rekeyed;
+		for (let hop = 0; hop < MAX_REKEY_HOPS; hop++) {
+			await entry.startupCatalogClaim?.settled().catch(() => undefined);
+			await this.#attachQueue;
+			if (this.#disposed) return;
+			const current = this.#entryForName(entry.name);
+			if (current === undefined) return;
+			if (current === entry) break;
+			entry = current;
+		}
+		await reconnectMcpNow(entry.connection);
 	}
 
 	/**
@@ -1483,6 +1509,9 @@ export function resetMcpServiceForTests(): void {
 
 export const MCP_DEFERRED_DISPOSE_TIMEOUT_ENV = "SENPI_MCP_DEFERRED_DISPOSE_TIMEOUT_MS";
 const MCP_DEFERRED_DISPOSE_TIMEOUT_MS = 15_000;
+
+/** How many credential re-keys a manual reconnect follows before it reconnects the connection it holds. */
+const MAX_REKEY_HOPS = 3;
 
 /** How long a release waits for pending attaches before it disposes anyway. */
 function resolveMcpDeferredDisposeTimeoutMs(): number {

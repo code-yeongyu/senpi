@@ -16,23 +16,30 @@ import { APP_NAME, CONFIG_DIR_NAME, findNodePackageDir, getAgentDir, getPackageD
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import { resolveInstallPath } from "../runtime-snapshot/marker.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
-import { ACCEPTED_SHIM_BANNERS, GENERATED_SHIM_BANNER } from "./generated-shim-banner.ts";
+import { GENERATED_SHIM_BANNER, generatedShimTarget } from "./generated-shim-banner.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 export { loadProjectContextFiles };
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { requiredInternalBuiltins, selectActiveBuiltinIds } from "./builtin-extension-selection.ts";
 import { bundledBuiltinExtensions } from "./bundled-resources.ts";
 import { type ContextFile, loadProjectContextFiles } from "./context-files.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	type BuiltinExtensionFactory,
 	builtinExtensions,
-	globalDefaultExtensionFactories,
 	globalDefaultExtensionIds,
 } from "./extensions/builtin/index.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
+import {
+	deadGeneratedShimTarget,
+	type GlobalDefaultExtensionId,
+	getGlobalDefaultExtensionShimPath,
+	namesBuiltin,
+	resolveGeneratedDefaultExtensionFactory,
+} from "./extensions/generated-default-shim.ts";
 import { createMcpExtension } from "./extensions/builtin/mcp/index.ts";
 import { McpService } from "./extensions/builtin/mcp/service.ts";
 import {
@@ -227,8 +234,6 @@ function resolvePromptInput(input: string | undefined, description: string): str
 }
 
 const GENERATED_GLOBAL_EXTENSION_BANNER = GENERATED_SHIM_BANNER;
-const LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS = ACCEPTED_SHIM_BANNERS;
-type GlobalDefaultExtensionId = (typeof globalDefaultExtensionIds)[number];
 
 const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; packageName: string }> = [
 	{ builtinId: "anthropic-bash", packageName: "pi-anthropic-bash" },
@@ -239,10 +244,6 @@ const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; pa
 	{ builtinId: "todowrite", packageName: "pi-todotools" },
 	{ builtinId: "codemode", packageName: "@code-yeongyu/senpi-codemode" },
 ];
-function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
-	return LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.some((banner) => content.startsWith(banner));
-}
-
 /**
  * The shim records an absolute path, and `getPackageDir()` derives from
  * `import.meta.url`. A session launched through the npm bin symlink and one
@@ -298,56 +299,8 @@ function buildGlobalDefaultExtensionShim(modulePath: string): string {
 	return `${GENERATED_GLOBAL_EXTENSION_BANNER}export { default } from ${JSON.stringify(pathToFileURL(modulePath).href)};\n`;
 }
 
-function getGlobalDefaultExtensionShimPath(agentDir: string, extensionId: GlobalDefaultExtensionId): string {
-	return join(agentDir, "extensions", `${extensionId}.js`);
-}
-
-function isGlobalDefaultExtensionShimLocation(extensionPath: string, agentDir: string): boolean {
-	const resolvedExtensionPath = resolve(extensionPath);
-	return globalDefaultExtensionIds.some(
-		(extensionId) => resolvedExtensionPath === resolve(getGlobalDefaultExtensionShimPath(agentDir, extensionId)),
-	);
-}
-
-function findGeneratedGlobalDefaultExtensionId(
-	extensionPath: string,
-	agentDir: string,
-): GlobalDefaultExtensionId | undefined {
-	if (resolve(agentDir) !== resolve(getAgentDir())) {
-		return undefined;
-	}
-
-	const resolvedExtensionPath = resolve(extensionPath);
-	for (const extensionId of globalDefaultExtensionIds) {
-		if (resolvedExtensionPath === resolve(getGlobalDefaultExtensionShimPath(agentDir, extensionId))) {
-			return extensionId;
-		}
-	}
-	return undefined;
-}
-
-/** The module a generated shim re-exports, when it is a generated shim whose target no longer exists. */
-// Exactly what `buildGlobalDefaultExtensionShim` writes: one export line after the banner, nothing else.
-const GENERATED_SHIM_EXPORT_LINE = /^export \{ default \} from ("[^"\n]*");\n?$/;
-
-/**
- * The module a generated shim re-exports, when the file is exactly a generated shim (an accepted banner
- * followed by the single export line and nothing else) and that module no longer exists. A file that
- * carries the banner but also anything a person wrote is never treated as a shim.
- */
-function deadGeneratedShimTarget(content: string): string | undefined {
-	const banner = LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.find((candidate) => content.startsWith(candidate));
-	if (banner === undefined) return undefined;
-	const specifier = GENERATED_SHIM_EXPORT_LINE.exec(content.slice(banner.length))?.[1];
-	if (specifier === undefined) return undefined;
-	let target: string;
-	try {
-		const parsed = JSON.parse(specifier) as string;
-		target = parsed.startsWith("file:") ? fileURLToPath(parsed) : parsed;
-	} catch {
-		return undefined;
-	}
-	return existsSync(target) ? undefined : target;
+function pointsToLiveBuiltin(target: string, id: GlobalDefaultExtensionId): boolean {
+	return namesBuiltin(target, id) && statSync(target, { throwIfNoEntry: false })?.isFile() === true;
 }
 
 function removeDeadGeneratedShim(shimPath: string): void {
@@ -362,36 +315,6 @@ function removeDeadGeneratedShim(shimPath: string): void {
 		unlinkSync(shimPath);
 	} catch {
 		// The loader skips a dead generated shim on its own; a failed removal only retries next start.
-	}
-}
-
-// A generated shim whose target is gone stands for "load the default extension" from an install that no
-// longer exists. Importing it can only fail with "Cannot find module", so it is skipped without an error.
-const skipDeadGeneratedShim: ExtensionFactory = () => {};
-
-function resolveGeneratedGlobalDefaultExtensionFactory(
-	extensionPath: string,
-	agentDir: string,
-): ExtensionFactory | undefined {
-	if (isGlobalDefaultExtensionShimLocation(extensionPath, agentDir)) {
-		try {
-			if (deadGeneratedShimTarget(readFileSync(extensionPath, "utf-8")) !== undefined) return skipDeadGeneratedShim;
-		} catch {
-			// Unreadable: let the regular load report it.
-		}
-	}
-	const extensionId = findGeneratedGlobalDefaultExtensionId(extensionPath, agentDir);
-	if (!extensionId) {
-		return undefined;
-	}
-
-	try {
-		const expectedShim = buildGlobalDefaultExtensionShim(getGlobalDefaultExtensionModulePath(extensionId));
-		return readFileSync(extensionPath, "utf-8") === expectedShim
-			? globalDefaultExtensionFactories[extensionId]
-			: undefined;
-	} catch {
-		return undefined;
 	}
 }
 
@@ -418,6 +341,8 @@ export interface DefaultResourceLoaderOptions {
 	noContextFiles?: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
+	/** Appended after `appendSystemPrompt` as literal text, never read as a file (a session's own persona). */
+	appendSystemPromptText?: string;
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -459,6 +384,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private noContextFiles: boolean;
 	private systemPromptSource?: string;
 	private appendSystemPromptSource?: string[];
+	private appendSystemPromptText?: string;
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	private skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -551,6 +477,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noContextFiles = options.noContextFiles ?? false;
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
+		this.appendSystemPromptText = options.appendSystemPromptText;
 		this.extensionsOverride = options.extensionsOverride;
 		this.skillsOverride = options.skillsOverride;
 		this.promptsOverride = options.promptsOverride;
@@ -894,7 +821,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.systemPrompt = resolvePromptInput(this.systemPromptSource, "system prompt");
 		this.appendSystemPrompt = (this.appendSystemPromptSource ?? [])
 			.map((source) => resolvePromptInput(source, "append system prompt"))
-			.filter((source): source is string => source !== undefined);
+			.filter((source): source is string => source !== undefined)
+			.concat(this.appendSystemPromptText === undefined ? [] : [this.appendSystemPromptText]);
 		this.systemPromptSourcePath =
 			this.systemPromptSource && existsSync(this.systemPromptSource)
 				? resolvePath(this.systemPromptSource)
@@ -928,7 +856,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const shim = buildGlobalDefaultExtensionShim(modulePath);
 			if (existsSync(targetPath)) {
 				const existing = readFileSync(targetPath, "utf-8");
-				if (existing === shim || !isGeneratedGlobalDefaultExtensionShim(existing)) {
+				if (existing === shim) continue;
+				const target = generatedShimTarget(existing);
+				if (target === undefined || pointsToLiveBuiltin(target, extensionId)) {
 					continue;
 				}
 
@@ -965,7 +895,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	} {
 		return {
 			factoryResolver: (_extensionPath, resolvedPath) =>
-				resolveGeneratedGlobalDefaultExtensionFactory(resolvedPath, this.agentDir),
+				resolveGeneratedDefaultExtensionFactory(resolvedPath, this.agentDir),
 			...this.extensionSession,
 		};
 	}
@@ -1069,6 +999,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const extensionsResult = await this.loadExtensionPaths(extensionPaths);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.unshift(...inlineExtensions.extensions);
+			await this.placeRequiredInternalBuiltins(extensionsResult);
 			const replacementWarnings: Array<{ path: string; warning: string }> = [];
 			extensionsResult.extensions = omitReplacedExtensions(extensionsResult.extensions, replacementWarnings);
 			mergeExtensionWarnings(extensionsResult, replacementWarnings);
@@ -1109,18 +1040,81 @@ export class DefaultResourceLoader implements ResourceLoader {
 			.filter((extension): extension is Extension => extension !== undefined);
 		orderedExtensions.unshift(...factoryExtensions);
 
-		const replacementWarnings: Array<{ path: string; warning: string }> = [];
-		const extensionsResult: LoadExtensionsResult = {
-			extensions: omitReplacedExtensions(orderedExtensions, replacementWarnings),
+		const assembled: LoadExtensionsResult = {
+			extensions: orderedExtensions,
 			errors: [...preTrustExtensions.errors, ...remainingExtensions.errors],
 			warnings: [...(preTrustExtensions.warnings ?? []), ...(remainingExtensions.warnings ?? [])],
 			runtime: preTrustExtensions.runtime,
 			eventBus: preTrustExtensions.eventBus ?? remainingExtensions.eventBus ?? this.eventBus,
 		};
+		await this.placeRequiredInternalBuiltins(assembled);
+		const replacementWarnings: Array<{ path: string; warning: string }> = [];
+		const extensionsResult: LoadExtensionsResult = {
+			...assembled,
+			extensions: omitReplacedExtensions(assembled.extensions, replacementWarnings),
+		};
 		mergeExtensionWarnings(extensionsResult, replacementWarnings);
 		this.rebuildExtensionFlagDefaults(extensionsResult);
 		this.addExtensionConflictDiagnostics(extensionsResult);
 		return extensionsResult;
+	}
+
+	/**
+	 * The one place internal builtins enter a final extension set (senpi#1146): whichever group selected the builtins
+	 * that require them (settings, an explicit `builtin:<name>` path, before or after project trust), they load once,
+	 * each right after the leading run of builtins the registry lists before it: behind the guards and policy when
+	 * those lead the set, and ahead of every other extension (a later builtin, a bundled, inline or path extension),
+	 * any of which may re-publish liveness in its session_start. An internal builtin handles no tool call, so one
+	 * placed ahead of a guard (an inline extension leads the plain branch) takes no veto from it.
+	 */
+	private async placeRequiredInternalBuiltins(result: LoadExtensionsResult): Promise<void> {
+		const builtinIdOf = (path: string): string | undefined =>
+			path.startsWith("<builtin:") && path.endsWith(">")
+				? path.slice("<builtin:".length, -1)
+				: path.startsWith(BUILTIN_PATH_PREFIX)
+					? path.slice(BUILTIN_PATH_PREFIX.length)
+					: undefined;
+		const selected = new Set(result.extensions.flatMap((extension) => builtinIdOf(extension.path) ?? []));
+		const internals = requiredInternalBuiltins(this.builtinExtensionFactories, selected);
+		if (internals.length === 0) return;
+		const internalIds = new Set(internals.map((builtin) => builtin.id));
+		const isInternal = (extension: Extension) => internalIds.has(builtinIdOf(extension.path) ?? "");
+		const required: Extension[] = [];
+		for (const builtin of internals) {
+			const path = `<builtin:${builtin.id}>`;
+			const loaded = result.extensions.find((extension) => builtinIdOf(extension.path) === builtin.id);
+			if (loaded) {
+				required.push(loaded);
+				continue;
+			}
+			try {
+				required.push(
+					await loadExtensionFromFactory(
+						builtin.factory,
+						this.cwd,
+						this.eventBus,
+						result.runtime,
+						path,
+						this.extensionSession,
+					),
+				);
+			} catch (error) {
+				result.errors.push({ path, error: error instanceof Error ? error.message : "failed to load extension" });
+			}
+		}
+		const registryIndex = (id: string | undefined): number =>
+			id === undefined ? -1 : this.builtinExtensionFactories.findIndex((builtin) => builtin.id === id);
+		const placed = result.extensions.filter((extension) => !isInternal(extension));
+		for (const internal of required) {
+			const own = registryIndex(builtinIdOf(internal.path));
+			const listedEarlier = (extension: Extension): boolean => {
+				const index = registryIndex(builtinIdOf(extension.path));
+				return index !== -1 && index < own;
+			};
+			const end = placed.findIndex((extension) => !listedEarlier(extension));
+			placed.splice(end === -1 ? placed.length : end, 0, internal);
+		}
+		result.extensions = placed;
 	}
 
 	private addExtensionConflictDiagnostics(extensionsResult: LoadExtensionsResult): void {
@@ -1405,32 +1399,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private getActiveBuiltinExtensionIds(): Set<string> {
-		const enabledBuiltinExtensions = this.settingsManager.getEnabledBuiltinExtensions();
-		const enabledBuiltinExtensionSet = enabledBuiltinExtensions ? new Set(enabledBuiltinExtensions) : undefined;
-		const disabledBuiltinExtensions = new Set(this.settingsManager.getDisabledBuiltinExtensions());
-		const activeBuiltinExtensionIds = new Set<string>();
-
-		for (const builtinExtension of this.builtinExtensionFactories) {
-			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(builtinExtension.id)) {
-				continue;
-			}
-			if (disabledBuiltinExtensions.has(builtinExtension.id)) {
-				continue;
-			}
-
-			activeBuiltinExtensionIds.add(builtinExtension.id);
-		}
-		for (const bundledExtension of bundledBuiltinExtensions) {
-			if (enabledBuiltinExtensionSet && !enabledBuiltinExtensionSet.has(bundledExtension.id)) {
-				continue;
-			}
-			if (disabledBuiltinExtensions.has(bundledExtension.id)) {
-				continue;
-			}
-			activeBuiltinExtensionIds.add(bundledExtension.id);
-		}
-
-		return activeBuiltinExtensionIds;
+		return selectActiveBuiltinIds(
+			this.builtinExtensionFactories,
+			bundledBuiltinExtensions.map((extension) => extension.id),
+			{
+				enabled: this.settingsManager.getEnabledBuiltinExtensions(),
+				disabled: this.settingsManager.getDisabledBuiltinExtensions(),
+			},
+		);
 	}
 
 	private getShadowedVendoredBuiltinPackageNames(): Set<string> {
@@ -1702,7 +1678,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return false;
 		}
 		try {
-			return isGeneratedGlobalDefaultExtensionShim(readFileSync(shimPath, "utf-8"));
+			return generatedShimTarget(readFileSync(shimPath, "utf-8")) !== undefined;
 		} catch {
 			return false;
 		}

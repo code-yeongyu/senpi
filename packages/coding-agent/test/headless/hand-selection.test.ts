@@ -579,3 +579,89 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		expect(selection.selected("s-nolink")).toBeNull();
 	});
 });
+
+// omo#13057 review M1: a hand runs every call, and every nested call its tools make, on a runtime of its own that never
+// receives the session's open_session.persona, so a persona session never runs on a hand.
+describe("a persona session and hands (omo#13057)", () => {
+	const recorded: SessionEntry[] = [
+		{
+			type: "custom",
+			id: "e1",
+			parentId: null,
+			timestamp: new Date(0).toISOString(),
+			customType: HAND_SELECTION_ENTRY,
+			data: { device: "dev-b" },
+		},
+	];
+	const sessionWith = (entries: SessionEntry[]) => {
+		const own: ToolHost = { execute: async () => ({ messages: [], terminate: false }) };
+		return {
+			own,
+			session: {
+				agent: { toolHost: own as ToolHost | undefined, subscribe: () => () => {} },
+				isStreaming: false,
+				promptSurface: "terminal" as const,
+				sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+			},
+		};
+	};
+
+	it("select_hand on a persona session is refused, opens no link and keeps the session's own host", async () => {
+		const selection = createHandSelection(await handDirectory([ROW]));
+		const { own, session } = sessionWith([]);
+		selection.restore("p1", session, true);
+
+		expect(selection.select("p1", session, "dev-b", true)).toEqual({
+			ok: false,
+			refusal: "persona_not_supported_on_hand",
+		});
+		expect(links).toBe(0);
+		expect(session.agent.toolHost).toBe(own);
+		expect(selection.select("p1", session, null, true)).toEqual({ ok: true });
+	});
+
+	it("the select_hand command reads the persona from the session's open profile", async () => {
+		const selection = createHandSelection(await handDirectory([ROW]));
+		const { session } = sessionWith([]);
+		const host = {
+			registry: {
+				peek: () => undefined,
+				getForCommand: () => ({
+					runtime: { session: { ...session, sessionId: "p2" } },
+					profile: { persona: { excludeTools: ["write"] } },
+				}),
+			},
+			defaults: { handSelection: selection },
+		};
+
+		const answer = answerSelectHand(host, { id: "s", type: "select_hand", sessionId: "p2", device: "dev-b" });
+
+		expect(answer).toMatchObject({ success: false, error: "persona_not_supported_on_hand" });
+		expect(links).toBe(0);
+	});
+
+	it("a persona session reopened on a file that recorded a reachable hand never links it: its calls fail visibly", async () => {
+		ranOnHand.length = 0;
+		const selection = createHandSelection(await handDirectory([ROW]));
+		const { own, session } = sessionWith(recorded);
+
+		selection.restore("p3", session, true);
+
+		expect(links).toBe(0);
+		expect(session.agent.toolHost).not.toBe(own);
+		const texts = await runProbe(session.agent.toolHost, "/");
+		expect(texts[0]).toContain("unreachable");
+		expect(ranOnHand).toEqual([]);
+	});
+
+	it("the same reopen without a persona still links its recorded hand (control)", async () => {
+		ranOnHand.length = 0;
+		const selection = createHandSelection(await handDirectory([ROW]));
+		const { session } = sessionWith(recorded);
+
+		selection.restore("p4", session, false);
+
+		expect(links).toBe(1);
+		expect(selection.selected("p4")).toBe("dev-b");
+	});
+});

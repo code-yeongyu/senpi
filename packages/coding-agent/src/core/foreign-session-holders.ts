@@ -3,7 +3,13 @@ import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import { errorCode } from "./extensions/builtin/terminal/lease-file.ts";
-import { liveSessionHolders, type SessionHolder, type SessionHolderProbes } from "./session-holders.ts";
+import {
+	claimSessionStart,
+	liveSessionHolders,
+	type SessionHolder,
+	type SessionHolderProbes,
+} from "./session-holders.ts";
+import { dropStartClaim } from "./session-start-claim.ts";
 import { parseEntryLine } from "./session-record.ts";
 
 /** Read only the header, asynchronously: checking admission must not load or mutate a transcript. */
@@ -64,6 +70,60 @@ export async function checkSessionHolders(
 	} catch {
 		return { lookupFailed: true };
 	}
+}
+
+/** A claim-and-check of a session this process is about to open (senpi#5988). */
+export interface SessionAdmission {
+	readonly check: Awaited<ReturnType<typeof checkSessionHolders>>;
+	/** This process holds the start claim; otherwise a live process that is still starting holds it. */
+	readonly claimed: boolean;
+	/**
+	 * Another live process holds the claim: the claim was read and refused, not lost to an error. A failed holder lookup
+	 * then does not stay advisory, since a live holder is already known.
+	 */
+	readonly heldElsewhere: boolean;
+	/** Claims again, after a take-over stopped the holders; false while another live process holds the claim. */
+	retake(): Promise<boolean>;
+	/** Lets the claim go when the session is not opened here; a hold taken for the session has dropped it already. */
+	release(): Promise<void>;
+}
+
+/**
+ * Claims the start of `sessionFile`, then reads its other holders. The claim comes first, so of two processes opening
+ * the session at once one finds the other: two starts cannot both claim it, and the RPC host, which publishes its
+ * record before it re-checks, finds the claim or is found by this check. A failed claim stays advisory, as a failed
+ * lookup does.
+ */
+export async function admitSessionHolders(
+	sessionFile: string,
+	lookup: typeof checkSessionHolders = checkSessionHolders,
+): Promise<SessionAdmission> {
+	const path = resolveMovedPath(sessionFile);
+	let sessionId: string | undefined;
+	let claimed: boolean;
+	try {
+		sessionId = await sessionIdFromFile(path);
+		// A file without a session header is a new session: nobody else can hold it.
+		claimed = sessionId === undefined || (await claimSessionStart(path, sessionId));
+	} catch {
+		return {
+			check: { lookupFailed: true },
+			claimed: false,
+			heldElsewhere: false,
+			retake: async () => false,
+			release: async () => {},
+		};
+	}
+	const id = sessionId;
+	return {
+		check: await lookup(sessionFile),
+		claimed,
+		heldElsewhere: !claimed,
+		retake: async () => id === undefined || (await claimSessionStart(path, id)),
+		release: async () => {
+			if (id !== undefined) await dropStartClaim(id);
+		},
+	};
 }
 
 const HOLDER_EXIT_POLL_MS = 100;

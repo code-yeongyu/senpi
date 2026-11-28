@@ -7,7 +7,7 @@ import type { Goal } from "./extensions/builtin/goal/types.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
 import { StaleExtensionContextError } from "./extensions/stale-context-error.ts";
 import type { AgentEndEvent } from "./extensions/types.ts";
-import { deliveryIdOf } from "./external-admission.ts";
+import { deliveryIdOf } from "./delivery-ids.ts";
 import { consumeLifecycleDelivery, lifecycleDeliveryEntries, messageTicket } from "./lifecycle-delivery.ts";
 import { readLifecycleGoal } from "./lifecycle-goal.ts";
 import { lastRunEnd, lifecycleHistory } from "./lifecycle-history.ts";

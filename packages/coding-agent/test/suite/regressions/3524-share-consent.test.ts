@@ -1,10 +1,12 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getShareViewerBase, isShareDisabledByEnvironment } from "../../../src/config.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 import type { ShareRedactionContext } from "../../../src/core/share/share-redaction.ts";
 import {
 	runShare,
@@ -12,12 +14,16 @@ import {
 	type ShareDependencies,
 	type ShareUploadResult,
 } from "../../../src/core/share/share-session.ts";
+import { makeTempDir } from "../../../../../scripts/vitest-temp.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 // senpi#3524: /share uploaded the whole session unredacted with no confirmation. The secret is
 // assembled at runtime so no credential-shaped literal sits in the repository.
 const SECRET = ["sk", "test", "0".repeat(24)].join("-");
 const HOME = "/Users/jane doe";
+// senpi#6170, senpi#6929: the session directory is fixed. A random temp path was the only value the default preview
+// counted as a credential, and only when its suffix happened to look generated.
+const PROJECT = "/workspace/project";
 const context: ShareRedactionContext = { homeDirectory: HOME, userName: "janedoe", hostName: "janes-mbp.local" };
 
 const catEnv: AgentTool = {
@@ -54,13 +60,14 @@ describe("/share consent and redaction (senpi#3524)", () => {
 	});
 
 	async function sessionWithSecretToolResult(): Promise<Harness> {
-		const harness = await createHarness({ tools: [catEnv], persistSession: true });
+		const sessionManager = SessionManager.create(PROJECT, makeTempDir(join(tmpdir(), "share-sessions-")));
+		const harness = await createHarness({ tools: [catEnv], sessionManager });
 		harnesses.push(harness);
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("cat_env", { path: `${HOME}/project/.env` }), { stopReason: "toolUse" }),
 			fauxAssistantMessage("Your key is set; mail janedoe@example.org if it breaks."),
 		]);
-		await harness.session.prompt(`check ${HOME}/project/.env`);
+		await harness.session.prompt(`check ${HOME}/project/.env, the key should be ${SECRET}`);
 		await harness.session.waitForIdle();
 		return harness;
 	}
@@ -171,7 +178,7 @@ describe("/share consent and redaction (senpi#3524)", () => {
 				return "cancel";
 			}),
 		});
-		expect(previews[0]).toMatch(/Removed first: .*credential/);
+		expect(previews[0]).toContain("Removed first: 1 credential, 2 home paths, 1 email.");
 		expect(previews[0]).toContain("anyone with the link");
 		expect(previews[0]).toContain("No viewer is configured");
 	});
