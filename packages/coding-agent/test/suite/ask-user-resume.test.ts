@@ -95,6 +95,39 @@ async function danglingSession(waitForAnswer = true): Promise<SessionManager> {
 	return SessionManager.open(file);
 }
 
+async function danglingUnrestorableSession(): Promise<SessionManager> {
+	const root = await mkdtemp(join(tmpdir(), "ask-user-resume-"));
+	roots.push(root);
+	const writer = SessionManager.create(root, join(root, "sessions"));
+	writer.appendMessage({
+		role: "user",
+		content: "pick a library",
+		timestamp: 1,
+	});
+	writer.appendMessage({
+		role: "assistant",
+		content: [
+			{
+				type: "toolCall",
+				id: CALL_ID,
+				name: "ask_user_question",
+				// No valid question set can be formed from these arguments
+				// (senpi#2966): zero questions, so toCanonical throws.
+				arguments: { questions: [], waitForAnswer: true, required: true },
+			},
+		],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "claude-opus-4-6",
+		usage: EMPTY_USAGE,
+		stopReason: "toolUse",
+		timestamp: 2,
+	});
+	const file = writer.getSessionFile();
+	if (!file) throw new Error("expected session JSONL fixture");
+	return SessionManager.open(file);
+}
+
 function resumedIds(sessionManager: SessionManager): string[] {
 	const ids: string[] = [];
 	for (const entry of sessionManager.getBranch()) {
@@ -375,5 +408,19 @@ describe("ask-user resume", () => {
 		expect(resumedIds(sessionManager)).toEqual([CALL_ID]);
 		await emitStart(handlers, "resume", ctx(sessionManager));
 		expect(userMessages).toHaveLength(1);
+	});
+
+	// senpi#2966 gap 2: the settleUnrestorable pass-through carries `required`
+	// onto the orphaned request, so a required call whose recorded arguments
+	// can no longer form a valid request still refuses the gated action when
+	// it is resumed. This test fails if the pass-through is removed.
+	it("refuses the gated action when a required call cannot be restored on resume", async () => {
+		const sessionManager = await danglingUnrestorableSession();
+		const { userMessages, handlers } = install(sessionManager);
+		await emitStart(handlers, "resume", ctx(sessionManager));
+		expect(userMessages).toHaveLength(1);
+		expect(userMessages[0]).toContain("do not take the action it gates");
+		expect(userMessages[0]).not.toMatch(/best judgment/i);
+		expect(resumedIds(sessionManager)).toEqual([CALL_ID]);
 	});
 });
