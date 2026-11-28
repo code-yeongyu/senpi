@@ -6382,7 +6382,7 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/external-admission.ts#writtenDeliveryIds": {
+		"packages/coding-agent/src/core/delivery-ids.ts#writtenDeliveryIds": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},

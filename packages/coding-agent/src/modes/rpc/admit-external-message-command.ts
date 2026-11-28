@@ -11,8 +11,8 @@
  * runs first, and an id the transcript already holds is answered `already_admitted` after a restart too.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { writtenDeliveryIds } from "../../core/delivery-ids.ts";
 import { MAX_HELD_PEER_DELIVERIES } from "../../core/engine-turn-hold-notices.ts";
-import { writtenDeliveryIds } from "../../core/external-admission.ts";
 import type { ConnectionOrigin, InputTurnMark } from "../../core/turn-origin.ts";
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
 import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";

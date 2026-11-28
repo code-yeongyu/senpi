@@ -19,17 +19,15 @@ import {
 	type AdmittedDeliveries,
 	type ExternalAdmissionResult,
 	type ExternalDeliverAs,
-	isSessionControlDeliveryDetails,
 	SESSION_CONTROL_DELIVERY_TYPE,
 	type SessionAdmissionGate,
 	type SessionControlDeliveryDetails,
 	type SessionControlRemoteOrigin,
 } from "./extensions/session-control-types.ts";
+import { deliveryIdOf } from "./delivery-ids.ts";
 import type { HoldKind } from "./engine-turn-hold.ts";
-import { heldNoticeDeliveryIds } from "./engine-turn-hold-notices.ts";
 import type { EngineTurnCap } from "./engine-turn-limit.ts";
 import type { CustomMessage } from "./messages.ts";
-import type { HistoryReducer } from "./session-history-reduce.ts";
 import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
 
 export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
@@ -333,28 +331,4 @@ function deliveryMessage(input: AdmitExternalMessageInput, stamp: DeliveryStamp)
 	// The mark rides the message into the run, where the turn that consumes it takes its origin (turn-origin.ts).
 	if (stamp.turnMark !== undefined) markInputTurnOrigin(message, stamp.turnMark);
 	return message;
-}
-
-/**
- * Every delivery id the transcript holds an entry for: what answers for the process-lifetime ledger after a restart.
- * A delivery held while paused lives only in its `session-notice` entry until a turn takes it (senpi#7588).
- */
-export const writtenDeliveryIds: HistoryReducer<Set<string>> = {
-	initial: () => new Set(),
-	add: (ids, entry) => {
-		if (entry.type === "custom" && entry.customType === "session-notice")
-			for (const id of heldNoticeDeliveryIds(entry.data)) ids.add(id);
-		else if (
-			entry.type === "custom_message" &&
-			entry.customType === SESSION_CONTROL_DELIVERY_TYPE &&
-			isSessionControlDeliveryDetails(entry.details)
-		)
-			ids.add(entry.details.delivery_id);
-		return ids;
-	},
-};
-
-export function deliveryIdOf(message: AgentMessage): string | undefined {
-	if (message.role !== "custom" || message.customType !== SESSION_CONTROL_DELIVERY_TYPE) return undefined;
-	return isSessionControlDeliveryDetails(message.details) ? message.details.delivery_id : undefined;
 }
