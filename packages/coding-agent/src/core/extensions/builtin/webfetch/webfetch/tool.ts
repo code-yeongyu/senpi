@@ -5,6 +5,7 @@ import { defineTool } from "../../../types.ts";
 
 import { htmlToMarkdown, htmlToText, looksLikeAppShell, stripScripts } from "./content.lazy.ts";
 import { clampTimeout, fetchUrl, type WebfetchFormat } from "./fetcher.ts";
+import { assertSourceRetrieved } from "./source-denial.ts";
 import {
 	BrowserSkillError,
 	type ConnectedBrowser,
@@ -231,6 +232,15 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 				}
 			}
 
+			assertSourceRetrieved({
+				url: params.url,
+				finalUrl: renderedUrl ?? fetched.url,
+				status: fetched.status,
+				raw,
+				isHtml,
+				text,
+				emptyExplained: renderSkipped !== undefined,
+			});
 			const capped = capWebfetchOutput(text);
 
 			const details: WebfetchDetails = {

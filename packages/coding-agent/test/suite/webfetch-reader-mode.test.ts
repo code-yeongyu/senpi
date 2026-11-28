@@ -163,9 +163,10 @@ describe("webfetch reader-mode cleanup", () => {
 		});
 
 		// when
-		await executeWebfetch({ url: `${server.baseUrl}/article`, format: "markdown" });
+		const result = executeWebfetch({ url: `${server.baseUrl}/article`, format: "markdown" });
 
 		// then
+		await expect(result).rejects.toThrow("was not retrieved: HTTP 403");
 		expect(attempts).toHaveLength(1);
 		const challengeHeaders = attempts[0];
 		if (!challengeHeaders) throw new Error("Expected challenge request headers");
