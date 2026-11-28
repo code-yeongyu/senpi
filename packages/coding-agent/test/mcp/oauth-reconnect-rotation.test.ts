@@ -8,6 +8,7 @@ import { runAuthComplete, runAuthStart } from "../../src/core/extensions/builtin
 import { resolveServerAuth } from "../../src/core/extensions/builtin/mcp/auth/context.ts";
 import { McpTokenStore } from "../../src/core/extensions/builtin/mcp/auth/token-store.ts";
 import { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
+import { bounded } from "./fixtures/gated-http-server.ts";
 import { capturingPi } from "./fixtures/register-call.ts";
 import {
 	agentDir,
@@ -113,6 +114,8 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 	// senpi#6538 (review LOW on #7498): a re-key that lands while the manual reconnect is already running retires the
 	// connection the reconnect acts on; that connection is disabled, its reconnect returns quietly, and the caller was
 	// told nothing. The reconnect must act on the connection that is current and surface its needs_auth.
+	// senpi#7648 (audit LOW 1, the up-front re-key): the grant is rotated before the reconnect starts, so only the
+	// up-front re-key of the stale connection can catch it; without that path this case resolves quietly.
 	it("surfaces auth-start guidance when the re-key retires the connection during the manual reconnect", async () => {
 		// Given: a connected server whose refresh token was rotated away, and every token-store lock held at a gate
 		const fixture = await idp();
@@ -166,7 +169,7 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 			agentDir: dir,
 		});
 		await service.whenAttachSettled();
-		await retired;
+		await bounded(retired, "the retired connection to reach disabled");
 		released.resolve();
 
 		// Then: the reconnect names the way back instead of resolving quietly
@@ -231,7 +234,7 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 			agentDir: dir,
 		});
 		await service.whenAttachSettled();
-		await retired;
+		await bounded(retired, "the retired connection to reach disabled");
 		released.resolve();
 
 		// Then: the reconnect names the way back instead of resolving quietly
