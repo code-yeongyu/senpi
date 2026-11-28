@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { Readable, Writable } from "node:stream";
+import { type Readable, Writable } from "node:stream";
 
 export interface KernelChild {
 	readonly stdin: Writable;
@@ -38,20 +38,60 @@ export class PythonKernelRetirementError extends Error {
 	}
 }
 
+/** The descriptor the kernel reads host frames from; see {@link defaultSpawn}. */
+export const PY_CONTROL_FD = 3;
+
 export function defaultSpawn(options: KernelSpawnOptions): KernelChild {
 	// Detached children survive their host, so the prelude needs the host pid to
 	// watch for a parent that is already gone by the time the interpreter boots.
-	const env =
-		process.platform === "win32" ? options.env : { ...options.env, SENPI_PY_KERNEL_PARENT_PID: String(process.pid) };
+	const env = {
+		...options.env,
+		...(process.platform === "win32" ? {} : { SENPI_PY_KERNEL_PARENT_PID: String(process.pid) }),
+		SENPI_PY_CONTROL_FD: String(PY_CONTROL_FD),
+	};
+	// The control pipe is the kernel's alone by design (senpi#2980): stdin is the null device, which is all a cell's
+	// child inherits by default, and host frames travel on their own descriptor, which the prelude makes non-inheritable.
 	const child = spawn(options.command, [...options.args], {
 		cwd: options.cwd,
 		env,
-		stdio: "pipe",
+		stdio: ["ignore", "pipe", "pipe", "pipe"],
 		detached: process.platform !== "win32",
 		windowsHide: true,
 	});
 	globalThis.__senpiCodemodeGateObserveResource?.("processes", child, "close");
-	return child;
+	const control = child.stdio[PY_CONTROL_FD];
+	if (!(control instanceof Writable)) throw new Error("Python kernel control pipe was not created");
+	return withControlPipe(child, control);
+}
+
+/** The kernel as the host drives it: `stdin` is the control pipe, everything else is the child itself. */
+function withControlPipe(child: ChildProcess, control: Writable): KernelChild & { unref(): void } {
+	const kernel = {
+		stdin: control,
+		stdout: child.stdout as Readable,
+		stderr: child.stderr as Readable,
+		get pid() {
+			return child.pid;
+		},
+		get killed() {
+			return child.killed;
+		},
+		kill: (signal?: NodeJS.Signals) => child.kill(signal),
+		unref: () => child.unref(),
+		on(event: string, listener: (...args: unknown[]) => void) {
+			child.on(event, listener);
+			return kernel;
+		},
+		once(event: string, listener: (...args: unknown[]) => void) {
+			child.once(event, listener);
+			return kernel;
+		},
+		off(event: string, listener: (...args: unknown[]) => void) {
+			child.off(event, listener);
+			return kernel;
+		},
+	};
+	return kernel;
 }
 
 export function splitCommand(commandLine: string): { readonly command: string; readonly args: readonly string[] } {

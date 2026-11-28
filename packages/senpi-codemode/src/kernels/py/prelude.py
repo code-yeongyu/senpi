@@ -2466,9 +2466,21 @@ def _start_parent_watch() -> None:
         ).start()
 
 
-def _read_control(commands: queue.SimpleQueue[tuple[str, Any]]) -> None:
+def _control_channel() -> typing.TextIO:
+    # The control pipe is the kernel's alone (senpi#2980): the host spawns the interpreter with stdin on the null device
+    # and hands frames on their own descriptor, named here once and removed from the environment cells and their
+    # children see. Non-inheritable, so no child can hold it (Windows hang, CPython gh-78961) or steal frames (POSIX).
+    named = os.environ.pop("SENPI_PY_CONTROL_FD", None)
+    if named is None:
+        return sys.stdin  # an in-process stand-in drives the kernel through stdin
+    control_fd = int(named)
+    os.set_inheritable(control_fd, False)
+    return os.fdopen(control_fd, "r", encoding="utf-8")
+
+
+def _read_control(commands: queue.SimpleQueue[tuple[str, Any]], control: typing.TextIO) -> None:
     # Kernel-tool frames are served here, so a callback can be admitted while the main thread is inside a cell.
-    for raw in sys.stdin:
+    for raw in control:
         try:
             message = json.loads(raw)
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — malformed input is reported by the main loop, in order.
@@ -2486,7 +2498,8 @@ def main() -> None:
     _start_parent_watch()
     sys.stdout, sys.stderr = KERNEL_TOOL_STREAMS
     commands: queue.SimpleQueue[tuple[str, Any]] = queue.SimpleQueue()
-    threading.Thread(target=_read_control, args=(commands,), name="senpi-control-reader", daemon=True).start()
+    control = _control_channel()
+    threading.Thread(target=_read_control, args=(commands, control), name="senpi-control-reader", daemon=True).start()
     host_closed = False
     while True:
         kind, payload = commands.get()

@@ -5,6 +5,7 @@ import { type BridgeHttpCallRequest, startBridgeServer } from "../src/bridge/htt
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { createInterpreterDetector } from "../src/interpreters/detect.ts";
 import { type KernelSpawnOptions, PythonKernel } from "../src/kernels/py/kernel.ts";
+import { defaultSpawn, PY_CONTROL_FD } from "../src/kernels/py/process.ts";
 import { FakeChild, hasPython3, liveKernel, runCell } from "./py-kernel/fixtures.ts";
 
 describe("PythonKernel transport", () => {
@@ -56,7 +57,52 @@ describe("PythonKernel transport", () => {
 	});
 });
 
+// Review of #5557: the control pipe is private by the spawn contract (process.ts), not made private by the kernel after
+// it starts. A synthetic fixture, not the prelude: it reports what it was given and echoes one frame from the channel.
+describe.skipIf(!(await hasPython3()) || process.platform === "win32")("Python kernel spawn contract (#2980)", () => {
+	it("gives the interpreter the null device on stdin and the control pipe on its own descriptor", async () => {
+		const fixture = [
+			"import os, sys",
+			"fd = int(os.environ['SENPI_PY_CONTROL_FD'])",
+			"null = os.path.samestat(os.fstat(0), os.stat(os.devnull))",
+			"line = os.fdopen(fd, 'r').readline().strip()",
+			"print(f'{null}:{fd}:{line}', flush=True)",
+		].join("\n");
+		const child = defaultSpawn({ command: "python3", args: ["-c", fixture], cwd: process.cwd(), env: process.env });
+		let out = "";
+		child.stdout.on("data", (chunk: Buffer) => {
+			out += chunk.toString();
+		});
+		const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+		child.stdin.end("frame\n");
+		await exited;
+		expect(out.trim()).toBe(`True:${PY_CONTROL_FD}:frame`);
+	});
+});
+
 describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
+	it("gives a cell's child process EOF on stdin instead of the control pipe (#2980)", async () => {
+		const kernel = await liveKernel();
+		try {
+			const child = await runCell(
+				kernel,
+				[
+					"import subprocess, sys",
+					"done = subprocess.run([sys.executable, '-c', 'import sys; print(repr(sys.stdin.read()))'],",
+					"    capture_output=True, text=True, timeout=5)",
+					"f'child:{done.returncode}:{done.stdout.strip()}'",
+				].join("\n"),
+			);
+			expect(child).toMatchObject({ ok: true, valueRepr: expect.stringContaining("child:0:''") });
+
+			const own = await runCell(kernel, "import sys\n'own:' + repr(sys.stdin.read())");
+			expect(own).toMatchObject({ ok: true, valueRepr: expect.stringContaining("own:''") });
+			await expect(runCell(kernel, "6 * 7")).resolves.toMatchObject({ ok: true, valueRepr: "42" });
+		} finally {
+			await kernel.close();
+		}
+	});
+
 	it("persists state across cells and reset clears it", async () => {
 		const kernel = await liveKernel();
 		try {
