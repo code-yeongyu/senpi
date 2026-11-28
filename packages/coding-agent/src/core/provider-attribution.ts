@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai/compat";
 import { APP_NAME } from "../config.ts";
 
@@ -64,7 +65,6 @@ function getDefaultAttributionHeaders(
 }
 
 function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Record<string, string> | undefined {
-	if (!sessionId) return undefined;
 	if (
 		model.provider !== "opencode" &&
 		model.provider !== "opencode-go" &&
@@ -72,7 +72,8 @@ function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Re
 	) {
 		return undefined;
 	}
-	return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
+	const effectiveSessionId = sessionId || randomUUID();
+	return { "x-opencode-session": effectiveSessionId, "x-opencode-client": "pi" };
 }
 
 /** `telemetryPermitted` is the session's decision from `telemetry-consent.ts` (senpi#7446), read per request. */

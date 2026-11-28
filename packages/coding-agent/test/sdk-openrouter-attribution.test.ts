@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { mergeProviderAttributionHeaders } from "../src/core/provider-attribution.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -245,6 +246,16 @@ describe("createAgentSession provider attribution headers", () => {
 		});
 
 		expect(headers?.["x-opencode-session"]).toBe("opencode-session");
+		expect(headers?.["x-opencode-client"]).toBe("pi");
+	});
+
+	it("generates an OpenCode routing ID when a standalone request has no session", () => {
+		const model = createModel("opencode-go", "https://opencode.ai/zen/go/v1");
+		const headers = mergeProviderAttributionHeaders(model, true, undefined);
+
+		expect(headers?.["x-opencode-session"]).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+		);
 		expect(headers?.["x-opencode-client"]).toBe("pi");
 	});
 
