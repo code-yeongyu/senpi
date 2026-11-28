@@ -735,21 +735,14 @@ export class McpService {
 			await entry.onCredentialsChanged?.();
 			return;
 		}
-		if (entry !== stale) {
-			await this.#reconnectRekeyed(entry);
-			return;
-		}
-		await reconnectMcpNow(entry.connection);
-		// A re-key that lands during the reconnect retires the connection it acted on, which then returns quietly. Act once
-		// more on the connection that is current, so the caller learns its real state (needs_auth included).
-		await this.#attachQueue;
-		if (this.#disposed) return;
-		const current = this.#entryForName(name);
-		if (current !== undefined && current !== entry) await this.#reconnectRekeyed(current);
+		// senpi#7655 review: the connection that was current all along takes the same path as a re-keyed one, so a re-key
+		// or a removal that lands during its reconnect is followed and reported, never answered with the retired state.
+		await this.#reconnectCurrent(entry);
 	}
 
 	/**
-	 * A connection a credentials re-key just built runs its own startup connect, and that connect publishes the sessions'
+	 * Reconnects the server's current connection. A connection a credentials re-key just built runs its own startup
+	 * connect, and that connect publishes the sessions'
 	 * tools once its catalog lands. Its catalog read holds only while the connection's generation is unchanged, so
 	 * reconnecting it now renews the transport under that read: the catalog is dropped and the sessions keep the offers
 	 * of the retired connection, which refuse every call (senpi#2597 regression 2514). Let the startup connect settle and
@@ -760,8 +753,8 @@ export class McpService {
 	 * that outcome describes a retired connection, so follow the current one again. Past the bound the reconnect throws,
 	 * naming the way back, instead of acting on a moving target.
 	 */
-	async #reconnectRekeyed(rekeyed: McpConnectionEntry): Promise<void> {
-		let entry = rekeyed;
+	async #reconnectCurrent(start: McpConnectionEntry): Promise<void> {
+		let entry = start;
 		for (let hop = 1; ; hop++) {
 			await entry.startupCatalogClaim?.settled().catch(() => undefined);
 			await this.#attachQueue;
