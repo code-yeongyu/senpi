@@ -18,8 +18,11 @@ const INTERRUPTED_RUN_HOLD_KEY = "interrupted-run";
 /** Consecutive continuations of a cut run without a person's input or a peer delivery in between (senpi#7079). */
 const RESTART_CONTINUATION_LIMIT = 3;
 
-/** Why a restart left an engine-started run held: it keeps being cut with no progress, or it reached the limit. */
-export type RestartHoldReason = "repeated_restart_no_progress" | "repeated_restart_limit";
+/**
+ * Why a restart left an engine-started run held: its last model response had already failed on its own (a provider
+ * 429, senpi#7449), or it keeps being cut with no progress, or it reached the limit.
+ */
+export type RestartHoldReason = "ended_on_provider_error" | "repeated_restart_no_progress" | "repeated_restart_limit";
 
 type RestartVerdict = { readonly continue: true } | { readonly continue: false; readonly reason?: RestartHoldReason };
 
@@ -52,15 +55,20 @@ function isNewInput(entry: SessionEntry): boolean {
 
 /**
  * Whether the run the restart cut continues. Continuations of a cut run are walked past to the run's own start: a run
- * the engine started continues, a run a person started does not. Continuations since the newest input are counted.
+ * the engine started continues, a run a person started does not. A run whose newest model response ended in an error
+ * was not cut by the restart: it had already stopped, so continuing it only repeats that request (senpi#7449).
+ * Continuations since the newest input are counted.
  */
 function restartVerdict(branch: readonly SessionEntry[]): RestartVerdict {
 	let continuations = 0;
 	let progressed = false;
+	let lastResponse: string | undefined;
 	let engineStarted: boolean | undefined;
 	for (let index = branch.length - 1; index >= 0 && engineStarted === undefined; index--) {
 		const entry = branch[index];
 		if (entry === undefined) continue;
+		if (lastResponse === undefined && entry.type === "message" && entry.message.role === "assistant")
+			lastResponse = entry.message.stopReason;
 		if (continuations === 0 && isProgress(entry)) progressed = true;
 		if (isRestartContinuation(entry)) continuations++;
 		else if (entry.type === "message" && entry.message.role === "user") engineStarted = false;
@@ -68,6 +76,7 @@ function restartVerdict(branch: readonly SessionEntry[]): RestartVerdict {
 		else if (entry.type === "custom" && entry.customType === ENGINE_TURN_START_ENTRY_TYPE) engineStarted = true;
 	}
 	if (engineStarted !== true) return { continue: false };
+	if (lastResponse === "error") return { continue: false, reason: "ended_on_provider_error" };
 	if (continuations === 0) return { continue: true };
 	if (!progressed) return { continue: false, reason: "repeated_restart_no_progress" };
 	let sinceInput = 0;

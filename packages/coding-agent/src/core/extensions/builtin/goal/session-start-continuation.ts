@@ -57,6 +57,39 @@ export function readTrailingGoalContinuations(entries: readonly SessionEntry[]):
 	return { counted, waitingOutLimit: waitingOutLimit ?? false };
 }
 
+export type TrailingProviderFailure = {
+	/** The newest answer in the branch, which ended on a provider error. */
+	readonly failure: AssistantAgentMessage;
+	/** Runs in a row that ended on a provider error, newest included: the retry attempt the backoff had reached. */
+	readonly attempts: number;
+};
+
+/**
+ * Reads whether the branch's newest run ended on a provider error (senpi#7449), and how many runs before it did too,
+ * back to the last real user message or the last run that ended otherwise. A run is bounded by goal continuations.
+ */
+export function readTrailingProviderFailure(entries: readonly SessionEntry[]): TrailingProviderFailure | undefined {
+	let failure: AssistantAgentMessage | undefined;
+	let attempts = 0;
+	let newestOfRun: AssistantAgentMessage | undefined;
+	for (let index = entries.length - 1; index >= -1; index--) {
+		const entry = entries[index];
+		if (entry?.type === "message" && entry.message.role === "assistant") {
+			newestOfRun ??= entry.message;
+			continue;
+		}
+		const userMessage = entry?.type === "message" && entry.message.role === "user";
+		const continuation = entry?.type === "custom_message" && entry.customType === GOAL_CONTINUATION_MESSAGE_TYPE;
+		if (entry !== undefined && !userMessage && !continuation) continue;
+		if (newestOfRun?.stopReason !== "error") break;
+		failure ??= newestOfRun;
+		attempts += 1;
+		newestOfRun = undefined;
+		if (!continuation) break;
+	}
+	return failure === undefined ? undefined : { failure, attempts };
+}
+
 function wasRefusedForLimit(turn: readonly AssistantAgentMessage[]): boolean {
 	return (
 		turn.length > 0 &&

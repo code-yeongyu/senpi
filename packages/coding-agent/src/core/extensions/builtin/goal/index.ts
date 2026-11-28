@@ -24,7 +24,11 @@ import {
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
-import { queueGoalContinuation, readTrailingGoalContinuations } from "./session-start-continuation.ts";
+import {
+	queueGoalContinuation,
+	readTrailingGoalContinuations,
+	readTrailingProviderFailure,
+} from "./session-start-continuation.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { interruptedRunHeld, markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
@@ -259,7 +263,18 @@ export default function goalExtension(pi: ExtensionAPI): void {
 					"info",
 				);
 			} else {
-				await queueGoalContinuationForCurrentSession(pi, ctx, goal, trailing.waitingOutLimit);
+				// A run that ended on a provider error was waiting out its retry backoff, not cut by the restart: resume that
+				// wait, so the restart neither asks the provider again at once nor wakes every such session together (senpi#7449).
+				// Held engine turns ask nothing anyway; they keep the held wake the queue path records (senpi#3853).
+				const providerFailure =
+					(event.reason === "startup" || event.reason === "resume") && ctx.engineTurnsHeld?.() !== true
+						? readTrailingProviderFailure(ctx.sessionManager.getBranch())
+						: undefined;
+				if (providerFailure !== undefined) {
+					monitorContinuation.resumeProviderRetryAfterRestart(ctx, goal, providerFailure);
+				} else {
+					await queueGoalContinuationForCurrentSession(pi, ctx, goal, trailing.waitingOutLimit);
+				}
 			}
 		}
 	});
