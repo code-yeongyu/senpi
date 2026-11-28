@@ -14,6 +14,7 @@ import { Text } from "../src/components/text.ts";
 import { VStack } from "../src/components/v-stack.ts";
 import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "../src/keybindings.ts";
 import {
+	cropKittyImageLine,
 	encodeKitty,
 	hyperlink,
 	registerKittyImageMetadata,
@@ -1034,6 +1035,92 @@ describe("TuiAltScreen", () => {
 				terminal.events.slice(eventCount).some((event) => event.type === "write" && event.data.includes("\x1b[2J")),
 			);
 			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
+	// Regression for senpi#6968: covered rows must be written before Kitty placements.
+	it("places Kitty images after writing covered rows", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		const terminal = new RecordingTerminal(20, 3);
+		const tui = new TuiAltScreen(terminal);
+		try {
+			const image = encodeKitty("AAAA", { columns: 2, rows: 2, imageId: 69681, moveCursor: false });
+			tui.addChild({ render: () => [image, "covered", "outside"], invalidate: () => {} });
+			tui.start();
+			await terminal.waitForRender();
+			const frame = terminal.events.find((event) => event.type === "write" && event.data.includes("covered"));
+			assert.ok(frame?.type === "write");
+			assert.ok(frame.data.indexOf("\x1b_Ga=T") > frame.data.indexOf("covered"));
+		} finally {
+			tui.stop();
+			resetCapabilitiesCache();
+		}
+	});
+
+	it("replaces Kitty images when a covered row changes", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			for (const [imageId, explicitRows, registered, cropped, zeroRows] of [
+				[69682, true, false, false],
+				[69683, true, true, false],
+				[69684, false, true, false],
+				[69685, true, true, true],
+				[69686, true, true, false, true],
+			] as const) {
+				const terminal = new RecordingTerminal(20, 3);
+				const tui = new TuiAltScreen(terminal);
+				let image = encodeKitty("AAAA", {
+					columns: 2,
+					rows: explicitRows ? (cropped ? 3 : 2) : undefined,
+					imageId,
+					moveCursor: false,
+				});
+				if (registered)
+					registerKittyImageMetadata({ imageId, columns: 2, rows: cropped ? 3 : 2, widthPx: 20, heightPx: 60 });
+				if (cropped) image = cropKittyImageLine(image, 1, 2);
+				if (zeroRows) image = image.replace(",r=2", ",r=0");
+				let covered = "before";
+				let outside = "outside";
+				let visible = true;
+				tui.addChild({ render: () => [visible ? image : "removed", covered, outside], invalidate: () => {} });
+				tui.start();
+				try {
+					await terminal.waitForRender();
+					const eventCount = terminal.events.length;
+					covered = "changed";
+					tui.requestRender();
+					await terminal.waitForRender();
+					const frame = terminal.events
+						.slice(eventCount)
+						.filter((event): event is { type: "write"; data: string } => event.type === "write")
+						.map((event) => event.data)
+						.join("");
+					const placement = registered ? "\x1b_Ga=p,q=2" : "\x1b_Ga=T";
+					assert.ok(frame.indexOf(placement) > frame.indexOf("changed"), `image ${imageId} must be replaced`);
+					if (registered) assert.ok(!frame.includes("\x1b_Ga=T"), "cached images must not be retransmitted");
+
+					const nextEvent = terminal.events.length;
+					outside = "different";
+					tui.requestRender();
+					await terminal.waitForRender();
+					const outsideWrites = terminal.events.slice(nextEvent);
+					assert.ok(outsideWrites.every((event) => event.type !== "write" || !event.data.includes("\x1b_G")));
+
+					const removalEvent = terminal.events.length;
+					visible = false;
+					tui.requestRender();
+					await terminal.waitForRender();
+					assert.ok(
+						terminal.events
+							.slice(removalEvent)
+							.some((event) => event.type === "write" && event.data.includes("\x1b_Ga=d,d=a,q=2\x1b\\")),
+					);
+				} finally {
+					tui.stop();
+				}
+			}
 		} finally {
 			resetCapabilitiesCache();
 		}
