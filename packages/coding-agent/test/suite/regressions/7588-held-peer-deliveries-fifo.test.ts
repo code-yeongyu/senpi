@@ -76,7 +76,9 @@ it.each([false, true])(
 				expect(open.success).toBe(true);
 				return { host, sessionId: open.data?.sessionId };
 			};
-			let { host, sessionId } = await reopen();
+			const reopenedAt = await reopen();
+			const host = reopenedAt.host;
+			let sessionId = reopenedAt.sessionId;
 			for (const [n, kind] of [
 				[1, "held"],
 				[2, "held"],
