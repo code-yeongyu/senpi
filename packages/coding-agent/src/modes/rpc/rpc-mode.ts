@@ -99,7 +99,6 @@
  */
 
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
-import type { AgentSessionEvent } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -109,12 +108,12 @@ import {
 	writeRawStdout,
 } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
-import { toJsonEvent } from "../json-event.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
-import { createRpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
+import { createRpcConnectionHandler } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
+import { createRpcStdoutSink } from "./rpc-stdout-sink.ts";
 import { createRpcShutdown } from "./shutdown.ts";
 
 // Re-export types for consumers
@@ -133,20 +132,13 @@ export type {
 export async function runRpcMode(runtimeHost: AgentSessionRuntime, toolRuntime?: ToolRuntimeKind): Promise<never> {
 	takeOverStdout();
 
-	const sink: RpcConnectionSink = {
-		writeRaw: (chunk) => {
-			const linearized = chunk
-				.split("\n")
-				.filter((line) => line.length > 0)
-				.map((line) => {
-					const value = JSON.parse(line) as { type?: string };
-					return JSON.stringify(value.type === "message_update" ? toJsonEvent(value as AgentSessionEvent) : value);
-				})
-				.join("\n");
-			writeRawStdout(linearized.length > 0 ? `${linearized}\n` : "");
-		},
+	const sink = createRpcStdoutSink({
+		write: writeRawStdout,
 		waitForBackpressure: waitForRawStdoutBackpressure,
-	};
+		shutdown: (exitCode) => {
+			void shutdown(exitCode);
+		},
+	});
 
 	// Client capability flags reach this single-connection stdio host via the
 	// SENPI_RPC_CLIENT_CAPABILITIES env var (comma-separated). A launcher can set
