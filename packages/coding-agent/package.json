@@ -123,7 +123,6 @@
 		"!dist/cli/experimental",
 		"docs",
 		"!docs/images",
-		"!docs/engine-socket/fixtures",
 		"examples",
 		"native/socket-secret",
 		"containerization.md",
