@@ -5,6 +5,7 @@ import { wrapStreamWithInvokeRecovery } from "./recovery-stream-wrapper.ts";
 import type { ToolCallFormat } from "./types.ts";
 
 export { getProtocol, transformContext } from "./context-transformer.ts";
+export { isToolCallRecoveryStreamFailure } from "./recovery-stream-failure.ts";
 export { wrapStreamWithToolCallMiddleware } from "./stream-wrapper.ts";
 export type {
 	ParsedToolCall,

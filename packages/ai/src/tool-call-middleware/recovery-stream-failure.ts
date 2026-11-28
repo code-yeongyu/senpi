@@ -24,6 +24,13 @@ const failureDetails: Record<RecoveryStreamFailure, { diagnosticType: string; er
 		},
 	};
 
+const recoveryFailureDiagnosticTypes = new Set(Object.values(failureDetails).map((details) => details.diagnosticType));
+
+/** True when tool-call recovery ended the stream: a stream/protocol failure that another model cannot fix (senpi#5723). */
+export function isToolCallRecoveryStreamFailure(message: Pick<AssistantMessage, "diagnostics">): boolean {
+	return message.diagnostics?.some((diagnostic) => recoveryFailureDiagnosticTypes.has(diagnostic.type)) === true;
+}
+
 export function terminateRecoveryStreamForFailure(
 	stream: AssistantMessageEventStream,
 	projection: StreamMessageProjection,
