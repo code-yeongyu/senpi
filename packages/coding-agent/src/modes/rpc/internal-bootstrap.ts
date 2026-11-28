@@ -60,6 +60,9 @@ function bootstrap(): InternalHostBootstrap | undefined {
 	const key = Buffer.alloc(32);
 	const deadline = Date.now() + INTERNAL_KEY_DEADLINE_MS;
 	const keyWorker = armKeyDeadline();
+	// senpi#4853: the read below blocks with no bound of its own; only a running deadline Worker bounds it, so its
+	// readiness is required before the read, not after it.
+	keyWorker.parked();
 	const pause = new Int32Array(new SharedArrayBuffer(4));
 	let offset = 0;
 	let lifetimeFd: number | undefined;
@@ -92,7 +95,6 @@ function bootstrap(): InternalHostBootstrap | undefined {
 	// Runs on success and failure alike: descendants must inherit /dev/null, never the key pipe. fd 0 is free between
 	// the close and the open, and the lowest free descriptor goes to whichever thread opens next. Require this Worker's
 	// readiness before the swap and release it only after restoration; unrelated allocators remain a separate race.
-	keyWorker.parked();
 	fs.closeSync(0);
 	const restored = fs.openSync("/dev/null", "r");
 	keyWorker.release();
