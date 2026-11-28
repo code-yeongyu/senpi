@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
+import { readdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { getAgentDir } from "../../src/config.ts";
+import { rpcKeyRoot } from "../../src/modes/rpc/rpc-auth-client.ts";
 import { runHostSessionRequest } from "../../src/modes/rpc/host-session-runner.ts";
 import { readHostStatus } from "../../src/modes/rpc/host-status.ts";
 import { HeldAnthropicModel, JsonlPeer } from "../helpers/rpc-generation-support.ts";
@@ -10,6 +13,18 @@ afterEach(cleanupHostSessionRigs, 120_000);
 
 // #3073: callers distinguish refusal, caller error and broken transport without scraping prose.
 describe("host session runner", () => {
+	// omo#15197: the runner's client must prove the host it ensured from the root that host publishes under, or it is
+	// refused by its own host. With no SENPI_RPC_KEY_ROOT and no enclosing key root, both are the target's agent dir.
+	it("proves the host it ensured from the same key root that host publishes under", async () => {
+		expect(process.env.SENPI_RPC_KEY_ROOT).toBeUndefined();
+		const { qa, target } = await rig();
+		expect(realpathSync(getAgentDir())).not.toBe(realpathSync(target.agentDir));
+		const clientRoot = rpcKeyRoot({}, target.agentDir);
+		expect(realpathSync(clientRoot)).toBe(realpathSync(qa.agentDir));
+		expect(readdirSync(join(clientRoot, "rpc", "keys")).length).toBeGreaterThan(0);
+		expect(await runHostSessionRequest({ action: "list", target })).toMatchObject({ exitCode: 0 });
+	});
+
 	it("closes idle sessions and refuses a second close", async () => {
 		const { target, ref, client } = await rig();
 		expect(await runHostSessionRequest({ action: "close", target, ref })).toMatchObject({

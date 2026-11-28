@@ -35,12 +35,18 @@ function execText(command: string, args: readonly string[], env?: NodeJS.Process
 	});
 }
 
-async function darwinProcessStartMs(pid: number): Promise<number | undefined> {
+export type ExecText = (command: string, args: readonly string[], env?: NodeJS.ProcessEnv) => Promise<string>;
+
+/**
+ * The darwin start instant of `pid` from `ps -o lstart=`; `exec` runs `ps`. It is rendered and read in UTC: a local
+ * rendering names two instants in a daylight-saving fall-back hour (omo#12108).
+ */
+export async function darwinProcessStartMs(pid: number, exec: ExecText = execText): Promise<number | undefined> {
 	const text = (
-		await execText("ps", ["-o", "lstart=", "-p", String(pid)], { ...process.env, LC_ALL: "C", LANG: "C" })
+		await exec("ps", ["-o", "lstart=", "-p", String(pid)], { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" })
 	).trim();
 	if (text.length === 0) return undefined;
-	return processStartTimeMs(text);
+	return processStartTimeMs(`${text} UTC`);
 }
 
 async function windowsProcessStartMs(pid: number): Promise<number | undefined> {

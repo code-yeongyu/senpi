@@ -168,14 +168,19 @@ describe.skipIf(process.platform === "win32")("public RPC client verification", 
 			const options = { socketPath: qa.socket, keyRoot: qa.agentDir };
 			const client = new RpcClient(options);
 			cleanups.push(() => client.stop());
-			if (state === "valid" || state === "missing" || state === "root-0755") {
+			if (state === "valid" || state === "root-0755") {
 				await client.start();
 				expect(await client.listSessions()).toEqual([]);
-				expect(requests.some((request) => request.type === "authenticate")).toBe(state !== "missing");
-				if (state === "missing")
-					expect(stderr.mock.calls.map(([text]) => String(text)).join("")).toContain(
-						`senpi rpc client: no key record for launch ${launchId} under ${qa.agentDir}; continuing unauthenticated (refused from the next release; set SENPI_RPC_KEY_ROOT to the host's agent dir)`,
-					);
+				expect(requests.some((request) => request.type === "authenticate")).toBe(true);
+			} else if (state === "missing") {
+				// omo#15197: a challenge under a launch with no key record is refused, never served unauthenticated.
+				const refusal = client.start();
+				await expect(refusal).rejects.toMatchObject({ code: "host_identity_unproven" });
+				await expect(refusal).rejects.toThrow(
+					`no key record ${record}; set SENPI_RPC_KEY_ROOT to the host's agent dir`,
+				);
+				expect(requests.map((request) => request.type)).toEqual(["get_protocol_info"]);
+				expect(stderr).not.toHaveBeenCalled();
 			} else {
 				await expect(client.start()).rejects.toMatchObject({
 					code: state === "wrong-proof" ? "host_identity_unproven" : "unsafe_key_record",

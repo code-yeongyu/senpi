@@ -1,3 +1,59 @@
+## 2026-11-27 - Embedders can retire a closed session without opening it (senpi#7577)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` exports `retireSession` and `SessionRetirement`.
+
+### Why
+
+- A controller can close a session after its last host has exited.
+
+### Why an extension could not handle it
+
+- No extension is running when a session exists only on disk.
+
+### Expected merge conflict zones
+
+- LOW: the named exports in `packages/coding-agent/src/index.ts`.
+
+## 2026-11-27 - The CLI runtime factory applies a session's persona (senpi#7570, oh-my-openagent#13057)
+
+### What changed
+
+- `packages/coding-agent/src/modes/headless/hand-selection.ts` and `headless-host.ts`: a persona session never runs on a hand. `select` to a device is refused with `persona_not_supported_on_hand`, and `restore` of a hand the file recorded installs the unreachable placeholder, because a hand builds its runtime from the scope root alone and its nested calls would run excluded tools.
+- `packages/coding-agent/src/main.ts`: refuses `persona.tools` on a host that restricts its built-in tools by default without `--tools` (`persona_tools_unsupported`); the per-session `runtimeParsed` overlay narrows the host's tool flags with the launch profile's persona (`withSessionPersona`: allowlist intersection, denylist union, an empty allowlist means no tools), and the services get the persona's prompt as `appendSystemPromptText`.
+
+### Why
+
+- A multi-session host builds every session from its own argv; a session's persona is the only per-session tool policy, and it may only narrow what the host allows.
+
+### Why an extension could not handle it
+
+- The tool selection and the appended prompt are resolved in the runtime factory, before the session's extensions exist.
+
+### Expected merge conflict zones
+
+- LOW: the `runtimeParsed` spread and the `resourceLoaderOptions` block in `createCliRuntimeFactory`.
+
+## 2026-11-27 - A stdio RPC engine silent during startup names its last phase (senpi#7556)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: a single-session stdio RPC launch (`--mode rpc` without `--multi-session`) arms `armStartupStallNotice()` as the first step after the pre-main timing is recorded, and disarms it right before `runRpcMode()`. While startup is unfinished, it writes one stderr line every 10 s (`<app> rpc: startup has not finished after Ns; last completed phase: <phase> (Ms ago)`).
+- `packages/coding-agent/src/core/startup-stall-notice.ts` (new, fork-only): `armStartupStallNotice()` with an injectable clock (production: `performance.now()` and an unref'd `setTimeout`, so it never keeps a process alive), `isStdioRpcLaunch()`, and `RPC_STARTUP_STALL_DEADLINE_MS` (10 s, below the 15 s an editor's status probe waits).
+
+### Why
+
+- An editor that started `--mode rpc` from a launchd service saw 0 bytes on stdout and stderr until its 15 s `get_state` deadline. The process was never sampled while silent, so the step it waited on could not be named, and the same launch answers in 2-3 s on the current build. A silent startup now names the phase it last finished, so the next occurrence points at its cause instead of a guess.
+
+### Why an extension could not handle it
+
+- Extensions load in the middle of startup, after the phases this has to cover (argument parsing, migrations, session lookup), so only `main()` can arm the notice before those phases and disarm it once RPC mode takes over.
+
+### Expected merge conflict zones
+
+- LOW: the `main()` prologue right after `recordTiming("processStart->main", ...)` and the `appMode === "rpc"` dispatch right before `runRpcMode()`; the import block next to `./core/timings.ts`.
+
 ## 2026-11-27 - The CLI relaunch keeps the rpc host supervisor's lifetime slot (senpi#7525)
 
 ### What changed

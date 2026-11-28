@@ -5,6 +5,7 @@
  * nothing was watching.
  */
 import { RpcMonitorCoalescer } from "./rpc-monitor-coalesce.ts";
+import { rpcKeyRoot } from "../../../../modes/rpc/rpc-auth-client.ts";
 import { openRpcObserver, type RpcObserver, type RpcRecord } from "./rpc-monitor-observer.ts";
 import { type RpcRemoteCheckpoint, RpcRemoteFeed } from "./rpc-monitor-remote.ts";
 import { detachedLabel, RpcMonitorRenderer, sessionKey } from "./rpc-monitor-render.ts";
@@ -156,12 +157,18 @@ export class RpcMonitorWatch {
 		const { target, events } = this.#options;
 		let observer: RpcObserver;
 		try {
-			observer = await openRpcObserver(socket, subscriptionFor(target, events), {
-				record: (record) => {
-					if (!this.#stopped) this.#record(socket, record);
+			// The endpoints are the watched agent dir's, so their hosts are proven from its key root (omo#15197).
+			observer = await openRpcObserver(
+				socket,
+				subscriptionFor(target, events),
+				{
+					record: (record) => {
+						if (!this.#stopped) this.#record(socket, record);
+					},
+					closed: () => this.#lost(socket, observer),
 				},
-				closed: () => this.#lost(socket, observer),
-			});
+				{ keyRoot: rpcKeyRoot({}, this.#options.agentDir) },
+			);
 		} catch {
 			return [];
 		}

@@ -26,8 +26,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, ensureEndpointIdentity } from "../src/modes/rpc/host-daemon-paths.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { endpointScratch, realHost, sweepEndpointScratches } from "./helpers/rpc-host-endpoint-scratch.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 afterEach(async () => {
 	linkState.failWith = undefined;
@@ -83,6 +83,6 @@ describe.skipIf(process.platform === "win32")("endpoint.json where link() is uns
 			socket: qa.shard,
 			created_at: expect.any(String),
 		});
-		expect(await probeHost({ socket: qa.shard })).toBeDefined();
+		expect(await probeSandboxHost(qa, { socket: qa.shard })).toBeDefined();
 	}, 180_000);
 });

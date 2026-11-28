@@ -7,7 +7,6 @@ import { rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { JsonlPeer, openedSessionId, type WireRecord } from "./helpers/rpc-generation-support.ts";
 import {
 	canonicalSocket,
@@ -21,6 +20,7 @@ import {
 	tracked,
 	trackSupervisor,
 } from "./helpers/rpc-host-endpoint-scratch.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 const PROBE_EXTENSION = `export default function (pi) {
 	pi.rpc.handle("probe.identity", () => ({ context: pi.sessionContext }));
@@ -34,7 +34,7 @@ describe.skipIf(process.platform === "win32")("host identity in every session's 
 		const extension = join(qa.root, "probe.mjs");
 		await writeFile(extension, PROBE_EXTENSION);
 		await realHost(qa, qa.legacy, { extension });
-		const first = await probeHost({ socket: qa.legacy });
+		const first = await probeSandboxHost(qa, { socket: qa.legacy });
 
 		const before = await probeContext(qa, qa.legacy, {
 			host_socket: "/forged",

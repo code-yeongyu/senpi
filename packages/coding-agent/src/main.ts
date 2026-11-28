@@ -107,6 +107,7 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
+import { personaToolsUnsupported, withSessionPersona } from "./core/session-persona.ts";
 import { assertValidSessionId, SessionManager, sessionFileNameId } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
@@ -1097,6 +1098,7 @@ export function createCliRuntimeFactory(
 				noContextFiles: parsed.noContextFiles,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
+				appendSystemPromptText: launchProfile?.persona?.appendSystemPrompt,
 				extensionFactories,
 			},
 		});
@@ -1148,11 +1150,20 @@ export function createCliRuntimeFactory(
 		// Multi-session opens carry their per-session startup choices here rather
 		// than through process argv. This deliberately feeds the same resolver as
 		// --provider/--model/--thinking, preserving classic flag semantics.
+		if (
+			personaToolsUnsupported(launchProfile?.persona, {
+				...parsed,
+				defaultTools: settingsManager.getDefaultTools(),
+			})
+		)
+			throw new Error(
+				"persona_tools_unsupported: this host restricts its built-in tools by default (--no-builtin-tools or settings defaultTools) without --tools, so open_session.persona.tools cannot be applied without risking a wider tool set",
+			);
 		const runtimeParsed: Args =
 			launchProfile === undefined
 				? parsed
 				: {
-						...parsed,
+						...withSessionPersona(parsed, launchProfile.persona),
 						...(launchProfile.creationModel === undefined
 							? {}
 							: {
