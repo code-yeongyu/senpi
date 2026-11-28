@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.28-1] - 2026-11-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 2 models.
+
+### Fixed
+
+### Removed
+
 ## [2026.11.28] - 2026-11-28
 
 ### Breaking Changes

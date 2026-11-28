@@ -1,5 +1,5 @@
 // senpi#6362: settings that name an executable or a command line are honoured only from global settings or from a project
-// the person trusted. Project trust defaults to false for every settings reader that does not pass a trust decision.
+// the person trusted. A settings manager created without a trust decision uses the decision the person saved for the folder.
 // Security contract: each family below must not run a project-named program from an untrusted project, and must still run
 // it from a trusted one.
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -68,9 +68,15 @@ describe("settings that name an executable (senpi#6362)", () => {
 			undefined,
 			undefined,
 		]);
-		const reasons = untrusted.drainErrors().map((error) => error.error.message);
+		const ignored = untrusted.drainErrors();
+		const reasons = ignored.map((error) => error.error.message);
 		for (const key of EXECUTABLE_SETTING_PATHS)
 			expect(reasons.some((reason) => reason.includes(key) && reason.includes("not trusted"))).toBe(true);
+		// senpi#7633: each notice names the file as the project knows it, never by its absolute path.
+		for (const error of ignored) {
+			expect(error.error.message).toContain(join(".senpi", "settings.json"));
+			expect([error.path, error.error.message].join("\n")).not.toContain(r.project);
+		}
 
 		await r.trust();
 		const trusted = SettingsManager.create(r.project, r.agentDir);
@@ -189,6 +195,23 @@ describe("settings that name an executable, when the project file is read again 
 		await manager.reload();
 		expect(manager.getShellPath()).toBe(r.program);
 		expect(manager.getNpmCommand()).toEqual([r.program]);
+	});
+
+	it("a project write from that manager leaves them in the user's settings file", async () => {
+		const r = rig(everyKey);
+		const file = join(r.project, ".senpi", "settings.json");
+		const onDisk = JSON.parse(readFileSync(file, "utf8"));
+		const manager = SettingsManager.create(r.project, r.agentDir);
+		await manager.reload();
+		manager.setProjectPackages(["npm:@scope/pkg"]);
+		await manager.setProjectSetting("theme", "dark");
+		await manager.flush();
+		expect(executableSettingPathsIn(manager.getProjectSettings())).toEqual([]);
+		expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+			...onDisk,
+			packages: ["npm:@scope/pkg"],
+			theme: "dark",
+		});
 	});
 
 	it("stay ignored when setProjectTrusted(true) reads the project file again", () => {

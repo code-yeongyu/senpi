@@ -1,3 +1,24 @@
+## 2026-11-28 - The saved-trust rule for executable settings holds on every read of the project file (senpi#7635)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`:
+  - `SettingsManager.create` without a trust decision records the folder on the manager.
+  - `dropUntrustedProjectKeys` uses that record, so it runs after every read of the project file: at creation, in `reload()`, and when `setProjectTrusted(true)` reads the file again.
+  - Each dropped key is reported as ignored, as at creation. A trust decision saved later is honoured on the next read.
+
+### Why
+
+- The drop ran only in `create()`, so `reload()` and `setProjectTrusted(true)` read an untrusted project's executable keys back (post-merge audit of #7595). The default managers of `createAgentSessionServices` and `createAgentSession` are reloaded during startup.
+
+### Why an extension could not handle it
+
+- The project scope is loaded and reloaded inside the core settings manager that every reader shares.
+
+### Expected merge conflict zones
+
+- MEDIUM: `settings-manager.ts` `create`, `dropUntrustedProjectKeys`, `setProjectTrusted` and `reload`.
+
 ## 2026-11-28 - Lifecycle bookkeeping leaves the resident mirror at a compaction (senpi#7596)
 
 ### What changed

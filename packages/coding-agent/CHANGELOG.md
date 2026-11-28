@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.28-1] - 2026-11-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Settings that name an executable or a command line stay ignored from an untrusted project after the settings are reloaded or the project trust is set again; before, a reload read them back ([#7636](https://github.com/code-yeongyu/senpi/pull/7636))
+
+### Removed
+
 ## [2026.11.28] - 2026-11-28
 
 ### Breaking Changes
