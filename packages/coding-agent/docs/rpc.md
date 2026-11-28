@@ -916,7 +916,15 @@ in its value, a `toJSON` that throws), is never dropped: the caller receives, fo
 {"id":"<request id>","type":"response","command":"<command>","success":false,"error":"<command> response could not be written: <cause>","errorCode":"response_unwritable"}
 ```
 
-and the session keeps serving later requests. The host reports it once on stderr as
+and the session keeps serving later requests.
+
+On the stdio transport (`--mode rpc`), a stream event whose JSON projection fails, such as a `message_update` that does not carry an assistant message or a `toolcall_start` whose content is not a tool call, is not written. The client reads this record in its place, and the process then exits with code 1:
+
+```json
+{"type":"response","command":"prompt","success":false,"errorCode":"invalid_stream_event","error":"<cause>","sessionId":"<session id, when the event carried one>"}
+```
+
+For an unwritable reply, the host reports it once on stderr as
 `senpi rpc host: <command> response unwritable (<cause>); answered response_unwritable (session <id>)` and counts
 it with the writer's refusals. This supersedes RULING-68's "refused, never delivered" for replies. A non-reply
 record whose path still overflows the stack outside the writer is refused as before, as the typed
