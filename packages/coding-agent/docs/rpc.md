@@ -4844,6 +4844,8 @@ The prompt success response carries `data.disposition` (`"started"` | `"queued"`
 
 `success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
 
+For a newly queued `prompt` (`streamingBehavior: "steer"` or `"followUp"`), the submitting connection receives the `disposition: "queued"` response before the `queue_update` that announces the input and before the user `message_start` that delivers it. This orders events for that input; unrelated events on an active session can still arrive while the prompt is in preflight.
+
 For a started input, optional `data.turnId` is captured after the engine admits the
 turn and before the user `message_start`. Identified inputs also retain it in
 `data.admission.turnId`. This applies to `steer` and `follow_up` with
