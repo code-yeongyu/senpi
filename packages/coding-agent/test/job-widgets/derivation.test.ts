@@ -202,6 +202,24 @@ describeEachMatcher("job widget derivation", () => {
 		expect(spark.last).toBe("1000");
 	});
 
+	it("compares progress with recent samples instead of the job's first file (#5031)", () => {
+		const ref = { field: "done", agg: "last", better: "higher", unit: "files" };
+		const spec = validSpec({
+			title: "processing",
+			rules: [{ from: "out", match: String.raw`^processed (?P<done>\d+)` }],
+			headline: ref,
+			blocks: [{ kind: "stat", items: [{ ...ref, label: "processed" }] }],
+		});
+		const out = new ScriptedSource("out");
+		const h = harness(spec, out);
+		for (let count = 1; count <= 176; count++) out.append(`processed ${count}\n`);
+		h.ingest();
+		const result = h.derive();
+		const trend = { text: "▲ 1.1%", tone: "success" }; // 174 → 176
+		expect(result.view.headline).toEqual({ text: "176 files", trend });
+		expect(block(result, "stat").items).toEqual([{ label: "processed", text: "176 files", trend }]);
+	});
+
 	const STEP_LINES = ["step 23/60 loss=1.540 acc=0.580", "step 24/60 loss=1.509 acc=0.590"];
 	const STEPS_TOTAL = { field: "steps", agg: "last" };
 	it.each([
