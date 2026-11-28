@@ -1,19 +1,68 @@
+import { isLifecycleBookkeeping } from "./lifecycle-bookkeeping.ts";
+import { readLifecycleRecord } from "./lifecycle-record.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
-import { isRecord } from "./work-custody-record.ts";
+import { custodyIsOpen, isRecord, readWorkCustody } from "./work-custody-record.ts";
 
-/** Lifecycle restoration needs bookkeeping, not a retained full conversation view. */
+/** Where each folded record sits in a `lifecycleHistory` state, so a newer record replaces it in place. */
+const foldedSlots = new WeakMap<SessionEntry[], Map<string, { index: number; seq: number | undefined }>>();
+
+/**
+ * The slot a bookkeeping entry folds into, or undefined for an entry that is kept as written. A
+ * `session-lifecycle` slot carries its record's `seq`: restoration takes the highest of a session. A
+ * `work-custody` slot carries none: restoration takes the last record of a record id. A closed custody record is
+ * held as the identity restoration reads of it, not as written (senpi#7603): an older journal repeats the payload
+ * of a delivery in every closing record.
+ */
+function foldSlot(entry: SessionEntry): { key: string; seq: number | undefined; held: SessionEntry } | undefined {
+	if (entry.type !== "custom") return undefined;
+	if (entry.customType === "session-lifecycle") {
+		const record = readLifecycleRecord(entry.data);
+		return record ? { key: `lifecycle:${record.sessionId}`, seq: record.seq, held: entry } : undefined;
+	}
+	if (entry.customType === "work-custody") {
+		const record = readWorkCustody(entry.data);
+		if (!record) return undefined;
+		const sessionId =
+			isRecord(entry.data) && typeof entry.data.sessionId === "string" ? entry.data.sessionId : undefined;
+		const held = custodyIsOpen(record)
+			? entry
+			: { ...entry, data: { ...record, ...(sessionId === undefined ? {} : { sessionId }) } };
+		return { key: `custody:${sessionId ?? ""}:${record.id}`, seq: undefined, held };
+	}
+	return undefined;
+}
+
+/**
+ * What lifecycle restoration reads, not the journal it is read from (senpi#7596): per session the
+ * `session-lifecycle` record with the highest `seq`, and per session and record id the last `work-custody`
+ * record, each at the position its first record took, which is the order the custody registry lists them in.
+ * `child-lifecycle` and `interrupted-run` entries, and records restoration cannot parse, are kept as written.
+ * A long-lived session writes tens of thousands of these records, so keeping them all held more than its
+ * conversation did.
+ */
 export const lifecycleHistory: HistoryReducer<SessionEntry[]> = {
 	initial: () => [],
 	add: (entries, entry) => {
-		if (
-			entry.type === "custom" &&
-			(entry.customType === "session-lifecycle" ||
-				entry.customType === "work-custody" ||
-				entry.customType === "child-lifecycle" ||
-				entry.customType === "interrupted-run")
-		)
+		if (!isLifecycleBookkeeping(entry)) return entries;
+		const slot = foldSlot(entry);
+		if (slot === undefined) {
 			entries.push(entry);
+			return entries;
+		}
+		let slots = foldedSlots.get(entries);
+		if (slots === undefined) {
+			slots = new Map();
+			foldedSlots.set(entries, slots);
+		}
+		const held = slots.get(slot.key);
+		if (held === undefined) {
+			slots.set(slot.key, { index: entries.length, seq: slot.seq });
+			entries.push(slot.held);
+		} else if (slot.seq === undefined || held.seq === undefined || slot.seq > held.seq) {
+			entries[held.index] = slot.held;
+			held.seq = slot.seq;
+		}
 		return entries;
 	},
 };

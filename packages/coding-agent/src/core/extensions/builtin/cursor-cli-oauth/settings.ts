@@ -1,3 +1,4 @@
+import { projectTrustFilePath } from "../../../project-executable-settings.ts";
 import { getAgentDir } from "../../../../config.ts";
 import { getFileContentRevision } from "../../../../utils/paths.ts";
 import {
@@ -234,7 +235,7 @@ export function loadCursorCliOauthProviderSettingsFromDisk(cwd: string): CursorC
 	const agentDir = getAgentDir();
 	const key = `${cwd}|${settingsFingerprint(getSettingsPath(cwd, agentDir, "global"))}|${settingsFingerprint(
 		getSettingsPath(cwd, agentDir, "project"),
-	)}`;
+	)}|${settingsFingerprint(projectTrustFilePath(agentDir))}`;
 	let settingsManager =
 		cachedCursorCliOauthManager?.cwd === cwd && cachedCursorCliOauthManager.key === key
 			? cachedCursorCliOauthManager.manager

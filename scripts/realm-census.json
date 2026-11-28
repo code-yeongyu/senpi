@@ -4067,6 +4067,10 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/config-reload/reload-queue.ts#processReloadScheduler": {
+			"class": "realm-registry",
+			"reason": "config-reload-scheduler/v1: every copy serving sessions on the host event loop must share the same reload queue"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts#ROUTINE_SETTINGS_KEYS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -5779,6 +5783,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/tool-search/activation-history.ts#activationMarkers": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history marker list"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/tool-search/engine/bm25.ts#DEFAULT_BM25_PRECISION": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -6378,14 +6386,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/generated-shim-banner.ts#ACCEPTED_SHIM_BANNERS": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/generated-shim-banner.ts#ACCEPTED_SHIM_BANNER_PREFIXES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
 		"packages/coding-agent/src/core/generated-shim-banner.ts#GENERATED_SHIM_BANNER": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
@@ -6526,9 +6526,21 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_ENTRY_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_BOOKKEEPING_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/lifecycle-delivery.ts#lifecycleDeliveryEntries": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-history.ts#foldedSlots": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
 		"packages/coding-agent/src/core/lifecycle-history.ts#lifecycleHistory": {
 			"class": "constant",
@@ -6887,10 +6899,6 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/resource-loader.ts#LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
 		"packages/coding-agent/src/core/resource-loader.ts#VENDORED_BUILTIN_EXTENSION_PACKAGES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -6982,10 +6990,6 @@
 		"packages/coding-agent/src/core/session-manager.ts#DEFERRED_FILE_LOAD": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
-		},
-		"packages/coding-agent/src/core/session-manager.ts#LIFECYCLE_ENTRY_TYPES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
 		},
 		"packages/coding-agent/src/core/session-manager.ts#SETUP_ENTRY_TYPES": {
 			"class": "constant",
@@ -9187,6 +9191,10 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#RetryFallback": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#SessionPersona": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
@@ -11801,6 +11809,14 @@
 		"packages/senpi-codemode/src/bridge/reserved.ts#SCOPE_MONITOR_OP": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#ownClaims": {
+			"class": "per-copy-safe",
+			"reason": "the session start claims this copy took and their refresh timers; the claim files themselves coordinate processes"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#UNPROVEN_CLAIM_STALE_MS": {
+			"class": "constant",
+			"reason": "numeric constant computed from another constant at load; never written"
 		}
 	}
 }

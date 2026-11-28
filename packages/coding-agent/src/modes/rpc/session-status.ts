@@ -11,6 +11,7 @@ import type { SessionKind } from "../../core/extensions/types.ts";
 import type { RetryWait } from "../../core/retry-wait.ts";
 import type { SettledFields, ThreadSettledBy } from "../../core/session-settled.ts";
 import type { RpcSessionState } from "./session-registry-types.ts";
+import type { SessionRowHold } from "./session-row-hold.ts";
 
 export type SessionStatusValue =
 	| "opening"
@@ -23,6 +24,7 @@ export type SessionStatusValue =
 
 export type SessionStatusCause =
 	| "open"
+	| "hold"
 	| "prompt"
 	| "agent_end"
 	| "agent_idle"
@@ -79,6 +81,7 @@ export interface SessionStatusEntryView {
 
 /** What the live runtime contributes; absent while the session is opening or after it was torn down. */
 export interface SessionStatusRuntimeView {
+	readonly hold?: SessionRowHold;
 	readonly isStreaming: boolean;
 	readonly isCompacting: boolean;
 	readonly model?: { readonly provider: string; readonly id: string };
@@ -96,6 +99,7 @@ export interface SessionStatusFanoutView {
 
 /** The derived half of a `session_status` record: everything except subscription, sequence and change. */
 export interface DerivedSessionStatus {
+	readonly hold?: SessionRowHold;
 	readonly status: SessionStatusValue;
 	readonly reason?: string;
 	readonly kind: SessionKind;
@@ -123,6 +127,7 @@ export interface SessionStatusLastEffect {
 
 /** One `session_status` record as it travels on the wire. */
 export interface SessionStatusRecord {
+	readonly hold?: SessionRowHold;
 	readonly type: "session_status";
 	readonly subscriptionId: string;
 	readonly seq: number;
@@ -209,6 +214,7 @@ export function deriveSessionStatus(
 		...(runtime?.model !== undefined ? { model: { provider: runtime.model.provider, id: runtime.model.id } } : {}),
 		...(runtime?.thinkingLevel !== undefined ? { thinkingLevel: runtime.thinkingLevel } : {}),
 		pendingQueue: { steering: runtime?.steering ?? 0, followUp: runtime?.followUp ?? 0 },
+		...(entry.state === "open" && !terminal && runtime?.hold && { hold: runtime.hold }),
 		...(runtime?.waiting !== undefined && status === "running" ? { waiting: runtime.waiting } : {}),
 		context: entry.context,
 	};
@@ -239,6 +245,10 @@ export function causeOfRecord(record: {
 	readonly method?: unknown;
 }): SessionStatusCause | undefined {
 	switch (record.type) {
+		case "session_paused":
+		case "session_resumed":
+		case "session_notice":
+			return "hold";
 		case "agent_start":
 			return "prompt";
 		case "agent_end":

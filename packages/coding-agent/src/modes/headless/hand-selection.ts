@@ -38,7 +38,11 @@ export interface HandDirectory {
 /** The session-file entry that records a session's choice; `device: null` is local. */
 export const HAND_SELECTION_ENTRY = "hand_selection";
 
-export type HandRefusal = "hand_not_listed" | "hand_unreachable" | "session_busy";
+/**
+ * `persona_not_supported_on_hand`: the session was opened with `open_session.persona`, which its own runtime applies, but a
+ * hand runs every call (and every nested call its tools make) on a runtime of its own that never receives it (omo#13057).
+ */
+export type HandRefusal = "hand_not_listed" | "hand_unreachable" | "session_busy" | "persona_not_supported_on_hand";
 
 export interface HandSession {
 	readonly agent: Pick<Agent, "toolHost" | "subscribe">;
@@ -53,16 +57,18 @@ export interface HandSelection {
 	readonly hands: () => readonly HandRow[];
 	/** The recorded hand of a session (by durable id), `null` when local. */
 	readonly selected: (durableSessionId: string) => string | null;
+	/** `personaBound`: the session's launch profile carries a persona, so no hand may run its calls. */
 	readonly select: (
 		durableSessionId: string,
 		session: HandSession,
 		device: string | null,
+		personaBound?: boolean,
 	) => { readonly ok: true } | { readonly ok: false; readonly refusal: HandRefusal };
 	/**
 	 * Starts tracking a session that just opened and re-applies the choice its file recorded; a hand that cannot be
 	 * linked now fails the session's calls. Nothing from an earlier runtime of the same id is kept.
 	 */
-	readonly restore: (durableSessionId: string, session: HandSession) => void;
+	readonly restore: (durableSessionId: string, session: HandSession, personaBound?: boolean) => void;
 	/** Forgets a session that ended and closes its link to the hand. */
 	readonly release: (durableSessionId: string) => void;
 }
@@ -153,7 +159,8 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 	return {
 		hands: () => directory.list(),
 		selected: (durableSessionId) => sessions.get(durableSessionId)?.device ?? null,
-		select: (durableSessionId, session, device) => {
+		select: (durableSessionId, session, device, personaBound) => {
+			if (device !== null && personaBound === true) return { ok: false, refusal: "persona_not_supported_on_hand" };
 			const current = stateOf(durableSessionId, session);
 			// Already on it: nothing to do. A recorded hand that was not linked (gone at reopen) is linked again below.
 			if (current.device === device && (device === null || current.linked)) return { ok: true };
@@ -180,14 +187,17 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 			install(durableSessionId, session, device, remote);
 			return { ok: true };
 		},
-		restore: (durableSessionId, session) => {
+		restore: (durableSessionId, session, personaBound) => {
 			sessions.get(durableSessionId)?.remote?.close();
 			sessions.delete(durableSessionId);
 			stateOf(durableSessionId, session);
 			const device = recordedDevice(session);
 			if (device === null) return;
 			const row = directory.list().find((hand) => hand.device === device);
-			install(durableSessionId, session, device, row?.reachable === true ? linkTo(device, session) : unreachable());
+			// A persona session reopened on a file that recorded a hand never runs there: its calls fail visibly instead of
+			// running on a runtime without its tool policy, or silently moving to this machine (omo#13057).
+			const linkable = row?.reachable === true && personaBound !== true;
+			install(durableSessionId, session, device, linkable ? linkTo(device, session) : unreachable());
 		},
 		release: (durableSessionId) => {
 			sessions.get(durableSessionId)?.remote?.close();

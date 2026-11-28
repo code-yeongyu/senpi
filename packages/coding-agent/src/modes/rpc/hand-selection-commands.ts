@@ -13,7 +13,13 @@ type CommandSession = HandSession & { readonly sessionId: string };
 type HandSelectionHost = {
 	readonly registry: {
 		peek(handle: string): { readonly runtime?: { readonly session?: CommandSession } } | undefined;
-		getForCommand(handle: string, command: string): { readonly runtime?: { readonly session?: CommandSession } };
+		getForCommand(
+			handle: string,
+			command: string,
+		): {
+			readonly runtime?: { readonly session?: CommandSession };
+			readonly profile?: { readonly persona?: unknown };
+		};
 	};
 	readonly defaults: { readonly handSelection?: HandSelection };
 };
@@ -54,13 +60,16 @@ export function answerSelectHand(
 	// hands back an entry the registry is already closing, and a select that landed in that window installed
 	// a hand link on an ended session that nothing was left to close (senpi#5949 review).
 	let session: CommandSession | undefined;
+	let personaBound = false;
 	try {
-		session = host.registry.getForCommand(command.sessionId, command.type).runtime?.session;
+		const entry = host.registry.getForCommand(command.sessionId, command.type);
+		session = entry.runtime?.session;
+		personaBound = entry.profile?.persona !== undefined;
 	} catch (cause) {
 		return error(command.id, command.type, code(cause), detail(cause));
 	}
 	if (session === undefined) return error(command.id, command.type, RPC_ERROR_UNKNOWN_SESSION);
-	const outcome = selection.select(session.sessionId, session, command.device);
+	const outcome = selection.select(session.sessionId, session, command.device, personaBound);
 	if (!outcome.ok) return error(command.id, command.type, outcome.refusal, { device: command.device });
 	return {
 		id: command.id,

@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
+import type { SessionPersona } from "../../core/session-persona.ts";
 
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 
@@ -126,6 +127,17 @@ type RpcCommandBody =
 			 */
 			retryFallback?: SessionRetryFallbackProfile;
 			/**
+			 * The instructions and tool policy THIS session runs with (e.g. a task child's agent): `appendSystemPrompt` is
+			 * literal text appended to its system prompt, `tools` the only tools it may have (empty = none),
+			 * `excludeTools` tools it never has. It narrows the host's own flags and never widens them, follows the
+			 * session through a successor's reopen, and an attach naming a different one is refused with
+			 * `session_path_in_use` (`persona_mismatch`). Requires the host capability `session_persona`; a malformed
+			 * value is refused with `invalid_launch_profile`.
+			 */
+			persona?: SessionPersona;
+			/** Explicitly reopen the retired identity. Ordinary opens never consume retirement. */
+			reopenRetired?: true;
+			/**
 			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
 			 * one session after the daemon's own allowlist, never merged into the host process or carried to
 			 * a successor generation, never seen by another session. Names must be on the host's
@@ -145,7 +157,17 @@ type RpcCommandBody =
 			 */
 			telemetry?: TelemetryDeclaration;
 	  }
-	| { id?: string; type: "close_session"; sessionId: string }
+	| {
+			id?: string;
+			type: "close_session";
+			sessionId: string;
+			/**
+			 * Also retire the session when this close is its final one: no restore and no plain `open_session` reopens it
+			 * until an `open_session` with `reopenRetired: true`. Default false: a closed session reopens from its file.
+			 * A session with no transcript file has nothing to retire and closes as usual. Requires `session_retirement`.
+			 */
+			retire?: boolean;
+	  }
 	| RpcMoveSessionCommand
 	| {
 			id?: string;
@@ -328,7 +350,7 @@ export type RpcCommand = (
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  }
-	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd" | "reopenRetired"> & {
 			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
 			type: "claim_session";
 			cwd: string;

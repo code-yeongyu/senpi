@@ -1,4 +1,5 @@
 import {
+	type AfterToolCallResult,
 	type Agent,
 	type AgentEvent,
 	type AgentTool,
@@ -24,13 +25,14 @@ export interface CursorExecBridgeSession {
 	): Promise<BeforeToolCallResult | undefined>;
 	/** The exec-frame call ended on any path; its preflight marked it model-issued with `execBridge`. */
 	releaseExecBridgeToolCall(toolCallId: string): void;
+	/** Runs the session's tool_result chain for an exec-frame call; answers the chain's replacement, if any. */
 	emitExecBridgeToolResult(
 		toolName: string,
 		toolCallId: string,
 		args: unknown,
 		result: AgentToolResult<unknown>,
 		isError: boolean,
-	): Promise<void>;
+	): Promise<AfterToolCallResult | undefined>;
 }
 
 /**
@@ -67,9 +69,8 @@ export function createSessionCursorExecBridge(
 		emitEvent: async (event: AgentEvent, runSignal: AbortSignal) =>
 			await getAgent().emitExternalEvent(event, runSignal),
 		settleToolCall: (toolCallId) => sessionRef.current?.releaseExecBridgeToolCall(toolCallId),
-		emitToolResult: async ({ toolName, toolCallId, args, result, isError }) => {
-			await sessionRef.current?.emitExecBridgeToolResult(toolName, toolCallId, args, result, isError);
-		},
+		emitToolResult: async ({ toolName, toolCallId, args, result, isError }) =>
+			sessionRef.current?.emitExecBridgeToolResult(toolName, toolCallId, args, result, isError),
 		getAbortSignal: () => {
 			if (runSignal === undefined || runSignal.aborted) return undefined;
 			return runSignal === getAgent().signal ? runSignal : undefined;
