@@ -142,7 +142,9 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 			const section =
 				presetSharedSections(preset) === "full" ? FULL_TASK_MANAGEMENT_SECTION : TASK_MANAGEMENT_SECTION;
 			// A preset whose core states the todo rules gets no second copy of them (senpi#7101).
-			const systemPrompt = presetOwnsTodoRules(preset) ? event.systemPrompt : `${event.systemPrompt}\n${section}`;
+			const systemPrompt = presetOwnsTodoRules(preset, ctx.model)
+				? event.systemPrompt
+				: `${event.systemPrompt}\n${section}`;
 			if (event.preview) return { systemPrompt };
 			const branchEntries = ctx.sessionManager.getBranch();
 			const setting = readFirstTurnPlan(ctx, presetFirstTurnPlanDefault(preset));

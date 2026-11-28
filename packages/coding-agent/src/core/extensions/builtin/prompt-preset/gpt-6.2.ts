@@ -1,7 +1,7 @@
-// GPT-6.2 Astra and GPT-6.2 Sol preset: one standalone core (senpi#6979), second edition (senpi#7101).
+// Read-first core for the GPT-6 Astra and GPT-6.2 presets (senpi#6979, senpi#7101).
 // Both models share one prompting guide (developers.openai.com/api/docs/guides/latest-model, read
 // 2026-11-18) and openai/codex ships one instructions template for both (codex-rs/models-manager/
-// models.json at 5916098d02), so one preset renders both.
+// models.json at 5916098d02). GPT-6 Astra adopts the same core without changing its preset name.
 //
 // History. The first 6.2 preset (senpi#6942) was the gpt-6-astra core with five texts replaced: long
 // (3,466 o200k tokens on the terminal surface) and at odds with itself for a model the guide calls

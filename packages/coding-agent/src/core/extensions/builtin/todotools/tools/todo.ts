@@ -363,11 +363,11 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 			// A chat surface posts replies to a conversation, which has no handoff block to cue (senpi#2398).
 			const surface = ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env);
 			// The cue must name the handoff block the session's prompt defines: the GPT block presets
-			// cue their outcome-first block, the rewritten gpt-6.2 core defines no block to cue, and every
+			// cue their outcome-first block, the compact GPT-6 core defines no block to cue, and every
 			// other core keeps the default Ask / For you cue (senpi#6977).
 			const cue = formatHandoffCue(
 				readOnly || surface === "chat" ? undefined : handoffMomentOf(previousPhases, applied.phases, createsList),
-				presetHandoffCueKind(resolveActivePresetName(ctx)),
+				presetHandoffCueKind(resolveActivePresetName(ctx), ctx.model),
 			);
 			const summary = `${formatSummary(applied.phases, [], readOnly, ask)}${cue}`;
 			const text = corrections.length > 0 ? `${corrections.join("\n")}\n\n${summary}` : summary;

@@ -14,6 +14,7 @@ import {
 	type ResolvedPresetName as ContractResolvedPresetName,
 	presetSharedSections,
 	resolvePresetName as resolveContractPresetName,
+	usesReadFirstAstraCore,
 } from "./contract.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
 import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
@@ -67,34 +68,46 @@ export function resolvePresetName(
 	return resolveContractPresetName({ providerID: model.provider, modelID: model.id, name: model.name });
 }
 
-export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
+export function buildPreset(
+	name: ResolvedPresetName,
+	options: BuildDynamicSystemPromptOptions,
+	model?: ModelWithPromptPresetMetadata,
+): ResolvedPromptPreset {
 	let parts: readonly DynamicSystemPromptPart[] = [];
-	const preset = renderPreset(name, {
-		...options,
-		sharedSections: presetSharedSections(name),
-		onParts: (composed) => {
-			parts = composed.map((part) => ({
-				...part,
-				source:
-					part.name === "project_context" && part.source !== undefined && part.source !== "dynamic-prompt"
-						? part.source
-						: `prompt-preset:${name}`,
-			}));
-			options.onParts?.(composed);
+	const preset = renderPreset(
+		name,
+		{
+			...options,
+			sharedSections: presetSharedSections(name),
+			onParts: (composed) => {
+				parts = composed.map((part) => ({
+					...part,
+					source:
+						part.name === "project_context" && part.source !== undefined && part.source !== "dynamic-prompt"
+							? part.source
+							: `prompt-preset:${name}`,
+				}));
+				options.onParts?.(composed);
+			},
 		},
-	});
+		model,
+	);
 	return { ...preset, parts };
 }
 
 function renderPreset(
 	name: ResolvedPresetName,
 	options: BuildDynamicSystemPromptOptions,
+	model: ModelWithPromptPresetMetadata | undefined,
 ): Omit<ResolvedPromptPreset, "parts"> {
 	switch (name) {
 		case "gpt-6.2":
 			return { name, prompt: buildGpt62Prompt(options) };
 		case "gpt-6-astra":
-			return { name, prompt: buildGpt6AstraPrompt(options) };
+			return {
+				name,
+				prompt: usesReadFirstAstraCore(name, model) ? buildGpt62Prompt(options) : buildGpt6AstraPrompt(options),
+			};
 		case "gpt-5.6":
 			return { name, prompt: buildGpt56Prompt(options) };
 		case "gpt-5.5":
@@ -186,5 +199,5 @@ export function resolvePreset(
 	if (!name) {
 		return undefined;
 	}
-	return buildPreset(name, withDefaults(options));
+	return buildPreset(name, withDefaults(options), model);
 }

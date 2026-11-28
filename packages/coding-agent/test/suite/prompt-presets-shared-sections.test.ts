@@ -273,7 +273,8 @@ const REQUEST_ROWS: ReadonlyArray<{
 		},
 	},
 	{
-		modelId: "gpt-6-astra",
+		// This is the GPT-6 family baseline, still shipped for Sol after Astra moved to the 6.2 core.
+		modelId: "gpt-6-sol",
 		source: "836fe1c75",
 		hashes: {
 			"eval-false": "cd0bf8ee355421933235ff9b63bb68259f72b6e0313ae148efdf296fc54d11ee",
@@ -375,4 +376,14 @@ describe("shared sections per preset (senpi#5665)", () => {
 			expect(sha256(prompt)).toBe(expected);
 		});
 	});
+
+	it.each(Object.keys(VARIANTS) as VariantName[])(
+		"shares the assembled GPT-6.2 first-turn prompt with Astra: %s",
+		async (variantName) => {
+			const variant = VARIANTS[variantName];
+			const astra = await firstTurnPrompt("gpt-6-astra", variant);
+			const astra62 = await firstTurnPrompt("gpt-6.2-astra", variant);
+			expect(astra).toBe(astra62);
+		},
+	);
 });

@@ -41,8 +41,8 @@ function getGpt6SolAndLunaCatalogModels(): Model<Api>[] {
 }
 
 // The OpenAI GPT-6 guide ships one set of prompting practices for Astra, 6.1 Sol, Sol and Luna
-// (developers.openai.com/api/docs/guides/latest-model), so the whole family renders the
-// gpt-6-astra preset. The preset name stays "gpt-6-astra" because settings.json already pins it.
+// (developers.openai.com/api/docs/guides/latest-model). The preset name stays "gpt-6-astra"
+// because settings.json already pins it, but only GPT-6 Astra adopts the GPT-6.2 core.
 describe("GPT-6 Sol / 6.1 Sol / Luna prompt preset", () => {
 	it.each([
 		{ id: "gpt-6-sol", provider: "openai", api: "openai-responses" as const },
@@ -72,8 +72,6 @@ describe("GPT-6 Sol / 6.1 Sol / Luna prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("gpt-6-astra");
-		expect(preset?.prompt).toContain("## Intent Gate");
-		expect(preset?.prompt).toContain("## Initiative");
 	});
 
 	it.each(["GPT-6 Sol", "GPT-6.1 Sol", "GPT-6 Luna"])(
@@ -90,7 +88,7 @@ describe("GPT-6 Sol / 6.1 Sol / Luna prompt preset", () => {
 		},
 	);
 
-	it("renders the same prompt for Sol, 6.1 Sol and Luna as for Astra", () => {
+	it("keeps Sol, 6.1 Sol and Luna on the same core, distinct from Astra", () => {
 		// given
 		const options = {
 			cwd: "/repo",
@@ -108,10 +106,10 @@ describe("GPT-6 Sol / 6.1 Sol / Luna prompt preset", () => {
 		const luna = resolvePreset(createModel("gpt-6-luna"), AUTO, options);
 
 		// then
-		expect(sol?.prompt).toBe(astra?.prompt);
-		expect(sixOneSol?.prompt).toBe(astra?.prompt);
-		expect(luna?.prompt).toBe(astra?.prompt);
-		expect(sol?.prompt).not.toMatch(/\bAstra\b/);
+		expect(sol?.prompt).toBeDefined();
+		expect(sixOneSol?.prompt).toBe(sol?.prompt);
+		expect(luna?.prompt).toBe(sol?.prompt);
+		expect(astra?.prompt).not.toBe(sol?.prompt);
 	});
 
 	it.each(["gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-luna-fast", "openai/gpt-5.6-sol"])(
