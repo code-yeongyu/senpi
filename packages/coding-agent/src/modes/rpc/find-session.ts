@@ -24,6 +24,7 @@ import { canonicalSessionPath } from "./session-path-key.ts";
 const FIND_SESSION_FILE_LIMIT = 20_000;
 /** A session header is the file's first line; it carries the id and the folder and nothing else is read. */
 const HEADER_READ_BYTES = 64 * 1024;
+const HEADER_FIRST_READ_BYTES = 4 * 1024;
 const READERS = 16;
 
 class FindSessionTooManyError extends Error {
@@ -85,9 +86,15 @@ async function headerOf(file: string): Promise<{ id: string; cwd: string } | und
 	}
 	try {
 		const buffer = Buffer.allocUnsafe(HEADER_READ_BYTES);
-		const { bytesRead } = await handle.read(buffer, 0, HEADER_READ_BYTES, 0);
+		const first = await handle.read(buffer, 0, HEADER_FIRST_READ_BYTES, 0);
+		let bytesRead = first.bytesRead;
+		let newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
+		if (newline === -1 && bytesRead === HEADER_FIRST_READ_BYTES) {
+			const rest = await handle.read(buffer, bytesRead, HEADER_READ_BYTES - bytesRead, bytesRead);
+			bytesRead += rest.bytesRead;
+			newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
+		}
 		const data = buffer.subarray(0, bytesRead);
-		const newline = data.indexOf(0x0a);
 		if (newline === -1 && bytesRead === HEADER_READ_BYTES) return undefined;
 		const header: unknown = JSON.parse(data.subarray(0, newline === -1 ? bytesRead : newline).toString("utf8"));
 		if (!isRecord(header) || header.type !== "session" || typeof header.id !== "string") return undefined;
