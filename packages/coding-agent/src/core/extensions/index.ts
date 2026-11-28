@@ -188,6 +188,8 @@ export type {
 	SessionBeforeTreeResult,
 	SessionBoundaryDraft,
 	SessionCompactEvent,
+	SessionCompactRequestedEvent,
+	SessionCompactRequestedResult,
 	SessionCompactFailedEvent,
 	SessionContext,
 	SessionEvent,

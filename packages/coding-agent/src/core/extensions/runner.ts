@@ -127,6 +127,7 @@ import type {
 	SendMessageReceipt,
 	ServiceTier,
 	SessionBeforeCompactResult,
+	SessionCompactRequestedResult,
 	SessionBeforeForkResult,
 	SessionBeforeReloadResult,
 	SessionBeforeSwitchResult,
@@ -385,7 +386,9 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 				? SessionBeforeCompactResult | undefined
 				: TEvent extends { type: "session_before_tree" }
 					? SessionBeforeTreeResult | undefined
-					: undefined;
+					: TEvent extends { type: "session_compact_requested" }
+						? SessionCompactRequestedResult | undefined
+						: undefined;
 
 export type ExtensionErrorListener = (error: ExtensionError) => void;
 
@@ -2444,6 +2447,10 @@ export class ExtensionRunner {
 					const handlerResult = await handler(event, this.createContext(ext.path));
 					timer?.mark(basename(ext.path));
 
+					if (event.type === "session_compact_requested" && handlerResult) {
+						const served = handlerResult as SessionCompactRequestedResult;
+						if (served.compaction) return served as RunnerEmitResult<TEvent>;
+					}
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
 						if (result.cancel) {

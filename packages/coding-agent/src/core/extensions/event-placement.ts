@@ -22,6 +22,7 @@ export const EXTENSION_EVENT_PLACEMENT = {
 	session_before_fork: "loop",
 	session_before_reload: "runtime",
 	session_before_compact: "loop",
+	session_compact_requested: "loop",
 	session_compact: "loop",
 	session_compact_failed: "loop",
 	session_shutdown: "split",
