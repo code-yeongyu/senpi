@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { supportsFmt } from "./bun-fmt.mjs";
+import { resolveBunExecutable, supportsFmt } from "./bun-fmt.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -121,5 +121,93 @@ describe("CI format gate", () => {
 		assert.ok(fixScript, "expected a check:fix script for local autofix");
 		assert.match(fixScript, /npm run fmt(?![:\w])/);
 		assert.equal(packageJson.scripts.fmt, "node scripts/bun-fmt.mjs");
+	});
+});
+
+// The wrapper used to spawn bare `bun` through `shell: true` on win32, so a
+// forwarded path containing spaces was split by cmd.exe before it reached
+// bun (senpi#5599). It now resolves bun to an absolute path and spawns it
+// without a shell on every platform.
+describe("bun fmt wrapper resolves bun without a shell", () => {
+	it("prefers bun.exe over the PATHEXT shims on win32", () => {
+		// Given: a win32 PATH whose first entry holds both a real bun.exe
+		// and a bun.cmd shim.
+		const exists = (candidate) => candidate === "C:\\tools\\bun.exe" || candidate === "C:\\tools\\bun.cmd";
+
+		// When: the wrapper resolves bun for win32.
+		const resolved = resolveBunExecutable({ platform: "win32", pathEnv: "C:\\tools;C:\\other", exists });
+
+		// Then: the real binary wins, so the shim can never shadow it.
+		assert.equal(resolved, "C:\\tools\\bun.exe");
+	});
+
+	it("falls back to a bun.cmd shim on win32 when no bun.exe exists", () => {
+		// Given: a win32 PATH with only a bun.cmd shim.
+		const exists = (candidate) => candidate === "C:\\tools\\bun.cmd";
+
+		// When: the wrapper resolves bun for win32.
+		const resolved = resolveBunExecutable({ platform: "win32", pathEnv: "C:\\tools", exists });
+
+		// Then: the shim is used rather than failing outright.
+		assert.equal(resolved, "C:\\tools\\bun.cmd");
+	});
+
+	it("returns null when no bun is on PATH", () => {
+		// Given: PATH entries with no bun in any of them.
+		const exists = () => false;
+
+		// When: the wrapper resolves bun.
+		const resolved = resolveBunExecutable({ platform: "win32", pathEnv: "C:\\tools", exists });
+
+		// Then: the caller falls back to bare `bun` and reports the miss.
+		assert.equal(resolved, null);
+	});
+
+	it("resolves a bare bun on posix", () => {
+		// Given: a posix PATH whose first entry holds an executable bun.
+		const exists = (candidate) => candidate === "/opt/bun/bin/bun";
+
+		// When: the wrapper resolves bun for posix.
+		const resolved = resolveBunExecutable({ platform: "linux", pathEnv: "/opt/bun/bin:/usr/bin", exists });
+
+		// Then: the bare name resolves with no extension search.
+		assert.equal(resolved, "/opt/bun/bin/bun");
+	});
+
+	it("passes a path containing spaces to bun as one argument", (t) => {
+		// Given: a fake bun on PATH that records the argv it receives, and
+		// a file under a directory whose name contains spaces.
+		const dir = realpathSync(mkdtempSync(join(tmpdir(), "bun-fmt-spaced-")));
+		t.after(() => rmSync(dir, { recursive: true, force: true }));
+		const binDir = join(dir, "bin");
+		mkdirSync(binDir, { recursive: true });
+		const record = join(dir, "argv.jsonl");
+		const fakeBun = join(binDir, "bun");
+		writeFileSync(
+			fakeBun,
+			`#!/usr/bin/env node\nimport { appendFileSync } from "node:fs";\nconst argv = process.argv.slice(2);\nif (argv[0] === "--version") {\n\tconsole.log("1.4.4");\n} else {\n\tappendFileSync(${JSON.stringify(record)}, JSON.stringify(argv) + "\\n");\n}\n`,
+		);
+		chmodSync(fakeBun, 0o755);
+		const spacedDir = join(dir, "path with spaces");
+		mkdirSync(spacedDir, { recursive: true });
+		const spacedFile = join(spacedDir, "probe.ts");
+		writeFileSync(spacedFile, "export const value = 1;\n");
+
+		// When: the wrapper checks the spaced file.
+		const result = spawnSync(process.execPath, [fmtWrapper, "--check", spacedFile], {
+			env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
+			timeout: 60000,
+			encoding: "utf8",
+		});
+
+		// Then: the fake bun ran, and it saw the spaced path as one argument.
+		assert.equal(result.status, 0, `expected the check to pass. stdout: ${result.stdout}\nstderr: ${result.stderr}`);
+		const recorded = JSON.parse(readFileSync(record, "utf8").trim());
+		assert.equal(
+			recorded.filter((arg) => arg.includes("path with spaces")).length,
+			1,
+			`spaced path must arrive as one argument: ${JSON.stringify(recorded)}`,
+		);
+		assert.ok(recorded.includes(spacedFile), `expected argv to carry ${spacedFile}: ${JSON.stringify(recorded)}`);
 	});
 });
