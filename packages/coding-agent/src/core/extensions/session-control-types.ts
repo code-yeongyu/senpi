@@ -46,6 +46,17 @@ export interface SessionControlWakeEvent {
 	readonly delivery_ids?: readonly string[];
 }
 
+/**
+ * A delivery another session sent was admitted into this session's runtime (started, queued, steered or held), emitted
+ * at admission, before any turn takes it. Once per delivery id; never for a refused delivery. It carries only the
+ * delivery's id and the text the model will read.
+ */
+export interface ExternalMessageAdmittedEvent {
+	readonly type: "external_message_admitted";
+	readonly delivery_id: string;
+	readonly text: string;
+}
+
 export type ExternalDeliverAs = "steer" | "followUp";
 
 /**

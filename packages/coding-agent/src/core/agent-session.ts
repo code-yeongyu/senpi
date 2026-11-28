@@ -2149,6 +2149,16 @@ export class AgentSession {
 			now: this._fallbackNow,
 		});
 		this._extensionRunnerRef = config.extensionRunnerRef;
+		// Read at admission, so a reloaded runner hears it; before any turn takes the delivery (oh-my-openagent#15221).
+		this.externalAdmission.onAdmitted((admitted) => {
+			void this._extensionRunner
+				.emit({ type: "external_message_admitted", ...admitted })
+				.catch((error: unknown) =>
+					this._sessionLogger.warn("external_message_admitted_emit_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					}),
+				);
+		});
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._defaultToolNames = config.defaultToolNames ? new Set(config.defaultToolNames) : undefined;
 		this._usesDefaultTools = config.usesDefaultTools ?? false;

@@ -33,6 +33,12 @@ import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
 
 export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
 
+/** What `onAdmitted` reports: the delivery's id and its text, nothing else of the record. */
+export interface ExternalMessageAdmitted {
+	readonly delivery_id: string;
+	readonly text: string;
+}
+
 /**
  * The session already holds `MAX_HELD_PEER_DELIVERIES`: nothing was written and the delivery stays with its sender
  * (senpi#7628). The engine's own entry points answer it; it is not an `ExternalAdmissionKind`, so an extension's call
@@ -91,6 +97,7 @@ export class ExternalAdmission {
 	private readonly failed = new Map<string, string>();
 	private fileTakesWrites = true;
 	private readonly emittedListeners = new Set<(deliveryId: string) => void>();
+	private readonly admittedListeners = new Set<(admitted: ExternalMessageAdmitted) => void>();
 	private editorSource: (() => EditorHoldState) | undefined;
 	private closedReason: string | undefined;
 	private readonly port: ExternalAdmissionPort;
@@ -150,6 +157,12 @@ export class ExternalAdmission {
 		return () => this.settledListeners.delete(listener);
 	}
 
+	/** A delivery entered the runtime (started, queued, steered or held): once per id, never for a refusal. */
+	onAdmitted(listener: (admitted: ExternalMessageAdmitted) => void): () => void {
+		this.admittedListeners.add(listener);
+		return () => this.admittedListeners.delete(listener);
+	}
+
 	onEmitted(listener: (deliveryId: string) => void): () => void {
 		this.emittedListeners.add(listener);
 		return () => this.emittedListeners.delete(listener);
@@ -185,6 +198,14 @@ export class ExternalAdmission {
 	}
 
 	admit(input: AdmitExternalMessageInput, stamp: DeliveryStamp = {}): ExternalAdmissionAnswer {
+		const held = this.pending.has(input.delivery_id);
+		const result = this.admitOnce(input, stamp);
+		if (!held && this.pending.has(input.delivery_id))
+			for (const listener of this.admittedListeners) listener({ delivery_id: input.delivery_id, text: input.text });
+		return result;
+	}
+
+	private admitOnce(input: AdmitExternalMessageInput, stamp: DeliveryStamp): ExternalAdmissionAnswer {
 		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;
