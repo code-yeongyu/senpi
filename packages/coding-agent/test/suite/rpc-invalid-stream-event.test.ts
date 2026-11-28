@@ -47,7 +47,10 @@ function listenerSnapshot(): Map<NodeJS.Signals | "end", NodeListener[]> {
 	const signals: NodeJS.Signals[] = process.platform === "win32" ? ["SIGTERM"] : ["SIGTERM", "SIGHUP"];
 	return new Map<NodeJS.Signals | "end", NodeListener[]>([
 		["end", process.stdin.listeners("end") as NodeListener[]],
-		...signals.map((signal): [NodeJS.Signals, NodeListener[]] => [signal, process.listeners(signal) as NodeListener[]]),
+		...signals.map((signal): [NodeJS.Signals, NodeListener[]] => [
+			signal,
+			process.listeners(signal) as NodeListener[],
+		]),
 	]);
 }
 
@@ -88,7 +91,10 @@ describe("RPC stdio serializer guard", () => {
 				assistantMessageEvent: { type: "toolcall_start", contentIndex: 0, partial: assistant },
 			},
 		],
-		["a message_update that carries a user message", { type: "message_update", message: { role: "user", content: "bad" } }],
+		[
+			"a message_update that carries a user message",
+			{ type: "message_update", message: { role: "user", content: "bad" } },
+		],
 	])("answers %s with invalid_stream_event and shuts down with exit code 1", async (_name, event) => {
 		// Given: a stdio RPC host whose process exit is observed instead of taken.
 		const snapshot = listenerSnapshot();
