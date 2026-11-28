@@ -31,6 +31,8 @@ export interface OAuthCredentials {
 	refresh: string;
 	access: string;
 	expires: number;
+	/** Hash binding the last completed refresh input to these token values. */
+	refreshContinuity?: string;
 	/** ChatGPT slots without a route retain the legacy Codex protocol. */
 	route?: "siwc" | "codex";
 	[key: string]: unknown;

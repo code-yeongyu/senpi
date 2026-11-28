@@ -38,7 +38,8 @@ function mailbox() {
 }
 
 if (process.argv[2] === "child") {
-	const [, , , authPath, mode] = process.argv;
+	const [, , , authPath, mode, noIdentity] = process.argv;
+	const flatMode = mode === "flat" || mode === "identity-flat";
 	const inbox = mailbox();
 	process.on("message", (message) => inbox.put(message));
 	process.channel.ref();
@@ -49,7 +50,7 @@ if (process.argv[2] === "child") {
 	if (locked) {
 		const lock = credentials.withRefreshLock.bind(credentials);
 		credentials.withRefreshLock = (...args) => {
-			process.send({ type: "contending" });
+			process.send({ type: "contending", slotName: args[1] });
 			return lock(...args);
 		};
 	} else {
@@ -59,7 +60,7 @@ if (process.argv[2] === "child") {
 		let reads = 0;
 		credentials.read = async (...args) => {
 			const value = await read(...args);
-			if (++reads === (mode === "flat" ? 2 : 1)) {
+			if (++reads === (flatMode ? 2 : 1)) {
 				process.send({ type: "contending" });
 				await inbox.take("continue-read");
 			}
@@ -71,6 +72,9 @@ if (process.argv[2] === "child") {
 		auth: {
 			oauth: {
 				name: "Synthetic rotating token endpoint",
+				...(noIdentity === "true"
+					? {}
+					: { accountIdentity: ({ access }) => (access.includes("-a") ? "account-a" : "account-b") }),
 				login: async () => stored,
 				async refresh(credential) {
 					process.send({ type: "exchange", refresh: credential.refresh });
@@ -89,7 +93,7 @@ if (process.argv[2] === "child") {
 			mode === "catalog"
 				? await resolveRefreshCredential(provider, credentials, context, stored, new AbortController().signal)
 				: await resolveProviderAuth(provider, credentials, context, {
-						slotName: mode === "flat" ? undefined : mode,
+						slotName: flatMode ? undefined : mode,
 					});
 		process.send({ type: "result", access: mode === "catalog" ? result?.access : result?.auth.apiKey });
 	} catch (error) {
@@ -106,10 +110,12 @@ if (process.argv[2] === "child") {
 	const authPath = join(directory, "auth.json");
 	const [firstMode, secondMode] = process.argv.slice(2);
 	const independent = secondMode === "b";
+	const identityFlat = firstMode === "identity-flat";
+	const refreshA = identityFlat ? "refresh-a-flat" : "refresh-a";
 	const initial = {
 		type: "oauth",
-		access: "old-a",
-		refresh: "refresh-a",
+		access: identityFlat ? "old-a-flat" : "old-a",
+		refresh: refreshA,
 		expires: NOW - 1,
 		scopes: ["initial"],
 		accounts: [
@@ -124,7 +130,7 @@ if (process.argv[2] === "child") {
 	let exchanges = 0;
 	function start(mode) {
 		const events = mailbox();
-		const child = Bun.spawn([process.execPath, "--tsconfig-override", process.argv[4], import.meta.filename, "child", authPath, mode], {
+		const child = Bun.spawn([process.execPath, "--tsconfig-override", process.argv[4], import.meta.filename, "child", authPath, mode, process.argv[5]], {
 			cwd: fileURLToPath(new URL("../../../../..", import.meta.url)),
 			env: { PATH: process.env.PATH, HOME: directory, SENPI_CODING_AGENT_DIR: directory },
 			stdout: "pipe",
@@ -164,11 +170,15 @@ if (process.argv[2] === "child") {
 		const second = start(secondMode);
 		await Promise.all([first.events.take("ready"), second.events.take("ready")]);
 		first.child.send({ type: "go" });
-		await first.events.take("contending");
+		const firstContention = await first.events.take("contending");
 		first.child.send({ type: "continue-read" });
 		const firstExchange = await first.events.take("exchange");
 		second.child.send({ type: "go" });
-		await second.events.take("contending");
+		const secondContention = await second.events.take("contending");
+		if (identityFlat) {
+			assert.equal(firstContention.slotName, "a", "flat refresh must select the matching account lock");
+			assert.equal(secondContention.slotName, firstContention.slotName, "both refreshes must share that lock");
+		}
 		second.child.send({ type: "continue-read" });
 		if (independent) {
 			// The first endpoint remains blocked until another account completes.
@@ -177,7 +187,7 @@ if (process.argv[2] === "child") {
 			assert.equal((await second.events.take("result")).access, "new-refresh-b");
 		}
 		respond(first, firstExchange);
-		assert.equal((await first.events.take("result")).access, "new-refresh-a");
+		assert.equal((await first.events.take("result")).access, `new-${refreshA}`);
 		if (!independent) {
 			const next = await Promise.race([
 				second.events.take("exchange"),
@@ -188,7 +198,7 @@ if (process.argv[2] === "child") {
 				const result = await second.events.take("result");
 				assert.equal(result.error, undefined, "two processes consumed the same rotating refresh token");
 			} else {
-				assert.equal(next.access, "new-refresh-a");
+				assert.equal(next.access, `new-${refreshA}`);
 			}
 		}
 		assert.equal(exchanges, independent ? 2 : 1);
@@ -196,10 +206,10 @@ if (process.argv[2] === "child") {
 			assert.equal(await child.exited, 0);
 		}
 		const saved = JSON.parse(readFileSync(authPath, "utf8")).fixture;
-		assert.equal(saved.access, "new-refresh-a");
-		assert.equal(saved.refresh, "refresh-a-next");
+		assert.equal(saved.access, `new-${refreshA}`);
+		assert.equal(saved.refresh, `${refreshA}-next`);
 		assert.equal(saved.expires, FUTURE);
-		assert.equal(saved.accounts[0].refresh, "refresh-a-next");
+		assert.equal(saved.accounts[0].refresh, `${refreshA}-next`);
 		assert.equal(saved.accounts[1].refresh, independent ? "refresh-b-next" : "refresh-b");
 		console.log(`PASS ${firstMode}/${secondMode}: ${exchanges} exchange(s), replacement persisted`);
 		})()]);

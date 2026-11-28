@@ -5,9 +5,12 @@ import {
 	appendLoginSlot,
 	type Credential,
 	type CredentialSlot,
+	findFlatOAuthSlot,
 	isManagedSentinelSlot,
 	listSlots,
 	managedSentinelMaterial,
+	mergeRefreshed,
+	mergeRefreshedSlot,
 	type PooledCredential,
 	removeSlot,
 	repairManagedSentinelSlots,
@@ -429,5 +432,97 @@ describe("provider-managed sentinel slot repair", () => {
 		expect(
 			repairManagedSentinelSlots("anthropic-subscription", { type: "oauth", access: "a", refresh: "r", expires: 1 }),
 		).toBe(undefined);
+	});
+});
+
+describe("credential pool refresh", () => {
+	test("mergeRefreshed updates the identified slot when its tokens differ from the flat credential (senpi#3407)", () => {
+		const desynced: PooledCredential = {
+			type: "oauth",
+			access: "desynced-top-access",
+			refresh: "desynced-top-refresh",
+			expires: 100,
+			accounts: [
+				{ name: "default", source: "login", access: "old-slot-access", refresh: "old-slot-refresh", expires: 100 },
+				{ name: "secondary", source: "login", access: "sec-access", refresh: "sec-refresh", expires: 100 },
+			],
+		};
+		const refreshed: Credential = {
+			type: "oauth",
+			access: "fresh-access",
+			refresh: "fresh-refresh",
+			expires: 200,
+			clientId: "fresh-client",
+		};
+		if (desynced.type !== "oauth") throw new Error("expected OAuth credentials");
+		const matched = findFlatOAuthSlot(desynced, ({ access }) =>
+			access === "desynced-top-access" || access === "old-slot-access" ? "same-account" : undefined,
+		);
+		const merged = mergeRefreshed(desynced, refreshed, matched ?? null);
+		if (merged.type !== "oauth") throw new Error("expected OAuth credentials");
+		const [primary, secondary] = listSlots(merged);
+		expect(merged.access).toBe("fresh-access");
+		expect(merged.refresh).toBe("fresh-refresh");
+		expect(merged.expires).toBe(200);
+		expect(primary?.access).toBe("fresh-access");
+		expect(primary?.refresh).toBe("fresh-refresh");
+		expect(primary?.expires).toBe(200);
+		expect(merged.clientId).toBe("fresh-client");
+		expect(primary?.clientId).toBe("fresh-client");
+		expect(secondary?.access).toBe("sec-access");
+	});
+
+	test("mergeRefreshedSlot rotates the identified flat projection with its slot (senpi#3407)", () => {
+		const pooled: PooledCredential = {
+			type: "oauth",
+			access: "desynced-access",
+			refresh: "desynced-refresh",
+			expires: 100,
+			accounts: [
+				{ name: "default", source: "login", access: "old-access", refresh: "old-refresh", expires: 100 },
+				{ name: "secondary", source: "login", access: "sec-access", refresh: "sec-refresh", expires: 100 },
+			],
+		};
+		const refreshed: Credential = {
+			type: "oauth",
+			access: "fresh-access",
+			refresh: "fresh-refresh",
+			expires: 200,
+		};
+		if (pooled.type !== "oauth") throw new Error("expected OAuth credentials");
+		const matched = findFlatOAuthSlot(pooled, ({ access }) =>
+			access === "desynced-access" || access === "old-access" ? "same-account" : undefined,
+		);
+		const merged = mergeRefreshedSlot(pooled, "default", refreshed, matched ?? null);
+		if (merged.type !== "oauth") throw new Error("expected OAuth credentials");
+		const [primary, secondary] = listSlots(merged);
+		expect(merged.access).toBe("fresh-access");
+		expect(primary?.access).toBe("fresh-access");
+		expect(secondary?.access).toBe("sec-access");
+	});
+
+	test("refreshing the primary slot preserves a flat projection of another slot", () => {
+		const pooled: PooledCredential = {
+			type: "oauth",
+			access: "sec-access",
+			refresh: "sec-refresh",
+			expires: 100,
+			accounts: [
+				{ name: "default", source: "login", access: "old-access", refresh: "old-refresh", expires: 100 },
+				{ name: "secondary", source: "login", access: "sec-access", refresh: "sec-refresh", expires: 100 },
+			],
+		};
+		const refreshed: Credential = {
+			type: "oauth",
+			access: "fresh-access",
+			refresh: "fresh-refresh",
+			expires: 200,
+		};
+		const merged = mergeRefreshedSlot(pooled, "default", refreshed) as PooledCredential;
+		if (merged.type !== "oauth") throw new Error("expected OAuth credentials");
+		expect(merged.access).toBe("sec-access");
+		expect(merged.refresh).toBe("sec-refresh");
+		expect(merged.accounts?.[0]?.access).toBe("fresh-access");
+		expect(merged.accounts?.[1]?.access).toBe("sec-access");
 	});
 });
