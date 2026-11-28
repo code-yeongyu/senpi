@@ -1,3 +1,4 @@
+import { projectTrustFilePath } from "../../../project-executable-settings.ts";
 import { getAgentDir } from "../../../../config.ts";
 import { getFileContentRevision } from "../../../../utils/paths.ts";
 import { type AccountStrategy, parseAccountStrategy } from "../../../credential-pool/selection-order.ts";
@@ -236,7 +237,7 @@ export function loadAnthropicSubscriptionProviderSettingsFromDisk(
 	const agentDir = getAgentDir();
 	const key = `${cwd}|${settingsFingerprint(getSettingsPath(cwd, agentDir, "global"))}|${settingsFingerprint(
 		getSettingsPath(cwd, agentDir, "project"),
-	)}`;
+	)}|${settingsFingerprint(projectTrustFilePath(agentDir))}`;
 	let settingsManager =
 		cachedAnthropicSubscriptionManager?.cwd === cwd && cachedAnthropicSubscriptionManager.key === key
 			? cachedAnthropicSubscriptionManager.manager

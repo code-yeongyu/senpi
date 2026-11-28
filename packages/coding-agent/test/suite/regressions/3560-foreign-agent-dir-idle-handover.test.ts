@@ -6,7 +6,8 @@
 import { mkdirSync, realpathSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { runHostRequest } from "../../../src/modes/rpc/host-runner.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
 import { signalGeneration, stopHost } from "../../../src/modes/rpc/host-stop.ts";
@@ -111,27 +112,58 @@ describe.skipIf(process.platform === "win32")("an idle handover asked by another
 		expect((await probeSandboxHost(host.qa))?.runtimeBuildId).toBe(host.buildB.runtimeBuildId);
 	}, 180_000);
 
-	// omo#15197: stop and status prove the host from the key root before they act. With the owner proven but no
-	// key record for its launch under the key root in use, each answers a typed refusal (status: reachable, with the
-	// refusal) and the host keeps serving. An empty SENPI_RPC_KEY_ROOT stands in for a root that lacks the record.
-	it("answers stop and status for a host it cannot prove with a typed identity refusal", async () => {
-		const host = await rig("ih-fc");
-		const emptyRoot = foreignAgentDir(host);
-		const target = { socket: host.qa.socket, agentDir: host.qa.agentDir };
-		const saved = process.env.SENPI_RPC_KEY_ROOT;
-		process.env.SENPI_RPC_KEY_ROOT = emptyRoot;
-		try {
-			const refused = { action: "refuse", reason: "host_identity_unproven" };
-			expect(await stopHost({ ...target, force: true })).toMatchObject(refused);
-			expect(await readHostStatus(target)).toMatchObject({
-				reachable: true,
-				refusal: { code: "host_identity_unproven" },
-				lifecycle: null,
-			});
-		} finally {
-			if (saved === undefined) delete process.env.SENPI_RPC_KEY_ROOT;
-			else process.env.SENPI_RPC_KEY_ROOT = saved;
-		}
-		await expectStillServing(host);
+	describe("a host the key root in use cannot prove", () => {
+		// Starting a host is the slow part of these cases. It runs in a hook with its own budget, as the cases above give
+		// theirs, so a loaded machine slows the start instead of failing a case that only asks the host to refuse.
+		let host: HandoverRig;
+		beforeEach(async () => {
+			host = await rig("ih-fc");
+		}, 120_000);
+
+		// omo#15197: stop and status prove the host from the key root before they act. With the owner proven but no
+		// key record for its launch under the key root in use, each answers a typed refusal (status: reachable, with the
+		// refusal) and the host keeps serving. An empty SENPI_RPC_KEY_ROOT stands in for a root that lacks the record.
+		it("answers stop and status for a host it cannot prove with a typed identity refusal", async () => {
+			const emptyRoot = foreignAgentDir(host);
+			const target = { socket: host.qa.socket, agentDir: host.qa.agentDir };
+			const saved = process.env.SENPI_RPC_KEY_ROOT;
+			process.env.SENPI_RPC_KEY_ROOT = emptyRoot;
+			try {
+				const refused = { action: "refuse", reason: "host_identity_unproven" };
+				expect(await stopHost({ ...target, force: true })).toMatchObject(refused);
+				expect(await readHostStatus(target)).toMatchObject({
+					reachable: true,
+					refusal: { code: "host_identity_unproven" },
+					lifecycle: null,
+				});
+			} finally {
+				if (saved === undefined) delete process.env.SENPI_RPC_KEY_ROOT;
+				else process.env.SENPI_RPC_KEY_ROOT = saved;
+			}
+			await expectStillServing(host);
+		});
+
+		// senpi#7623: a generation that does not advertise the drain request file is asked by signal, and that path proves
+		// the host first. With no key record for its launch under the key root, the drain is refused typed and unsent.
+		it("refuses a signal drain for a host it cannot prove, sending no signal", async () => {
+			const emptyRoot = foreignAgentDir(host);
+			const target = { socket: host.qa.socket, agentDir: host.qa.agentDir };
+			await rm(generationPaths(createHostDaemonPaths(target), host.instanceId).drainWatchFile);
+			const kill = vi.spyOn(process, "kill");
+			const saved = process.env.SENPI_RPC_KEY_ROOT;
+			process.env.SENPI_RPC_KEY_ROOT = emptyRoot;
+			try {
+				expect(await stopHost({ ...target, drain: true })).toMatchObject({
+					action: "refuse",
+					reason: "host_identity_unproven",
+				});
+				expect(kill.mock.calls.filter(([, signal]) => signal === "SIGUSR1")).toEqual([]);
+			} finally {
+				kill.mockRestore();
+				if (saved === undefined) delete process.env.SENPI_RPC_KEY_ROOT;
+				else process.env.SENPI_RPC_KEY_ROOT = saved;
+			}
+			await expectStillServing(host);
+		});
 	});
 });

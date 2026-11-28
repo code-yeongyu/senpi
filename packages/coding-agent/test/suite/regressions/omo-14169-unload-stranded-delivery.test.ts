@@ -2,7 +2,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
-import { deliveryIdOf } from "../../../src/core/external-admission.ts";
+import { deliveryIdOf } from "../../../src/core/delivery-ids.ts";
 import { messageTicket } from "../../../src/core/lifecycle-delivery.ts";
 import { abortAndSettle } from "../../../src/modes/rpc/session-release-interrupt.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";

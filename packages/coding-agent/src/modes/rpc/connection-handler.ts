@@ -188,6 +188,7 @@ import { runPauseForRun, runResumeForRun } from "./run-hold-commands.ts";
 import { interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
+import { RPC_ERROR_TOOLS_DISABLED, sessionToolsDisabled } from "./session-tools-disabled.ts";
 import { subscribeStructuredSessionRecords } from "./structured-session-records.ts";
 import { RpcSessionRelocation } from "./session-relocation.ts";
 import {
@@ -1997,6 +1998,13 @@ export function createRpcConnectionHandler(
 				return success(id, "set_label");
 
 			case "bash": {
+				if (sessionToolsDisabled(runtimeHost.launchProfile))
+					return error(
+						id,
+						"bash",
+						`${RPC_ERROR_TOOLS_DISABLED}: this session was opened with no tools`,
+						RPC_ERROR_TOOLS_DISABLED,
+					);
 				if (routingSessionId !== undefined) outputEvent({ type: "bash_start" });
 				try {
 					const eventResult = await session.extensionRunner.emitUserBash({

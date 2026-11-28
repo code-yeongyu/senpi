@@ -1,5 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { join } from "node:path";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { engineBuildIdentity, engineBuildIdentityFrom } from "../../../src/core/engine-build-identity.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
@@ -131,6 +132,27 @@ describe.skipIf(process.platform === "win32")("stale old-engine hosts (#3268)", 
 			process.kill(host, "SIGCONT");
 		}
 	}, 90_000);
+
+	// senpi#7623: the judge proves a host stale, then the host's key record is gone by the time the stop probes it. The
+	// stop cannot prove the host, so gc keeps it as stale_unproven_owner and never signals it.
+	describe("a stale host its stop cannot prove", () => {
+		let unproven: Awaited<ReturnType<typeof idleHost>>;
+		beforeAll(async () => {
+			unproven = await idleHost("unproven");
+		}, 90_000);
+
+		it("is kept as stale_unproven_owner, unsignalled", async () => {
+			const { qa, supervisor, host } = unproven;
+			const result = await gcHostEndpoints(qa.agentDir, {
+				staleEngine,
+				_test: { beforeStaleStop: () => rm(join(qa.agentDir, "rpc", "keys"), { recursive: true, force: true }) },
+			});
+			expect(result.stopped).toBeUndefined();
+			expect(result.kept).toEqual([expect.objectContaining({ socket: qa.socket, reason: "stale_unproven_owner" })]);
+			expect(processAlive(supervisor)).toBe(true);
+			expect(processAlive(host)).toBe(true);
+		});
+	});
 
 	it("never judges a live host without the stale-engine option", async () => {
 		const { qa, supervisor } = await idleHost("plain");

@@ -1,4 +1,6 @@
 name: Build Binaries
+# senpi#7469: a dispatched recovery run runs on main, so its title carries the tag for publish-npm.yml's publisher guard.
+run-name: Build Binaries ${{ github.event.inputs.tag || github.ref_name }}
 
 on:
   push:
@@ -320,15 +322,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOT_BEFORE: ${{ steps.dispatch.outputs.not_before }}
+          VERSION: ${{ steps.dispatch.outputs.version }}
         run: |
           set -euo pipefail
 
-          # The dispatched run can take a few seconds to appear in the API.
+          # The dispatched run can take a while to appear in the API under a hosted-runner backlog (over a minute on
+          # 2026.11.28-1, senpi#7469), so wait up to three minutes, and match this tag's publish-only run by its title
+          # (publish-npm.yml run-name: "Release <version> publish-only") as well as by creation time.
           run_id=""
-          for _ in $(seq 1 12); do
+          for _ in $(seq 1 36); do
             run_id="$(gh run list --workflow publish-npm.yml --event workflow_dispatch --limit 20 \
-              --json databaseId,createdAt \
-              --jq "[.[] | select(.createdAt >= \"${NOT_BEFORE}\")] | .[0].databaseId // empty")"
+              --json databaseId,createdAt,displayTitle \
+              --jq "[.[] | select(.createdAt >= \"${NOT_BEFORE}\")
+                      | select(.displayTitle | split(\" \") | (any(. == \"${VERSION}\") and any(. == \"publish-only\") and (any(. == \"dry-run\") | not)))]
+                    | .[0].databaseId // empty")"
             if [[ -n "${run_id}" ]]; then
               break
             fi

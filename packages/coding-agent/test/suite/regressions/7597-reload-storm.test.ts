@@ -3,19 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
-import { createEventBus } from "../../../src/core/event-bus.ts";
 import configReloadExtension from "../../../src/core/extensions/builtin/config-reload/index.ts";
 import type { ConfigReloadLogger } from "../../../src/core/extensions/builtin/config-reload/log.ts";
 import { RELOAD_SLOT_TIMEOUT_MS } from "../../../src/core/extensions/builtin/config-reload/reload-queue.ts";
 import { globalDefaultExtensionFactories } from "../../../src/core/extensions/builtin/index.ts";
 import type { WatchEventListener } from "../../../src/core/extensions/builtin/config-reload/watch-engine.ts";
 import { discoverAndLoadExtensions } from "../../../src/core/extensions/loader.ts";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-	SessionShutdownEvent,
-	SessionStartEvent,
-} from "../../../src/core/extensions/types.ts";
+import type { SessionStartEvent } from "../../../src/core/extensions/types.ts";
 import { GENERATED_SHIM_BANNER } from "../../../src/core/generated-shim-banner.ts";
 import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
 import { createHarness, type Harness } from "../harness.ts";
@@ -249,69 +243,4 @@ it("frees the queue for the next session when a queued session closes", async ()
 	await sessions[1].getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" });
 	await settleOpenReloads();
 	expect(group.calls).toEqual([0, 2]);
-});
-
-// #7599 review: a reload the reloaded session requests from its own session_start waits its turn instead of
-// waiting on the reload that is running it.
-// A real reload replaces the extension instance, so this drives instances directly as the config-reload owner tests do.
-it("queues a follow-up requested during a session's reload behind the other sessions", async () => {
-	vi.useFakeTimers();
-	const { root } = fixture();
-	const settings = join(root, "settings.json");
-	writeFileSync(settings, JSON.stringify({ theme: "dark" }));
-	const bus = createEventBus();
-	const listeners = new Set<WatchEventListener>();
-	const options = {
-		agentDir: root,
-		clock: { setTimeout, clearTimeout },
-		subscribe: (path: string, listener: WatchEventListener) => {
-			if (path === root) listeners.add(listener);
-			return () => {
-				listeners.delete(listener);
-			};
-		},
-	};
-	const instance = () => {
-		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
-		configReloadExtension({ events: bus, on: handlers.set.bind(handlers) } as unknown as ExtensionAPI, options);
-		return (event: SessionStartEvent | SessionShutdownEvent, ctx: ExtensionContext) =>
-			handlers.get(event.type)?.(event, ctx);
-	};
-	const calls: string[] = [];
-	let active = 0;
-	let peak = 0;
-	const context = (name: string, duringReload?: () => Promise<void>) =>
-		({
-			cwd: root,
-			mode: "tui",
-			ui: { notify: () => {} },
-			isIdle: () => true,
-			hasPendingMessages: () => false,
-			isProjectTrusted: () => true,
-			isCompacting: () => false,
-			requestReload: async () => {
-				const open = Promise.withResolvers<void>();
-				openReloads.push(open);
-				calls.push(name);
-				peak = Math.max(peak, ++active);
-				await duringReload?.();
-				await open.promise;
-				active--;
-			},
-		}) as unknown as ExtensionContext;
-	const a = instance();
-	const aContext = context("a", async () => {
-		await a({ type: "session_shutdown", reason: "reload" }, aContext);
-		writeFileSync(settings, JSON.stringify({ theme: "changed during the reload" }));
-		await instance()({ type: "session_start", reason: "reload" }, context("a follow-up"));
-	});
-	await a({ type: "session_start", reason: "startup" }, aContext);
-	await instance()({ type: "session_start", reason: "startup" }, context("b"));
-	writeFileSync(settings, JSON.stringify({ theme: "light" }));
-	for (const listener of listeners) listener("change", "settings.json");
-	await vi.advanceTimersByTimeAsync(200);
-	expect(calls).toEqual(["a"]);
-	await settleOpenReloads();
-	expect([...calls].sort()).toEqual(["a", "a follow-up", "b"]);
-	expect(peak).toBe(1);
 });

@@ -62,7 +62,7 @@ it("a peer delivery behind the resume-window cap is answered held with the cap, 
 	const answer = await admitAndSettle(h, "cap-1", "[from lead] next step");
 	expect(h.faux.state.callCount).toBe(8);
 	expect(answer).toMatchObject({ kind: "held", engine_turn_cap: { reason: "cap-per-resume-window", count: 8 } });
-	expect(answer.holds).toBeUndefined();
+	expect(answer).not.toHaveProperty("holds");
 
 	const state = buildRpcSessionState(h.session);
 	expect(state.engineTurnCap).toEqual({ reason: "cap-per-resume-window", count: 8 });

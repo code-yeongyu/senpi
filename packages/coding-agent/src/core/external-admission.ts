@@ -19,20 +19,31 @@ import {
 	type AdmittedDeliveries,
 	type ExternalAdmissionResult,
 	type ExternalDeliverAs,
-	isSessionControlDeliveryDetails,
 	SESSION_CONTROL_DELIVERY_TYPE,
 	type SessionAdmissionGate,
 	type SessionControlDeliveryDetails,
 	type SessionControlRemoteOrigin,
 } from "./extensions/session-control-types.ts";
+import { deliveryIdOf, deliveryIdsOf } from "./delivery-ids.ts";
 import type { HoldKind } from "./engine-turn-hold.ts";
-import { heldNoticeDeliveryIds } from "./engine-turn-hold-notices.ts";
+import { MAX_HELD_PEER_DELIVERIES } from "./engine-turn-hold-notices.ts";
 import type { EngineTurnCap } from "./engine-turn-limit.ts";
 import type { CustomMessage } from "./messages.ts";
-import type { HistoryReducer } from "./session-history-reduce.ts";
 import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
 
 export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
+
+/**
+ * The session already holds `MAX_HELD_PEER_DELIVERIES`: nothing was written and the delivery stays with its sender
+ * (senpi#7628). The engine's own entry points answer it; it is not an `ExternalAdmissionKind`, so an extension's call
+ * throws it instead (`session-control-actions.ts`).
+ */
+export interface HeldDeliveriesFull {
+	readonly kind: "held_deliveries_full";
+	readonly turn_epoch: number;
+}
+
+export type ExternalAdmissionAnswer = ExternalAdmissionResult | HeldDeliveriesFull;
 
 export interface ExternalAdmissionPort {
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
@@ -41,6 +52,8 @@ export interface ExternalAdmissionPort {
 	readonly heldBy: () => readonly HoldKind[];
 	/** The engine-turn cap that would stop a delivery's turn now, so a start is answered `held` (senpi#7138). */
 	readonly cappedBy: () => EngineTurnCap | undefined;
+	/** Distinct peer deliveries the session's held notices keep now (senpi#7588). */
+	readonly heldPeerDeliveries: () => number;
 	/** Synchronously enqueues into the runtime's own queue for `lane`. */
 	readonly enqueue: (message: SessionControlDeliveryMessage, lane: ExternalDeliverAs) => void;
 	/** Starts a turn carrying `message`; settles when that run is over, whether or not it wrote the entry. */
@@ -63,8 +76,11 @@ export interface DeliveryStamp {
 	readonly turnMark?: InputTurnMark;
 }
 
-/** `capped`: a start answered held with the engine-turn cap; it opens no run, so it is neither busy nor joined. */
-type PendingLane = ExternalDeliverAs | "start" | "capped" | (() => boolean);
+/**
+ * `capped`: a start answered held with the engine-turn cap. `held`: a start answered held by a hold a peer cannot
+ * release, until its held notice is written. Neither opens a run, so neither is busy nor joined (senpi#7628).
+ */
+type PendingLane = ExternalDeliverAs | "start" | "capped" | "held" | (() => boolean);
 
 export class ExternalAdmission {
 	private turnEpochValue = 0;
@@ -168,7 +184,7 @@ export class ExternalAdmission {
 			: { can_admit: false, hold_reason: editor.hold_reason, ...base };
 	}
 
-	admit(input: AdmitExternalMessageInput, stamp: DeliveryStamp = {}): ExternalAdmissionResult {
+	admit(input: AdmitExternalMessageInput, stamp: DeliveryStamp = {}): ExternalAdmissionAnswer {
 		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;
@@ -176,6 +192,8 @@ export class ExternalAdmission {
 		if (this.pending.has(id) || this.emitted.has(id) || this.failed.has(id)) {
 			return { kind: "already_admitted", turn_epoch };
 		}
+		// Every entry point shares the cap, and nothing is written past it, so the sender keeps the delivery (senpi#7628).
+		if (this.heldPeerDeliveries() >= MAX_HELD_PEER_DELIVERIES) return { kind: "held_deliveries_full", turn_epoch };
 		if (!this.gate().can_admit) return { kind: "held_draft", turn_epoch };
 		// While a delivery start has not begun its run, the turn it opens is already the one its admission was answered
 		// with (senpi#7478), so a steer naming it is meant for that run, as one naming the current epoch always was.
@@ -190,13 +208,13 @@ export class ExternalAdmission {
 		if (!this.isBusy() && input.whenIdle !== "queue") {
 			const holds = this.port.heldBy();
 			const cap = holds.length > 0 ? undefined : this.port.cappedBy();
-			this.pending.set(id, cap === undefined ? "start" : "capped");
+			this.pending.set(id, holds.length > 0 ? "held" : cap === undefined ? "start" : "capped");
 			this.startIssuedAt = turn_epoch;
 			// A start that settles without writing the entry left it queued for later (the runtime's
 			// admission-retention path): from then on it is held like any queued delivery.
 			void this.port.start(message).finally(() => {
 				const lane = this.pending.get(id);
-				if (lane === "start" || lane === "capped") this.pending.set(id, "followUp");
+				if (lane === "start" || lane === "capped" || lane === "held") this.pending.set(id, "followUp");
 			});
 			// A held start is kept as a notice and starts once its hold is released: the sender is told it waits (senpi#6490).
 			if (holds.length > 0) return { kind: "held", holds: [...holds], turn_epoch };
@@ -237,11 +255,13 @@ export class ExternalAdmission {
 	/** A message's transcript entry was written: the file takes writes; a delivery's own entry makes it emitted. */
 	observePersisted(message: AgentMessage): void {
 		this.fileTakesWrites = true;
-		const id = deliveryIdOf(message);
-		if (id === undefined || this.emitted.has(id)) return;
-		this.pending.delete(id);
-		this.emitted.add(id);
-		for (const listener of this.emittedListeners) listener(id);
+		// A folded turn's one entry carries a run of held deliveries: it settles each of them (senpi#7628).
+		for (const id of deliveryIdsOf(message)) {
+			if (this.emitted.has(id)) continue;
+			this.pending.delete(id);
+			this.emitted.add(id);
+			for (const listener of this.emittedListeners) listener(id);
+		}
 	}
 
 	/**
@@ -250,10 +270,11 @@ export class ExternalAdmission {
 	 */
 	observeRefused(message: AgentMessage, error: string): void {
 		this.fileTakesWrites = false;
-		const id = deliveryIdOf(message);
-		if (id === undefined || this.emitted.has(id)) return;
-		this.pending.delete(id);
-		this.failed.set(id, error);
+		for (const id of deliveryIdsOf(message)) {
+			if (this.emitted.has(id)) continue;
+			this.pending.delete(id);
+			this.failed.set(id, error);
+		}
 	}
 
 	/** Whether admission answered this delivery held with the engine-turn cap, so its start must open no run (senpi#7138). */
@@ -273,7 +294,8 @@ export class ExternalAdmission {
 	dropQueued(): void {
 		this.releaseRestored();
 		for (const [id, lane] of this.pending) {
-			if (lane !== "start" && lane !== "capped" && typeof lane !== "function") this.pending.delete(id);
+			if (lane !== "start" && lane !== "capped" && lane !== "held" && typeof lane !== "function")
+				this.pending.delete(id);
 		}
 	}
 
@@ -299,6 +321,16 @@ export class ExternalAdmission {
 		if (this.port.isBusy()) return true;
 		for (const lane of this.pending.values()) if (lane === "start") return true;
 		return false;
+	}
+
+	/**
+	 * The held notices written, plus the held starts whose notice is still on its way: a delivery is written only after
+	 * an await, so a burst of admissions would otherwise all see the count from before it.
+	 */
+	private heldPeerDeliveries(): number {
+		let inFlight = 0;
+		for (const lane of this.pending.values()) if (lane === "held") inFlight += 1;
+		return this.port.heldPeerDeliveries() + inFlight;
 	}
 }
 
@@ -333,28 +365,4 @@ function deliveryMessage(input: AdmitExternalMessageInput, stamp: DeliveryStamp)
 	// The mark rides the message into the run, where the turn that consumes it takes its origin (turn-origin.ts).
 	if (stamp.turnMark !== undefined) markInputTurnOrigin(message, stamp.turnMark);
 	return message;
-}
-
-/**
- * Every delivery id the transcript holds an entry for: what answers for the process-lifetime ledger after a restart.
- * A delivery held while paused lives only in its `session-notice` entry until a turn takes it (senpi#7588).
- */
-export const writtenDeliveryIds: HistoryReducer<Set<string>> = {
-	initial: () => new Set(),
-	add: (ids, entry) => {
-		if (entry.type === "custom" && entry.customType === "session-notice")
-			for (const id of heldNoticeDeliveryIds(entry.data)) ids.add(id);
-		else if (
-			entry.type === "custom_message" &&
-			entry.customType === SESSION_CONTROL_DELIVERY_TYPE &&
-			isSessionControlDeliveryDetails(entry.details)
-		)
-			ids.add(entry.details.delivery_id);
-		return ids;
-	},
-};
-
-export function deliveryIdOf(message: AgentMessage): string | undefined {
-	if (message.role !== "custom" || message.customType !== SESSION_CONTROL_DELIVERY_TYPE) return undefined;
-	return isSessionControlDeliveryDetails(message.details) ? message.details.delivery_id : undefined;
 }

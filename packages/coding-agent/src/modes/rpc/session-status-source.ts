@@ -103,7 +103,7 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
  */
 function activityFields(
 	entry: RpcSessionEntry,
-): Pick<RpcSessionRow, "archived" | "settled" | "settledBy" | "activity" | "waiting" | "model"> {
+): Pick<RpcSessionRow, "archived" | "settled" | "settledBy" | "activity" | "waiting" | "model" | "persistence"> {
 	const session = entry.runtime?.session;
 	const state = entry.worker?.snapshot?.state;
 	const streaming = session !== undefined ? session.isStreaming === true : state?.isStreaming === true;
@@ -116,6 +116,7 @@ function activityFields(
 		activity: streaming ? "running" : "idle",
 		...(waiting === undefined ? {} : { waiting }),
 		...(model !== undefined ? { model } : {}),
+		...(entry.profile.persistence === "none" ? { persistence: "none" as const } : {}),
 	};
 }
 

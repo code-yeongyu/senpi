@@ -1,3 +1,40 @@
+## 2026-11-28 - The public extension loader resolves generated default shims (#7597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/generated-default-shim.ts` (new) resolves a generated default-extension shim in any agent dir to this process's in-process builtin factory, skips one whose target is gone, and leaves every other file to the regular import.
+- `packages/coding-agent/src/core/extensions/loader.ts` `discoverAndLoadExtensions` loads with that resolver, as `DefaultResourceLoader` does.
+
+### Why
+
+- Without it, the public loader imported a generated shim's URL, which can be another installation's builtin and its whole module graph.
+
+### Why an extension could not handle it
+
+- The loader picks the module for a discovered extension path before any extension runs.
+
+### Expected merge conflict zones
+
+- The `loadExtensions` call at the end of `discoverAndLoadExtensions` and the loader's import block.
+
+## 2026-11-27 - The runner's project-trust function defaults to false (senpi#6362)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `isProjectTrustedFn` defaults to `() => false` until the runtime binds the real decision.
+
+### Why
+
+- An extension that reads project settings before binding must not see an unbound runner as trusted.
+
+### Why an extension could not handle it
+
+- The default lives in the runner that every extension context reads.
+
+### Expected merge conflict zones
+
+- LOW: the `isProjectTrustedFn` field initializer in `runner.ts`.
+
 ## 2026-11-25 - `ctx.telemetryPermitted` (senpi#7446)
 
 ### What changed
