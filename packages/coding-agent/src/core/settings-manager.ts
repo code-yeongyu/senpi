@@ -69,6 +69,7 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { executableSettingPathsIn, savedProjectTrusted, withoutSettingPaths } from "./project-executable-settings.ts";
 import { parseSettingsJson } from "./settings-json.ts";
 import { withoutOverride } from "./settings-overrides.ts";
 import { removeRetiredSettingsKeys, writeRawScopedSettings } from "./settings-retired-keys.ts";
@@ -858,7 +859,15 @@ export class SettingsManager {
 		options: SettingsManagerCreateOptions = {},
 	): SettingsManager {
 		const storage = new FileSettingsStorage(cwd, agentDir);
-		return SettingsManager.fromStorage(storage, options);
+		const manager = SettingsManager.fromStorage(storage, options);
+		// senpi#6362: settings that name an executable or a command line are honoured only from global settings or a
+		// trusted project. A reader that passes no trust decision gets the one the person saved for this folder.
+		if (options.projectTrusted === undefined) {
+			const named = executableSettingPathsIn(manager.getProjectSettings());
+			if (named.length > 0 && !savedProjectTrusted(cwd, agentDir))
+				manager.dropUntrustedProjectKeys(named, getSettingsPath(cwd, agentDir, "project"));
+		}
+		return manager;
 	}
 
 	/** Create a SettingsManager from an arbitrary storage backend */
@@ -902,11 +911,22 @@ export class SettingsManager {
 		return manager;
 	}
 
+	/** Drops project keys an untrusted project may not set, and reports each as ignored (senpi#6362). */
+	private dropUntrustedProjectKeys(keys: readonly string[], path: string): void {
+		this.projectSettings = withoutSettingPaths(this.projectSettings, keys);
+		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		for (const key of keys)
+			this.errors.push(
+				toSettingsError("project", new Error(`project setting ${key} ignored: the project is not trusted`), path),
+			);
+	}
+
 	/** Create an in-memory SettingsManager (no file I/O) */
 	static inMemory(settings: Partial<Settings> = {}, options: SettingsManagerCreateOptions = {}): SettingsManager {
 		const storage = new InMemorySettingsStorage();
 		const initialSettings = SettingsManager.migrateSettings(structuredClone(settings) as Record<string, unknown>);
 		storage.withLock("global", () => JSON.stringify(initialSettings, null, 2));
+		// Supplied by the calling code, never read from a repository, so its project scope is the caller's to trust.
 		return SettingsManager.fromStorage(storage, options);
 	}
 
