@@ -70,8 +70,8 @@ function describeHandTools(source: HandToolCatalogSource): JsonValue {
  * for every loop hook; `sessionId` and `idle` are checked like theirs.
  */
 export function withToolCatalog(hooks: LooplessLoopHooks, source: HandToolCatalogSource): LooplessLoopHooks {
-	return async (event, payload) => {
-		if (event !== DESCRIBE_TOOLS_EVENT) return hooks(event, payload);
+	return async (event, payload, cancel) => {
+		if (event !== DESCRIBE_TOOLS_EVENT) return hooks(event, payload, cancel);
 		if (!isRecord(payload) || typeof payload.sessionId !== "string" || typeof payload.idle !== "boolean")
 			throw new Error(`malformed ${DESCRIBE_TOOLS_EVENT} payload`);
 		return describeHandTools(source);

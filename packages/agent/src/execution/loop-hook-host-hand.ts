@@ -7,8 +7,11 @@ import {
 	type LoopHookMessage,
 } from "./loop-hook-host-protocol.ts";
 
-/** Runs the user's hooks for one loop event on this machine and returns what they produced. */
-export type LoopHookRunner = (event: string, payload: JsonValue) => Promise<JsonValue>;
+/**
+ * Runs the user's hooks for one loop event on this machine and returns what they produced. `signal` aborts when the loop
+ * host cancels the call (its caller stopped waiting).
+ */
+export type LoopHookRunner = (event: string, payload: JsonValue, signal: AbortSignal) => Promise<JsonValue>;
 
 /** The points of one hook call on the hand, in order; a kill-point probe may stop the process at any of them. */
 export type LoopHookPoint = "received" | "started" | "ran" | "replied";
@@ -44,6 +47,8 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 	const { transport, lane } = options;
 	const instance = options.instance ?? crypto.randomUUID();
 	const answers = new Map<string, LoopHookMessage | undefined>();
+	/** The calls whose hooks are running, by ID, so a cancel reaches them. */
+	const running = new Map<string, AbortController>();
 	let dead = false;
 
 	const send = (message: LoopHookMessage): Promise<void> => transport.send(lane, encodeLoopHookMessage(message));
@@ -65,33 +70,42 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 		}
 		point("received", call.callId);
 		answers.set(call.callId, undefined);
-		await send({ kind: "hook.started", callId: call.callId, instance });
-		point("started", call.callId);
-		let answer: LoopHookMessage;
+		// Registered before the first await: a cancel the lane delivers right behind its call finds it.
+		const controller = new AbortController();
+		running.set(call.callId, controller);
 		try {
-			answer = { kind: "hook.reply", callId: call.callId, result: await options.run(call.event, call.payload) };
-		} catch (error) {
-			answer = {
-				kind: "hook.failed",
-				callId: call.callId,
-				error: error instanceof Error ? error.message : String(error),
-			};
+			await send({ kind: "hook.started", callId: call.callId, instance });
+			point("started", call.callId);
+			let answer: LoopHookMessage;
+			try {
+				const result = await options.run(call.event, call.payload, controller.signal);
+				answer = { kind: "hook.reply", callId: call.callId, result };
+			} catch (error) {
+				answer = {
+					kind: "hook.failed",
+					callId: call.callId,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+			point("ran", call.callId);
+			answers.set(call.callId, answer);
+			await send(answer);
+			point("replied", call.callId);
+		} finally {
+			running.delete(call.callId);
 		}
-		point("ran", call.callId);
-		answers.set(call.callId, answer);
-		await send(answer);
-		point("replied", call.callId);
 	};
 
-	transport.onFrame(async (frame: TransportFrame) => {
+	transport.onFrame((frame: TransportFrame) => {
 		if (dead) return;
 		const message = decodeLoopHookMessage(frame.payload);
-		if (message?.kind !== "hook.call") return;
-		try {
-			await serve(message);
-		} catch (error) {
-			options.onFault?.(error);
+		if (message?.kind === "hook.cancel") {
+			running.get(message.callId)?.abort();
+			return;
 		}
+		if (message?.kind !== "hook.call") return;
+		// Not awaited: the transport holds a lane until its handler settles, and the call's cancel follows it on the lane.
+		serve(message).catch((error: unknown) => options.onFault?.(error));
 	});
 
 	return {
