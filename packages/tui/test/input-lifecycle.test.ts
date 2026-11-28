@@ -40,33 +40,36 @@ describe("Input container lifecycle", () => {
 		});
 	}
 
-	it("scrubs secret editing state and callbacks when its container is disposed", () => {
-		const container = new Container();
-		const input = new Input({ secret: true });
-		let callbackCalls = 0;
-		input.onEscape = input.onSubmit = () => {
-			callbackCalls += 1;
-		};
-		container.addChild(input);
-		input.handleInput("synthetic-secret");
-		input.handleInput("\x01");
-		input.handleInput("\x0b");
-		input.handleInput("private");
-		input.handleInput("\x1b[200~unfinished");
+	for (const removal of ["dispose", "clear", "removeChild"] as const) {
+		it(`scrubs secret editing state and callbacks on ${removal}`, () => {
+			const container = new Container();
+			const input = new Input({ secret: true });
+			let callbackCalls = 0;
+			input.onEscape = input.onSubmit = () => {
+				callbackCalls += 1;
+			};
+			container.addChild(input);
+			input.handleInput("synthetic-secret");
+			input.handleInput("\x01");
+			input.handleInput("\x0b");
+			input.handleInput("private");
+			input.handleInput("\x1b[200~unfinished");
 
-		container.dispose();
+			if (removal === "removeChild") container.removeChild(input);
+			else container[removal]();
 
-		assert.equal(input.getValue(), "");
-		input.handleInput("\x1f");
-		input.handleInput("\x19");
-		input.handleInput("\x1b[201~");
-		assert.equal(input.getValue(), "");
-		input.handleInput("\x1b");
-		input.handleInput("\r");
-		assert.equal(callbackCalls, 0);
-		input.handleInput("x");
-		input.handleInput("\x1b[D");
-		input.handleInput("y");
-		assert.equal(input.getValue(), "yx");
-	});
+			assert.equal(input.getValue(), "");
+			input.handleInput("\x1f");
+			input.handleInput("\x19");
+			input.handleInput("\x1b[201~");
+			assert.equal(input.getValue(), "");
+			input.handleInput("\x1b");
+			input.handleInput("\r");
+			assert.equal(callbackCalls, 0);
+			input.handleInput("x");
+			input.handleInput("\x1b[D");
+			input.handleInput("y");
+			assert.equal(input.getValue(), "yx");
+		});
+	}
 });
