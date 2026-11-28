@@ -4140,7 +4140,10 @@ export class AgentSession {
 		if (lastAssistant?.role !== "assistant") {
 			return false;
 		}
-		if (lastAssistant.stopReason === "aborted" || lastAssistant.stopReason === "error") {
+		if (
+			lastAssistant.stopReason === "aborted" ||
+			(lastAssistant.stopReason === "error" && this._isLocalFailure(lastAssistant))
+		) {
 			return false;
 		}
 		if (this._getRequiredAutoCompactionReason(lastAssistant)) {
@@ -4442,6 +4445,8 @@ export class AgentSession {
 		let retryableFailureAwaitingDrain: AssistantMessage | undefined;
 		let allowsPostCompactionUsageExemptContinuation = false;
 		let releasedExemptionAllowsQueuedContinuation = false;
+		let endedInProviderError = false;
+		const abortGeneration = this._userAbortGeneration;
 		const userAbortSuppressedQueuedContinuation =
 			event.type === "agent_end" && this._suppressQueuedContinuationAfterUserAbort;
 		if (userAbortSuppressedQueuedContinuation) {
@@ -4454,6 +4459,7 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			endedInProviderError = msg.stopReason === "error" && !this._isLocalFailure(msg);
 			if (msg.stopReason !== "error") this._queuedDrainBackoffAttempt = 0;
 			if (msg.stopReason === "error") {
 				const resetAt = limitResetAt(msg, this._fallbackWallNow());
@@ -4576,9 +4582,8 @@ export class AgentSession {
 				retryOwnedDeferredQueue &&
 				retryOutcome === "not-handled" &&
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
-			// A provider that is only rate limited or overloaded answers again later: the input queued behind this run
-			// waits that out instead of parking until unrelated input arrives (omo#14428). A provider timeout keeps its
-			// own policy: input stays parked until that provider proves responsive.
+			// A transient rate limit or overload can back off further for peer deliveries (omo#14428).
+			// A provider timeout does not use that extra wait after the retry owner has settled (#6868).
 			if (
 				!userAbortSuppressedQueuedContinuation &&
 				retryOutcome === "not-handled" &&
@@ -4631,10 +4636,15 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					// A failed first response consumes the exemption but must not continue the run: input queued behind it
-					// waits for the next prompt, exactly as after a failed response without a compaction (#4036).
+					// A completed exempt response continues with the input parked behind it (#4036). After a provider error
+					// that input starts its own turn (#6868), decided while the exemption still holds: once it is released
+					// below, the threshold it covered reads as a required compaction again. An abort or a local failure
+					// never continues.
 					allowsPostCompactionUsageExemptContinuation =
-						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
+						this._postCompactionUsageExemptAssistants.has(msg) &&
+						(msg.stopReason === "error"
+							? endedInProviderError && this._agentEndAllowsQueuedContinuation(event.messages)
+							: msg.stopReason !== "aborted");
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
 					}
@@ -4659,7 +4669,7 @@ export class AgentSession {
 			// The exemption covers only the first response after a compaction. A run that ends on that response
 			// without consuming it (a blocked or exhausted retry, a user abort) has still spent it: the input parked
 			// while that run started rejoins the ordinary queues, whose rules then decide when it runs, exactly as
-			// for input queued in a run without a compaction (#4036).
+			// for input queued in a run without a compaction (#4036, #6868). A user abort leaves it waiting.
 			if (this._releaseSpentPostCompactionExemption(msg)) {
 				releasedExemptionAllowsQueuedContinuation =
 					!userAbortSuppressedQueuedContinuation && this._agentEndAllowsQueuedContinuation(event.messages);
@@ -4670,9 +4680,33 @@ export class AgentSession {
 			this._flushPendingBashMessages();
 			// Before the continuation decision, so input sent while the title is pending still continues this run.
 			await this._settleSessionTitle();
+			const userAborted = userAbortSuppressedQueuedContinuation || abortGeneration !== this._userAbortGeneration;
+			if (userAborted) this._suppressQueuedContinuationAfterUserAbort = false;
+			if (
+				endedInProviderError &&
+				!launchedContinuation &&
+				!userAborted &&
+				this.agent.hasQueuedMessages()
+			) {
+				const hold = await this._queuedInputUsageHold();
+				if (hold) {
+					await this._rejectQueuedInputsForUsageHold(hold);
+					retryContinuationBlocked = true;
+				} else if (
+					!retryContinuationBlocked &&
+					retryableFailureAwaitingDrain &&
+					this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
+				) {
+					// Keep omo#14428's backoff for peer deliveries when the provider is not under a #3131 hold.
+					const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
+					launchedContinuation = drain === "continued";
+					retryContinuationBlocked ||= drain === "cancelled";
+				}
+			}
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
+				!userAborted &&
 				(allowsQueuedContinuation ||
 					allowsPostCompactionUsageExemptContinuation ||
 					releasedExemptionAllowsQueuedContinuation ||
@@ -4685,26 +4719,12 @@ export class AgentSession {
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
 			}
-			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again.
-			// A queue of a person's own input alone waits for their next prompt (#4036); in a queue that holds both, the
-			// drained run takes the person's input too, in queue order.
-			if (
-				!launchedContinuation &&
-				!retryContinuationBlocked &&
-				retryableFailureAwaitingDrain &&
-				this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
-			) {
-				const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
-				launchedContinuation = drain === "continued";
-				// A cancelled wait settles the run, as a retry cancelled during its backoff does.
-				retryContinuationBlocked ||= drain === "cancelled";
-			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before
 			// the run settles. A user abort or a blocked retry settles without it.
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
-				!userAbortSuppressedQueuedContinuation &&
+				!userAborted &&
 				this._extensionRunner.hasHandlers("agent_before_settle") &&
 				(await this._runBeforeSettleBoundary(this.agent.hasQueuedMessages()))
 			) {
@@ -6524,70 +6544,8 @@ export class AgentSession {
 		if (!this.isStreaming) {
 			try {
 				await this._maybeRestoreFallbackPrimary();
-				const model = this.model;
-				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
-				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
-				// A pooled provider is out only when no account can serve: one account's billing or limit is that
-				// account's, and the pool's own block already routes around it (senpi#5590).
-				const pool =
-					model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
-						? await this._pooledAccountHealth(model.provider, model.id)
-						: undefined;
-				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
-				// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
-				if (
-					model?.provider === "anthropic-subscription" &&
-					!this._pendingModelSwitch &&
-					this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
-					attributionOf(options) === "user"
-				)
-					claudeRecheckProvider = model.provider;
-				// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
-				// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
-				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
-				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
-					if (attributionOf(options) === "user") await refreshSubscriptionUsage(model.provider);
-					this._retryFallback.releaseAccountHoldShownServable(
-						model.provider,
-						await this._usageOfSelectableAccounts(model.provider),
-					);
-				}
-				if (
-					model &&
-					!this._pendingModelSwitch &&
-					claudeRecheckProvider !== model.provider &&
-					this._retryFallback.isProviderSpent(model.provider) &&
-					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
-				) {
-					this._retryFallback.resetTurn();
-					this._fallbackTurnFailures = [];
-					const errorMessage = this._retryFallback.accountError(model.provider);
-					// Routing around a remembered failure did not observe another provider failure.
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
-						throw new AccountUsageLimitError(
-							model.provider,
-							errorMessage,
-							this._retryFallback.accountResetAt(model.provider),
-							this._retryFallback.widenedFamiliesOf(model.provider),
-							pool?.accountsOut,
-						);
-					}
-				}
-				// A family held by a weekly limit that named no family binds automated turns the same way, so a loop
-				// moves to another family or stops instead of hammering the held one (senpi#5596, senpi#3131).
-				const heldFamily =
-					this.model && !this._pendingModelSwitch && attributionOf(options) !== "user"
-						? this._retryFallback.heldFamily(this.model)
-						: undefined;
-				if (this.model && heldFamily) {
-					this._retryFallback.resetTurn();
-					this._fallbackTurnFailures = [];
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage: heldFamily.errorMessage }, false))) {
-						throw new AccountUsageLimitError(this.model.provider, heldFamily.errorMessage, undefined, [
-							heldFamily.family,
-						]);
-					}
-				}
+				const guarded = this._guardAccountHolds(attributionOf(options));
+				claudeRecheckProvider = guarded instanceof Promise ? await guarded : guarded;
 			} catch (error) {
 				releaseStart(false);
 				throw error;
@@ -7862,10 +7820,10 @@ export class AgentSession {
 	}
 
 	/** A removed itemized message is never written: every send waiting on it settles now (senpi#4106). */
-	private _settleRemovedCarriers(removed: readonly AgentMessage[]): void {
+	private _settleRemovedCarriers(removed: readonly AgentMessage[], failure?: AccountUsageLimitError): void {
 		for (const message of removed) {
 			const watcher = this._takePersistWatcher(message);
-			watcher?.failed(new QueuedDeliveryCleared(watcher.itemIds));
+			watcher?.failed(failure ?? new QueuedDeliveryCleared(watcher.itemIds));
 		}
 	}
 
@@ -9314,6 +9272,10 @@ export class AgentSession {
 	 * session; its sender redelivers it (oh-my-openagent#14169).
 	 */
 	takeQueuedDeliveries(): void {
+		this._takeQueuedDeliveries();
+	}
+
+	private _takeQueuedDeliveries(failure?: AccountUsageLimitError): void {
 		const removed = this.agent.peekQueuedMessages({ all: true }).filter((queued) => deliveryIdOf(queued) !== undefined);
 		for (const message of removed) this.agent.removeQueuedMessage(message);
 		const tickets = removed.flatMap((message) => {
@@ -9321,9 +9283,140 @@ export class AgentSession {
 			return ticket === undefined ? [] : [ticket];
 		});
 		this._releaseQueuedDeliveries(tickets, "cleared");
-		this._settleRemovedCarriers(removed);
+		// A hold refusal settles the sender with the typed error and drops the admission, so a redelivery is admitted again.
+		this._settleRemovedCarriers(removed, failure);
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
+	}
+
+	/**
+	 * The #3131 hold that binds an automatic turn for the queued input, after the guard released what usage shows
+	 * servable and walked the fallback chain; `undefined` when a route can serve it (the guard may have switched to it).
+	 */
+	private async _queuedInputUsageHold(): Promise<AccountUsageLimitError | undefined> {
+		try {
+			await this._maybeRestoreFallbackPrimary();
+			await this._guardAccountHolds("agent");
+			return undefined;
+		} catch (error) {
+			if (error instanceof AccountUsageLimitError) return error;
+			throw error;
+		}
+	}
+
+	/**
+	 * Under a #3131 hold, input a sender waits on (an RPC input with a client id, a peer delivery) fails with the typed
+	 * hold error instead of staying parked on an idle session. A person's TUI input stays queued and visible: they see
+	 * the error and decide. Inputs snapshotted once, so input arriving during the refusal is not refused with them.
+	 */
+	private async _rejectQueuedInputsForUsageHold(error: AccountUsageLimitError): Promise<void> {
+		const waited = this.getQueuedInputs().filter((input) => input.clientMessageId !== undefined);
+		try {
+			await this._pendingInputs.rejectBeforeDispatch(
+				waited.flatMap((input) => (input.clientMessageId === undefined ? [] : [input.clientMessageId])),
+				{ type: "reject_before_dispatch", reason: error.message, code: error.code },
+				() => {
+					for (const input of waited) this._changeQueuedInput(input.queuedId, undefined, undefined);
+				},
+			);
+		} catch (journalError) {
+			// The inputs stay queued, as before this refusal; the run still settles.
+			this._sessionLogger.warn("pending_input_hold_refusal_unrecorded", {
+				error: journalError instanceof Error ? journalError.message : String(journalError),
+			});
+		}
+		this._takeQueuedDeliveries(error);
+		this._emit({ type: "continuation_error", errorMessage: error.message });
+	}
+
+	/**
+	 * The account-hold guard at a turn boundary (senpi#3131), run after the fallback primary was restored: releases holds
+	 * a pooled account or newer usage shows servable, routes a spent provider or held family to its fallback, and
+	 * throws `AccountUsageLimitError` when no route can serve. Answers the provider whose hold defers to the Claude pool
+	 * (senpi#6727). Synchronous when nothing is held, so a prompt's admission keeps its ordering against queue flushes.
+	 */
+	private _guardAccountHolds(attribution: InputAttribution): string | undefined | Promise<string | undefined> {
+		const model = this.model;
+		const held =
+			!this._pendingModelSwitch &&
+			((model !== undefined && this._retryFallback.isProviderSpent(model.provider)) ||
+				(model !== undefined && attribution !== "user" && this._retryFallback.heldFamily(model) !== undefined));
+		if (held) return this._guardHeldAccount(attribution);
+		return model?.provider === "anthropic-subscription" &&
+			!this._pendingModelSwitch &&
+			this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+			attribution === "user"
+			? model.provider
+			: undefined;
+	}
+
+	private async _guardHeldAccount(attribution: InputAttribution): Promise<string | undefined> {
+		let claudeRecheckProvider: string | undefined;
+		const model = this.model;
+		// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
+		// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+		// A pooled provider is out only when no account can serve: one account's billing or limit is that
+		// account's, and the pool's own block already routes around it (senpi#5590).
+		const pool =
+			model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
+				? await this._pooledAccountHealth(model.provider, model.id)
+				: undefined;
+		if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
+		// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
+		if (
+			model?.provider === "anthropic-subscription" &&
+			!this._pendingModelSwitch &&
+			this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+			attribution === "user"
+		)
+			claudeRecheckProvider = model.provider;
+		// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
+		// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
+		// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
+		if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+			if (attribution === "user") await refreshSubscriptionUsage(model.provider);
+			this._retryFallback.releaseAccountHoldShownServable(
+				model.provider,
+				await this._usageOfSelectableAccounts(model.provider),
+			);
+		}
+		if (
+			model &&
+			!this._pendingModelSwitch &&
+			claudeRecheckProvider !== model.provider &&
+			this._retryFallback.isProviderSpent(model.provider) &&
+			!(attribution === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
+		) {
+			this._retryFallback.resetTurn();
+			this._fallbackTurnFailures = [];
+			const errorMessage = this._retryFallback.accountError(model.provider);
+			// Routing around a remembered failure did not observe another provider failure.
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
+				throw new AccountUsageLimitError(
+					model.provider,
+					errorMessage,
+					this._retryFallback.accountResetAt(model.provider),
+					this._retryFallback.widenedFamiliesOf(model.provider),
+					pool?.accountsOut,
+				);
+			}
+		}
+		// A family held by a weekly limit that named no family binds automated turns the same way, so a loop
+		// moves to another family or stops instead of hammering the held one (senpi#5596, senpi#3131).
+		const heldFamily =
+			this.model && !this._pendingModelSwitch && attribution !== "user"
+				? this._retryFallback.heldFamily(this.model)
+				: undefined;
+		if (this.model && heldFamily) {
+			this._retryFallback.resetTurn();
+			this._fallbackTurnFailures = [];
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage: heldFamily.errorMessage }, false))) {
+				throw new AccountUsageLimitError(this.model.provider, heldFamily.errorMessage, undefined, [
+					heldFamily.family,
+				]);
+			}
+		}
+		return claudeRecheckProvider;
 	}
 
 	/**

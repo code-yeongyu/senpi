@@ -2,6 +2,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSession, PromptDisposition } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { readClientMessageIdentity } from "../../core/client-message-identity.ts";
+import type { PendingInputProjection } from "../../core/pending-input-projection.ts";
 import {
 	CLIENT_ADMISSION_ENTRY,
 	type ClientAdmissionRecord,
@@ -87,6 +88,8 @@ export class ClientAdmissions {
 				for (const record of this.records.values()) {
 					if (record.state === "running") this.save({ ...record, state: "completed", outcome });
 				}
+			} else if (event.type === "pending_input_update") {
+				this.refuseQueuedInputs(event.changes);
 			} else if (event.type === "queue_update") {
 				const queuedIds = new Set(event.ordered.map((input) => input.clientMessageId));
 				const consumingId = readClientMessageIdentity(session.agent.state.streamingMessage).clientMessageId;
@@ -228,11 +231,28 @@ export class ClientAdmissions {
 			const queued = [...this.records.values()]
 				.filter((record) => record.state === "queued")
 				.sort((left, right) => left.prepared.enqueueOrder - right.prepared.enqueueOrder);
+			// A crash can leave the journal's rejection durable before its RPC receipt was written.
+			if (queued.length > 0) this.refuseQueuedInputs((await this.session.getPendingInputs()).inputs);
 			for (const record of queued) {
+				if (this.records.get(record.clientMessageId)?.state !== "queued") continue;
 				await this.session.restoreQueuedInput(record.prepared);
 			}
 		} finally {
 			this.restoring = false;
+		}
+	}
+
+	private refuseQueuedInputs(inputs: readonly PendingInputProjection[]): void {
+		for (const input of inputs) {
+			if (input.state !== "failed" || input.failure?.code !== "account_usage_limit") continue;
+			const record = this.records.get(input.clientMessageId);
+			if (record?.state !== "queued") continue;
+			this.save({
+				...record,
+				state: "completed",
+				prepared: undefined,
+				outcome: { kind: "refused", reason: input.failure.code, detail: input.failure.reason },
+			});
 		}
 	}
 
