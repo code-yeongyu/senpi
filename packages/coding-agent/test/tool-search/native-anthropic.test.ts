@@ -67,9 +67,14 @@ describe("todo 9 generalized catalog injection", () => {
 			],
 		});
 		try {
-			const output = await harness.getExtensionRunner().emitBeforeProviderRequest({
-				tools: [{ name: "tool_search", description: "Search", input_schema: {} }],
-			});
+			// The faux endpoint is not api.anthropic.com; the request names the first-party endpoint (senpi#7257).
+			const output = await harness
+				.getExtensionRunner()
+				.emitBeforeProviderRequest(
+					{ tools: [{ name: "tool_search", description: "Search", input_schema: {} }] },
+					undefined,
+					{ model: { ...harness.getModel(), baseUrl: "https://api.anthropic.com" }, headers: {} },
+				);
 
 			expect(named(toolsOf(output), "weather_forecast")).toMatchObject({
 				name: "weather_forecast",

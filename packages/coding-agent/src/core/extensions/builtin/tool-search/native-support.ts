@@ -1,10 +1,10 @@
-import type { AnthropicMessagesCompat, Api, Model } from "@earendil-works/pi-ai";
+import { type AnthropicMessagesCompat, type Api, isAnthropicApiBaseUrl, type Model } from "@earendil-works/pi-ai";
 
-export type AnthropicToolSearchModel = Pick<Model<Api>, "api" | "id" | "provider"> &
+export type AnthropicToolSearchModel = Pick<Model<Api>, "api" | "baseUrl" | "id" | "provider"> &
 	Partial<Pick<Model<Api>, "compat">>;
 export type AnthropicToolSearchTarget = Api | AnthropicToolSearchModel | undefined;
 
-const CLAUDE_VERSIONED_MODEL_ID = /^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)/;
+const CLAUDE_VERSIONED_MODEL_ID = /^claude-(?:opus|sonnet|fable|mythos)-(\d+)(?:-(\d+))?(?:-|$)/;
 /** A trailing 8-digit group is a release date (claude-opus-4-5-20251101), not a minor version. */
 const MODEL_ID_DATE_SUFFIX_LENGTH = 8;
 
@@ -22,10 +22,14 @@ function isSupportedModel(model: AnthropicToolSearchModel): boolean {
  * lists tool search on Opus/Sonnet 4.5+ and the Fable/Mythos line; Opus 4.1 and
  * earlier reject the server tool and Haiku rejects `tool_reference` blocks.
  * Haiku 5.5 is listed too but stays off until a live probe confirms it
- * (senpi#2914).
+ * (senpi#2914). Only api.anthropic.com counts as first-party: a gateway
+ * configured under the `anthropic` provider id keeps the id but not the
+ * capability (senpi#7257).
  */
 function defaultSupportsToolSearch(model: AnthropicToolSearchModel): boolean {
-	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
+	if (model.provider !== "anthropic" || !isAnthropicApiBaseUrl(model.baseUrl) || model.id.includes("haiku"))
+		return false;
+	if (model.id === "claude-mythos-preview") return true;
 	const version = model.id.match(CLAUDE_VERSIONED_MODEL_ID);
 	if (!version) return false;
 	const major = Number(version[1]);

@@ -1,3 +1,5 @@
+import type { Model } from "@earendil-works/pi-ai";
+import { getAnthropicCompat } from "@earendil-works/pi-ai/utils/prompt-cache-ttl";
 import { describe, expect, it } from "vitest";
 import {
 	addAnthropicNativeToolSearch,
@@ -33,8 +35,11 @@ function catalogPayload(): { tools: Record<string, unknown>[] } {
 	};
 }
 
-function anthropicModel(id: string) {
-	return { api: "anthropic-messages" as const, id, provider: "anthropic" };
+const FIRST_PARTY_BASE_URL = "https://api.anthropic.com";
+const THIRD_PARTY_BASE_URL = "https://gateway.example.invalid/anthropic";
+
+function anthropicModel(id: string, baseUrl = FIRST_PARTY_BASE_URL) {
+	return { api: "anthropic-messages" as const, id, provider: "anthropic", baseUrl };
 }
 
 describe("Anthropic native tool-search wire contract", () => {
@@ -70,6 +75,9 @@ describe("Anthropic native tool-search wire contract", () => {
 describe("Anthropic native tool-search model gate", () => {
 	it.each([
 		["claude-fable-5-1", true],
+		["claude-mythos-5-1", true], // senpi#7257
+		["claude-mythos-preview", true],
+		["claude-mythos-unknown", false],
 		["claude-opus-5", true],
 		["claude-opus-4-8", true],
 		["claude-sonnet-4-5-20250929", true],
@@ -88,7 +96,12 @@ describe("Anthropic native tool-search model gate", () => {
 	it("leaves an Anthropic-compatible third-party endpoint untouched", () => {
 		// given a proxy that answers anthropic-messages but rejects the server tool
 		const payload = catalogPayload();
-		const proxied = { api: "anthropic-messages" as const, id: "claude-opus-5", provider: "openmodel" };
+		const proxied = {
+			api: "anthropic-messages" as const,
+			id: "claude-opus-5",
+			provider: "openmodel",
+			baseUrl: THIRD_PARTY_BASE_URL,
+		};
 
 		// when the native adapter runs against it
 		const out = addAnthropicNativeToolSearch(proxied, payload, CONFIG);
@@ -104,12 +117,51 @@ describe("Anthropic native tool-search model gate", () => {
 			api: "anthropic-messages" as const,
 			id: "claude-opus-4-1",
 			provider: "openmodel",
+			baseUrl: THIRD_PARTY_BASE_URL,
 			compat: { supportsToolReferences: true },
 		};
 
 		// when the gate classifies it
 		// then the declared capability wins over the id-derived default
 		expect(supportsAnthropicNativeToolSearch(overridden)).toBe(true);
+	});
+
+	it.each(["claude-mythos-5-1", "claude-mythos-preview", "claude-opus-5"])(
+		"leaves %s off on a third-party endpoint that keeps the anthropic provider id",
+		(id) => {
+			// given an anthropic-provider model configured with a non-Anthropic base URL (senpi#7257 review)
+			const proxied = anthropicModel(id, THIRD_PARTY_BASE_URL);
+
+			// when the native gate classifies it
+			// then the first-party default does not apply to the gateway
+			expect(supportsAnthropicNativeToolSearch(proxied)).toBe(false);
+		},
+	);
+
+	it.each([
+		["claude-mythos-5-1", FIRST_PARTY_BASE_URL],
+		["claude-mythos-preview", FIRST_PARTY_BASE_URL],
+		["claude-mythos-unknown", FIRST_PARTY_BASE_URL],
+		["claude-opus-4-1", FIRST_PARTY_BASE_URL],
+		["claude-mythos-5-1", THIRD_PARTY_BASE_URL],
+		["claude-mythos-preview", THIRD_PARTY_BASE_URL],
+		["claude-opus-5", THIRD_PARTY_BASE_URL],
+	])("keeps the native gate and pi-ai supportsToolReferences equal for %s at %s", (id, baseUrl) => {
+		// given one model as both runtimes see it
+		const target = anthropicModel(id, baseUrl);
+		const model = {
+			...target,
+			name: id,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200_000,
+			maxTokens: 32_000,
+		} satisfies Model<"anthropic-messages">;
+
+		// when each runtime resolves its default
+		// then they agree, so reverting either gate alone fails this matrix
+		expect(supportsAnthropicNativeToolSearch(target)).toBe(getAnthropicCompat(model).supportsToolReferences);
 	});
 
 	it("keeps the api-only contract for callers that pass no model", () => {
