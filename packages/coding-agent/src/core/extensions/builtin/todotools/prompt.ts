@@ -24,8 +24,8 @@ Completing tasks out of phase order can move this pointer **back** to an earlier
 Example: {"op":"init","list":[{"phase":"Setup","items":["Survey code","Write tests"]}]}
 
 ## Anatomy
-- **Task content**: 5–10 words; what, not how. Unique identifier.
-- **Phase name**: short noun phrase (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.
+- **Task content**: 5–10 words; what, not how, in the language the user writes in. Unique identifier.
+- **Phase name**: short noun phrase in the user's language (e.g. Foundation, Auth, Verification). Unique identifier. NEVER prefix 1., A), Phase 1:.
 
 ## Rules
 - Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.
