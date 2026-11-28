@@ -17,16 +17,29 @@ const sourceRoot = dirname(manifestPath);
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 // Parse the loader's table without importing its entire runtime graph during packaging.
 // Package roots include all virtual subpaths; host-only dependency trees are never walked.
-const loaderPath = join(repoRoot, "packages", "coding-agent", "src", "core", "extensions", "loader.ts");
-const virtualTable = readFileSync(loaderPath, "utf8").match(/const VIRTUAL_MODULES:[^{]+\{([\s\S]*?)\n\};/);
-if (!virtualTable) {
-	throw new Error(`Unable to read VIRTUAL_MODULES from ${loaderPath}`);
+const extensionsDirectory = join(repoRoot, "packages", "coding-agent", "src", "core", "extensions");
+// A table entry is `"specifier": binding` or `...TABLE`, a table another module of that directory exports under that
+// name (senpi#7657: SENPI_SUBPATH_MODULES), read the same way.
+function virtualSpecifiers(path, table) {
+	const source = readFileSync(path, "utf8");
+	const body = source.match(new RegExp(`const ${table}:[^{]+\\{([\\s\\S]*?)\\n\\};`));
+	if (!body) {
+		throw new Error(`Unable to read ${table} from ${path}`);
+	}
+	const specifiers = Array.from(body[1].matchAll(/^\s*(?:"([^"]+)"|([\w$]+)):\s*/gm), (match) => match[1] ?? match[2]);
+	for (const [, spread] of body[1].matchAll(/^\s*\.\.\.([\w$]+),?\s*$/gm)) {
+		const from = source.match(new RegExp(`import \\{[^}]*\\b${spread}\\b[^}]*\\} from "(\\.[^"]+)";`));
+		if (!from) {
+			throw new Error(`Unable to resolve the ${spread} table spread into ${table} in ${path}`);
+		}
+		specifiers.push(...virtualSpecifiers(join(dirname(path), from[1]), spread));
+	}
+	return specifiers;
 }
 const HOST_PROVIDED_MODULES = new Set(
-	Array.from(virtualTable[1].matchAll(/^\s*(?:"([^"]+)"|([\w$]+)):\s*/gm), (match) => {
-		const specifier = match[1] ?? match[2];
-		return specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/");
-	}),
+	virtualSpecifiers(join(extensionsDirectory, "loader.ts"), "VIRTUAL_MODULES").map((specifier) =>
+		specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/"),
+	),
 );
 const targetRoot = join(
 	resolve(outputRootArgument),
