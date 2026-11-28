@@ -68,7 +68,9 @@ guarded hidden `systemRecovery` continuation after `agent_settled` (staging pres
 cancellation; canceling releases the single-flight latch for `/goal resume`). Intentional
 blocks — user interrupt or a model-declared `update_goal` block — stay non-recoverable.
 Resuming with 8+ trailing continuation entries whose turn ran suppresses session-start
-auto-resume (startup, resume and reload alike). A continuation the provider refused for a limit
+auto-resume (startup, resume and reload alike). A fork inherits a limit wait from its copied branch;
+a new session without that history has no wait to inherit. Releasing a held wake rechecks the current branch.
+A continuation whose fallback ladder ended in a limit refusal without running a model turn
 is not one of them, and a session opened in the middle of a limit wait re-checks that limit with
 a wake that spends no continuation budget (`session-start-continuation.ts`, senpi#4085). On
 `session_start` reason `resume`, an idle TUI session with a stopped-but-unfinished goal
