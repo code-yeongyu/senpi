@@ -36,6 +36,7 @@ import { closeTerminalGracefully } from "./session-control-close.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
 import { runTuiRpcCommand, TUI_RPC_COMMANDS } from "./session-control-rpc-commands.ts";
 import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
+import { TERMINAL_PRESENTER_COMMANDS } from "./terminal-presenter-surface.ts";
 import {
 	runSessionControlCommand,
 	SESSION_CONTROL_COMMANDS,
@@ -84,6 +85,10 @@ const TUI_CONTROL_COMMANDS = [
 	...TUI_RPC_COMMANDS,
 ];
 
+// The presenter frames are served only when the endpoint has a presenter surface (#5782).
+const PRESENTER_FRAMES = new Set<string>(TERMINAL_PRESENTER_COMMANDS);
+const TUI_CONTROL_COMMANDS_WITHOUT_PRESENTER = TUI_CONTROL_COMMANDS.filter((command) => !PRESENTER_FRAMES.has(command));
+
 export async function runControlCommand(
 	context: ControlCommandContext,
 	connection: ControlConnection,
@@ -113,7 +118,7 @@ export async function runControlCommand(
 				generation: 0,
 				engineVersion: build.text,
 				engineOrdinal: build.ordinal,
-				commands: TUI_CONTROL_COMMANDS,
+				commands: context.attachments.presenters ? TUI_CONTROL_COMMANDS : TUI_CONTROL_COMMANDS_WITHOUT_PRESENTER,
 				method_classes: describeRpcMethodClasses(),
 			});
 		}
