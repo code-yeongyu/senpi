@@ -85,8 +85,19 @@ export function admitExternalMessage(
 		data: { kind, turnId: String(epoch) },
 	});
 	const id = ledgerId(command.deliveryId, origin);
-	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id))
-		return answer("already_admitted", admission.turnEpoch);
+	// A resend of a written id, a held notice's included (senpi#7588), still answers its own place while it waits (senpi#7590).
+	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id)) {
+		const { queue_position, hold } = admission.position(id);
+		return {
+			ok: true,
+			data: {
+				kind: "already_admitted",
+				turnId: String(admission.turnEpoch),
+				queuePosition: queue_position,
+				...(hold && { hold }),
+			},
+		};
+	}
 	const expected = command.expectedTurnId;
 	if (expected !== undefined && !CANONICAL_TURN_ID.test(expected)) return answer("turn_conflict", admission.turnEpoch);
 	const displayText = command.displayText ?? (origin === undefined ? undefined : command.text);
@@ -121,6 +132,8 @@ export function admitExternalMessage(
 		data: {
 			kind: result.kind,
 			turnId: String(result.turn_epoch),
+			...(result.queue_position !== undefined && { queuePosition: result.queue_position }),
+			...(result.hold && { hold: result.hold }),
 			...(result.holds === undefined ? {} : { holds: [...result.holds] }),
 			...(result.engine_turn_cap === undefined ? {} : { engineTurnCap: result.engine_turn_cap }),
 		},

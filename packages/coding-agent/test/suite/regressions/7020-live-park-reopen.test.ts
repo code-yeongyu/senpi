@@ -139,6 +139,8 @@ it("a live reopen keeps a person's Stop: the session stays paused and a peer is 
 		kind: "held",
 		holds: ["session_hold"],
 		turn_epoch: 0,
+		queue_position: 1,
+		hold: { kind: "session_hold", key: "session_hold", queueDepth: 1, since: expect.any(String) },
 	});
 	await successor.session.waitForIdle();
 	expect(successor.harness.faux.state.callCount).toBe(0);

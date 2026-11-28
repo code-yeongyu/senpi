@@ -69,7 +69,7 @@ it("counts the real held set, a delivery recorded twice once, and refuses the ne
 	});
 	const session = await fixture.openSettled();
 	expect(session.paused).toBe(true);
-	expect(session.heldPeerDeliveryCount).toBe(MAX_HELD_PEER_DELIVERIES - 1);
+	expect(session.heldPeerDeliveryIds).toHaveLength(MAX_HELD_PEER_DELIVERIES - 1);
 
 	await admitHeld(session, MAX_HELD_PEER_DELIVERIES);
 	const notices = session.pausedNoticeCount;
@@ -111,7 +111,7 @@ it("refuses an extension's admission past the cap too, in one burst, writing not
 	expect(refused).toMatchObject({ code: "held_deliveries_full" });
 	await written;
 	expect(fixture.session.pausedNoticeCount).toBe(MAX_HELD_PEER_DELIVERIES);
-	expect(fixture.session.heldPeerDeliveryCount).toBe(MAX_HELD_PEER_DELIVERIES);
+	expect(fixture.session.heldPeerDeliveryIds).toHaveLength(MAX_HELD_PEER_DELIVERIES);
 	expect(fixture.session.externalAdmission.list().pending).not.toContain(`ext-${MAX_HELD_PEER_DELIVERIES + 1}`);
 	expect(admit(1)?.kind).toBe("already_admitted");
 });

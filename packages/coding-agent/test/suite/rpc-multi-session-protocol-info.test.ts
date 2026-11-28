@@ -54,6 +54,7 @@ describe("multi-session RPC protocol info", () => {
 					"session_model_scope", // senpi#5933: set_model honours scope "session".
 					"session_held",
 					"session_row_hold", // senpi#7583: a listed session row carries its engine hold.
+					"external_admission_position", // senpi#7590: an admission receipt names its own pending position.
 					"resume_session",
 					"attended",
 					"observe_reads",

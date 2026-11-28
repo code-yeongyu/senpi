@@ -189,7 +189,13 @@ it("a peer delivery under a person's Stop is answered held, stays a notice, and 
 
 	expect(
 		h.session.externalAdmission.admit({ delivery_id: "stop-1", text: "[from lead] go on", deliverAs: "followUp" }),
-	).toEqual({ kind: "held", holds: ["session_hold"], turn_epoch: 0 });
+	).toEqual({
+		kind: "held",
+		holds: ["session_hold"],
+		turn_epoch: 0,
+		queue_position: 1,
+		hold: { kind: "session_hold", key: "session_hold", queueDepth: 1, since: expect.any(String) },
+	});
 	expect(
 		h.session.externalAdmission.admit({ delivery_id: "stop-1", text: "[from lead] go on", deliverAs: "followUp" })
 			.kind,
@@ -217,7 +223,13 @@ it("a peer delivery after an interrupted run is answered held: continuing it nee
 	h.session["_lifecycleBinding"].controller.ledger.interrupted = true;
 	expect(
 		h.session.externalAdmission.admit({ delivery_id: "int-1", text: "[from lead] go on", deliverAs: "followUp" }),
-	).toEqual({ kind: "held", holds: ["session_hold", "unattended"], turn_epoch: 0 });
+	).toEqual({
+		kind: "held",
+		holds: ["session_hold", "unattended"],
+		turn_epoch: 0,
+		queue_position: 1,
+		hold: { kind: "unattended", key: "unattended", queueDepth: 1, since: expect.any(String) },
+	});
 	await h.session.waitForIdle();
 	expect(h.faux.state.callCount).toBe(0);
 	expect(h.session.paused).toBe(true);

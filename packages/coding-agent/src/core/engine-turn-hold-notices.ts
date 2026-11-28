@@ -73,9 +73,13 @@ export class EngineTurnHoldNotices {
 		);
 	}
 
-	/** Distinct peer deliveries held now, the count `MAX_HELD_PEER_DELIVERIES` bounds. */
-	get peerDeliveryCount(): number {
-		return this.wakes[SESSION_CONTROL_DELIVERY_TYPE]?.items.size ?? 0;
+	/**
+	 * The distinct peer deliveries held now, oldest first: the order a resume takes them in, and what
+	 * `MAX_HELD_PEER_DELIVERIES` bounds (senpi#7588).
+	 */
+	get peerDeliveryIds(): string[] {
+		const items = this.wakes[SESSION_CONTROL_DELIVERY_TYPE]?.items;
+		return items ? [...items.values()].flatMap((message) => peerMessageDeliveryId(message) ?? []) : [];
 	}
 
 	get noticeCount(): number {
