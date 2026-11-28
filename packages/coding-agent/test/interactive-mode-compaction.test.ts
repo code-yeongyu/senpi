@@ -828,19 +828,16 @@ describe("InteractiveMode compaction events", () => {
 	});
 
 	// Regression test for #9340.
-	test("routes interactive response aborts through AgentSession", () => {
+	test("routes interactive response aborts through AgentSession", async () => {
 		const abort = vi.fn(async () => {});
 		const ui = {
-			clearAllQueues: () => ({ steering: [], followUp: [] }),
-			updatePendingMessagesDisplay: vi.fn(),
-			session: { abort },
+			session: { abort, waitForIdle: async () => {}, clearQueue: () => ({ ordered: [] }) },
 		};
-		const restoreQueuedMessagesToEditor = Reflect.get(InteractiveMode.prototype, "restoreQueuedMessagesToEditor") as (
+		const abortKeepingQueuedDelivery = Reflect.get(InteractiveMode.prototype, "abortKeepingQueuedDelivery") as (
 			this: typeof ui,
-			options?: { abort?: boolean },
-		) => number;
+		) => Promise<void>;
 
-		restoreQueuedMessagesToEditor.call(ui, { abort: true });
+		await abortKeepingQueuedDelivery.call(ui);
 
 		expect(abort).toHaveBeenCalledOnce();
 	});
