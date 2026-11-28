@@ -66,7 +66,7 @@ describe("claude-sdk-oauth auxiliary authentication", () => {
 
 		expect(replay?.auth.apiKey).toBe(first.auth.apiKey);
 		expect(replay?.env).toEqual(requestEnvironment);
-		expect(title).toBe("Auxiliary Auth Works");
+		expect(title).toEqual({ kind: "titled", title: "Auxiliary Auth Works" });
 		expect(captured).toHaveLength(1);
 		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("request-token");
 		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).not.toBe("host-token");

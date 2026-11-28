@@ -54,7 +54,7 @@ describe("senpi#2848 session-factory SDK cwd paths", () => {
 					streamFn: session.agent.streamFunction,
 					retry,
 				});
-				expect(title).toBeDefined();
+				expect(title.kind).toBe("titled");
 			} else if (path === "summary") {
 				const result = await completeSummarization(
 					model,
