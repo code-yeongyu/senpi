@@ -24,10 +24,10 @@
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
-import { assertMoveFits } from "../../core/session-move/export.ts";
-import { prepareOutgoingState, STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
+import { STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
+import { sealedForMove, stageMoveRelease } from "./session-release-move.ts";
 import {
 	RPC_ERROR_ATTACHED,
 	RPC_ERROR_HOST_DRAINING,
@@ -118,6 +118,8 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	// on the session the host keeps, and a throw is answered `release_failed` rather than left unanswered.
 	const admission = first.session.externalAdmission;
 	let dropped = NOTHING_DROPPED;
+	// What a successful move release answers: a refusal hands back only `dropped`, this attempt's take (senpi#6474).
+	let owed = NOTHING_DROPPED;
 	let answer: RpcResponse | undefined;
 	let stagedState: { readonly attempt: string; readonly dir: string } | undefined;
 	let sealed = false;
@@ -127,6 +129,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			const taken = takeQueuedInput(first.session);
 			const handedBack = await abortAndSettle(port, command.sessionId, first.session);
 			dropped = { ...taken, deliveries: [...taken.deliveries, ...handedBack] };
+			owed = dropped;
 			// What the clear retired is on disk before `session_released` seals the file (senpi#3549).
 			await first.session.whenQueueClearRecorded();
 		}
@@ -135,22 +138,13 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		// A written session awaits nothing, so its claim stays in the same turn as the request that asked.
 		const manager = first.session.sessionManager;
 		if (!manager.isTranscriptFlushed()) await manager.persistHeaderNow();
-		// A move takes the extensions' out-of-folder state with it; they write it while their runtime is still live.
-		// Each handler runs under the session_shutdown handler budget: a hung one fails the release instead of holding it.
+		// A move takes the extensions' out-of-folder state and the input this release took with it (see stageMoveRelease).
 		if (command.reason === "move") {
-			const moveId = parseMoveId(command.moveId);
-			stagedState = await prepareOutgoingState(first.sessionPath, moveId);
-			const [failed] = await first.session.extensionRunner.emitSessionMove({
-				type: "session_move_export",
-				moveId,
-				dir: stagedState.dir,
-			});
-			if (failed !== undefined)
-				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
-			// State a bundle could not carry refuses the release here, before the seal: the session stays live.
-			await assertMoveFits(first.sessionPath, manager.getSessionId(), stagedState.dir, false);
+			const staged = await stageMoveRelease(first.session, first.sessionPath, parseMoveId(command.moveId), dropped);
+			stagedState = staged.stagedState;
+			owed = staged.owed;
 		}
-		answer = await claimAndRelease(port, command, interrupted, dropped, stagedState?.attempt, () => {
+		answer = await claimAndRelease(port, command, interrupted, { dropped, owed }, stagedState?.attempt, () => {
 			sealed = true;
 		});
 		return answer;
@@ -185,7 +179,7 @@ async function claimAndRelease(
 	port: SessionReleasePort,
 	command: ReleaseSessionCommand,
 	interrupted: boolean,
-	dropped: ReleaseDropped,
+	{ dropped, owed }: { readonly dropped: ReleaseDropped; readonly owed: ReleaseDropped },
 	stateAttempt: string | undefined,
 	onSealed: () => void,
 ): Promise<RpcResponse> {
@@ -205,27 +199,31 @@ async function claimAndRelease(
 	// delivery it had not admitted stays with its sender and reaches the next owner.
 	const admission = ready.session.externalAdmission;
 	admission.close(RELEASED_ADMISSION_CLOSED);
-	try {
-		// On disk or not at all: a failed write leaves no entry a later append could chain onto.
-		ready.session.sessionManager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
-			reason: command.reason,
-			...(command.reason === "move"
-				? {
-						move_id: command.moveId,
-						// The export bundles only this attempt's staged state: a late write from an earlier one never travels.
-						...(stateAttempt === undefined ? {} : { [STATE_ATTEMPT_FIELD]: stateAttempt }),
-						target: command.target ?? "",
-						session_id: ready.session.sessionManager.getSessionId(),
-					}
-				: {}),
-			interrupted,
-			attachments: ready.attachments,
-			host_instance: port.hostInstance ?? null,
-			released_at: new Date().toISOString(),
-		});
-	} catch (cause) {
-		admission.reopen();
-		throw cause;
+	// A release of a session an earlier release of this same move already sealed (senpi#3962's asked-again
+	// release) re-answers it: the seal already on the file stands, and writing a second one would be refused.
+	if (command.reason !== "move" || !sealedForMove(ready.session, command.moveId)) {
+		try {
+			// On disk or not at all: a failed write leaves no entry a later append could chain onto.
+			ready.session.sessionManager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
+				reason: command.reason,
+				...(command.reason === "move"
+					? {
+							move_id: command.moveId,
+							// The export bundles only this attempt's staged state: a late write from an earlier one never travels.
+							...(stateAttempt === undefined ? {} : { [STATE_ATTEMPT_FIELD]: stateAttempt }),
+							target: command.target ?? "",
+							session_id: ready.session.sessionManager.getSessionId(),
+						}
+					: {}),
+				interrupted,
+				attachments: ready.attachments,
+				host_instance: port.hostInstance ?? null,
+				released_at: new Date().toISOString(),
+			});
+		} catch (cause) {
+			admission.reopen();
+			throw cause;
+		}
 	}
 	onSealed();
 	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
@@ -236,7 +234,7 @@ async function claimAndRelease(
 		type: "response",
 		command: "release_session",
 		success: true,
-		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments, dropped },
+		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments, dropped: owed },
 	};
 }
 

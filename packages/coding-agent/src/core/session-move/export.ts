@@ -19,6 +19,7 @@ import {
 	sha256File,
 } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD } from "./extension-state.ts";
+import { readDroppedInputRecord } from "./dropped-input-record.ts";
 import {
 	headerSessionId,
 	type MoveId,
@@ -118,6 +119,9 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	if (stateDir !== undefined && !(await pathExists(stateDir))) throw new MovedStateMissingError(stateDir);
 	// A session sealed before anything looked (an earlier version's release) is refused before a bundle is written.
 	await assertMoveFits(sessionFile, sessionId, stateDir, true);
+	// The release's own record of what it drained outranks what the caller hands the export (senpi#3962): a
+	// caller that never saw the release's answer has nothing to pass, and the input must still travel with the move.
+	const recordedDropped = await readDroppedInputRecord(sessionFile, moveId);
 	const staging = `${options.bundleDir}.partial-${process.pid}`;
 	await rm(staging, { recursive: true, force: true });
 	await mkdir(join(staging, dirname(SESSION_BUNDLE_PATH)), { recursive: true });
@@ -133,7 +137,7 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		repository: await readRecordedRepositoryIdentity(sessionFile),
 		session: { path: SESSION_BUNDLE_PATH, sha256: await sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
-		droppedUserMessages: [...options.droppedUserMessages],
+		droppedUserMessages: recordedDropped.length > 0 ? [...recordedDropped] : [...options.droppedUserMessages],
 		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
 	};
 	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);

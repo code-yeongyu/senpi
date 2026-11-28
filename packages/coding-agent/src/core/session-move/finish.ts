@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
 import { pathExists } from "../tools/path-utils.ts";
 import { readKeptBundle } from "./bundle.ts";
+import { readDroppedInputRecord, removeDroppedInputRecord } from "./dropped-input-record.ts";
 import { outgoingStateDir } from "./extension-state.ts";
 import type { MoveAnswer } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
@@ -47,8 +48,10 @@ export class MoveAlreadyMovedError extends Error {
  * Closes a move on the sending device from the receiver's answer. `accepted` records `session_moved` (read-only for
  * good). `declined`/`failed`, and `accepted` with `revoked` (the receiver sealed its copy), take the session back:
  * `session_reclaimed` makes the file writable, the queued input is re-queued under ids stable per move, then the
- * bundle goes. While the bundle exists the re-queue runs again on the next call, so a crash between any two steps
- * loses nothing and doubles nothing. A revoked answer for a file already marked moved is refused.
+ * bundle goes. The input is read from the kept bundle's manifest, or - when no export ever wrote one, because it
+ * failed or never ran (senpi#6474, senpi#3962) - from the record the release itself left under the move id. While
+ * either exists the re-queue runs again on the next call, so a crash between any two steps loses nothing and doubles
+ * nothing. A revoked answer for a file already marked moved is refused.
  */
 export function finishMove(options: FinishMoveOptions): Promise<void> {
 	return withSessionMoveLock(options.sessionFile, () => settleMove(options), options.guard);
@@ -63,7 +66,7 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 	const entries = await loadEntriesFromFileAsync(sessionFile);
 	const ownership = sessionOwnership(entries);
 	if (ownership.writable) {
-		if (reclaimed(entries, moveId)) await requeueDroppedInput(sessionFile, bundleDir);
+		if (reclaimed(entries, moveId)) await requeueDroppedInput(sessionFile, bundleDir, moveId);
 		await discardMoveFiles(sessionFile, bundleDir, moveId);
 		return;
 	}
@@ -79,7 +82,11 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 			return;
 		case "accepted":
 			if ("revoked" in answer) {
-				await takeBack(sessionFile, bundleDir, { move_id: moveId, session_id: sessionId, reason: "revoked" });
+				await takeBack(sessionFile, bundleDir, moveId, {
+					move_id: moveId,
+					session_id: sessionId,
+					reason: "revoked",
+				});
 				break;
 			}
 			(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_MOVED, {
@@ -92,7 +99,7 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 			break;
 		case "declined":
 		case "failed":
-			await takeBack(sessionFile, bundleDir, {
+			await takeBack(sessionFile, bundleDir, moveId, {
 				move_id: moveId,
 				session_id: sessionId,
 				reason: answer.state,
@@ -109,18 +116,24 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 }
 
 /** `session_reclaimed` makes the file writable again, then the queued input comes back under ids stable per move. */
-async function takeBack(sessionFile: string, bundleDir: string, data: Record<string, string>): Promise<void> {
+async function takeBack(
+	sessionFile: string,
+	bundleDir: string,
+	moveId: MoveId,
+	data: Record<string, string>,
+): Promise<void> {
 	(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_RECLAIMED, {
 		...data,
 		reclaimed_at: new Date().toISOString(),
 	});
 	moveStep("finish:recorded");
-	await requeueDroppedInput(sessionFile, bundleDir);
+	await requeueDroppedInput(sessionFile, bundleDir, moveId);
 }
 
 async function discardMoveFiles(sessionFile: string, bundleDir: string, moveId: MoveId): Promise<void> {
 	await rm(bundleDir, { recursive: true, force: true });
 	await rm(outgoingStateDir(sessionFile, moveId), { recursive: true, force: true });
+	await removeDroppedInputRecord(sessionFile, moveId);
 }
 
 function reclaimed(entries: readonly { type: string; customType?: string; data?: unknown }[], moveId: MoveId): boolean {
@@ -132,8 +145,17 @@ function reclaimed(entries: readonly { type: string; customType?: string; data?:
 	);
 }
 
-export async function requeueDroppedInput(sessionFile: string, bundleDir: string): Promise<void> {
-	if (!(await pathExists(bundleDir))) return;
-	const kept = await readKeptBundle(bundleDir);
-	await requeueInput(sessionFile, kept.moveId, kept.droppedUserMessages);
+export async function requeueDroppedInput(sessionFile: string, bundleDir: string, moveId: MoveId): Promise<void> {
+	if (await pathExists(bundleDir)) {
+		const kept = await readKeptBundle(bundleDir);
+		// The release's own record outranks a manifest that carries less than the release drained (an older
+		// build, or a caller without the answer, emptied it): the engine's memory of its queue decides.
+		const recorded = await readDroppedInputRecord(sessionFile, moveId);
+		const texts = recorded.length > 0 ? recorded : kept.droppedUserMessages;
+		await requeueInput(sessionFile, kept.moveId, texts);
+		return;
+	}
+	// No manifest was ever written: the record the release itself left under the move id is what is left
+	// (senpi#6474, senpi#3962), re-queued under the same stable per-move ids as the bundle's copy.
+	await requeueInput(sessionFile, moveId, await readDroppedInputRecord(sessionFile, moveId));
 }

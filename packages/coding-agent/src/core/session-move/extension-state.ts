@@ -22,7 +22,7 @@ export const MOVED_STATE_RESTORED = "session_move_state_restored";
 /** The `session_released` field naming the release attempt whose staged state the move bundles. */
 export const STATE_ATTEMPT_FIELD = "state_attempt";
 
-const MOVE_STATE = ".move-state";
+export const MOVE_STATE = ".move-state";
 const DELIVERED_MARKER = "delivered";
 const DELIVERY_COPY = "attempt-";
 
@@ -52,7 +52,7 @@ const field = (entry: EntryLike, name: string): string | undefined => {
 
 const moveIdOf = (entry: EntryLike): string | undefined => field(entry, "move_id");
 
-function sealedAttempt(entries: readonly EntryLike[], moveId: MoveId): string | undefined {
+export function sealedAttempt(entries: readonly EntryLike[], moveId: MoveId): string | undefined {
 	const seal = entries.findLast(
 		(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED && moveIdOf(entry) === moveId,
 	);
