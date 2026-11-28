@@ -1515,6 +1515,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				throw error;
 			}
 			const { params: sentParams, response } = requestOutcome;
+			// senpi#3399: with `thinking.display: "summarized"` a streamed thinking block is the
+			// summary, not the billed reasoning itself, which ran before the first summary chunk.
+			// The sent params are the contract: only a request that asked for summaries earns the marker.
+			const thinkingConfig = sentParams.thinking;
+			const summarizedThinkingRequested =
+				thinkingConfig !== undefined && "display" in thinkingConfig && thinkingConfig.display === "summarized";
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -1809,6 +1815,16 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						})),
 					},
 				});
+			}
+
+			// senpi#3399: mark usage so the timing window starts at the response start instead of the
+			// first summary chunk. A reasoning count (output_tokens_details.thinking_tokens) already
+			// implies the same window on its own, and redacted thinking never streams a summary.
+			if (
+				summarizedThinkingRequested &&
+				output.content.some((block) => block.type === "thinking" && !block.redacted)
+			) {
+				output.usage.reasoningSummarized = true;
 			}
 
 			combinedAbort.cleanup();

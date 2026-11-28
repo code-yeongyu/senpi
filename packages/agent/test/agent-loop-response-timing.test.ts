@@ -288,6 +288,39 @@ describe("agent loop response timing (senpi#3879)", () => {
 		expect(reply.timing?.generationMs).toBe(600);
 	});
 
+	it("times a summarized-thinking reply without a reasoning count from the response start (senpi#3399)", async () => {
+		useClock(0);
+		const thinking = (text: string) => assistant([{ type: "thinking", thinking: text }]);
+		const final = assistant(
+			[
+				{ type: "thinking", thinking: "plan" },
+				{ type: "text", text: "ok" },
+			],
+			12,
+		);
+		// The adapter stamped the summarized marker: the summary streamed as thinking_delta,
+		// but the billed reasoning ran before the first summary chunk.
+		final.usage.reasoningSummarized = true;
+		const { reply } = await run(
+			() =>
+				new ScriptedStream(
+					[
+						[100, { type: "start", partial: thinking("") }],
+						[400, { type: "thinking_start", contentIndex: 0, partial: thinking("") }],
+						[0, { type: "thinking_delta", contentIndex: 0, delta: "plan", partial: thinking("plan") }],
+						[600, { type: "text_delta", contentIndex: 1, delta: "ok", partial: final }],
+						[0, { type: "done", reason: "stop", message: final }],
+					],
+					final,
+				),
+		);
+
+		expect(reply.usage.reasoning).toBeUndefined();
+		expect(reply.usage.reasoningSummarized).toBe(true);
+		expect(reply.timing?.firstTokenAt).toBe(500);
+		expect(reply.timing?.generationMs).toBe(1_000);
+	});
+
 	it("times a thinking block that never streamed, with no reasoning count, from the response start", async () => {
 		useClock(0);
 		const text = (value: string) => assistant([{ type: "text", text: value }]);

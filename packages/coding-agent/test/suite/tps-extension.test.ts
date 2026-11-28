@@ -270,6 +270,36 @@ describe("tps builtin extension", () => {
 		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 0.0%, 34.0s"]);
 	});
 
+	it("#3399: summarized thinking without usage.reasoning is timed from message start", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const base = createAssistantMessage({ input: 10, output: 3_400, cacheRead: 0, cacheWrite: 0 }) as {
+			usage: Record<string, unknown>;
+		};
+		// The adapter stamped the summarized marker: the summary streamed, but the billed
+		// reasoning tokens sit uncounted in usage.output.
+		const message = { ...base, usage: { ...base.usage, reasoningSummarized: true } };
+		const summary = {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "s", partial: message },
+		};
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		vi.advanceTimersByTime(30_000);
+		await harness.emit("message_update", summary, ctx);
+		vi.advanceTimersByTime(4_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
+
+		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 0.0%, 34.0s"]);
+	});
+
 	it("#3393: thinking that streamed nothing and is not in usage.reasoning still counts its time (Bedrock, omitted display)", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(0);

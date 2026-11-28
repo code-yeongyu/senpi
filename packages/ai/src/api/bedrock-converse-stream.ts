@@ -358,6 +358,17 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 
 			// A stream can settle without stopping every block, so finalize here too.
 			for (const block of output.content) finalizeStreamingBlock(block as Block);
+			// senpi#3399: Claude on Bedrock never reports a reasoning token count, and with display
+			// "summarized" (the adapter default) a streamed thinking block is the summary, not the
+			// billed reasoning itself. Mark usage so the timing window starts at the response start.
+			// Non-Anthropic models stream raw reasoning (not a summary) and GovCloud sends no display field.
+			if (
+				bedrockThinkingDisplay(model, options) === "summarized" &&
+				isAnthropicClaudeModel(model) &&
+				output.content.some((block) => block.type === "thinking" && !block.redacted)
+			) {
+				output.usage.reasoningSummarized = true;
+			}
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
@@ -1288,6 +1299,18 @@ function isGovCloudBedrockTarget(model: Model<"bedrock-converse-stream">, option
 	return modelId.startsWith("us-gov.") || modelId.startsWith("arn:aws-us-gov:");
 }
 
+/**
+ * The thinking display mode the request carries for Claude models. GovCloud Bedrock currently rejects the Claude
+ * thinking.display field, so it stays unset there until the GovCloud Converse schema catches up.
+ */
+function bedrockThinkingDisplay(
+	model: Model<"bedrock-converse-stream">,
+	options: BedrockOptions,
+): BedrockThinkingDisplay | undefined {
+	if (isGovCloudBedrockTarget(model, options)) return undefined;
+	return options.thinkingDisplay ?? "summarized";
+}
+
 function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
@@ -1310,9 +1333,7 @@ function buildAdditionalModelRequestFields(
 	}
 
 	if (isAnthropicClaudeModel(model)) {
-		// GovCloud Bedrock currently rejects the Claude thinking.display field.
-		// Omit it there until the GovCloud Converse schema catches up.
-		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
+		const display = bedrockThinkingDisplay(model, options);
 		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
 			? {
 					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },

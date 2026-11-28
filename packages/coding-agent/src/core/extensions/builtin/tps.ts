@@ -9,6 +9,7 @@ type AssistantMessageLike = {
 		input?: number;
 		output?: number;
 		reasoning?: number;
+		reasoningSummarized?: true;
 		cacheRead?: number;
 		cacheWrite?: number;
 	};
@@ -87,8 +88,9 @@ export default function (pi: ExtensionAPI) {
 		// The rate counts only messages that streamed, timed from their first token to their last, so
 		// time-to-first-token and a reply delivered in one piece cannot skew it (senpi#3393). Reasoning
 		// counted in usage.output may be hidden or only summarised after it finished, so it was generated
-		// before the first delta. Such a message (usage.reasoning, or a thinking block whose text never
-		// streamed: Bedrock and omitted display report no reasoning count) is timed from its start.
+		// before the first delta. Such a message (usage.reasoning, the adapter's usage.reasoningSummarized
+		// marker for a streamed summary (senpi#3399), or a thinking block whose text never streamed: Bedrock
+		// and omitted display report no reasoning count) is timed from its start.
 		const output = event.message.usage?.output ?? 0;
 		const windowStart = reasonedBeforeFirstDelta(event.message, thinkingStreamed) ? messageStartMs : firstDeltaMs;
 		const counted = event.message.stopReason !== "aborted" && event.message.stopReason !== "error" && output > 0;

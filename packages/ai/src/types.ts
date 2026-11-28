@@ -609,6 +609,13 @@ export interface Usage {
 	 * providers that expose a reasoning breakdown; left undefined by providers that don't.
 	 */
 	reasoning?: number;
+	/**
+	 * The billed `output` includes reasoning the provider delivered only as a summary (senpi#3399):
+	 * the summary streamed, but the reasoning itself ran before the first summary chunk. Stamped only
+	 * by adapters that know the request's reasoning-display mode; consumers must not infer it from
+	 * stream content.
+	 */
+	reasoningSummarized?: true;
 	totalTokens: number;
 	cost: {
 		input: number;
