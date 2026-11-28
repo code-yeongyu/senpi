@@ -21,6 +21,7 @@ import { SessionManager } from "../../../src/core/session-manager.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { reservationStep } from "../rpc-worker-reservation-support.ts";
+import { cliStart } from "./5988-start-support.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 // senpi#5744: /resume of a session another live process holds switched onto it and only warned. The restored
@@ -29,7 +30,21 @@ import { startSessionHolder } from "./issue-2951-holder-support.ts";
 // is asked to exit first). Either way there is never a second writer.
 const TAKE_OVER = "Take over (stop it there)";
 
-it.each(["Cancel", TAKE_OVER] as const)("a resume of a session another live process holds: %s", async (choice) => {
+// senpi#5988: a process that is still starting holds the session by its start claim, before any holder record.
+async function startHolder(kind: "record" | "claim", file: string, id: string, root: string) {
+	if (kind === "record") return startSessionHolder(file, id, root);
+	const start = cliStart({ root, file, id });
+	const admitted = await start.next();
+	if (admitted?.step !== "admitted" || typeof admitted.pid !== "number") throw new Error("the start was not admitted");
+	return { pid: admitted.pid, [Symbol.asyncDispose]: () => start[Symbol.asyncDispose]() };
+}
+
+it.each([
+	{ choice: "Cancel", kind: "record" },
+	{ choice: TAKE_OVER, kind: "record" },
+	{ choice: "Cancel", kind: "claim" },
+	{ choice: TAKE_OVER, kind: "claim" },
+] as const)("a resume of a session another live process holds by its $kind: $choice", async ({ choice, kind }) => {
 	const root = await mkdtemp(join(tmpdir(), "held-resume-refused-"));
 	const target = join(root, "target.jsonl");
 	const id = randomUUID();
@@ -105,7 +120,7 @@ it.each(["Cancel", TAKE_OVER] as const)("a resume of a session another live proc
 		if (needle && text.includes(needle)) printed.resolve();
 	});
 	try {
-		await using holder = await startSessionHolder(target, id, root);
+		await using holder = await startHolder(kind, target, id, root);
 		await mode.init();
 		const asked: string[] = [];
 		vi.spyOn(

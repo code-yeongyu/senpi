@@ -25,6 +25,7 @@ import type {
 import { type FdResolver, localGlob } from "./glob.ts";
 import { localGrep } from "./grep.ts";
 import { acquireFileMutationLock } from "./mutation-queue.ts";
+import { privacyProtectedDirs } from "./privacy-protected.ts";
 
 const ACCESS_MODES = {
 	read: constants.R_OK,
@@ -171,14 +172,16 @@ export function createLocalFileOps(options: { resolveFd?: FdResolver }): FileOps
 				pattern = split.rest;
 			}
 			await checkPath(cwd, "enumerate", "files.glob", ctx);
-			return gated("files.glob", req, ctx, () => localGlob(pattern, cwd, req.limit, ctx.signal, options.resolveFd));
+			return gated("files.glob", req, ctx, () =>
+				localGlob(pattern, cwd, req.limit, ctx.signal, options.resolveFd, privacyProtectedDirs()),
+			);
 		},
 
 		async grep(req: GrepRequest, ctx: OpContext): Promise<GrepResult> {
 			const path = resolveOpPath(req.path, ctx);
 			await checkPath(path, "enumerate", "files.grep", ctx);
 			return gated("files.grep", req, ctx, () =>
-				localGrep(path, req.pattern, req.limit, ctx.limits.readMaxBytes, ctx.signal),
+				localGrep(path, req.pattern, req.limit, ctx.limits.readMaxBytes, ctx.signal, privacyProtectedDirs()),
 			);
 		},
 

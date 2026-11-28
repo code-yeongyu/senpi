@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MissingSessionCwdError } from "../src/core/session-cwd.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
 import { teardownChildProcessesAndRoots } from "./helpers/process-teardown.ts";
 import { startFakeModelServer } from "./helpers/rpc-fake-model.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
+import { sandboxRpcClient } from "./helpers/rpc-sandbox-host.ts";
 
 const roots: string[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
@@ -71,7 +71,7 @@ async function fixture(label: string) {
 			}
 		});
 	});
-	const client = new RpcClient({ socketPath: socket });
+	const client = sandboxRpcClient({ agentDir, socket });
 	await client.start();
 	const manager = SessionManager.create(cwd, sessionDir);
 	manager.appendMessage({ role: "user", content: "fixture", timestamp: 1 });

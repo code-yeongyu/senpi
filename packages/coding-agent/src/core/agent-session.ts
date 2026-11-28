@@ -22,6 +22,7 @@ import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
 import { runExecuteToolOnHost } from "./execute-tool-on-host.ts";
 import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 import type {
+	AfterToolCallResult,
 	Agent,
 	AgentContinuationOptions,
 	AgentEvent,
@@ -5767,15 +5768,18 @@ export class AgentSession {
 		this._execBridgeToolCalls.delete(toolCallId);
 	}
 
-	/** Cursor exec already ran the tool; still emit tool_result so plan-touch trackers see .omo/plans writes. */
+	/**
+	 * Run the tool_result chain for a call Cursor exec already ran, and answer its override as `afterToolCall` does for
+	 * a model-issued call: the bridge merges it into the frame's result, so a replacement reaches the model (omo#12466).
+	 */
 	async emitExecBridgeToolResult(
 		toolName: string,
 		toolCallId: string,
 		args: unknown,
 		result: AgentToolResult<unknown>,
 		isError: boolean,
-	): Promise<void> {
-		await this._emitAfterToolCallHooks(
+	): Promise<AfterToolCallResult | undefined> {
+		return await this._emitAfterToolCallHooks(
 			{
 				type: "toolCall",
 				id: toolCallId,
@@ -8775,6 +8779,11 @@ export class AgentSession {
 
 	get pausedNoticeCount(): number {
 		return this._engineTurnHold.noticeCount;
+	}
+
+	/** Distinct peer deliveries held while paused (senpi#7588): `admit_external_message` refuses past the cap. */
+	get heldPeerDeliveryCount(): number {
+		return this._engineTurnHold.peerDeliveryCount;
 	}
 
 	get holds() {

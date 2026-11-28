@@ -1,3 +1,4 @@
+import { sessionPersonaError } from "../../core/session-persona.ts";
 import { isSpawnedBy } from "../../core/session-spawned-by.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 
@@ -92,6 +93,8 @@ export function validatedOpenProfile(
 	const retryFallbackError = sessionRetryFallbackError(command.retryFallback);
 	if (retryFallbackError)
 		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
+	const personaError = sessionPersonaError(command.persona);
+	if (personaError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${personaError}`);
 	const telemetryError = sessionTelemetryError(command.telemetry);
 	if (telemetryError)
 		return error(command.id, "open_session", RPC_ERROR_INVALID_TELEMETRY_CONSENT, { reason: telemetryError });
@@ -128,6 +131,7 @@ export function validatedOpenProfile(
 		...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
 		...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
 		...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
+		...(command.persona !== undefined ? { persona: command.persona } : {}),
 		...(sessionEnv !== undefined ? { sessionEnv } : {}),
 		// Every wire open has a caller, so its silence is an answer: an older peer never grants (senpi#7446).
 		telemetryConsent: command.telemetry?.consent ?? "unanswered",

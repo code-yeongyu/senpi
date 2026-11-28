@@ -4,7 +4,6 @@ import { createConnection, type Socket } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import { HOST_SHUTDOWN_BUDGET_MS } from "../../../src/modes/rpc/host-shutdown-connections.ts";
 import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
 import {
@@ -16,6 +15,7 @@ import {
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { reapProcessesUnder } from "../../helpers/spawned-host-reaper.ts";
 import { startInProcessHost } from "../rpc-worker-host-support.ts";
+import { probeSandboxHost } from "../../helpers/rpc-sandbox-host.ts";
 
 // RULING-124 (#5322): the half-close grace that flushes `socket_closing` never extends a host shutdown past its budget
 // (the supervisor's SIGTERM-to-SIGKILL window), and a handoff never waits on the old host's sockets.
@@ -167,7 +167,7 @@ it.skipIf(process.platform === "win32")(
 			env,
 			_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
 		});
-		const before = await probeHost({ socket: qa.socket });
+		const before = await probeSandboxHost(qa);
 		const peer = await stalledCompactPeer(qa.socket, qa.cwd);
 		let oldSocketClosed = false;
 		peer.once("close", () => {
@@ -185,7 +185,7 @@ it.skipIf(process.platform === "win32")(
 			const elapsedMs = Math.round(performance.now() - startedAt);
 			process.stdout.write(`5322-MEASURE handoff with stalled peer ${elapsedMs}ms\n`);
 			expect(result).toMatchObject({ action: "handoff", generation: 1 });
-			const serving = await probeHost({ socket: qa.socket });
+			const serving = await probeSandboxHost(qa);
 			expect(serving?.instanceId, "the new generation serves the endpoint").not.toBe(before?.instanceId);
 			expect(oldSocketClosed, "the takeover did not wait for the old stalled socket to close").toBe(false);
 		} finally {

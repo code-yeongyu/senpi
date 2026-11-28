@@ -16,7 +16,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { type EnsuredHost, ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import { signalGeneration } from "../../../src/modes/rpc/host-stop.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import {
@@ -31,6 +30,7 @@ import {
 } from "../../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { reapProcessesUnder, waitForPidGone } from "../../helpers/spawned-host-reaper.ts";
+import { probeSandboxHost } from "../../helpers/rpc-sandbox-host.ts";
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
@@ -84,7 +84,7 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 		if (sent.length === 0) {
 			expect(await readFile(stderrLog(old), "utf8")).toContain("another generation owns the public socket");
 		}
-		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(replaced.instanceId);
+		expect((await probeSandboxHost(old.qa, { socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(replaced.instanceId);
 		// The upgraded client's next ensure attaches to the successor instead of being turned away.
 		const attached = await ensureOn(old.qa, old.socket);
 		expect(attached).toMatchObject({ reused: true, pid: replaced.pid });
@@ -109,7 +109,7 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 		const replaced = expectHandoff(result);
 		expect(await waitForPidGone(old.pid, 60_000)).toBe(true);
 		expect(signals.sentTo(old.pid)).toEqual([]);
-		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(replaced.instanceId);
+		expect((await probeSandboxHost(old.qa, { socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(replaced.instanceId);
 	}, 240_000);
 
 	it("is replaced when no record proves any owner and it holds no session, without being signalled", async () => {
@@ -153,7 +153,7 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 		expect(detail).toContain("host stop --drain");
 		expect(signals.sentTo(old.pid)).toEqual([]);
 		expect(processAlive(old.pid)).toBe(true);
-		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(old.instanceId);
+		expect((await probeSandboxHost(old.qa, { socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(old.instanceId);
 		expect(await readFile(flatPidFile(old), "utf8")).toBe(old.flatRecord);
 	}, 240_000);
 
@@ -169,7 +169,7 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 		expect(result.action === "refuse" ? result.detail : undefined).toContain("1 open session");
 		expect(signals.sentTo(old.pid)).toEqual([]);
 		expect(processAlive(old.pid)).toBe(true);
-		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(old.instanceId);
+		expect((await probeSandboxHost(old.qa, { socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(old.instanceId);
 	}, 240_000);
 
 	it("never signals a legacy host that took a session between the count and the socket swap", async () => {
@@ -224,7 +224,7 @@ async function startOldHost(label: string, owner: "legacy" | "unprovable"): Prom
 	const ensured = await ensureOn(qa, socket);
 	// An attached client keeps a draining host resident; the old host must start with nobody on it.
 	ensured.release();
-	const instanceId = (await probeHost({ socket, timeoutMs: 10_000 }))?.instanceId;
+	const instanceId = (await probeSandboxHost(qa, { socket, timeoutMs: 10_000 }))?.instanceId;
 	if (instanceId === undefined) throw new Error("the old host did not report an instanceId");
 	const startTime = await readProcessStartTime(ensured.pid);
 	if (startTime === undefined) throw new Error(`old host pid ${ensured.pid} has no readable start time`);

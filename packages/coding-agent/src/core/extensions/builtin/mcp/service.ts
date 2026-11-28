@@ -671,9 +671,8 @@ export class McpService {
 	}
 
 	#rehydrateFromSessionHistory(binding: McpSessionBinding): void {
-		const entries = binding.context.sessionManager?.getEntries() ?? [];
-		if (entries.length === 0) return;
-		this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(entries);
+		const manager = binding.context.sessionManager;
+		if (manager) this.#toolSearchFor(binding)?.maybeRehydrateFromSessionHistory(manager);
 	}
 
 	async handleSessionShutdown(event: SessionShutdownEvent): Promise<void> {
