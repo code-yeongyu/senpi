@@ -2,11 +2,12 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { resetCredentialAccount } from "../../../src/core/credential-account-reset.ts";
 import { getCredentialAccounts } from "../../../src/core/credential-accounts.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
+import { subscribeProviderAccountEvents } from "../../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { emptyCredential } from "../../../src/core/extensions/builtin/cursor-cli-oauth/accounts.ts";
 
 const FAR_FUTURE = 4_102_444_800_000;
@@ -52,6 +53,25 @@ async function seedBlock(slot: string, key: string): Promise<void> {
 }
 
 describe("an account's cooldown can be cleared on request (senpi#3285)", () => {
+	// senpi#4884: the sidecar write commits first; a failing auth.json write must not leave that change unannounced.
+	test("announces the cleared sidecar even when the second write fails", async () => {
+		await storage.modify("test", async () => pooled());
+		await seedBlock("b", "key-b");
+		const events: unknown[] = [];
+		const unsubscribe = subscribeProviderAccountEvents((event) => events.push(event));
+		vi.spyOn(storage, "modify").mockRejectedValueOnce(new Error("auth.json write failed"));
+		try {
+			await expect(resetCredentialAccount(storage, "test", "b", {}, repository)).rejects.toThrow(
+				"auth.json write failed",
+			);
+		} finally {
+			unsubscribe();
+			vi.restoreAllMocks();
+		}
+		expect(await blocked("b")).toBe(false);
+		expect(events).toEqual([{ type: "accounts_changed", provider: "test", remedy: "reset" }]);
+	});
+
 	test("reset clears the sidecar exclusion so the account is listed available again", async () => {
 		await storage.modify("test", async () => pooled());
 		await seedBlock("b", "key-b");
