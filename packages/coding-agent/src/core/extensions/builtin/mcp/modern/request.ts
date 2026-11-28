@@ -34,6 +34,7 @@ export interface ModernProtocolState {
 }
 export type MrtrClock = McpClock;
 const states = new WeakMap<Client, ModernProtocolState>();
+export const modernMcpProtocolVersion = (client: Client) => states.get(physicalMcpClient(client))?.version;
 export const isModernMcpClient = (client: Client) => states.get(physicalMcpClient(client))?.version !== undefined;
 export const legacyMcpFormsAdvertised = (client: Client) => states.get(physicalMcpClient(client))?.legacyFormEligible;
 const own = (value: object, key: string) => Object.hasOwn(value, key);
