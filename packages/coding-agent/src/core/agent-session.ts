@@ -4634,11 +4634,10 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					// The exemption does not extend a failed run. Released input starts its own turn or is refused
-					// under a usage hold, just like ordinary queued input (#4036, superseded by #6868).
+					// The exemption does not extend a failed run: input parked behind a failed or aborted response is
+					// released just below and follows the ordinary queue rules (#4036, #6868).
 					allowsPostCompactionUsageExemptContinuation =
-						this._postCompactionUsageExemptAssistants.has(msg) &&
-						this._agentEndAllowsQueuedContinuation(event.messages);
+						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
 					}
@@ -6537,7 +6536,9 @@ export class AgentSession {
 		// Turn boundary: restore the primary model if the fallback cooldown expired.
 		if (!this.isStreaming) {
 			try {
-				claudeRecheckProvider = await this._guardAccountHolds(attributionOf(options));
+				await this._maybeRestoreFallbackPrimary();
+				const guarded = this._guardAccountHolds(attributionOf(options));
+				claudeRecheckProvider = guarded instanceof Promise ? await guarded : guarded;
 			} catch (error) {
 				releaseStart(false);
 				throw error;
@@ -9287,6 +9288,7 @@ export class AgentSession {
 	 */
 	private async _queuedInputUsageHold(): Promise<AccountUsageLimitError | undefined> {
 		try {
+			await this._maybeRestoreFallbackPrimary();
 			await this._guardAccountHolds("agent");
 			return undefined;
 		} catch (error) {
@@ -9321,13 +9323,28 @@ export class AgentSession {
 	}
 
 	/**
-	 * The account-hold guard at a turn boundary (senpi#3131): releases holds a pooled account or newer usage shows
-	 * servable, routes a spent provider or held family to its fallback, and throws `AccountUsageLimitError` when no
-	 * route can serve. Answers the provider whose hold defers to the Claude pool (senpi#6727).
+	 * The account-hold guard at a turn boundary (senpi#3131), run after the fallback primary was restored: releases holds
+	 * a pooled account or newer usage shows servable, routes a spent provider or held family to its fallback, and
+	 * throws `AccountUsageLimitError` when no route can serve. Answers the provider whose hold defers to the Claude pool
+	 * (senpi#6727). Synchronous when nothing is held, so a prompt's admission keeps its ordering against queue flushes.
 	 */
-	private async _guardAccountHolds(attribution: InputAttribution): Promise<string | undefined> {
+	private _guardAccountHolds(attribution: InputAttribution): string | undefined | Promise<string | undefined> {
+		const model = this.model;
+		const held =
+			!this._pendingModelSwitch &&
+			((model !== undefined && this._retryFallback.isProviderSpent(model.provider)) ||
+				(model !== undefined && attribution !== "user" && this._retryFallback.heldFamily(model) !== undefined));
+		if (held) return this._guardHeldAccount(attribution);
+		return model?.provider === "anthropic-subscription" &&
+			!this._pendingModelSwitch &&
+			this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+			attribution === "user"
+			? model.provider
+			: undefined;
+	}
+
+	private async _guardHeldAccount(attribution: InputAttribution): Promise<string | undefined> {
 		let claudeRecheckProvider: string | undefined;
-		await this._maybeRestoreFallbackPrimary();
 		const model = this.model;
 		// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
 		// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
