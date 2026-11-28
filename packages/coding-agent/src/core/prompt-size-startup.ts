@@ -32,7 +32,7 @@ export function promptSizeStartupNotes(input: {
 }): PromptSizeStartupNotes {
 	const thirdPartySessionStart = {
 		names: input.runner.getThirdPartySessionStartPaths().map((path) => input.extensionNames.get(path) ?? "extension"),
-		note: "these third-party session_start hooks ran during startup and may have used the network",
+		note: "these third-party session_start hooks ran during startup and may have used the network; trusted SessionStart command hooks also ran and are not listed",
 	};
 	if (!input.sizesOnlyStartup || input.inventory === undefined) return { thirdPartySessionStart };
 	const servers = [...input.inventory.mcpServerNames({ cwd: input.cwd, runner: input.runner })].sort();

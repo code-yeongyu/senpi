@@ -217,7 +217,9 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 				state.recordedBackgroundIds.clear();
 				bindTerminalManifestWriter(sessionKey, writer);
 			}
-		} else if (sessionKey !== undefined) {
+		} else if (sessionKey !== undefined && event.sizesOnly !== true) {
+			// A sizes-only startup (`--print-prompt-sizes`) inspects; it never takes the session's terminal lease or
+			// restores (and possibly kills) the processes its manifest names (senpi#4104).
 			await startPersistence({ pi, state, toolCtx, sessionKey });
 		}
 		syncToolset(pi, state);
