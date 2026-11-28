@@ -90,15 +90,16 @@ function place(staged: string, dir: string, files: KillGuardShimFiles): void {
 }
 
 /**
- * Whether `base` carries an outer agent's kill-guard BASH_ENV: a `bash_env.sh` written together with the private
- * `SENPI_KILL_GUARD_USER_BASH_ENV` that `killGuardEnvironment` always sets beside it. Read from the environment alone,
- * like the PROMPT_COMMAND hook's prefix, so building a spawn environment touches no file (no-sync-in-session-path).
+ * Match the wrapper's full path, without reading files on the session path. Older
+ * environments have no path marker; their interactive hook identifies the outer shim directory.
  */
-function isKillGuardBashEnv(base: NodeJS.ProcessEnv): boolean {
+function isKillGuardBashEnv(base: NodeJS.ProcessEnv, wrapper: string): boolean {
+	const path = base.BASH_ENV;
+	if (path === undefined || base.SENPI_KILL_GUARD_USER_BASH_ENV === undefined) return false;
+	if (base.SENPI_KILL_GUARD_BASH_ENV !== undefined) return path === base.SENPI_KILL_GUARD_BASH_ENV;
 	return (
-		base.BASH_ENV !== undefined &&
-		basename(base.BASH_ENV) === KILL_GUARD_BASH_ENV &&
-		base.SENPI_KILL_GUARD_USER_BASH_ENV !== undefined
+		path === wrapper ||
+		(basename(path) === KILL_GUARD_BASH_ENV && base.PROMPT_COMMAND === killGuardPromptCommand(dirname(path)))
 	);
 }
 
@@ -123,13 +124,14 @@ function nestedShellLevel(level: string | undefined): boolean {
 export function killGuardEnvironment(base: NodeJS.ProcessEnv, runtime: KillGuardRuntime): Record<string, string> {
 	const pathKey = Object.keys(base).find((key) => key.toLowerCase() === "path") ?? "PATH";
 	const rest = (base[pathKey] ?? "").split(delimiter).filter((entry) => entry !== "" && entry !== runtime.dir);
-	const userBashEnv = isKillGuardBashEnv(base) ? base.SENPI_KILL_GUARD_USER_BASH_ENV : base.BASH_ENV;
+	const userBashEnv = isKillGuardBashEnv(base, runtime.bashEnv) ? base.SENPI_KILL_GUARD_USER_BASH_ENV : base.BASH_ENV;
 	const userPromptCommand = base.PROMPT_COMMAND?.startsWith(KILL_GUARD_PROMPT_HOOK_PREFIX)
 		? base.SENPI_KILL_GUARD_USER_PROMPT_COMMAND
 		: base.PROMPT_COMMAND;
 	return {
 		[pathKey]: [runtime.dir, ...rest].join(delimiter),
 		BASH_ENV: runtime.bashEnv,
+		SENPI_KILL_GUARD_BASH_ENV: runtime.bashEnv,
 		SENPI_KILL_GUARD_USER_BASH_ENV: userBashEnv ?? "",
 		PROMPT_COMMAND: killGuardPromptCommand(runtime.dir),
 		SENPI_KILL_GUARD_USER_PROMPT_COMMAND: userPromptCommand ?? "",
