@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { spawnWithPrivateFds } from "../../private-fd-spawn.ts";
 import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
+import { keepPreviousDaemonLog } from "./host-daemon-log.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
@@ -76,8 +77,11 @@ export async function startHost(
 		instanceId,
 	});
 	await writeHostOwner(generationPaths(paths, instanceId).dir, lifetimeOwner);
-	// A stranded generation is still writing its diagnostics here; only a fresh endpoint starts over.
+	// A stranded generation is still writing its diagnostics here; only a fresh endpoint starts over, after keeping the
+	// log it starts over from (#4769).
+	const notKept = generation === 0 ? await keepPreviousDaemonLog(paths) : undefined;
 	const stderr = await open(paths.stderrLog, generation === 0 ? "w" : "a", 0o600);
+	if (notKept !== undefined) await stderr.write(`${notKept}\n`);
 	let pidFile: DaemonPidFile | undefined;
 	let child: ReturnType<typeof spawn> | undefined;
 	let exitedEarly: ChildExit | undefined;

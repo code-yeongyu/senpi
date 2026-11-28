@@ -1840,6 +1840,15 @@ are what this decision encodes; the other two are what a client must not undo el
   touches nothing of it. The ensure then starts one beside it, numbered after the stranded generation, which
   keeps its registration until it exits; refusing there locked every client out until that process happened to
   end (#1936). A named pipe has no entry to lose, so win32 keeps refusing.
+  "Accepts" means one bounded `get_protocol_info` probe of the public path either got a line back or was held
+  silent until its deadline: a busy host, never replaced. A socket that accepts and then closes or resets the
+  connection without answering, or answers only `host_unavailable`, can serve no client while its listener keeps
+  the path (senpi#4769); because a supervisor also answers that way for a moment while its hop is being restored,
+  the verdict counts only when a second probe after a 12 s wait sees the same. The ensure stops that generation (`replace_unreachable`) and starts a fresh one when this
+  process wrote its pidfile, or when the writer stamp names a process that no longer exists (its pid is not live,
+  or belongs to a process started at another time): nobody is left who may stop it. A pidfile without a writer
+  stamp, or one whose writer identity cannot be read, keeps the `foreign_writer` refusal. A named pipe or an
+  abstract socket gets only the plain reachability probe, so neither is ever judged this way.
   Neither replacement happens to a generation that is alive but stalled: when its own
   `generations/<instanceId>/host-stalled.json` records a loop stall younger than `SENPI_RPC_STALL_REFUSAL_MS`
   (default 120000), or its `host-alive.json` heartbeat stopped more than the loop-lag error threshold ago yet inside
@@ -2096,6 +2105,8 @@ directory can never read each other's state:
     host.pid                                   POINTER: { layout, instance_id, generation_dir, writer }
     settings.json                              what the supervisor reads at boot
     daemon.lock  stderr.log
+    stderr.prev.log                            what a fresh (generation 0) start kept of the log it
+                                                 restarts: appended, newest 1 MiB, never overwritten
     generations/<instanceId>/                  one directory per generation
       host.pid                                 { pid, processStartTime, instance_id, generation,
                                                  engineVersion, engineOrdinal, launchProfileId,

@@ -19,25 +19,19 @@ import {
 import { claimHostOwner } from "./host-daemon-state.ts";
 import { HostEnsureRefusedError } from "./host-decision.ts";
 import { decideEnsureAction as decide } from "./host-ensure-client.ts";
-import { refuseIfForeignHeld, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
+import { unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
-import { appendStderr, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
-import {
-	delay,
-	ensureSender,
-	matchesPidFileOrUnknown,
-	resolvePidFileOwnership,
-	STOP_WAIT_BUDGET_MS,
-	stopManagedHost,
-} from "./host-ensure-stop.ts";
+import { appendStderr, startHost } from "./host-ensure-start.ts";
+import { delay, matchesPidFileOrUnknown, resolvePidFileOwnership, STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
+import { settleUnansweredGeneration } from "./host-ensure-unanswered.ts";
 import { scheduleOpportunisticHostGc } from "./host-gc-pass.ts";
 import { handoffHostLocked } from "./host-handoff.ts";
 import { reapOrphanedBindAliases } from "./host-bind-alias-reaper.ts";
 import { reapOrphanedInternalHostDirs } from "./host-internal-dir-reaper.ts";
 import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
-import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
+import { holdProtocolInfo } from "./host-probe.ts";
 import { childStalledStopMaxMs, hostChildAlive } from "./host-stalled-evidence.ts";
 import { ensureLockWaitDetail, startupEnvelope } from "./host-startup-policy.ts";
 import { acquireOwnershipSafeLock, isBusy } from "./ownership-safe-lock.ts";
@@ -188,41 +182,8 @@ async function ensureHostLocked(
 	const pidMatches = registeredHere && registered ? await matchesPidFileOrUnknown(registered.record, probe) : false;
 	// The generation this start leaves RUNNING beside the new one, when there is one.
 	let stranded: RegisteredHost | undefined;
-	if (registered && pidMatches) {
-		if (!startedByUs) {
-			// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
-			// this record may end it - anyone else refuses rather than signalling somebody else's host.
-			await refuseIfForeignHeld(paths, registered, socket, protocol);
-			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
-			// A foreign record whose public endpoint accepts NOTHING names a generation nobody can reach:
-			// its entry was replaced (so it is already draining, #1893) or removed, or a dead listener
-			// left the entry behind. Refusing here locked every client out until that process happened
-			// to exit (#1936). Binding a fresh generation there signals nothing, so that is what happens -
-			// the stranded one keeps its record.
-			stranded = registered;
-		} else {
-			// Silent is not the same as gone. A host serving many sessions can miss a probe budget
-			// while its event loop is busy; its socket still ACCEPTS the connection. Ending it then
-			// would destroy every live session to replace a host that was never broken, so a
-			// reachable socket is refused instead of signalled - the caller retries or falls back.
-			if (await probeSocketReachable(socket, EXISTING_HOST_PROBE_TIMEOUT_MS)) {
-				throw new HostEnsureRefusedError(socket, "host_busy", protocol);
-			}
-			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
-			await stopManagedHost(
-				registered.record,
-				testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
-				{
-					daemonDir: paths.dir,
-					generation: generationPaths(paths, registered.instanceId),
-					instanceId: registered.instanceId,
-					sender: ensureSender(),
-					reason: "replace_unreachable",
-				},
-				probe,
-			);
-		}
-	}
+	if (registered && pidMatches)
+		stranded = await settleUnansweredGeneration({ paths, socket, registered, protocol, startedByUs, options });
 	// A host from before this layout registered itself in the FLAT directory. Its files are another
 	// process's state: never read as ours, never removed. While it is alive this ensure never starts
 	// beside it: an idle one is drained and waited out (#2423), a busy or unprovable one is refused.
