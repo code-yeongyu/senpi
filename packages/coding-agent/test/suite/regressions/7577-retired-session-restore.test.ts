@@ -8,7 +8,10 @@ import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-rou
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
-import { recordHandoverParkedSession } from "../../../src/modes/rpc/host-handover-parked.ts";
+import {
+	readHandoverParkedSessions,
+	recordHandoverParkedSession,
+} from "../../../src/modes/rpc/host-handover-parked.ts";
 import { reopenHandoverParkedSessions } from "../../../src/modes/rpc/host-handover-reopen.ts";
 import { currentResidentWriter } from "../../../src/modes/rpc/host-handover-resident-writer.ts";
 
@@ -56,6 +59,52 @@ it.each(["handover", "retained restart"] as const)("does not open a retired sess
 	}
 });
 
+// senpi#7622: a header id that is not a session id names no marker, so that park is skipped and kept, never the end of the restore.
+it("skips a parked transcript whose header id is invalid and still restores the others", async () => {
+	const agentDir = await mkdtemp(join(tmpdir(), "retirement-header-"));
+	const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	try {
+		const socket = join(agentDir, "host.sock");
+		const daemonDir = createHostDaemonPaths({ agentDir, socket }).dir;
+		const timestamp = new Date(0).toISOString();
+		const malformed = join(agentDir, "malformed.jsonl");
+		const active = join(agentDir, "active.jsonl");
+		for (const [sessionPath, id] of [
+			[malformed, "not a session id"],
+			[active, "00000000-0000-4000-8000-000000000003"],
+		] as const) {
+			await writeFile(
+				sessionPath,
+				`${JSON.stringify({ type: "session", version: 3, id, timestamp, cwd: agentDir })}\n`,
+			);
+			await recordHandoverParkedSession(daemonDir, {
+				cwd: agentDir,
+				sessionPath,
+				durableSessionId: id,
+				retainOnDisconnect: true,
+				parkedBy: "previous",
+			});
+		}
+
+		const open = vi.fn(async (_entry: { sessionPath: string }) => {});
+		let passes = 0;
+		await reopenHandoverParkedSessions(open, agentDir, socket, {
+			hostInstance: "successor",
+			shouldReopen: () => passes++ < 3,
+		});
+		expect(open.mock.calls.map(([entry]) => entry.sessionPath)).toEqual([active]);
+		expect((await readHandoverParkedSessions(daemonDir)).map((entry) => entry.sessionPath)).toEqual([malformed]);
+		// Two passes saw the skipped park; the host log names it and the reason once.
+		const records = stderr.mock.calls
+			.map(([chunk]) => String(chunk))
+			.filter((line) => line.includes(malformed) && line.includes("retirement_marker_unavailable"));
+		expect(records).toHaveLength(1);
+	} finally {
+		stderr.mockRestore();
+		await rm(agentDir, { recursive: true, force: true });
+	}
+});
+
 it("keeps retirement through ordinary and failed opens; only an explicit successful reopen consumes it", async () => {
 	const agentDir = await mkdtemp(join(tmpdir(), "retirement-open-"));
 	const registry = new RpcSessionRegistry({
@@ -84,6 +133,11 @@ it("keeps retirement through ordinary and failed opens; only an explicit success
 			data: { found: { open: false, retirement: marker } },
 		});
 		expect(await router.handle(request)).toMatchObject({ errorCode: "session_retired", errorData: marker });
+		// senpi#7622: an open by reference (the durable id alone, no path) is refused like an open by path.
+		expect(await router.handle({ type: "open_session", cwd: agentDir, durableSessionId: id })).toMatchObject({
+			errorCode: "session_retired",
+			errorData: marker,
+		});
 		expect(await router.handle({ ...request, reopenRetired: true, cwd: sessionPath })).toMatchObject({
 			success: false,
 		});
@@ -123,7 +177,7 @@ it("keeps retirement through ordinary and failed opens; only an explicit success
 		await writeFile(store, "not a directory");
 		expect(await router.handle({ ...request, reopenRetired: true })).toMatchObject({
 			errorCode: "retirement_store_unavailable",
-			errorData: { store },
+			errorData: { store: "retired-sessions" },
 		});
 		const socket = join(agentDir, "restore.sock");
 		await recordHandoverParkedSession(createHostDaemonPaths({ agentDir, socket }).dir, {
@@ -150,14 +204,16 @@ it("distinguishes absent, damaged marker and inaccessible store without marking 
 		await writeFile(join(store, "one.json"), "{");
 		await expect(readSessionRetirement(agentDir, "one")).rejects.toMatchObject({
 			code: "retirement_marker_unavailable",
-			detail: { marker: join(store, "one.json") },
+			detail: { marker: "retired-sessions/one.json" },
+			path: join(store, "one.json"),
 		});
 		expect(await readSessionRetirement(agentDir, "two")).toBeUndefined();
 		await rm(store, { recursive: true });
 		await writeFile(store, "not a directory");
 		await expect(readSessionRetirement(agentDir, "two")).rejects.toMatchObject({
 			code: "retirement_store_unavailable",
-			detail: { store },
+			detail: { store: "retired-sessions" },
+			path: store,
 		});
 		expect(await retireSession({ agentDir, reason: "requested" })).toEqual({ reason: "memory_only" });
 	} finally {
