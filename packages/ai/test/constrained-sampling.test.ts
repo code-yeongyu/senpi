@@ -188,13 +188,45 @@ describe("constrained tool sampling", () => {
 
 			expect(() => makeStrictJsonSchema(parameters)).toThrow(error);
 			expect(resolveJsonSchemaStrictSampling(tool, true)).toBeUndefined();
-			expect(convertResponsesTools([tool], { supportsStrictMode: true })[0]).toMatchObject({
-				strict: false,
-				parameters,
-			});
+			expect(convertResponsesTools([tool], { supportsStrictMode: true })[0]).toMatchObject({ strict: false });
 
 			tool.constrainedSampling = { type: "json_schema", strict: "require" };
 			expect(() => resolveJsonSchemaStrictSampling(tool, true)).toThrow(error);
+		}
+	});
+
+	// #7092: a root union with a boolean branch is valid JSON Schema, but Responses rejects any root combinator.
+	it("sends a plain object root for root unions with boolean or impossible branches", () => {
+		const branchesOf = (anyOf: unknown[]): Record<string, unknown> => {
+			const [converted] = convertResponsesTools([
+				makeTool({
+					parameters: {
+						type: "object",
+						properties: { code: { type: "string" }, cell_id: { type: "string" } },
+						anyOf,
+					} as Tool["parameters"],
+				}),
+			]);
+			if (converted?.type !== "function") throw new Error("expected a function tool");
+			return converted.parameters ?? {};
+		};
+
+		// `true` accepts anything, so no branch name becomes required.
+		const open = branchesOf([{ required: ["code"] }, true]);
+		expect(open).toMatchObject({ type: "object", properties: { code: { type: "string" } } });
+		expect(open).not.toHaveProperty("anyOf");
+		expect(open.required ?? []).toEqual([]);
+
+		// `false` matches nothing, so the remaining branch decides what is required.
+		const closed = branchesOf([{ required: ["code"] }, false]);
+		expect(closed).not.toHaveProperty("anyOf");
+		expect(closed.required).toEqual(["code"]);
+
+		// A scalar-typed branch can never match an object input, so it is pruned like `false`.
+		for (const impossible of [{ type: "string" }, { type: "null" }, { type: ["array", "number"] }]) {
+			const pruned = branchesOf([{ required: ["code"] }, impossible]);
+			expect(pruned, JSON.stringify(impossible)).not.toHaveProperty("anyOf");
+			expect(pruned.required).toEqual(["code"]);
 		}
 	});
 

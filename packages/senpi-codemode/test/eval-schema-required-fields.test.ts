@@ -7,8 +7,8 @@ import { convertResponsesTools } from "../../ai/src/api/openai-responses-shared.
 import { getModel } from "../../ai/src/compat.ts";
 import type { Tool } from "../../ai/src/types.ts";
 import {
-	normalizeToolParametersForBedrock,
 	normalizeToolParametersForMoonshot,
+	normalizeToolParametersForObjectRoot,
 	normalizeToolParametersForOpenAICompat,
 } from "../../ai/src/utils/tool-schema-compat.ts";
 import { createEvalInputSchema } from "../src/tool/types.ts";
@@ -35,7 +35,7 @@ describe("eval action schemas", () => {
 			convertGoogleTools([tool], true)?.[0].functionDeclarations[0].parameters,
 			normalizeToolParametersForOpenAICompat({ ...schema }),
 			normalizeToolParametersForMoonshot({ ...schema }),
-			normalizeToolParametersForBedrock({ ...schema }),
+			normalizeToolParametersForObjectRoot({ ...schema }),
 		]) {
 			expect(wire).toBeDefined();
 			const converted: TSchema = JSON.parse(JSON.stringify(wire));
@@ -86,10 +86,7 @@ describe("eval action schemas", () => {
 	it("falls back from preferred OpenAI strict sampling without requiring run fields on controls", () => {
 		expect(
 			convertResponsesTools([{ ...tool, constrainedSampling: { type: "json_schema", strict: "prefer" } }])[0],
-		).toMatchObject({
-			strict: false,
-			parameters: schema,
-		});
+		).toMatchObject({ strict: false });
 		expect(() =>
 			convertResponsesTools([{ ...tool, constrainedSampling: { type: "json_schema", strict: "require" } }]),
 		).toThrow("object and array unions are unsupported");
@@ -114,6 +111,21 @@ describe("eval action schemas", () => {
 		]) {
 			expect(wire.description).toEqual(expect.stringContaining("REQUIRED for action=run: language, code, summary."));
 		}
+	});
+
+	// senpi#7092: OpenAI rejects every request with invalid_function_parameters when a function's root
+	// schema is not a plain object (no root oneOf/anyOf/allOf/enum/const/not).
+	it("sends the OpenAI Responses path an object root without root combinators", () => {
+		const responses = convertResponsesTools([tool])[0];
+		expect(responses.type).toBe("function");
+		if (responses.type !== "function") return;
+		const wire = responses.parameters ?? {};
+		expect(wire.type).toBe("object");
+		for (const key of ["oneOf", "anyOf", "allOf", "enum", "const", "not"]) expect(wire).not.toHaveProperty(key);
+		// senpi#5150: the merged root still tells the model which fields each branch requires.
+		expect(wire.description).toEqual(expect.stringContaining("REQUIRED for action=run: language, code, summary."));
+		// Providers that accept the union keep receiving it unchanged.
+		expect(convertGoogleTools([tool])?.[0].functionDeclarations[0].parametersJsonSchema).toEqual(schema);
 	});
 
 	it("keeps list, peek and stop usable without run fields", () => {
