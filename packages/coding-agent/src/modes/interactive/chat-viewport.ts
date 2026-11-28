@@ -39,11 +39,15 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
 		...(options.widgetsBelow === undefined ? [] : [{ component: options.widgetsBelow, shrink: 1, minSize: 0 }]),
 		{ component: options.footer, shrink: 1, minSize: 0 },
 	]);
+	// A dock taller than the screen (a long ask-user question, senpi#4331) scrolls instead of clipping its rows; it
+	// follows its end so the editor stays in view, and a wheel it cannot use chains on to the transcript. No scrollbar:
+	// an overlay bar would cover the last column and cut a wide glyph there, and a reserved one would narrow the editor.
+	const dockScroll = new ScrollView(dock, { follow: "end", overscroll: "chain", scrollbar: "hidden" });
 	return {
 		transcript,
 		root: new VStack([
 			{ component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
-			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
+			{ component: dockScroll, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
 		]),
 	};
 }
