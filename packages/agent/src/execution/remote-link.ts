@@ -14,8 +14,13 @@ import {
 
 /** How a dispatched call or file operation ended, as the session saw it. */
 export type HandReply =
-	| { readonly kind: "settled"; readonly result: RemoteToolResult }
-	| { readonly kind: "terminal"; readonly terminal: RemoteTerminal }
+	/**
+	 * `ack`: tells the hand the session accepted this outcome, so it may drop its record (senpi#5867). The receiver calls
+	 * it once the outcome is durably taken, never on receipt: an outcome a session lost before taking it stays with the
+	 * hand for the next session to recover.
+	 */
+	| { readonly kind: "settled"; readonly result: RemoteToolResult; readonly ack: () => void }
+	| { readonly kind: "terminal"; readonly terminal: RemoteTerminal; readonly ack: () => void }
 	| { readonly kind: "refused"; readonly reason: string }
 	| { readonly kind: "aborted"; readonly sent: boolean }
 	| { readonly kind: "unreachable"; readonly reason: string }
@@ -55,6 +60,8 @@ export function createHandLink(
 	const stamp = epoch === undefined ? {} : { epoch };
 	/** Messages handed to the transport: a hand's `hello` re-sends only these, never one still waiting on its floor. */
 	const sent = new Set<string>();
+	/** Outcomes the receiver took (`ack` called): a replay of one of them is acknowledged again, never kept. */
+	const taken = new Set<string>();
 	// Nested requests (S31) are admitted only while their parent CALL is live on its lane. A pending file operation
 	// (S40) hosts only the planes in `filePlanes` (a two-sided extension's forwarded tool events, S29); every other
 	// plane under it is refused as if it had no live parent. An abort names no plane and reaches what was admitted.
@@ -124,12 +131,25 @@ export function createHandLink(
 			return;
 		}
 		if (message.kind === "floor_ack" || message.kind === "floor_refused") return gate?.answer(frame.lane, message);
-		if (message.kind === "settled") {
-			settle(message.executionId, { kind: "settled", result: message.result });
-			ack(message.executionId);
-		} else if (message.kind === "terminal") {
-			settle(message.executionId, { kind: "terminal", terminal: message });
-			ack(message.executionId);
+		if (message.kind === "settled" || message.kind === "terminal") {
+			const { executionId } = message;
+			if (!pending.has(executionId)) {
+				// A replay of an outcome this link already took (its ack was lost, say to a hand restart) is acknowledged
+				// again. Any other outcome nobody here waits for was never taken, and no waiter is not consumption: the hand
+				// keeps it for a later dispatch of the same call or a later session to recover.
+				if (taken.has(executionId)) ack(executionId);
+				return;
+			}
+			const accepted = (): void => {
+				taken.add(executionId);
+				if (!closed) ack(executionId);
+			};
+			settle(
+				executionId,
+				message.kind === "settled"
+					? { kind: "settled", result: message.result, ack: accepted }
+					: { kind: "terminal", terminal: message, ack: accepted },
+			);
 		} else if (message.kind === "refused") settle(message.executionId, { kind: "refused", reason: message.reason });
 	});
 

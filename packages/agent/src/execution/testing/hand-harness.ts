@@ -13,7 +13,7 @@ import type { ExecutionEntry } from "../ledger-types.ts";
 import { createRemoteExecutor, type HandScope } from "../remote-executor.ts";
 import { createHandLedger } from "../remote-hand-ledger.ts";
 import { createRemoteToolHost, type HandPlacement } from "../remote-tool-host.ts";
-import type { ToolHostResult } from "../tool-host.ts";
+import type { ToolHostOptions, ToolHostResult } from "../tool-host.ts";
 
 /** What the KILL-HAND, MULTI-HAND and FAULT-HAND cases need from a host: a durable store and a transport. */
 export type HandCaseAdapters = StoreCaseAdapters & TransportCaseAdapters;
@@ -30,7 +30,17 @@ export interface HandRig {
 	/** Faults the hand processes reported (a killed hand reports the kill). */
 	readonly faults: readonly unknown[];
 	readonly killed: Promise<void>;
-	execute(scope: string, calls: readonly AgentToolCall[], mode?: ToolExecutionMode): Promise<ToolHostResult>;
+	/** `turn`: the durable identity of the assistant message that issued the calls (senpi#5867). */
+	execute(
+		scope: string,
+		calls: readonly AgentToolCall[],
+		mode?: ToolExecutionMode,
+		turn?: string,
+		/** The loop's side of the batch: its event sink (default: accepts every event) and its durable record hook. */
+		loop?: Partial<Pick<ToolHostOptions, "emit" | "recorded">>,
+	): Promise<ToolHostResult>;
+	/** Replaces the session's brain with a fresh instance on the same link: no pending call or id is shared with the old one. */
+	replaceSession(): void;
 	/** A new hand process on the reopened store and the same link; resolves once it announced itself. */
 	restart(): Promise<void>;
 	/** Hold every body until `release(toolCallId)`. */
@@ -193,15 +203,23 @@ export async function openHandRig(
 	};
 	let current = await adapters.store.open(medium, { onWritePoint: killing });
 	await startHand(current).ready;
-	const host = createRemoteToolHost({ transport: sessionSide, placement: options.placement });
+	let host = createRemoteToolHost({ transport: sessionSide, placement: options.placement });
 	const { advance, settle, runUntil, waitFor } = transportPump(timers);
 	return {
 		advance,
 		bodies,
 		faults,
 		killed: killed.promise,
-		execute: (scope, calls, mode = "parallel") =>
-			host.execute({ scope: { id: scope, root: `/work/${scope}` }, calls, mode }, { emit: () => {} }),
+		execute: (scope, calls, mode = "parallel", turn, loop = {}) =>
+			host.execute(
+				{ scope: { id: scope, root: `/work/${scope}` }, calls, mode, ...(turn === undefined ? {} : { turn }) },
+				{ emit: () => {}, ...loop },
+			),
+		replaceSession() {
+			// The transport endpoint outlives the brain process (S05); a new host takes over its frames, and nothing the
+			// old host held in memory (pending calls, ids it minted) reaches the new one.
+			host = createRemoteToolHost({ transport: sessionSide, placement: options.placement });
+		},
 		async restart() {
 			current = await adapters.store.open(medium);
 			await settle(startHand(current).ready, "the restarted hand recovered");

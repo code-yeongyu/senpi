@@ -1,6 +1,7 @@
 import { TOOL_RESULT_PLACEHOLDER, type ToolResultMessage } from "@earendil-works/pi-ai";
 import type { Transport } from "../transport/transport.ts";
 import type { AgentToolCall } from "../types.ts";
+import { canonicalJson } from "./canonical-digest.ts";
 import type { DeviceFiles } from "./device-files.ts";
 import { createRemoteDeviceFiles } from "./remote-device-files.ts";
 import type { PlaneHandler } from "./plane.ts";
@@ -15,6 +16,16 @@ import type { ExecutionScope, ToolHost, ToolHostCall, ToolHostOptions, ToolHostR
  * - `cross-machine`: the endpoint contract. The call is reported as uncertain, never run again.
  */
 export type HandPlacement = "split-local" | "cross-machine";
+
+/**
+ * A call's execution id from durable turn state (senpi#5867): the canonical JSON of (session scope, turn, the call's
+ * block index in the message, tool call id): the same for every brain that dispatches this call of this turn in this
+ * session, so a resumed or moved brain reaches the hand's record of it instead of running it again. The index keeps two
+ * calls a provider gave one id apart.
+ */
+export function remoteExecutionId(scope: ExecutionScope, turn: string, index: number, toolCallId: string): string {
+	return canonicalJson({ scope: scope.id, turn, index, toolCallId });
+}
 
 export interface RemoteToolHostOptions {
 	/** The session's end of the link to the hand; lanes are execution scope IDs. */
@@ -104,21 +115,25 @@ export function createRemoteToolHost(
 				return errorResult(`The hand refused this session's epoch: ${reply.reason}`);
 		}
 	};
+	/** `accepted`: acknowledges the hand's outcome once the loop took the result message (a no-op for other replies). */
 	const dispatch = (
 		invoke: RemoteInvoke,
 		signal: AbortSignal | undefined,
-	): { readonly settled: Promise<RemoteToolResult> } => ({
-		settled: link.dispatch(invoke, signal).then(resultOf),
-	});
+	): Promise<{ readonly result: RemoteToolResult; readonly accepted: () => void }> =>
+		link.dispatch(invoke, signal).then((reply) => ({
+			result: resultOf(reply),
+			accepted: reply.kind === "settled" || reply.kind === "terminal" ? reply.ack : () => {},
+		}));
 
 	return {
 		async execute(call: ToolHostCall, hostOptions: ToolHostOptions): Promise<ToolHostResult> {
 			const { emit, signal } = hostOptions;
 			const batchId = mintId();
+			const { turn } = call;
 			const promptSurface = options.promptSurface?.();
 			const invokeOf = (raw: AgentToolCall, index: number): RemoteInvoke => ({
 				kind: "invoke",
-				executionId: mintId(),
+				executionId: turn === undefined ? mintId() : remoteExecutionId(call.scope, turn, index, raw.id),
 				batchId,
 				index,
 				scope: call.scope,
@@ -138,17 +153,21 @@ export function createRemoteToolHost(
 				});
 				return result;
 			};
-			const outcomes: Promise<RemoteToolResult>[] = [];
+			const outcomes: Promise<{ readonly result: RemoteToolResult; readonly accepted: () => void }>[] = [];
 			for (const [index, raw] of call.calls.entries()) {
 				await emit({ type: "tool_execution_start", toolCallId: raw.id, toolName: raw.name, args: raw.arguments });
-				const outcome = dispatch(invokeOf(raw, index), signal).settled.then((result) => finish(raw, result));
+				const outcome = dispatch(invokeOf(raw, index), signal).then(async (reply) => ({
+					...reply,
+					result: await finish(raw, reply.result),
+				}));
 				outcomes.push(outcome);
 				if (call.mode === "sequential") {
 					await outcome;
 					if (signal?.aborted) break;
 				}
 			}
-			const results = await Promise.all(outcomes);
+			const replies = await Promise.all(outcomes);
+			const results = replies.map((reply) => reply.result);
 			const messages: ToolResultMessage[] = [];
 			for (const [index, result] of results.entries()) {
 				const raw = call.calls[index];
@@ -165,6 +184,16 @@ export function createRemoteToolHost(
 				};
 				await emit({ type: "message_start", message });
 				await emit({ type: "message_end", message });
+				// The hand may drop its outcome only once the session durably recorded the result message (senpi#5867); one
+				// that was not recorded stays with the hand for a later dispatch or session to recover. Without a durable
+				// record (no session), the emitted message is all the loop keeps.
+				const accepted = replies[index]?.accepted;
+				if (hostOptions.recorded === undefined) accepted?.();
+				else
+					void hostOptions.recorded(message).then(
+						() => accepted?.(),
+						() => undefined,
+					);
 				messages.push(message);
 			}
 			return {

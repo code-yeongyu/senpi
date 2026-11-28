@@ -29,7 +29,8 @@ export interface EpochRig extends TransportPump {
 	readonly bodies: readonly string[];
 	readonly faults: readonly unknown[];
 	readonly killed: Promise<void>;
-	execute(brain: string, scope: string, calls: readonly AgentToolCall[]): Promise<ToolHostResult>;
+	/** `turn`: the issuing assistant message's durable identity (senpi#5867). */
+	execute(brain: string, scope: string, calls: readonly AgentToolCall[], turn?: string): Promise<ToolHostResult>;
 	/** Moves `scope` to `brain` in the hand's placement record (what `ownerOf` answers). */
 	setOwner(scope: string, brain: string): void;
 	/** Holds the next commit `match` picks until `release()`; `reached` settles when it arrives. */
@@ -223,11 +224,16 @@ export async function openEpochRig(
 		bodies,
 		faults,
 		killed: killed.promise,
-		execute(brain, scope, calls) {
+		execute(brain, scope, calls, turn) {
 			const host = hosts.get(brain);
 			if (host === undefined) throw new Error(`no brain ${brain}`);
 			return host.execute(
-				{ scope: { id: scope, root: `/work/${scope}` }, calls, mode: "parallel" },
+				{
+					scope: { id: scope, root: `/work/${scope}` },
+					calls,
+					mode: "parallel",
+					...(turn === undefined ? {} : { turn }),
+				},
 				{ emit: () => {} },
 			);
 		},

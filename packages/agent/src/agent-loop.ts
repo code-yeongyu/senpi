@@ -1235,12 +1235,14 @@ async function executeToolCalls(
 			scope: config.executionScope ?? { id: crypto.randomUUID(), root: "" },
 			calls: toolCalls,
 			mode: config.toolExecution ?? "parallel",
+			turn: `${assistantMessage.timestamp}:${assistantMessage.responseId ?? ""}`,
 		},
 		{
 			signal,
 			emit,
 			recordWitness: config.onExecutionPipeline,
 			local: { context: currentContext, assistantMessage },
+			...(config.messageRecorded === undefined ? {} : { recorded: config.messageRecorded }),
 		},
 	);
 

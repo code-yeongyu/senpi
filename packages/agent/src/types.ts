@@ -432,6 +432,12 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	afterToolFreeze?: (prepared: unknown, frozen: unknown) => void;
 	executionScope?: ExecutionScope;
 	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => Promise<void> | void;
+	/**
+	 * Resolves once the session durably recorded `message` (a tool result the loop emitted on `message_end`), rejects
+	 * when it could not. A remote tool host acknowledges a hand's outcome only after this (senpi#5867). Absent: the loop
+	 * has no durable record, and an outcome is acknowledged once its result message was emitted.
+	 */
+	messageRecorded?: (message: ToolResultMessage) => Promise<void>;
 
 	/**
 	 * Optional migration guidance for tool names intentionally removed by an extension.
