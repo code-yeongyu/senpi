@@ -107,7 +107,6 @@ export class McpService {
 	#mcpInstructions = "";
 	readonly #pendingAuth = new Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider>();
 	readonly #interactiveAuthServers = new Set<string>();
-	readonly #promptCommandNames = new Set<string>();
 	readonly #registrationListeners = new Set<() => void>();
 	readonly #wireStatusListeners = new Set<McpWireStatusListener>();
 	#wireStatusRefreshQueue: Promise<void> = Promise.resolve();
@@ -692,7 +691,6 @@ export class McpService {
 		this.#mcpInstructions = "";
 		this.#pendingAuth.clear();
 		this.#interactiveAuthServers.clear();
-		this.#promptCommandNames.clear();
 		this.#registrationListeners.clear();
 		this.#wireStatusListeners.clear();
 		this.#startupWindows.clear();
@@ -1298,14 +1296,6 @@ export class McpService {
 				return binding === undefined || binding.capture()?.ready() === true;
 			},
 		});
-	}
-
-	isMcpPromptCommandRegistered(name: string): boolean {
-		return this.#promptCommandNames.has(name);
-	}
-
-	markMcpPromptCommandRegistered(name: string): void {
-		this.#promptCommandNames.add(name);
 	}
 
 	beginInteractiveAuth(serverName: string): boolean {

@@ -98,9 +98,9 @@ describe("MCP session isolation", () => {
 			server: "shared",
 		};
 		const alphaRecorder = commandRecorder();
-		registerMcpPromptCommands(alpha, alphaRecorder as never, [sharedPromptServer] as never);
+		registerMcpPromptCommands(alphaRecorder as never, [sharedPromptServer] as never);
 		const recorder = commandRecorder();
-		registerMcpPromptCommands(bravo, recorder as never, [sharedPromptServer] as never);
+		registerMcpPromptCommands(recorder as never, [sharedPromptServer] as never);
 		const prompt = recorder.commands.get("mcp:shared:fixture_prompt");
 		expect(prompt).toBeDefined();
 
