@@ -21,7 +21,9 @@ const NPM_EMPTY = `echo "$*" >> "$LOG"`;
 
 /**
  * A draft release exists; `gh run view` answers FAKE_RUN_VIEW (exit FAKE_RUN_VIEW_EXIT) and
- * `gh run list` answers FAKE_RUN_LIST (exit FAKE_RUN_LIST_EXIT).
+ * `gh run list` answers FAKE_RUN_LIST (exit FAKE_RUN_LIST_EXIT); the query for runs that published the version
+ * (senpi#7469, it asks for `displayTitle`) answers the raw --json rows FAKE_PUBLISHED_ROWS through the script's own
+ * --jq program with real jq (exit FAKE_PUBLISHED_EXIT), so its selection predicate is what the tests exercise.
  */
 function fakeGh() {
 	return fakeBin(
@@ -31,7 +33,15 @@ case "$1 $2" in
   "release view") echo true ;;
   "release delete") exit 0 ;;
   "run view") echo "\${FAKE_RUN_VIEW:-}"; exit "\${FAKE_RUN_VIEW_EXIT:-0}" ;;
-  "run list") echo "\${FAKE_RUN_LIST:-0}"; exit "\${FAKE_RUN_LIST_EXIT:-0}" ;;
+  "run list")
+    case "$*" in
+      *displayTitle*)
+        [ "\${FAKE_PUBLISHED_EXIT:-0}" = 0 ] || exit "\${FAKE_PUBLISHED_EXIT}"
+        filter="" previous=""
+        for argument in "$@"; do [ "$previous" = --jq ] && filter="$argument"; previous="$argument"; done
+        jq -r "$filter" <<< "\${FAKE_PUBLISHED_ROWS:-[]}"; exit $? ;;
+    esac
+    echo "\${FAKE_RUN_LIST:-0}"; exit "\${FAKE_RUN_LIST_EXIT:-0}" ;;
   *) exit 2 ;;
 esac`,
 	);
@@ -211,5 +221,73 @@ describe("release-draft-cleanup.sh: dispatched publish run (senpi#4173)", () => 
 		assertDeleted(
 			cleanup(NPM_E404, { PUBLISH_JOB_RESULT: "failure", FAKE_RUN_LIST: "0" }),
 		);
+	});
+});
+
+// senpi#7469 (2026.11.25): a manual publish-only run published every package, then Build Binaries' own publish run met
+// the registry's lag on the main package, failed, and its finalize deleted the draft. The run that failed is not the
+// only witness: the draft stays while any publish-npm.yml run of the version succeeded.
+const run = (databaseId, displayTitle, conclusion = "success", event = "workflow_dispatch") => ({ databaseId, displayTitle, conclusion, event });
+const rows = (...list) => JSON.stringify(list);
+
+describe("release-draft-cleanup.sh: another run published the version (senpi#7469)", () => {
+	it("keeps the draft when this publish run failed on registry lag but another run of the version succeeded", () => {
+		const outcome = cleanup(NPM_E404, {
+			PUBLISH_RUN_ID: "45679166975",
+			PUBLISH_JOB_RESULT: "success",
+			PUBLISH_RELEASE_RESULT: "failure",
+			FAKE_PUBLISHED_ROWS: rows(run(45678655590, "Release 2026.10.24-1 publish-only")),
+		});
+		assertKept(outcome);
+		assert.match(outcome.output, /publish-npm\.yml run\(s\) 45678655590 published 2026\.10\.24-1/);
+		assert.ok(
+			outcome.gh.calls().some((call) => call.startsWith("run list --workflow publish-npm.yml") && call.includes("displayTitle")),
+			outcome.gh.calls().join("\n"),
+		);
+	});
+
+	// senpi#7469 (2026.11.28-1): Build Binaries dispatched the publish run but its find step gave up before the run showed
+	// up in the API, so the run id is unknown here; that run had already published every package and npm still lagged.
+	it("keeps the draft when the publish run id is unknown and a publish-only run of the version already succeeded", () => {
+		const outcome = cleanup(NPM_E404, {
+			PUBLISH_RUN_ID: "",
+			PUBLISH_JOB_RESULT: "failure",
+			FAKE_RUN_LIST: "0",
+			FAKE_PUBLISHED_ROWS: rows(run(46103796424, "Release 2026.10.24-1 publish-only")),
+		});
+		assertKept(outcome);
+		assert.match(outcome.output, /publish-npm\.yml run\(s\) 46103796424 published 2026\.10\.24-1/);
+	});
+
+	it("deletes the draft when the publish run id is unknown, nothing is in flight and no publish run of the version succeeded", () => {
+		assertDeleted(cleanup(NPM_E404, { PUBLISH_RUN_ID: "", PUBLISH_JOB_RESULT: "failure", FAKE_RUN_LIST: "0", FAKE_PUBLISHED_ROWS: rows() }));
+	});
+
+	it("keeps the draft when the runs that could have published the version cannot be listed", () => {
+		assertKept(
+			cleanup(NPM_E404, { PUBLISH_RUN_ID: "45679166975", PUBLISH_JOB_RESULT: "success", PUBLISH_RELEASE_RESULT: "failure", FAKE_PUBLISHED_EXIT: "1" }),
+		);
+	});
+
+	it("deletes the draft only when npm lacks the version and no publish run of it succeeded", () => {
+		assertDeleted(
+			cleanup(NPM_E404, { PUBLISH_RUN_ID: "45679166975", PUBLISH_JOB_RESULT: "success", PUBLISH_RELEASE_RESULT: "failure", FAKE_PUBLISHED_ROWS: rows() }),
+		);
+	});
+
+	it("deletes the draft when the only successful runs of the version are the stamp run, a dry run or a failed publish", () => {
+		const outcome = cleanup(NPM_E404, {
+			PUBLISH_RUN_ID: "45679166975",
+			PUBLISH_JOB_RESULT: "success",
+			PUBLISH_RELEASE_RESULT: "failure",
+			FAKE_PUBLISHED_ROWS: rows(
+				run(45677509583, "Release 2026.10.24-1"),
+				run(45677509584, "Release 2026.10.24-1 publish-only dry-run"),
+				run(45679166975, "Release 2026.10.24-1 publish-only", "failure"),
+				run(45677509585, "Release 2026.10.24-10 publish-only"),
+			),
+		});
+		assertDeleted(outcome);
+		assert.doesNotMatch(outcome.output, /published 2026\.10\.24-1/);
 	});
 });

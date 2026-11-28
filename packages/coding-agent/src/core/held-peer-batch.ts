@@ -1,3 +1,4 @@
+import { deliveryIdsOf } from "./delivery-ids.ts";
 import { isSessionControlDeliveryDetails, SESSION_CONTROL_DELIVERY_TYPE } from "./extensions/session-control-types.ts";
 import type { CustomMessage } from "./messages.ts";
 import { copyInputTurnMark, sameInputTurnMark } from "./turn-origin.ts";
@@ -28,12 +29,24 @@ function fold(run: readonly HeldRelease[]): HeldRelease {
 	if (rest.length === 0) return first;
 	if (!isSessionControlDeliveryDetails(first.message.details))
 		throw new Error("a folded run holds a non-peer message");
-	// The first delivery's entry records the turn; every delivery's id stays proven by its own held notice.
-	const { display_text: _display, ...details } = first.message.details;
+	// The first delivery's id names the entry and the others ride on it, so writing it settles every delivery of the run
+	// (senpi#7628); each id also stays proven by its own held notice.
+	const { display_text: _display, chain_count: _hop, ...details } = first.message.details;
+	const [, ...folded] = run.flatMap((release) => deliveryIdsOf(release.message));
+	// The turn answers for the longest chain it carries: a lower hop would let its replies undercount that chain.
+	const hops = run.flatMap(({ message }) =>
+		isSessionControlDeliveryDetails(message.details) && message.details.chain_count !== undefined
+			? [message.details.chain_count]
+			: [],
+	);
 	const message: CustomMessage = {
 		...first.message,
 		content: run.flatMap((release) => partsOf(release.message.content)),
-		details,
+		details: {
+			...details,
+			folded_delivery_ids: folded,
+			...(hops.length === 0 ? {} : { chain_count: Math.max(...hops) }),
+		},
 	};
 	copyInputTurnMark(first.message, message);
 	return { source: first.source, noticeIds: run.flatMap((release) => release.noticeIds), message };

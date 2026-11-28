@@ -3141,10 +3141,16 @@ Retirement does not add a file-only session to the resident list.
 
 The store is `<agentDir>/retired-sessions/<durable-id>.json`, keyed by the transcript header.
 An absent directory means no retirements. A malformed or unreadable marker refuses that identity
-(`retirement_marker_unavailable`); an unreadable store refuses restore and explicit reopen
-(`retirement_store_unavailable`). Repair the named file or directory rather than treating the error
-as an absent marker. The marker is not a boundary against another process running as the same user:
-that process can write or remove it.
+(`retirement_marker_unavailable`), and so does a header id that is not a valid session id, which names
+no marker (`errorData.action: "repair_session_header"`). Restore keeps such a session parked and
+unopened, logs why once, and still reopens the others. An unreadable store refuses restore and explicit
+reopen (`retirement_store_unavailable`). `errorData.store` and `errorData.marker` name the directory or
+file relative to the agent directory, never by absolute path; the host log keeps the full path. Repair
+the named file or directory rather than treating the error as an absent marker. A `close_session` with
+`retire: true` that cannot record the retirement still closes and answers `retirement_failed`, with
+`errorData.detail` set to the refusal code (and its `store` or `marker`), or to `retirement_write_failed`
+for any other write error. The marker is not a boundary against another process running as the same
+user: that process can write or remove it.
 
 #### Instructions and tool policy per session (`session_persona`)
 
@@ -3770,7 +3776,7 @@ registrant opens no socket and writes no registry directory.
     (`admitExternalMessage`), so input the user submitted and the runtime has not taken yet holds them, with the host's `whenIdle` choice (`queue`, the
     default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
     steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started`,
-    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run; or with `engineTurnCap`: recorded behind the engine-turn cap, senpi#7138); `held_draft` (the user's submitted input has not reached the runtime yet) and `turn_conflict` are refusals with a reason and an action.
+    `queued` or `held` (with `holds`: kept as a notice until the person releases a Stop or an interrupted run; or with `engineTurnCap`: recorded behind the engine-turn cap, senpi#7138); `held_draft` (the user's submitted input has not reached the runtime yet), `turn_conflict` and `held_deliveries_full` (the session already holds 64 peer deliveries while paused) are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
     skills. Input sent with a `clientMessageId` is answered with an admission receipt,
@@ -3834,9 +3840,19 @@ registrant opens no socket and writes no registry directory.
   - `already_admitted`: this process already holds or already wrote that `delivery_id`, or the session file refused
     its entry and it is not admissible again yet (see `failed` below).
 
+  While the session already holds 64 peer deliveries (one a log records twice counts once), the call throws an
+  error whose `code` is `held_deliveries_full` instead: nothing is written and the delivery stays with its sender;
+  send it again once the session is resumed. A `delivery_id` the session already holds still answers
+  `already_admitted`.
+
   The delivery becomes a `custom` transcript entry, `customType: "session_control_delivery"`, whose `details`
-  carry the `delivery_id`. `listAdmittedDeliveries()` reports `pending` (held by the runtime) and `emitted`
-  (entry written) for the life of the process. When the session file refuses a delivery's entry (`EACCES`,
+  carry the `delivery_id`. A resume that releases several held deliveries of one sender as one turn writes one
+  entry for them: `details.delivery_id` names the first, `details.folded_delivery_ids` the others in admission
+  order, and `details.chain_count` is the highest hop among them. The Resume after a Stop or an interrupted run
+  carries every held delivery in its one `session-resumed` entry, whose `details.folded_delivery_ids` names them
+  all. `listAdmittedDeliveries()` reports `pending`
+  (held by the runtime) and `emitted` (entry written, for every delivery the entry carries) for the life of the
+  process. When the session file refuses a delivery's entry (`EACCES`,
   `ENOSPC`), the delivery is settled as `failed: [{ delivery_id, error }]` (listed only while non-empty): it is no
   longer held, so it blocks no later delivery and no release, and it stays with its sender. It becomes admissible
   again once the run that refused it has settled and the file's last write succeeded: the redelivery then starts or
@@ -6470,6 +6486,7 @@ Response:
 - `chainCount` is a thread call's hop count, checked against `threads.chainCountLimit` before anything is admitted (refused with `chain_count_limit` / `invalid_chain_count`, as on `prompt`/`steer`/`follow_up`); the admitted hop is written as `details.chain_count`.
 - `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). `held` (senpi#6490): the session is idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run hold); the delivery is kept as a held notice and starts once that hold is released, and `holds` lists the hold kinds, for example `{ "kind": "held", "turnId": "0", "holds": ["session_hold"] }`. An `unattended` hold alone is released by the delivery, which answers `started`. `held` with `engineTurnCap` instead of `holds` (senpi#7138): the engine-turn cap stops the turn the delivery would start, for example `{ "kind": "held", "turnId": "8", "engineTurnCap": { "reason": "cap-per-resume-window", "count": 8 } }`; the delivery is recorded without a turn and is answered by the turn a person's message or `resume_session` starts (`get_state.engineTurnCap` shows the cap until then). A caller that predates `held` must treat it as neither success nor a refusal to retry: the delivery is admitted and waits on that device for its person. The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`. A delivery held while paused counts as such an entry, so its resend after a restart answers `already_admitted` and is not held twice (senpi#7588). A paused session holds at most 64 distinct peer deliveries (`MAX_HELD_PEER_DELIVERIES`); past that a new `deliveryId` is refused with `held_deliveries_full`, nothing is written and the delivery stays with its sender until the session is resumed. When an unattended session resumes, consecutive held deliveries from one sender under one origin reach the model as one turn, in admission order. A delivery from another sender, or admitted under another turn origin (for example a remote device's delegated connection beside a local one), keeps its own turn: one turn carries one origin, and folding a delegated delivery into another turn would run it under that turn's approval-mode rule instead of its own.
 - On a connection that speaks for a remote device (a delegated connection, or one whose `set_client_info` declared `remoteOrigin`), the engine stamps that device as `details.remote_origin` and writes `text` unchanged, so the model reads exactly what a delivery on a local connection carries and no device (senpi#6250). It keeps `text` as `details.display_text` when no `displayText` is given, and refuses a `command_line` sender (`sender_not_allowed`). A delegated connection that names no remote device is refused (`delegated_origin_unknown`), never admitted as a local delivery. A record that names `remote_origin` is refused on every connection. The turn that consumes the delivery takes the connection's origin, so a remote device's follow-up runs under the delegated approval-mode rule even inside a local turn.
+- A session that already holds 64 peer deliveries while paused refuses a new one with `errorCode: "held_deliveries_full"` and writes nothing: the delivery stays with its sender. An id the session already holds still answers `already_admitted`.
 - Once `release_session` has closed the session's admission, the record answers `success: false` with the release's message: the delivery stays with its sender.
 
 #### release_session

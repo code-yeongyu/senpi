@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { sessionIdFromFile } from "../../core/foreign-session-holders.ts";
-import { readSessionRetirement, RetirementFault } from "../../core/session-retirement.ts";
+import { describeRetirementFailure, readSessionRetirement, RetirementFault } from "../../core/session-retirement.ts";
 import { readdir } from "node:fs/promises";
 import { processIsLive } from "../../utils/process-identity.ts";
 import { createHostDaemonPaths, generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
@@ -89,6 +89,7 @@ export async function reopenHandoverParkedSessions(
 	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_BUDGET_MS;
 	const reopenAttempts = new Map<string, number>();
 	const heldPolls = new Map<string, number>();
+	const unreadable = new Set<string>();
 	const writerAlive = residentWriterProbe();
 	// What a listing reads meanwhile (senpi#7020): the parks still to reopen and whether a predecessor still runs.
 	const report = async (pending: number): Promise<void> => {
@@ -119,7 +120,16 @@ export async function reopenHandoverParkedSessions(
 				}
 			} catch (cause) {
 				if (!(cause instanceof RetirementFault)) throw cause;
-				if (cause.code === "retirement_store_unavailable") return done();
+				const why = describeRetirementFailure(cause).hostLog;
+				if (cause.code === "retirement_store_unavailable") {
+					process.stderr.write(`senpi rpc successor stopped reopening parked sessions: ${why}\n`);
+					return done();
+				}
+				// Only this identity is refused (a damaged marker, or a header id that names none): its park is kept, never
+				// reopened unproven, and the others are still reopened (senpi#7622). Logged once per watch, not per poll.
+				if (!unreadable.has(entry.sessionPath))
+					process.stderr.write(`senpi rpc successor kept parked session ${entry.sessionPath} closed: ${why}\n`);
+				unreadable.add(entry.sessionPath);
 				continue;
 			}
 			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
@@ -210,6 +220,12 @@ async function reopenOne(
 		process.stderr.write(`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`);
 		return;
 	}
+	// An explicit close_session clears the park (before it finalizes) without telling this watch: a park gone since the
+	// pass read the record was closed, never reopened from that stale read (senpi#4791). A park written again for the
+	// same path since (this host's own idle sweep, a writer still running) is a different park: it is not reopened
+	// from what this pass read either.
+	const current = await readHandoverParkedSessions(daemonDir);
+	if (!current.some((park) => isSamePark(park, entry))) return;
 	try {
 		await open(entry);
 		// The host started draining while this reopen was in flight: the session landed in a registry
@@ -247,4 +263,14 @@ async function reopenOne(
 		}
 		process.stderr.write(`senpi rpc successor reopen parked session ${entry.sessionPath} failed: ${String(cause)}\n`);
 	}
+}
+
+/** The park this pass read, still in place: same path, same writer and holder, same durable session. */
+function isSamePark(park: HandoverParkedEntry, read: HandoverParkedEntry): boolean {
+	return (
+		park.sessionPath === read.sessionPath &&
+		park.parkedBy === read.parkedBy &&
+		park.durableSessionId === read.durableSessionId &&
+		JSON.stringify(park.residentWriter ?? null) === JSON.stringify(read.residentWriter ?? null)
+	);
 }

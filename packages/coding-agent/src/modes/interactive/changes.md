@@ -1,3 +1,21 @@
+## 2026-11-27 - /resume claims the session before it checks for holders (senpi#5988)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleResumeSession` admits the target through `admitSessionHolders` (claim, then check) and releases the claim in a `finally`; the body it wrapped moved unchanged into `resumeAdmittedSession`, which retakes the claim after a take-over and refuses with the existing "still open" warning when it cannot.
+
+### Why
+
+- The check and the switch were check-then-act across processes: a CLI start racing a /resume could pass its own check before this process published its holder record, and both became writers of one session.
+
+### Why an extension could not handle it
+
+- The holder check of /resume is core interactive control flow; no extension hook runs between the check and the runtime switch.
+
+### Expected merge conflict zones
+
+- LOW: `handleResumeSession` and the new `resumeAdmittedSession` in `interactive-mode.ts`; the `foreign-session-holders.ts` import list.
+
 ## 2026-11-26 - OSC 7577 Program Resume reports (senpi#7493)
 
 ### What changed
