@@ -128,15 +128,7 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 			agentDir: dir,
 		});
 		await service.whenAttachSettled();
-		const retiring = service.getConnection("fix");
-		expect(retiring?.state).toBe("connected");
-		const retired = new Promise<void>((resolve) => {
-			const unsubscribe = retiring?.onStateChange((event) => {
-				if (event.state !== "disabled") return;
-				unsubscribe?.();
-				resolve();
-			});
-		});
+		expect(service.getConnection("fix")?.state).toBe("connected");
 		await poisonRefreshToken(harness);
 		const released = Promise.withResolvers<void>();
 		const reached = Promise.withResolvers<void>();
@@ -151,8 +143,8 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 		});
 		cleanups.push(async () => gate.mockRestore());
 
-		// When: the reconnect is inside its refresh, the grant is rotated again in the store, and the re-key retires the
-		// connection before the refresh runs
+		// When: the reconnect (already past its own pre-step re-key) is inside its refresh on the current connection, the
+		// grant is rotated again in the store, and a second re-key retires that connection before the refresh runs
 		const reconnect = service.reconnectServer("fix");
 		const outcome = reconnect.then(
 			() => "resolved",
@@ -160,6 +152,15 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 		);
 		await reached.promise;
 		gate.mockRestore();
+		const running = service.getConnection("fix");
+		expect(running).toBeDefined();
+		const retired = new Promise<void>((resolve) => {
+			const unsubscribe = running?.onStateChange((event) => {
+				if (event.state !== "disabled") return;
+				unsubscribe?.();
+				resolve();
+			});
+		});
 		await harness.store.update((current) => ({ ...current, refreshToken: "RT_ROTATED_AGAIN" }));
 		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
 			agentDir: dir,
