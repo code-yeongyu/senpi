@@ -188,8 +188,10 @@ async function recheckedTarget(
 		if (current?.socket !== undefined && !sameEndpoint(current.socket, socket)) return undefined;
 		if (!(await startedBeforeRegistration(expected.pid, generationPaths(paths, expected.instanceId).pidFile)))
 			return undefined;
-		if (host?.instanceId !== undefined && host.instanceId !== expected.instanceId)
-			return { action: "refuse", reason: "stale_generation" };
+		if (host !== undefined) {
+			if (!host.instanceId) return undefined;
+			if (host.instanceId !== expected.instanceId) return { action: "refuse", reason: "stale_generation" };
+		}
 	}
 	return { pid: expected.pid, instanceId: expected.instanceId };
 }

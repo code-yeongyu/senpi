@@ -20,13 +20,13 @@ export function readLiveStartTime(pid: number): Promise<string | undefined> {
 
 /**
  * Proves, without a recorded start time, that `pid` is still the process that wrote `registrationFile`:
- * that process started before it wrote the file, so a live start time LATER than the file's mtime is a
- * reused pid. Gone, unreadable or unparseable is not proven.
+ * that process started before the file was created. Successor promotion updates its metadata in place,
+ * so mtime can move past a different process's start. Missing creation time is not proof.
  */
 export async function startedBeforeRegistration(pid: number, registrationFile: string): Promise<boolean> {
 	const live = await readLiveStartTime(pid).catch(() => undefined);
 	const startedMs = live === undefined ? undefined : processStartTimeMs(live);
 	if (startedMs === undefined) return false;
 	const written = await stat(registrationFile).catch(() => undefined);
-	return written !== undefined && startedMs <= written.mtimeMs;
+	return written !== undefined && written.birthtimeMs > 0 && startedMs <= written.birthtimeMs;
 }
