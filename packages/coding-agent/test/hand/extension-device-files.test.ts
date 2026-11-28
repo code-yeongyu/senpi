@@ -75,6 +75,7 @@ describe("an extension's device files (senpi#5839)", () => {
 		const splitFiles = split.getExtensionRunner().createContext().deviceFiles;
 
 		expect(fusedFiles !== undefined && isLocalDeviceFiles(fusedFiles)).toBe(true);
+		expect(splitFiles).toBeDefined();
 		expect(splitFiles !== undefined && isLocalDeviceFiles(splitFiles)).toBe(false);
 	});
 
