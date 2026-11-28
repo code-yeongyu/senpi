@@ -197,7 +197,13 @@ export const clearApiKeyCache = clearConfigValueCache;
 
 type ModelWithConfigMetadata = Model<Api> & {
 	promptPreset?: string;
+	[unknownContextWindow]?: boolean;
 };
+
+const unknownContextWindow = Symbol("unknown models.json context window");
+export function usesUnknownContextWindow(model: Model<Api>): boolean {
+	return Reflect.get(model, unknownContextWindow) === true;
+}
 
 function getAllProviderModels(provider: Provider | undefined): readonly AnyModel[] {
 	return provider ? (provider.getAllModels?.() ?? provider.getModels()) : [];
@@ -285,6 +291,7 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 			: model.cost,
 		promptCache: override.promptCache ? { ...model.promptCache, ...override.promptCache } : model.promptCache,
 		contextWindow: override.contextWindow ?? model.contextWindow,
+		...(override.contextWindow === undefined ? {} : { [unknownContextWindow]: false }),
 		maxTokens: override.maxTokens ?? model.maxTokens,
 		cacheRetention: override.cacheRetention ?? model.cacheRetention,
 		samplingParams: override.samplingParams
@@ -313,7 +320,8 @@ function modelFromJson(
 	definition: ModelsJsonModel,
 	providerConfig: ModelsJsonProvider,
 	defaults: { api?: Api; baseUrl?: string } | undefined,
-	catalogCost: ModelCost | undefined,
+	catalogModel: AnyModel | undefined,
+	exactCatalogWindow?: (id: string) => number | undefined,
 ): ModelWithConfigMetadata {
 	const api = definition.api ?? providerConfig.api ?? defaults?.api;
 	if (!api) {
@@ -329,6 +337,11 @@ function modelFromJson(
 	if (definition.maxTokens !== undefined && definition.maxTokens <= 0) {
 		throw new Error(`Provider ${providerId}, model ${definition.id}: invalid maxTokens`);
 	}
+	const window =
+		definition.contextWindow ??
+		definition.discoveredContextWindow ??
+		(catalogModel && isModelType(catalogModel, "chat") ? catalogModel.contextWindow : undefined) ??
+		exactCatalogWindow?.(definition.id);
 	return {
 		id: definition.id,
 		name: definition.name ?? definition.id,
@@ -342,9 +355,10 @@ function modelFromJson(
 		defaultThinkingLevel: definition.defaultThinkingLevel,
 		input: (definition.input ?? ["text"]) as ("text" | "image" | "video")[],
 		inputLimits: definition.inputLimits,
-		cost: definition.cost ?? catalogCost ?? (providerId === "ollama" ? FREE_COST : UNKNOWN_COST),
+		cost: definition.cost ?? catalogModel?.cost ?? (providerId === "ollama" ? FREE_COST : UNKNOWN_COST),
 		promptCache: definition.promptCache,
-		contextWindow: definition.contextWindow ?? 128000,
+		contextWindow: window ?? 128000,
+		...(window === undefined ? { [unknownContextWindow]: true } : {}),
 		maxTokens: definition.maxTokens ?? 16384,
 		samplingParams: definition.samplingParams,
 		headers: undefined,
@@ -409,6 +423,7 @@ function applyModelsJson(
 	baseModels: readonly AnyModel[],
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderConfigInput | undefined,
+	exactCatalogWindow?: (id: string) => number | undefined,
 ): AnyModel[] {
 	if (!config) return [...baseModels];
 	const hasOverrides = config.modelOverrides && Object.keys(config.modelOverrides).length > 0;
@@ -457,7 +472,8 @@ function applyModelsJson(
 				api: extension?.api ?? defaults?.api,
 				baseUrl: extension?.baseUrl ?? defaults?.baseUrl,
 			},
-			existing?.cost,
+			existing,
+			exactCatalogWindow,
 		);
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);
@@ -576,7 +592,7 @@ export function composeModelProvider(
 	modelConfig: ModelConfig,
 	extension: ProviderConfigInput | undefined,
 	/** Deferred ambient reads; the reader runs during auth resolution, never at composition. */
-	options?: { storedProviderEnv?: StoredProviderEnvReader },
+	options?: { storedProviderEnv?: StoredProviderEnvReader; exactCatalogWindow?: (id: string) => number | undefined },
 ): Provider {
 	const config = modelConfig.getProvider(providerId);
 	let extensionOAuthCredential: OAuthCredentials | undefined;
@@ -588,7 +604,13 @@ export function composeModelProvider(
 	const getAllModels = (): AnyModel[] => {
 		let models = applyExtension(
 			providerId,
-			applyModelsJson(providerId, getAllProviderModels(base), config, currentExtension()),
+			applyModelsJson(
+				providerId,
+				getAllProviderModels(base),
+				config,
+				currentExtension(),
+				options?.exactCatalogWindow,
+			),
 			currentExtension(),
 			new Set((config?.models ?? []).map((definition) => definition.id)),
 		);
