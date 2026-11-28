@@ -12,8 +12,8 @@
  * A profile is warmed once per host: a repeat answers `already_warm` without running factories
  * again, and concurrent warms of one profile share a single load.
  */
-import { access } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { access, realpath } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { AgentSessionLaunchProfile, CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
@@ -61,10 +61,14 @@ function profileKey(profile: HostWarmProfile): string {
 	return JSON.stringify([profile.cwd, profile.sessionKind ?? "interactive", context]);
 }
 
+function collisionCwd(cwd: string): Promise<string> {
+	return realpath(cwd).catch(() => resolve(cwd));
+}
+
 /** Coalesces concurrent warms of one profile and answers repeats without loading again. */
 export class HostWarmer {
 	private readonly warm = new Set<string>();
-	private readonly loading = new Map<string, { readonly cwd: string; readonly pending: Promise<void> }>();
+	private readonly loading = new Map<string, { readonly cwd: Promise<string>; readonly pending: Promise<void> }>();
 	private readonly load: (profile: HostWarmProfile) => Promise<void>;
 
 	constructor(load: (profile: HostWarmProfile) => Promise<void>) {
@@ -76,7 +80,7 @@ export class HostWarmer {
 		if (this.warm.has(key)) return "already_warm";
 		let load = this.loading.get(key);
 		if (load === undefined) {
-			load = { cwd: profile.cwd, pending: this.loadOnce(key, profile) };
+			load = { cwd: collisionCwd(profile.cwd), pending: this.loadOnce(key, profile) };
 			this.loading.set(key, load);
 		}
 		await load.pending;
@@ -88,9 +92,14 @@ export class HostWarmer {
 	 * that starts later, or one of another cwd, is not part of it.
 	 */
 	inFlight(cwd: string): Promise<void> | undefined {
-		const pending = [...this.loading.values()].filter((load) => load.cwd === cwd).map((load) => load.pending);
-		if (pending.length === 0) return undefined;
-		return Promise.allSettled(pending).then(() => undefined);
+		const snapshot = [...this.loading.values()];
+		if (snapshot.length === 0) return undefined;
+		const requested = collisionCwd(cwd);
+		return Promise.allSettled(
+			snapshot.map(async (load) => {
+				if ((await load.cwd) === (await requested)) await load.pending;
+			}),
+		).then(() => undefined);
 	}
 
 	private async loadOnce(key: string, profile: HostWarmProfile): Promise<void> {
