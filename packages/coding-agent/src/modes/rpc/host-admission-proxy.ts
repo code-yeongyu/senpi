@@ -94,6 +94,16 @@ export function proxyWithAdmission(
 				);
 			} else if (!internal && hopFailure !== undefined) {
 				await reply(serializeJsonLine(hostUnavailableResponse(request?.id, String(request?.type ?? "parse"), hopFailure)));
+			} else if (!internal && admission.stopping && request?.type === "list_sessions") {
+				// The one read a stop decides on stays answered while the host drains (senpi#7132); it changes nothing.
+				const listed = await admission.listSessions(request);
+				await reply(
+					serializeJsonLine(
+						listed === undefined
+							? hostStoppingResponse(request.id, request.type, admission)
+							: { ...listed, id: request.id },
+					),
+				);
 			} else if (admission.stopping && (request?.type === "open_session" || !internal)) {
 				await reply(
 					serializeJsonLine(hostStoppingResponse(request?.id, String(request?.type ?? "parse"), admission)),

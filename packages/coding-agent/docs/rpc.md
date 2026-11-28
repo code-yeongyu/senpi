@@ -1662,9 +1662,12 @@ The supervisor closes admission synchronously when shutdown or a drain begins,
 including owner-expiry shutdown. It keeps answering protocol probes while waiting
 for its child to exit, even if the child no longer responds. `senpi host status`
 and `status --all` expose the same `lifecycle` field (`null` for an older or
-unreachable host). Session counts during stopping are unobserved and represented
-by the existing empty listing, not a claim that the child has already exited.
-Shutdown signals the child immediately, then waits for its observed exit and any
+unreachable host). A connection made after stopping began is answered two reads:
+`get_protocol_info` (`lifecycle: "stopping"`) and `list_sessions`, which the
+supervisor reads from its child over the link it opened at startup, so a stop
+decision sees the sessions a draining host still holds (senpi#7132). Every other
+request on such a connection is refused `host_stopping`, and so is the listing
+when the child no longer answers it. Shutdown signals the child immediately, then waits for its observed exit and any
 pending startup publication before removing the generation's ownership state.
 
 A ready probe does not reserve an open: a later `open_session` can fail with
@@ -2270,9 +2273,11 @@ which prints the bare socket path).
   `refusal` is `null` unless the host answered but could not be proven from the key root
   (`{ code, detail }`, `code` one of the endpoint auth codes, such as `host_identity_unproven`): `reachable` is then
   `true`, and nothing else is read from that host.
-  `status --all` carries the same field and values on each endpoint row. While stopping, session listing
-  is not queried and its empty counts are unobserved, not proof that all sessions have finished.
-  Otherwise, `sessions` is what `list_sessions`
+  `status --all` carries the same field and values on each endpoint row. A stopping host still answers
+  `list_sessions` (its supervisor reads the listing over its own link to the host), so a draining host's
+  `sessions` are what it still holds. That listing is given at most 2 s: a live host answers over a link its
+  supervisor already holds, so only a hung one runs into the bound, and its listing reads as empty counts here.
+  `sessions` is what `list_sessions`
   reports under the same flag, so `worker` stays `0` without `--include-workers`; `foreign_*` is the same
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
   `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
@@ -2416,8 +2421,13 @@ which prints the bare socket path).
   connection - whatever `--policy`, `--drain` or `--force` says. A terminal owns its endpoint; `gc` reaps a dead
   one on the same evidence as a host's.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
-  foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
-  overrides after printing the same counts; `--drain` is always permitted, because it ends no work. It
+  foreign_retained == 0`, or it refuses `sessions_live` with exit 3 and prints the counts it refused on.
+  A host that answers `get_protocol_info` (ready or stopping) but not its session count is refused
+  `sessions_unknown`: an unanswered count is never an empty host (senpi#7132). Only a socket where nothing
+  answers `get_protocol_info` counts as nobody serving it, and stays stoppable. In every `host stop` answer -
+  refused, `stopped` or `drained`, `--force` included - `sessions` is `null` when the count went unanswered,
+  never zero counts.
+  `--force` overrides after printing the same counts (or `null`); `--drain` is always permitted, because it ends no work. It
   asks through the generation's drain request (SIGUSR1 only for a generation from before it), `--instance <id>`
   names a generation other than the current one, and `--wait-ms <n>` waits for it to exit and adds `exited` to
   the answer; both need `--drain`.

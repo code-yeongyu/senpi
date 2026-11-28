@@ -46,7 +46,7 @@ import { isIdentityRefusal, probeOrIdentityRefusal } from "./host-identity-refus
 import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
-import { staleStopGeneration, stopHost } from "./host-stop.ts";
+import { occupancyRefusal, staleStopGeneration, stopHost } from "./host-stop.ts";
 import { hostUnitPayload } from "./host-unit-placement.ts";
 import type { HostStopGeneration } from "./host-stop-generation.ts";
 
@@ -267,10 +267,12 @@ async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): P
 	// The runner's own reads prove the host first: one that cannot be proven is a typed refusal, never a host_error.
 	const host = await probeOrIdentityRefusal(() => probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS));
 	if (isIdentityRefusal(host)) return identityRefusal(target, host);
-	const sessions = await readSessionCounts(target.socket, true);
-	const occupied = sessions.foreign_attached + sessions.foreign_retained > 0;
-	if (!drain && !force && occupied) {
-		return refusal("refuse", host, { reason: "sessions_live", socket: target.socket, sessions });
+	// `null` when the host did not answer its count: unknown, never an empty host (senpi#7132).
+	const sessions = (await readSessionCounts(target.socket, true)) ?? null;
+	const occupancy = sessions === null ? undefined : sessions.foreign_attached + sessions.foreign_retained;
+	const occupied = occupancyRefusal(drain || force, host !== undefined, occupancy);
+	if (occupied !== undefined) {
+		return refusal("refuse", host, { reason: occupied.reason, socket: target.socket, sessions });
 	}
 	const result = await stopHost({
 		socket: target.socket,
