@@ -111,10 +111,12 @@ describe.skipIf(process.platform === "win32")("a draining host with a turn still
 			action: "drained",
 		});
 		await draining;
-		expect(await probeProtocolInfo(qa.socket, 10_000)).toMatchObject({ lifecycle: "stopping" });
+		expect(await probeProtocolInfo(qa.socket, 10_000, { keyRoot: qa.agentDir })).toMatchObject({
+			lifecycle: "stopping",
+		});
 
 		// Both readers of a stop see the session the draining host still holds, and both stop paths refuse.
-		expect(await probeSessionCount(qa.socket, 10_000)).toBe(1);
+		expect(await probeSessionCount(qa.socket, 10_000, { keyRoot: qa.agentDir })).toBe(1);
 		expect(await stopHost({ socket: qa.socket, agentDir: qa.agentDir })).toEqual({
 			action: "refuse",
 			reason: "sessions_live",

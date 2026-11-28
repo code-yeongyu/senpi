@@ -9,6 +9,7 @@ import { writeHostSettings } from "../../../src/modes/rpc/host-daemon-state.ts";
 import { settledOpportunisticHostGc } from "../../../src/modes/rpc/host-gc-pass.ts";
 import { probeSessionCount } from "../../../src/modes/rpc/host-probe.ts";
 import { readSessionCounts } from "../../../src/modes/rpc/host-status.ts";
+import { withRpcKeyRoot } from "../../../src/modes/rpc/rpc-auth-client.ts";
 import { stopHost } from "../../../src/modes/rpc/host-stop.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
@@ -98,7 +99,7 @@ describe.skipIf(process.platform === "win32")(
 		it("refuses before the drain, as a control", async () => {
 			const r = await rig();
 
-			expect(await probeSessionCount(r.qa.socket, 5_000)).toBe(1);
+			expect(await probeSessionCount(r.qa.socket, 5_000, { keyRoot: r.qa.agentDir })).toBe(1);
 			expect(await stopHost({ socket: r.qa.socket, agentDir: r.qa.agentDir })).toEqual({
 				action: "refuse",
 				reason: "sessions_live",
@@ -112,8 +113,9 @@ describe.skipIf(process.platform === "win32")(
 			await r.seen("child-draining");
 
 			// What a stop decision reads: the host's own count, through both readers.
-			expect.soft(await probeSessionCount(r.qa.socket, 5_000)).toBe(1);
-			expect.soft((await readSessionCounts(r.qa.socket, true))?.total).toBe(1);
+			expect.soft(await probeSessionCount(r.qa.socket, 5_000, { keyRoot: r.qa.agentDir })).toBe(1);
+			// The client proves the host from the host's own agent dir, as `host stop` and `host status` do.
+			expect.soft((await withRpcKeyRoot(r.qa.agentDir, () => readSessionCounts(r.qa.socket, true)))?.total).toBe(1);
 
 			const stopping = stopHost({ socket: r.qa.socket, agentDir: r.qa.agentDir });
 			// If the stop goes through, the child hears SIGTERM; let it leave so the stop call can settle.
@@ -131,7 +133,7 @@ describe.skipIf(process.platform === "win32")(
 			await r.seen("child-draining");
 
 			// An answered zero, not an unanswered count: the stop goes through at once.
-			expect(await probeSessionCount(r.qa.socket, 5_000)).toBe(0);
+			expect(await probeSessionCount(r.qa.socket, 5_000, { keyRoot: r.qa.agentDir })).toBe(0);
 			const leaving = r.seen("child-stopping").then(() => r.supervisor.send("exit"));
 			expect(await stopHost({ socket: r.qa.socket, agentDir: r.qa.agentDir })).toEqual({
 				action: "stopped",
