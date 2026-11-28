@@ -4634,10 +4634,15 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					// The exemption does not extend a failed run: input parked behind a failed or aborted response is
-					// released just below and follows the ordinary queue rules (#4036, #6868).
+					// A completed exempt response continues with the input parked behind it (#4036). After a provider error
+					// that input starts its own turn (#6868), decided while the exemption still holds: once it is released
+					// below, the threshold it covered reads as a required compaction again. An abort or a local failure
+					// never continues.
 					allowsPostCompactionUsageExemptContinuation =
-						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
+						this._postCompactionUsageExemptAssistants.has(msg) &&
+						(msg.stopReason === "error"
+							? endedInProviderError && this._agentEndAllowsQueuedContinuation(event.messages)
+							: msg.stopReason !== "aborted");
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
 					}
