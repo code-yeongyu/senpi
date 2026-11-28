@@ -61,3 +61,21 @@ describe("host session error mapping", () => {
 		});
 	});
 });
+
+// senpi#3283 item 3: a launch-profile refusal carries its detail after the code; it is still a usage error.
+describe("launch-profile refusals exit as usage errors (senpi#3283)", () => {
+	it.each([
+		["with errorData", "invalid_launch_profile: expectedHostInstance must be a non-empty string", true],
+		["without errorData", 'invalid_launch_profile: promptSurface must be "terminal", "app" or "chat".', false],
+	] as const)("%s", (_label, message, withData) => {
+		const error = new RpcCommandError(
+			message,
+			withData ? message : undefined,
+			withData ? { reason: "r" } : undefined,
+		);
+		expect(mapError(error, "/rpc.sock")).toMatchObject({
+			exitCode: 2,
+			payload: { action: "error", reason: "invalid_launch_profile", detail: message },
+		});
+	});
+});
