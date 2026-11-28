@@ -139,8 +139,27 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime, toolRuntime?:
 				.split("\n")
 				.filter((line) => line.length > 0)
 				.map((line) => {
-					const value = JSON.parse(line) as { type?: string };
-					return JSON.stringify(value.type === "message_update" ? toJsonEvent(value as AgentSessionEvent) : value);
+					const value = JSON.parse(line) as { type?: string; sessionId?: string };
+					try {
+						return JSON.stringify(
+							value.type === "message_update" ? toJsonEvent(value as AgentSessionEvent) : value,
+						);
+					} catch (error) {
+						// A stream event the JSON projection rejects ends this host: the client reads why on the wire
+						// instead of the error escaping the event flush.
+						if (!(error instanceof Error)) throw error;
+						queueMicrotask(() => {
+							void shutdown(1);
+						});
+						return JSON.stringify({
+							type: "response",
+							command: "prompt",
+							success: false,
+							errorCode: "invalid_stream_event",
+							error: error.message,
+							sessionId: value.sessionId,
+						});
+					}
 				})
 				.join("\n");
 			writeRawStdout(linearized.length > 0 ? `${linearized}\n` : "");
