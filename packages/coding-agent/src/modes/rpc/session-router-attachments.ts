@@ -1,6 +1,7 @@
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { connectionLeft } from "./session-router-relocation.ts";
+import { forgetAnswererConnection, syncAnswererPresence } from "./prompt-answerer-gate.ts";
 /** Disconnect semantics shared by socket loss and release_attachment. True means settlement owns the final release. */
 export async function releaseDisconnectAttachment(host: RouterContext, sessionId: string): Promise<boolean> {
 	// Headless completion contract: a turn survives its client's death and
@@ -97,10 +98,12 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 		host.pendingCapabilities.delete(connectionId);
 		host.writer.delegations.forget(connectionId);
 		host.connectionRoles.forget(connectionId);
+		forgetAnswererConnection(host, connectionId);
 	}
 	const opens = host.opensByConnection.get(connectionId);
 	const owned = host.sessionsByConnection.get(connectionId);
 	host.sessionsByConnection.delete(connectionId);
+	for (const sessionId of owned?.keys() ?? []) syncAnswererPresence(host, sessionId);
 	if (host.draining) {
 		// Drain owns teardown now, even when a client reacts to the announcement early.
 		// Its attachment-draining claim releases these counts once work settles.
@@ -173,11 +176,13 @@ export function releaseOwnerAttachment(host: RouterContext, owner: string, sessi
 		connectionLeft(host, sessionId, owner);
 	} else owned.set(sessionId, count - 1);
 	if (owned.size === 0) host.sessionsByConnection.delete(owner);
+	syncAnswererPresence(host, sessionId);
 }
 
 /** Drops per-connection records for a handle the host closed on its own. */
 export function forgetSessionOwnership(host: RouterContext, sessionId: string): void {
 	host.attachOrder.forgetSession(sessionId);
+	host.answerers.forgetSession(sessionId);
 	for (const [connection, owned] of host.sessionsByConnection) {
 		owned.delete(sessionId);
 		if (owned.size === 0) host.sessionsByConnection.delete(connection);

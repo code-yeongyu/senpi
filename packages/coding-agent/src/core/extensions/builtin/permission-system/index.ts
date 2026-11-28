@@ -418,25 +418,30 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			// Read at ask time: a labelled attach can record the refusal while this session is live. A runtime with no
 			// session (a hand running tools for a remote loop) has no record to read; its opener's label still applies.
 			const refusedByOpener = labelled || (ctx.sessionManager !== undefined && hasOpenerRefusal(ctx.sessionManager));
-			if (ctx.hasUI && !refusedByOpener) {
-				const reply = await showPermissionPrompt(ctx, request, signal);
+			// senpi#7572: a run whose designated answerer is not connected has nobody to ask, now or when a raised prompt
+			// is settled because that answerer left.
+			const noAnswerer = (): boolean => ctx.ui.capabilities?.answerer === "absent";
+			const noUI = (): ReturnType<typeof handleNoUI> =>
+				handleNoUI(request, {
+					emitEvent: (eventName, data) => {
+						if (eventName !== "permission_asked") {
+							pi.events.emit(eventName, data);
+						}
+					},
+					presetBound: callPreset === "auto",
+					refusedByOpener,
+					noAnswerer: noAnswerer(),
+				});
+			if (ctx.hasUI && !refusedByOpener && !noAnswerer()) {
+				const shown = await showPermissionPrompt(ctx, request, signal);
+				const reply = shown.reply === "reject" && shown.message === undefined && noAnswerer() ? noUI() : shown;
 				activeService.reply(reply);
 				if (reply.reply === "always") {
 					const answered = reply.always ? { ...request, always: reply.always } : request;
 					persistAlways(ctx.agentDir, ctx.cwd, answered, persistedAtAnswer);
 				}
 			} else {
-				activeService.reply(
-					handleNoUI(request, {
-						emitEvent: (eventName, data) => {
-							if (eventName !== "permission_asked") {
-								pi.events.emit(eventName, data);
-							}
-						},
-						presetBound: callPreset === "auto",
-						refusedByOpener,
-					}),
-				);
+				activeService.reply(noUI());
 			}
 
 			const askResult = await askResultPromise;

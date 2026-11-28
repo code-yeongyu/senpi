@@ -59,6 +59,7 @@ describe("multi-session RPC protocol info", () => {
 					"observe_reads",
 					"entries_tail",
 					"set_permission_preset_v1",
+					"prompt_answerer", // senpi#7572: an opener can ask that only its run's designated answerer resolve its prompts.
 					"retain_on_disconnect",
 					"open_session_header_cwd", // senpi#6427: an open by path with no cwd works where the file's header says.
 					"detach_connection",

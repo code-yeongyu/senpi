@@ -261,6 +261,7 @@ export class SessionWorkerClient {
 				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
+			setAnswererPresence: (present) => this.post({ type: "answerer_presence", present }),
 			connectionDetached: (connection) => this.postRetired(this.owners.detach(writer.connectionContext, connection)),
 			dispose: async () => {
 				this.postRetired(this.owners.retireAll());

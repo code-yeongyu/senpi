@@ -4344,8 +4344,10 @@ Hosts that do this advertise `open_session_header_cwd`. A host without it opens 
 
 #### attach_session
 
-`attach_session { sessionId, durableSessionId, expectedHostInstance?, telemetry? }` attaches the current connection
-only to the live session selected by both routing and durable identity. A vanished or non-open target
+`attach_session { sessionId, durableSessionId, expectedHostInstance?, telemetry?, answerKey? }` attaches the current connection
+only to the live session selected by both routing and durable identity. The answer carries `answerer: true` when this
+connection now answers the run's prompts: with `answerKey`, the run's key from its `open_session` reply, the caller
+becomes an answerer (see "Designated answerer"); without it, or with a wrong key, `answerer` is `false`. A vanished or non-open target
 returns `unknown_session`; a recycled routing id or mismatching host instance returns
 `session_identity_mismatch`. A draining or shutting-down host refuses before admission with
 `session_busy_lifecycle` and `errorData: { reason: "host_draining" }`; a caller without a connection
@@ -8515,6 +8517,51 @@ carrying the frame's `id`:
 session has that id); on a terminal `unknown_request`, `question_incomplete` or `invalid_response`. A single-session stdio
 connection answers every response it resolves the same way, and ignores one that matches none of its
 requests. A client may still fire and forget: the reply is an ordinary `response` record.
+
+#### Designated answerer (`prompt_answerer`)
+
+On a multi-session host that advertises `prompt_answerer`, an opener asks for the rule with
+`open_session.designatedAnswerer: true`; without it (the default) a run takes answers from any attached client, as
+before. In a run that asked, only its designated answerer resolves its dialogs and questions
+(`extension_ui_response`, `extension_ui_progress`). Any other answer is refused before the session or its worker sees
+it, with `error: "prompt_answerer_required"` and `errorData.reason` `not_answerer` (or `host_handover`, below), and the
+request stays pending.
+
+- An `open_session` that creates a run answers `answerer: true` and `answerKey`, a random 32-byte key encoded as
+  base64url, sent once in that reply only. The opener's connection answers the run while it stays attached.
+- `attach_session { answerKey }` makes another connection an answerer (a reconnect after a dropped socket presents
+  it too); one answer may instead carry `answerKey` itself, which is meant for a relay or a routed connection. Every
+  open and attach reply says `answerer: true|false`.
+- The host keeps only the key's SHA-256 digest, in memory. The key is never written to a file, the environment,
+  argv, a log, a list row, `get_state`, an error or a message to a worker isolate, and the host strips it from an
+  answer before dispatch. A client must keep it the same way: a process the session's own tools start can read any
+  file, environment variable or argument of the user.
+- A run that asked and that the host reopens on its own (a handover restore) has no answerer: no key survives a
+  generation change. Every open and attach reply on it says `answerer: false, answererUnavailable: "host_handover"`,
+  and every answer is refused with `errorData.reason: "host_handover"`, so a client can close it, open it again and
+  take a new key without a person. Only the flag that the run asked travels in the host's parked record, never the
+  key or its digest; a parked record from an engine without this field reopens with the rule off, as before.
+- After a handover a controller checks `prompt_answerer` on the SUCCESSOR: a successor engine that does not know the
+  field reopens such a run with the rule off, and a controller that finds the capability absent treats the run's
+  prompts as advisory. A same-user process that can rewrite the host's parked records can switch the rule off for the
+  next reopen in the same way.
+- Secret inputs keep their own raiser route and are not checked here.
+- No hang: while none of a run's answerers is attached (the opener dropped and nobody presented the key, or the run
+  came back from a handover), the session's UI reports `capabilities.answerer: "absent"`. A permission ask then is
+  refused at once with a reason naming that the run's designated answerer is not connected, and no dialog is raised.
+  A dialog or question already raised when the last answerer left stays pending for 30 seconds; an answerer that
+  attaches with the key within that window answers it, otherwise it is settled as unanswered, and a permission prompt
+  settled this way gets the same refusal. A run that did not ask for the rule never reports `answerer`.
+
+What this protects: the prompts of a **live** run, against every client but the one that opened it, including a
+program that run itself started with the user's RPC keys. It does not bind the session across runs. Whoever opens a
+session that is not running becomes that new run's answerer, so a client that expects to answer and receives
+`answerer: false` should tell the person instead of driving the session. Closing, releasing, unloading or replacing a
+run is not limited to its answerer. What it cannot stop: a same-user process that can read the opener's or the host's
+memory (ptrace allowed, root, a debugger entitlement), that can kill the host and open the session as a run of its
+own, or that changes the client's own files or the user's shell configuration so that the next opener is a program it
+controls. An opener whose session tools run as another OS user or in a container that cannot reach the user's files
+and processes is not exposed to these.
 
 ```json
 {"type": "extension_ui_response", "id": "answer-1", "uiRequestId": "uuid-1", "value": "Allow"}

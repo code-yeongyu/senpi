@@ -141,6 +141,8 @@ export type RpcExtensionUIResponseFrame = {
 	id: string;
 	uiRequestId?: string;
 	answerId?: string;
+	/** The run's answer key, for an answer sent on a connection that is not the run's answerer (senpi#7572). */
+	answerKey?: string;
 };
 
 export type RpcSecretInputSettledEvent = {
@@ -162,6 +164,8 @@ export type RpcExtensionUIProgress = {
 	answers?: RpcQuestionAnswers;
 	comment?: string;
 	sessionId?: string;
+	/** As on `extension_ui_response` (senpi#7572). */
+	answerKey?: string;
 };
 
 /** Outbound deadline refresh for an open `question` request. */

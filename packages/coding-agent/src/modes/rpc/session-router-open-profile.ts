@@ -132,6 +132,7 @@ export function validatedOpenProfile(
 		...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
 		...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
 		...(command.persona !== undefined ? { persona: command.persona } : {}),
+		...(command.designatedAnswerer === true ? { designatedAnswerer: true } : {}),
 		...(sessionEnv !== undefined ? { sessionEnv } : {}),
 		// Every wire open has a caller, so its silence is an answer: an older peer never grants (senpi#7446).
 		telemetryConsent: command.telemetry?.consent ?? "unanswered",

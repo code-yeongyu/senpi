@@ -3,6 +3,7 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import type { OpenRpcSession, RpcSessionEntry } from "./session-registry.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
+import { designateOpener, openReplyAnswerer } from "./prompt-answerer-gate.ts";
 
 /** A dropped opener waits until its open or claim has either transferred or released ownership. */
 export function holdOpenConnection(host: RouterContext, owner: string): () => void {
@@ -20,6 +21,7 @@ export function holdOpenConnection(host: RouterContext, owner: string): () => vo
 /** One ownership transition for both a freshly built open and a claimed speculative open. */
 export function ownOpen(host: RouterContext, opened: OpenRpcSession, owner: string | undefined, compact = false): void {
 	if (owner === undefined) return;
+	designateOpener(host, opened, owner);
 	if (!host.writer.hasRegisteredConnectionCapabilities(owner))
 		host.writer.setConnectionCapabilities(
 			owner,
@@ -61,13 +63,18 @@ export function replyOpen(
 	host: RouterContext,
 	opened: OpenRpcSession,
 	entry: RpcSessionEntry,
-	command: { readonly type: "open_session" | "claim_session" | "move_session"; readonly id?: string },
+	command: {
+		readonly type: "open_session" | "claim_session" | "move_session";
+		readonly id?: string;
+		readonly designatedAnswerer?: boolean;
+	},
 	reply = true,
 	beside: Readonly<Record<string, unknown>> = {},
 ): void {
 	const state =
 		entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
 	if (!state) throw new Error("Session state was not created");
+	const answerer = openReplyAnswerer(host, opened, reply, command.designatedAnswerer);
 	if (reply)
 		host.writer.enqueue(opened.sessionId, {
 			id: command.id,
@@ -93,6 +100,7 @@ export function replyOpen(
 					: {}),
 				...openReplyPermissionMode(state),
 				...(opened.attached ? { attached: true } : {}),
+				...answerer,
 				...(host.defaults.sessionPresence ? { presence: host.defaults.sessionPresence.view(state.sessionId) } : {}),
 			},
 		});

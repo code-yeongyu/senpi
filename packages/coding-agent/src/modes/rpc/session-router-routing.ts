@@ -17,6 +17,7 @@ import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
 import { answerListHands, answerSelectHand } from "./hand-selection-commands.ts";
 import { attachSession, reclaimSession, releaseAttachment } from "./session-attachment-commands.ts";
 import { attachmentGate } from "./session-attachment-gate.ts";
+import { answererGate, withoutAnswerKey } from "./prompt-answerer-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { dispatchSessionBinding } from "./session-held.ts";
 import { findSession } from "./find-session.ts";
@@ -60,8 +61,9 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 	if ("sessionId" in command && command.sessionId !== undefined && host.registry.peek(command.sessionId)?.speculative)
 		return Promise.resolve(error(command.id, command.type, "unknown_session"));
 	if (command.type === "park_session") return parkSession(host, command);
-	const refusal = attachmentGate(host, command) ?? compactAdmissionGate(host, command);
+	const refusal = attachmentGate(host, command) ?? answererGate(host, command) ?? compactAdmissionGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
+	command = withoutAnswerKey(command);
 	// RULING-111 (LEAK-B/C): the host-side pre-declaration belongs to the compact negotiation; with the flag off a
 	// session-scoped declaration reaches its session exactly as on main.
 	if (command.type === "set_client_info" && compactUpdatesEnabled()) {

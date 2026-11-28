@@ -9,6 +9,7 @@ import {
 	AUTO_PERMISSION_PRESET_CAPABILITY,
 } from "../../core/extensions/builtin/permission-system/config.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
+import { PROMPT_ANSWERER_CAPABILITY } from "./prompt-answerer.ts";
 import {
 	ACCOUNT_RESET_CAPABILITY,
 	ATTENDED_CAPABILITY,
@@ -143,6 +144,8 @@ export function multiSessionHostCapabilities(options: {
 			OBSERVE_READS_CAPABILITY,
 			ENTRIES_TAIL_CAPABILITY,
 			SET_PERMISSION_PRESET_CAPABILITY,
+			// senpi#7572: only a run's designated answerer resolves its prompts (`answerKey`, `prompt_answerer_required`).
+			PROMPT_ANSWERER_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the
 			// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 			// per-session launch profile `context`/`auto_title` travel on, and the session

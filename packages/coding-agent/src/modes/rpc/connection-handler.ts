@@ -1,4 +1,5 @@
 import { projectCwdMismatch } from "./project-expected-cwd.ts";
+import { AnswererPresence } from "./answerer-presence.ts";
 import {
 	isHostOwnedToolRuntimeCapability,
 	type ToolRuntimeKind,
@@ -280,6 +281,8 @@ export interface RpcConnectionHandler {
 	readonly ready: Promise<void>;
 	/** Complete a prebuilt binding with the capabilities its opener supplied. */
 	setClientCapabilities(capabilities: readonly string[]): void;
+	/** senpi#7572: whether one of the run's designated answerers is attached (`answerer-presence.ts`). */
+	setAnswererPresence(present: boolean): void;
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
 	/**
@@ -620,6 +623,10 @@ export function createRpcConnectionHandler(
 		() => options.clientInfo?.connectionId(),
 		raiserOrigin,
 	);
+	const answererPresence = new AnswererPresence(() => {
+		questions.cancelAll();
+		pendingExtensionRequests.cancelAll();
+	});
 	let secretHandshake = false;
 	const secretOwners = new Map<string, { connection: string | undefined; cancel?: () => void }>();
 	const secretCapable = (connection: string | undefined): boolean =>
@@ -730,7 +737,10 @@ export function createRpcConnectionHandler(
 	 * Create an extension UI context that uses the RPC protocol.
 	 */
 	const createExtensionUIContext = (): ExtensionUIContext => ({
-		capabilities: { secretInput: true },
+		get capabilities() {
+			const answerer = answererPresence.answerer();
+			return answerer === undefined ? { secretInput: true as const } : { secretInput: true as const, answerer };
+		},
 		question: (request, opts) =>
 			clientCapabilities?.includes(QUESTION_CAPABILITY)
 				? questions.ask(request, opts)
@@ -2767,6 +2777,9 @@ export function createRpcConnectionHandler(
 		setClientCapabilities(capabilities) {
 			replaceClientCapabilities([...capabilities]);
 			refreshGrantPresentation();
+		},
+		setAnswererPresence(present) {
+			answererPresence.set(present);
 		},
 		isShutdownRequested() {
 			return shutdownRequested;

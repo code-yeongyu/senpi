@@ -6,6 +6,8 @@ export interface NoUIOptions {
 	readonly presetBound?: boolean;
 	/** The session's opener declared that nobody answers its prompts (`open_session.context.approvals`, `core/opener-approvals.ts`). */
 	readonly refusedByOpener?: boolean;
+	/** The run asked for a designated answerer and none is connected (senpi#7572, `ctx.ui.capabilities.answerer`). */
+	readonly noAnswerer?: boolean;
 }
 
 /**
@@ -16,7 +18,7 @@ export interface NoUIOptions {
  */
 export function handleNoUI(
 	request: Request,
-	{ emitEvent, presetBound = false, refusedByOpener = false }: NoUIOptions,
+	{ emitEvent, presetBound = false, refusedByOpener = false, noAnswerer = false }: NoUIOptions,
 ): ReplyInput {
 	emitEvent("permission_asked", request);
 	const patternsStr = request.patterns.join(", ");
@@ -24,10 +26,12 @@ export function handleNoUI(
 	return {
 		requestID: request.id,
 		reply: "reject",
-		message: refusedByOpener
-			? `${required}, and nobody answers this session's prompts, so the call did not run. ${DENIAL_IS_FINAL} The session that opened this one chose its permission preset; it can open a session with a preset that allows the call.`
-			: presetBound
-				? `${required}, and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} Under the auto preset, allow rules do not widen what it approves; the user can run it interactively or choose another preset.`
-				: `${required}, and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission ${request.permission}=allow.`,
+		message: noAnswerer
+			? `${required}, and this run's designated answerer is not connected, so nobody can answer the prompt and the call did not run. ${DENIAL_IS_FINAL} The client that opened the run can attach again with its answer key, or close and reopen the run to answer from there.`
+			: refusedByOpener
+				? `${required}, and nobody answers this session's prompts, so the call did not run. ${DENIAL_IS_FINAL} The session that opened this one chose its permission preset; it can open a session with a preset that allows the call.`
+				: presetBound
+					? `${required}, and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} Under the auto preset, allow rules do not widen what it approves; the user can run it interactively or choose another preset.`
+					: `${required}, and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission ${request.permission}=allow.`,
 	};
 }

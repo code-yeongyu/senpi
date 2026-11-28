@@ -7,6 +7,7 @@ import { advertisedCompactCapabilities } from "./compact-negotiation.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 import type { InheritedHandover } from "./host-handover-reopen.ts";
 
+import { PromptAnswerers } from "./prompt-answerer.ts";
 import type { RpcHostKernelMemory } from "./rpc-types.ts";
 
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
@@ -88,6 +89,8 @@ export class RouterContext {
 	readonly pendingCapabilities = new Map<string, string[]>();
 	/** Roles each connection declared through set_client_info (senpi#3811). */
 	readonly connectionRoles = new ConnectionRoles();
+	/** Who may answer each run's prompts (senpi#7572); memory only. */
+	readonly answerers = new PromptAnswerers();
 
 	readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 

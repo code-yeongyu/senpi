@@ -264,7 +264,14 @@ export interface QuestionResponse {
  */
 export interface ExtensionUIContext {
 	/** Implements private collection and typed refusal; a presenter is checked at call time. */
-	readonly capabilities?: { readonly secretInput?: true };
+	readonly capabilities?: {
+		readonly secretInput?: true;
+		/**
+		 * senpi#7572: `"absent"` while the run asked for a designated answerer and none is connected, so a prompt raised
+		 * now would wait for nobody; read it at ask time. Absent or `"present"` otherwise.
+		 */
+		readonly answerer?: "present" | "absent";
+	};
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 

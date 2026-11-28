@@ -71,7 +71,18 @@ export type RpcHostCommandResponse =
 			type: "response";
 			command: "open_session";
 			success: true;
-			data: { sessionId: string; state: RpcSessionState; attached?: boolean; presence?: RpcSessionPresence };
+			data: {
+				sessionId: string;
+				state: RpcSessionState;
+				attached?: boolean;
+				presence?: RpcSessionPresence;
+				/** Whether this connection answers the run's prompts (senpi#7572, `prompt_answerer`). */
+				answerer?: boolean;
+				/** The new run's answer key, in this reply only: keep it in memory, never in a file or the environment. */
+				answerKey?: string;
+				/** Why nobody can answer the run: the host reopened it after a handover (close and reopen for a new key). */
+				answererUnavailable?: "host_handover";
+			};
 	  }
 	| { id?: string; type: "response"; command: "close_session"; success: true; data: Record<string, never> }
 	| {

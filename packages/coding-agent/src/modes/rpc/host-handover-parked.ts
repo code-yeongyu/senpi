@@ -64,6 +64,8 @@ export interface HandoverParkedEntry {
 	readonly retryFallback?: SessionRetryFallbackProfile;
 	/** The session's instructions and tool policy (omo#13057): a successor never reopens it with a wider tool surface. */
 	readonly persona?: SessionPersona;
+	/** The run asked for a designated answerer (senpi#7572): its successor reopens it with no answerer. The flag only. */
+	readonly designatedAnswerer?: true;
 	/** The session's own caller env (senpi#4381); it follows the session, never the generation's process. */
 	readonly sessionEnv?: SessionEnv;
 	/** The standing telemetry answer of the session's callers (senpi#7446); a reopen never grants by losing it. */
@@ -123,6 +125,7 @@ export function isHandoverParkedEntry(value: unknown): value is HandoverParkedEn
 		sessionAutoTitleError(record.autoTitle) === undefined &&
 		sessionRetryFallbackError(record.retryFallback) === undefined &&
 		sessionPersonaError(record.persona) === undefined &&
+		(record.designatedAnswerer === undefined || record.designatedAnswerer === true) &&
 		sessionEnvShapeError(record.sessionEnv) === undefined &&
 		(record.telemetryConsent === undefined || isTelemetryConsent(record.telemetryConsent)) &&
 		(record.model === undefined ||

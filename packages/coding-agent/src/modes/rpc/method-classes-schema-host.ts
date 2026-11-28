@@ -39,6 +39,7 @@ const uiResponseFrame = {
 	id: Id,
 	uiRequestId: OptId,
 	answerId: OptId,
+	answerKey: OptStr,
 };
 
 const openProperties = {
@@ -56,6 +57,7 @@ const openProperties = {
 	kind: Opt(SessionKind),
 	context: Opt(SessionContext),
 	auto_title: OptBool,
+	designatedAnswerer: OptBool,
 	durableSessionId: OptId,
 	promptSurface: Opt(literals("terminal", "app", "chat")),
 	browserEngine: Opt(literals("connected", "builtin", "none")),
@@ -165,6 +167,7 @@ export const HOST_RECORD_SCHEMAS = {
 		takeover: Opt(Type.Literal(true)),
 		holder: OptId,
 		telemetry: Opt(TelemetryDeclaration),
+		answerKey: OptStr,
 	}),
 	set_telemetry_consent: command("set_telemetry_consent", { sessionId: Id, consent: TelemetryConsent }),
 	release_attachment: command("release_attachment", { sessionId: Id }),
@@ -187,6 +190,7 @@ export const HOST_RECORD_SCHEMAS = {
 		answers: Opt(QuestionAnswers),
 		comment: OptStr,
 		sessionId: OptId,
+		answerKey: OptStr,
 	}),
 	host_response: Type.Object({
 		type: Type.Literal("host_response"),
