@@ -22,7 +22,7 @@
  * Where those files LIVE, and the modes they are written with, belong to `host-daemon-state.ts`;
  * this module reads and writes through its primitives and never builds a path of its own.
  */
-import { rename, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import {
 	type DaemonPidFile,
@@ -130,13 +130,12 @@ export async function writeHostRegistration(
 	const { generation, writer } = await writeGenerationRecord(paths, registration);
 	// The pointer is replaced by rename: a reader either sees the generation that owned the socket
 	// before this call or the one that owns it now, never a half-written pointer.
-	await writeStateFile(`${paths.pointerFile}.${process.pid}.tmp`, {
+	await writeStateFile(paths.pointerFile, {
 		layout: HOST_DAEMON_LAYOUT,
 		instance_id: registration.instanceId,
 		generation_dir: generation.relativeDir,
 		writer,
 	});
-	await rename(`${paths.pointerFile}.${process.pid}.tmp`, paths.pointerFile);
 }
 
 /**

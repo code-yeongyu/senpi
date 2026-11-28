@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { type HeldFileLock, lockWithLossHandling } from "../file-lock.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_OPTIONS, isLockError } from "../lockfile-policy.ts";
+import { isTransientRenameError, renameRetryingTransient } from "../../utils/paths.ts";
 
 const FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 
@@ -22,32 +23,14 @@ export function readStateFile(path: string): string | undefined {
 	}
 }
 
-// Windows refuses to replace a file another process (antivirus, the indexer, a
-// lock-free reader) has open for a moment; those codes clear on their own.
-const TRANSIENT_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
-const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160] as const;
-
-function isTransientRenameError(error: unknown): boolean {
-	return (
-		error instanceof Error &&
-		"code" in error &&
-		typeof error.code === "string" &&
-		TRANSIENT_RENAME_CODES.has(error.code)
-	);
-}
-
 /** Renames over the target, retrying a transiently refused replace; a refusal that outlasts the retries reads as a busy store. */
 async function replaceFile(temporary: string, path: string): Promise<void> {
 	const startedAt = Date.now();
-	for (const delayMs of [...RENAME_RETRY_DELAYS_MS, undefined]) {
-		try {
-			renameSync(temporary, path);
-			return;
-		} catch (error) {
-			if (!isTransientRenameError(error)) throw error;
-			if (delayMs === undefined) throw new CredentialStoreBusyError(path, Date.now() - startedAt, error);
-			await sleep(delayMs);
-		}
+	try {
+		await renameRetryingTransient(() => renameSync(temporary, path));
+	} catch (error) {
+		if (isTransientRenameError(error)) throw new CredentialStoreBusyError(path, Date.now() - startedAt, error);
+		throw error;
 	}
 }
 

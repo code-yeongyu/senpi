@@ -3310,10 +3310,6 @@
 			"class": "per-copy-safe",
 			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
-		"packages/coding-agent/src/core/credential-pool/state-file.ts#TRANSIENT_RENAME_CODES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
 		"packages/coding-agent/src/core/credential-pool/state-file.ts#queueTails": {
 			"class": "per-copy-safe",
 			"reason": "state-file write queue; the state-file lock coordinates copies like processes (design 3.2)"
@@ -8851,6 +8847,10 @@
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/host-identity-env.ts#HOST_HANDOFF_NAME_SET": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/utils/paths.ts#TRANSIENT_RENAME_CODES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
