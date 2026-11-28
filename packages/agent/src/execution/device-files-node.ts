@@ -8,6 +8,7 @@ import {
 	type DeviceFileStat,
 	type DeviceRunRequest,
 	type DeviceRunResult,
+	runTermination,
 	FILE_CHANNEL_MAX_BYTES,
 	LOCAL_DEVICE_FILES,
 } from "./device-files.ts";
@@ -89,20 +90,35 @@ function runDirect(request: DeviceRunRequest, signal: AbortSignal | undefined): 
 		child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
 		child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
 		let killTimer: NodeJS.Timeout | undefined;
+		let closed = false;
+		let expiry: NodeJS.Immediate | undefined;
+		const timeout = { expired: false, signalsSent: new Set<string>() };
+		const send = (sig: NodeJS.Signals): void => {
+			if (child.kill(sig)) timeout.signalsSent.add(sig);
+		};
 		const timer =
 			request.timeoutMs === undefined
 				? undefined
 				: setTimeout(() => {
-						child.kill("SIGTERM");
-						killTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+						// Timers run before the loop reaps children: a child that ended on its own before the deadline can
+						// still look alive here. One poll phase later its exit is recorded, so only a child whose exit has not been observed expires.
+						expiry = setImmediate(() => {
+							if (closed || child.exitCode !== null || child.signalCode !== null) return;
+							timeout.expired = true;
+							send("SIGTERM");
+							killTimer = setTimeout(() => send("SIGKILL"), 10_000);
+						});
 					}, request.timeoutMs);
 		child.on("error", (error) => fail(new DeviceFileError(signal?.aborted ? "aborted" : "io", error.message)));
 		child.on("close", (code, exitSignal) => {
+			closed = true;
+			clearImmediate(expiry);
 			clearTimeout(timer);
 			clearTimeout(killTimer);
 			done({
 				code,
 				signal: exitSignal,
+				termination: runTermination(exitSignal, timeout),
 				stdout: new Uint8Array(Buffer.concat(out)),
 				stderr: Buffer.concat(err).toString("utf8"),
 			});

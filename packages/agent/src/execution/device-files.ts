@@ -76,9 +76,40 @@ export interface DeviceRunRequest {
 	readonly activityLock?: boolean;
 }
 
+/** How a run's process ended, as the side that spawned it observed it: an exit code, or a signal (senpi#7282). */
+export type DeviceRunTerminationKind = "exited" | "signaled";
+
+/**
+ * Timer provenance, kept apart from the observed outcome (senpi#7282): the spawning side's own timer expired before
+ * that side had observed the child's exit, and these are the signals it then requested (`kill()` accepted them). It
+ * does not establish that the child was alive or that a signal was delivered or acted on: a child can already be gone,
+ * survive a signal, or later end on the same signal for another reason. A consumer that needs a confirmed timeout cannot
+ * derive one from this.
+ */
+export type DeviceRunTimeout = {
+	readonly expired: true;
+	readonly signalsSent: readonly string[];
+};
+
+/** `timeout` is present only when the spawning side's own timer expired before that side observed the child's exit. */
+export type DeviceRunTermination =
+	| { readonly kind: DeviceRunTerminationKind }
+	| { readonly kind: DeviceRunTerminationKind; readonly timeout: DeviceRunTimeout };
+
+/** The termination record for a child that ended with `signal` (null: an exit code). */
+export function runTermination(
+	signal: string | null,
+	timer: { readonly expired: boolean; readonly signalsSent: ReadonlySet<string> },
+): DeviceRunTermination {
+	const kind: DeviceRunTerminationKind = signal === null ? "exited" : "signaled";
+	return timer.expired ? { kind, timeout: { expired: true, signalsSent: [...timer.signalsSent] } } : { kind };
+}
+
 export interface DeviceRunResult {
 	readonly code: number | null;
 	readonly signal: string | null;
+	/** Absent when a hand predates it: the cause is unknown, and a signal alone never means a timeout. */
+	readonly termination?: DeviceRunTermination;
 	readonly stdout: Uint8Array;
 	readonly stderr: string;
 }

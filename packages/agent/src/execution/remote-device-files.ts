@@ -4,6 +4,8 @@ import {
 	type DeviceFileOp,
 	type DeviceFiles,
 	type DeviceFileStat,
+	type DeviceRunTermination,
+	type DeviceRunTerminationKind,
 	decodeBase64,
 	encodeBase64,
 	FILE_CHANNEL,
@@ -66,6 +68,29 @@ function valueOf(reply: HandReply): JsonValue {
 	}
 }
 
+const TERMINATION_KINDS: ReadonlySet<string> = new Set<DeviceRunTerminationKind>(["exited", "signaled"]);
+
+function isRecord(value: JsonValue | undefined): value is Record<string, JsonValue> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A hand that predates senpi#7282 sends no termination: left absent (unknown), never inferred from the signal. Timer
+ * provenance is kept only when well formed; a malformed one is dropped rather than read as a timeout.
+ */
+function terminationOf(value: JsonValue | undefined): { termination?: DeviceRunTermination } {
+	if (!isRecord(value)) return {};
+	const { kind, timeout } = value;
+	if (typeof kind !== "string" || !TERMINATION_KINDS.has(kind)) return {};
+	const observed = kind as DeviceRunTerminationKind;
+	if (!isRecord(timeout) || timeout.expired !== true || !Array.isArray(timeout.signalsSent)) {
+		return { termination: { kind: observed } };
+	}
+	const signalsSent = timeout.signalsSent.filter((sig): sig is string => typeof sig === "string");
+	if (signalsSent.length !== timeout.signalsSent.length) return { termination: { kind: observed } };
+	return { termination: { kind: observed, timeout: { expired: true, signalsSent } } };
+}
+
 /**
  * A session's {@link DeviceFiles} on a hand (S40): each operation is one `file` message on the scope's lane, after the
  * hand announced the channel in its `hello` (or `unsupported`, sent nowhere). A write over the limit is refused here,
@@ -126,12 +151,13 @@ export function createRemoteDeviceFiles(link: HandLink, scope: ExecutionScope, m
 			const value = await call("run", args, options?.signal, RUN_CHANNEL);
 			if (typeof value !== "object" || value === null || Array.isArray(value))
 				throw new DeviceFileError("protocol", "malformed run outcome");
-			const { code, signal, stdout, stderr } = value as Record<string, JsonValue>;
+			const { code, signal, stdout, stderr, termination } = value as Record<string, JsonValue>;
 			if (typeof stdout !== "string" || typeof stderr !== "string")
 				throw new DeviceFileError("protocol", "malformed run outcome");
 			return {
 				code: typeof code === "number" ? code : null,
 				signal: typeof signal === "string" ? signal : null,
+				...terminationOf(termination),
 				stdout: decodeBase64(stdout),
 				stderr,
 			};

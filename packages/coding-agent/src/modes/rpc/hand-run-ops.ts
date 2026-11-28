@@ -6,6 +6,8 @@ import {
 	decodeBase64,
 	encodeBase64,
 	FILE_CHANNEL_MAX_BYTES,
+	type DeviceRunTermination,
+	runTermination,
 } from "@earendil-works/pi-agent-core";
 import { type Flock, holdActivityLock } from "./hand-activity-lock.ts";
 import type { NestedRequest } from "@earendil-works/pi-agent-core";
@@ -27,6 +29,8 @@ export interface RunArgs {
 export interface RunOutcome {
 	readonly code: number | null;
 	readonly signal: string | null;
+	/** How the child ended as the hand observed it, plus, when the hand's own timer expired first, the signals it requested (senpi#7282). */
+	readonly termination: DeviceRunTermination;
 	readonly stdout: string;
 	readonly stderr: string;
 }
@@ -120,16 +124,33 @@ function spawnBounded(
 		let size = { out: 0, err: 0 };
 		let overflow = false;
 		let killTimer: NodeJS.Timeout | undefined;
+		let closed = false;
+		let expiry: NodeJS.Immediate | undefined;
+		const expired = { expired: false, signalsSent: new Set<string>() };
+		const send = (sig: NodeJS.Signals): void => {
+			if (child.kill(sig)) expired.signalsSent.add(sig);
+		};
 		const stop = (): void => {
-			if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+			if (child.exitCode === null && child.signalCode === null) send("SIGTERM");
 			// A grandchild (ssh) may hold the pipes after git exits; destroying them lets the run end at its deadline.
 			killTimer ??= setTimeout(() => {
-				child.kill("SIGKILL");
+				send("SIGKILL");
 				child.stdout?.destroy();
 				child.stderr?.destroy();
 			}, KILL_GRACE_MS);
 		};
-		const timeout = setTimeout(stop, Math.min(args.timeoutMs ?? DEFAULT_TIMEOUT_MS, RUN_TIMEOUT_CAP_MS));
+		const timeout = setTimeout(
+			() => {
+				// Timers run before the loop reaps children: a child that ended on its own before the deadline can still
+				// look alive here. One poll phase later its exit is recorded, so only a child whose exit has not been observed expires.
+				expiry = setImmediate(() => {
+					if (closed) return;
+					if (child.exitCode === null && child.signalCode === null) expired.expired = true;
+					stop();
+				});
+			},
+			Math.min(args.timeoutMs ?? DEFAULT_TIMEOUT_MS, RUN_TIMEOUT_CAP_MS),
+		);
 		const onAbort = (): void => stop();
 		signal.addEventListener("abort", onAbort, { once: true });
 		const collect = (into: Buffer[], key: "out" | "err") => (chunk: Buffer) => {
@@ -145,6 +166,8 @@ function spawnBounded(
 		child.stderr?.on("data", collect(err, "err"));
 		child.on("error", (error) => fail(new DeviceFileError("io", error.message)));
 		child.on("close", (code, exitSignal) => {
+			closed = true;
+			clearImmediate(expiry);
 			clearTimeout(timeout);
 			if (killTimer !== undefined) clearTimeout(killTimer);
 			signal.removeEventListener("abort", onAbort);
@@ -153,6 +176,7 @@ function spawnBounded(
 			done({
 				code,
 				signal: exitSignal,
+				termination: runTermination(exitSignal, expired),
 				stdout: encodeBase64(new Uint8Array(Buffer.concat(out))),
 				stderr: Buffer.concat(err).toString("utf8"),
 			});
