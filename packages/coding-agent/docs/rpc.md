@@ -3141,10 +3141,16 @@ Retirement does not add a file-only session to the resident list.
 
 The store is `<agentDir>/retired-sessions/<durable-id>.json`, keyed by the transcript header.
 An absent directory means no retirements. A malformed or unreadable marker refuses that identity
-(`retirement_marker_unavailable`); an unreadable store refuses restore and explicit reopen
-(`retirement_store_unavailable`). Repair the named file or directory rather than treating the error
-as an absent marker. The marker is not a boundary against another process running as the same user:
-that process can write or remove it.
+(`retirement_marker_unavailable`), and so does a header id that is not a valid session id, which names
+no marker (`errorData.action: "repair_session_header"`). Restore keeps such a session parked and
+unopened, logs why once, and still reopens the others. An unreadable store refuses restore and explicit
+reopen (`retirement_store_unavailable`). `errorData.store` and `errorData.marker` name the directory or
+file relative to the agent directory, never by absolute path; the host log keeps the full path. Repair
+the named file or directory rather than treating the error as an absent marker. A `close_session` with
+`retire: true` that cannot record the retirement still closes and answers `retirement_failed`, with
+`errorData.detail` set to the refusal code (and its `store` or `marker`), or to `retirement_write_failed`
+for any other write error. The marker is not a boundary against another process running as the same
+user: that process can write or remove it.
 
 #### Instructions and tool policy per session (`session_persona`)
 
