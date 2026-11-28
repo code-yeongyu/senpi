@@ -127,7 +127,7 @@ function validatePack(pkg) {
 	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: pkg.publishDirectory });
 	const packed = parseNpmPackJson(result.stdout)[0];
 	if (pkg.directory === "packages/coding-agent") {
-		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory), { requiredSocketSecretTargets });
+		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory), { requiredSocketSecretTargets, requiredNativePrebuildTargets });
 	} else {
 		assertPublishedWorkspacePackFiles(packed, readPackageJson(pkg.directory).name, { requiredNativePrebuildTargets });
 	}
