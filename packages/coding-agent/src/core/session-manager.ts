@@ -144,6 +144,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
+import { annotateCompactionUserLanguage, compactionReplyLanguageFields } from "./compaction-reply-language.ts";
 
 /**
  * Whether `value` is plain JSON: null, booleans, finite numbers, strings, arrays of those, and objects
@@ -348,6 +349,10 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	fromHook?: boolean;
 	/** Complete prompt and tool state at this compaction boundary. */
 	systemMessage?: SystemMessage;
+	/** The reply language of the context this compaction replaced (omo#11527, omo#12625). */
+	userLanguage?: string;
+	/** Whether the user explicitly asked for userLanguage, rather than writing in it. */
+	userLanguageRequested?: boolean;
 }
 
 export interface BranchSummaryEntry<T = unknown> extends SessionEntryBase {
@@ -936,6 +941,7 @@ function projectSession(
 					: projectContextEntry(sourceEntry, edits.get(sourceEntry.id)),
 		}),
 	);
+	annotateCompactionUserLanguage(projectedEntries[0], path);
 	const recoveryIndex = path.findLastIndex(
 		(entry) =>
 			entry.type === "compaction" &&
@@ -2521,6 +2527,7 @@ export class SessionManager {
 			usage,
 			fromHook,
 			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
+			...compactionReplyLanguageFields(from.messages),
 		};
 		this._appendEntry(entry, undefined, undefined, () =>
 			compactionFlow(from.entries, this.buildSessionProjection().entries),
