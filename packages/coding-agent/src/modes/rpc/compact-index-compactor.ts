@@ -63,7 +63,7 @@ export class CompactIndexCompactor {
 
 	/** Key-ordered ready keys preserve page locality without looking up the pending backlog (senpi#4575). */
 	private *readyEntries(cut: FrozenIndex): Generator<readonly [string, IndexOverride]> {
-		for (const key of [...this.index.ready].sort()) {
+		for (const key of this.index.ready) {
 			if (!this.index.ready.has(key)) continue;
 			const value = this.index.overlays.get(cut.overrides, key);
 			if (value) yield [key, value];
