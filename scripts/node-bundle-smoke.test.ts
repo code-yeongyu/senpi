@@ -30,48 +30,40 @@ const responseSchema = z.object({
 	type: z.string(), id: z.string().optional(), success: z.boolean().optional(),
 	data: z.unknown().optional(), error: z.unknown().optional(),
 });
-// An external extension: TypeScript the bundle must compile at load time, with a type-only
-// import of a package that is not installed beside it.
-const extensionSource = `import type { ExtensionAPI } from "@code-yeongyu/senpi";
-import type { SelectItem } from "@earendil-works/pi-tui";
-
-const flag: SelectItem = { value: "bundle-smoke", label: "Registered by an external TypeScript extension" };
-
-export default function bundleSmokeExtension(pi: ExtensionAPI): void {
-	pi.registerFlag(flag.value, { description: flag.label, type: "boolean", default: false });
-}
-`;
-
-// An extension importing every library subpath, then loading the running bundle's own entry for it through the runtime's
-// native loader (`createRequire`, so the extension compiler cannot serve its own copy). The running bundle is the
-// launch's runtime snapshot (#2358) when it handed off to one, else the package's own. It reports, per subpath, the
-// exports that differ between the two.
-function subpathIdentityExtension(report: string): string {
+// An external extension: TypeScript the bundle must compile at load time, with a type-only import of a package that is
+// not installed beside it, and value imports of every library subpath, which only the host can serve. For each subpath
+// it loads the running bundle's own entry through the runtime's native loader (`createRequire`, so the extension
+// compiler cannot serve its own copy) and reports the exports that differ from what it imported. The running bundle is
+// the launch's runtime snapshot (#2358) when it handed off to one, else the package's own.
+function extensionSource(report: string): string {
 	const imports = librarySubpaths.map((subpath, index) => `import * as m${index} from "@code-yeongyu/senpi${subpath.slice(1)}";`);
 	const pairs = librarySubpaths.map(
 		(subpath, index) => `[${JSON.stringify(subpath)}, m${index}, ${JSON.stringify(subpath === "." ? "index" : subpath.slice(2))}]`,
 	);
-	return `${imports.join("\n")}
+	return `import type { ExtensionAPI } from "@code-yeongyu/senpi";
+import type { SelectItem } from "@earendil-works/pi-tui";
+${imports.join("\n")}
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
-const snapshots = join(process.env.SENPI_CODING_AGENT_DIR, "runtime");
+const flag: SelectItem = { value: "bundle-smoke", label: "Registered by an external TypeScript extension" };
+const snapshots = join(process.env.SENPI_CODING_AGENT_DIR ?? "", "runtime");
 const running = existsSync(snapshots)
 	? readdirSync(snapshots).map((name) => join(snapshots, name, "dist", "bundle")).filter((dir) => existsSync(dir))
 	: [];
 const bundle = running.length === 1 ? running[0] : ${JSON.stringify(join(repo, "packages/coding-agent/dist/bundle"))};
 const nativeRequire = createRequire(join(bundle, "cli.js"));
 
-export default function subpathIdentityExtension(pi) {
-	const report = {};
-	for (const [subpath, imported, entry] of [${pairs.join(", ")}]) {
+export default function bundleSmokeExtension(pi: ExtensionAPI): void {
+	const report: Record<string, string | string[]> = {};
+	for (const [subpath, imported, entry] of [${pairs.join(", ")}] as Array<[string, Record<string, unknown>, string]>) {
 		const own = nativeRequire(join(bundle, entry + ".js"));
 		const names = Object.keys(own);
 		report[subpath] = names.length === 0 ? "no exports" : names.filter((name) => own[name] !== imported[name]);
 	}
 	writeFileSync(${JSON.stringify(report)}, JSON.stringify(report));
-	pi.registerFlag("subpath-identity", { description: "Subpath identity probe", type: "boolean", default: false });
+	pi.registerFlag(flag.value, { description: flag.label, type: "boolean", default: false });
 }
 `;
 }
@@ -188,36 +180,16 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		}
 	}, SPAWN_BUDGET_MS + 10_000);
 
-	test("loads an external TypeScript extension and lists the flag it registers", () => {
+	// Package contract of the `exports` map (senpi#7657): the bundle emits an entry for every library subpath, and an
+	// extension in a bundled run gets that same module instance, never a second copy with its own module state.
+	test("loads an external TypeScript extension, lists its flag and serves it the bundle's own library subpaths", () => {
 		// Given: a fresh agent dir, so the help fast path misses its per-extension-set cache and
-		// the bundle really compiles and runs the extension.
+		// the bundle really compiles and runs the extension; the extension sits outside any install.
 		const state = createState();
 		const extensionDir = mkdtempSync(join(tmpdir(), "senpi-bundle-extension-"));
 		const extension = join(extensionDir, "extension.ts");
-		writeFileSync(extension, extensionSource);
-		try {
-			// When
-			const result = spawnSync(runtime, [cli, "--extension", extension, "--help"], {
-				encoding: "utf8", env: hermeticEnv(state), timeout: SPAWN_BUDGET_MS,
-			});
-			// Then
-			expect(result.status, result.stderr).toBe(0);
-			expect(result.stdout).toContain("--bundle-smoke");
-		} finally {
-			rmSync(extensionDir, { recursive: true, force: true });
-			rmSync(state, { recursive: true, force: true });
-		}
-	}, SPAWN_BUDGET_MS + 10_000);
-
-	// Package contract of the `exports` map: the bundle emits an entry for every library subpath, and an extension in a
-	// bundled run gets that same module instance, never a second copy with its own module state (senpi S2a).
-	test("hands an extension the bundle's own instance of every library subpath", () => {
-		// Given: an extension outside any install, so only the host can serve the subpaths it imports.
-		const state = createState();
-		const extensionDir = mkdtempSync(join(tmpdir(), "senpi-bundle-subpaths-"));
-		const extension = join(extensionDir, "extension.ts");
 		const report = join(extensionDir, "report.json");
-		writeFileSync(extension, subpathIdentityExtension(report));
+		writeFileSync(extension, extensionSource(report));
 		try {
 			// When
 			const result = spawnSync(runtime, [cli, "--extension", extension, "--help"], {
@@ -225,7 +197,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 			});
 			// Then
 			expect(result.status, result.stderr).toBe(0);
-			expect(result.stdout, result.stderr).toContain("--subpath-identity");
+			expect(result.stdout, result.stderr).toContain("--bundle-smoke");
 			expect(JSON.parse(readFileSync(report, "utf8"))).toEqual(
 				Object.fromEntries(librarySubpaths.map((subpath) => [subpath, []])),
 			);
