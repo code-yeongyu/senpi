@@ -1,13 +1,11 @@
-import { mkdirSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { engineBuildIdentity, engineBuildIdentityFrom } from "../../../src/core/engine-build-identity.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { gcHostEndpoints } from "../../../src/modes/rpc/host-gc.ts";
-import { judgeStaleEngine } from "../../../src/modes/rpc/host-stale-engine.ts";
 import { readAllHostStatus } from "../../../src/modes/rpc/host-status-all.ts";
 import { stopHost } from "../../../src/modes/rpc/host-stop.ts";
 import {
@@ -23,12 +21,6 @@ import {
 	waitForPidGone,
 } from "../../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
-
-// The real judge for every case; one case replaces a single verdict to reach the stop it gates.
-vi.mock("../../../src/modes/rpc/host-stale-engine.ts", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../../../src/modes/rpc/host-stale-engine.ts")>();
-	return { ...actual, judgeStaleEngine: vi.fn(actual.judgeStaleEngine) };
-});
 
 const IDLE_EXIT_MS = 600_000;
 const NEWER_CLIENT = engineBuildIdentityFrom({ version: "2999.1.1" });
@@ -141,26 +133,26 @@ describe.skipIf(process.platform === "win32")("stale old-engine hosts (#3268)", 
 		}
 	}, 90_000);
 
-	// senpi#7623: a host judged stale whose stop cannot prove it (no key record for its launch under the key root) is
-	// kept as stale_unproven_owner and never signalled. An empty SENPI_RPC_KEY_ROOT stands in for that root.
-	it("keeps a stale host it cannot prove as stale_unproven_owner, unsignalled", async () => {
-		const { qa, supervisor, host } = await idleHost("unproven");
-		const emptyRoot = join(qa.root, "other-agent");
-		mkdirSync(emptyRoot, { recursive: true, mode: 0o700 });
-		vi.mocked(judgeStaleEngine).mockResolvedValueOnce({ stale: true, pid: supervisor });
-		const saved = process.env.SENPI_RPC_KEY_ROOT;
-		process.env.SENPI_RPC_KEY_ROOT = emptyRoot;
-		try {
-			const result = await gcHostEndpoints(qa.agentDir, { staleEngine });
+	// senpi#7623: the judge proves a host stale, then the host's key record is gone by the time the stop probes it. The
+	// stop cannot prove the host, so gc keeps it as stale_unproven_owner and never signals it.
+	describe("a stale host its stop cannot prove", () => {
+		let unproven: Awaited<ReturnType<typeof idleHost>>;
+		beforeAll(async () => {
+			unproven = await idleHost("unproven");
+		}, 90_000);
+
+		it("is kept as stale_unproven_owner, unsignalled", async () => {
+			const { qa, supervisor, host } = unproven;
+			const result = await gcHostEndpoints(qa.agentDir, {
+				staleEngine,
+				_test: { beforeStaleStop: () => rm(join(qa.agentDir, "rpc", "keys"), { recursive: true, force: true }) },
+			});
 			expect(result.stopped).toBeUndefined();
 			expect(result.kept).toEqual([expect.objectContaining({ socket: qa.socket, reason: "stale_unproven_owner" })]);
-		} finally {
-			if (saved === undefined) delete process.env.SENPI_RPC_KEY_ROOT;
-			else process.env.SENPI_RPC_KEY_ROOT = saved;
-		}
-		expect(processAlive(supervisor)).toBe(true);
-		expect(processAlive(host)).toBe(true);
-	}, 90_000);
+			expect(processAlive(supervisor)).toBe(true);
+			expect(processAlive(host)).toBe(true);
+		});
+	});
 
 	it("never judges a live host without the stale-engine option", async () => {
 		const { qa, supervisor } = await idleHost("plain");
