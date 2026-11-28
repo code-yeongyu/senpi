@@ -150,7 +150,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 		});
 	}
 
-	// Release contract (senpi#7660): the package's JavaScript is the bundle; the per-file tree ships only declarations.
+	// Release contract (senpi#7659): the package's JavaScript is the bundle; the per-file tree ships only declarations.
 	it("rejects a tarball that ships the per-file JavaScript tree, but not the HTML export's text assets", () => {
 		// Given
 		const assets = ["dist/core/export-html/template.js", "dist/core/export-html/vendor/marked.min.js"];

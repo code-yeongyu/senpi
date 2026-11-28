@@ -14,7 +14,7 @@ const packageJson = JSON.parse(
 ) as CodingAgentPackageJson;
 
 describe("package distribution entrypoints", () => {
-	// One copy of the code per install (senpi#7660): executables, the root entry and every library subpath load the
+	// One copy of the code per install (senpi#7659): executables, the root entry and every library subpath load the
 	// bundle; the per-file tree is a build input that ships only its declarations.
 	test("serves executables and every library entry from the bundle", () => {
 		expect(packageJson.bin.pi).toBe("dist/bundle/cli.js");
