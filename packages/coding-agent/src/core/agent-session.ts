@@ -3492,7 +3492,7 @@ export class AgentSession {
 		model: Model<Api>,
 	): ReturnType<typeof projectModelUsabilityBudget> | undefined {
 		if (model.contextWindow <= 0) return undefined;
-		const compaction = this._getCompactionSettings();
+		const compaction = this._getCompactionSettings(model);
 		const projection = projectModelUsabilityBudget({
 			model,
 			systemPrompt: this.agent.state.systemPrompt,
@@ -9560,7 +9560,7 @@ export class AgentSession {
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
 			liveContextTokens,
-			compaction: this._getCompactionSettings(),
+			compaction: this._getCompactionSettings(model),
 			includeSpeculationLead: options?.includeSpeculationLead,
 			admission: options?.admission,
 		});
@@ -9584,7 +9584,7 @@ export class AgentSession {
 		liveContextTokens: number,
 	): ModelUsabilityBudgetProjection | undefined {
 		if (model.contextWindow <= 0) return undefined;
-		const compaction = this._getCompactionSettings();
+		const compaction = this._getCompactionSettings(model);
 		if (!compaction.enabled) return undefined;
 		if (this._modelSwitchAdmission() !== "switch") return undefined;
 		const projection = projectModelUsabilityBudget({
@@ -9641,7 +9641,7 @@ export class AgentSession {
 	 * transcript stays intact in the session file.
 	 */
 	private _reduceForSwitchTarget(model: Model<Api>, liveContextTokens: number): number {
-		if (!this._getCompactionSettings().enabled) return liveContextTokens;
+		if (!this._getCompactionSettings(model).enabled) return liveContextTokens;
 		// senpi#3447: on a downswitch the repair decision, the slice and the guard
 		// charge one measure, so the figure handed to the guard is the one the decision
 		// used. A rung that is not a downswitch carries no fit charge
@@ -9685,7 +9685,7 @@ export class AgentSession {
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
 			liveContextTokens: chargeContextTokens(this._switchContextMessages(), tokenScale),
-			compaction: this._getCompactionSettings(),
+			compaction: this._getCompactionSettings(model),
 			includeSpeculationLead: false,
 			admission: "switch",
 		});
@@ -9822,18 +9822,17 @@ export class AgentSession {
 	private _getDownswitchLiveContextTokens(model: Model<Api>): number {
 		const currentModel = this.model;
 		if (!currentModel) return 0;
-		const compaction = this._getCompactionSettings();
 		const currentBudget = projectModelUsabilityBudget({
 			model: currentModel,
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
-			compaction,
+			compaction: this._getCompactionSettings(currentModel),
 		});
 		const targetBudget = projectModelUsabilityBudget({
 			model,
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
-			compaction,
+			compaction: this._getCompactionSettings(model),
 		});
 		const currentUsableContext = currentBudget.contextWindow - currentBudget.requiredTokens;
 		const targetUsableContext = targetBudget.contextWindow - targetBudget.requiredTokens;
