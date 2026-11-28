@@ -35,6 +35,20 @@ test("an id seen under an id key gets the same token where it is embedded in oth
 	assert.deepEqual(out, [{ id: "<id:1>" }, { turnKey: "1:<id:1>" }, { id: "<id:2>" }, { text: "the reader" }]);
 });
 
+test("transcript and turn references resolve a digit-free generated entry id even before its entry", () => {
+	const normalize = createNormalizer();
+	const references = {
+		transcriptEntryId: "cfabcbcd",
+		turnKey: "1:cfabcbcd",
+		text: "literal cfabcbcd",
+	};
+	assert.deepEqual(normalize([references, { id: "cfabcbcd" }, { turnKey: "1:deadbeef" }]), [
+		{ transcriptEntryId: "<id:1>", turnKey: "1:<id:1>", text: "literal cfabcbcd" },
+		{ id: "<id:1>" },
+		{ turnKey: "1:deadbeef" },
+	]);
+});
+
 test("a value under an id key that is not a bare uuid is one id, owner ids with a pid prefix included", () => {
 	const normalize = createNormalizer();
 	const out = normalize([{ ownerId: `47635:${U1}` }, { ownerId: `55542:${U1}` }, { sessionId: U1 }]);
