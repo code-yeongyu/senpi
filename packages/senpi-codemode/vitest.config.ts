@@ -16,6 +16,7 @@ export default mergeConfig(
 	defineConfig({
 		test: {
 			environment: "node",
+			globalSetup: ["./test/eval/webview-warm-up-global-setup.ts"],
 			testTimeout: 30_000,
 			reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
 			silent: "passed-only",

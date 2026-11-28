@@ -1328,6 +1328,8 @@
       "packages/senpi-codemode/src/tool/render-live.ts": ["LIVE_CODE_WINDOW_LINES", "isLiveCellStatus"],
       // pre-existing at origin main aceb1cc1d9: unused exports TERMINAL_SNAPSHOT_CAP, estimateSnapshotBytes
       "packages/senpi-codemode/src/tool/terminal-snapshot-store.ts": ["TERMINAL_SNAPSHOT_CAP", "estimateSnapshotBytes"],
+      // default export is the globalSetup vitest.config.ts loads by path, not an import (entry, export-checked; #7147)
+      "packages/senpi-codemode/test/eval/webview-warm-up-global-setup.ts": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused exports TestHarness
       "packages/server/src/testing/index.ts": ["TestHarness"],
       // pre-existing at origin main aceb1cc1d9: unused exports createUnixListener
@@ -1665,6 +1667,8 @@
         // Kernel worker and child-process entries started by path (inline-worker.ts, process-worker.ts).
         "src/kernels/js/inline-worker-entry.js",
         "src/kernels/js/process-entry.js",
+        // The vitest globalSetup file vitest.config.ts loads by path (WebView warm-up slot, #7147).
+        "test/eval/webview-warm-up-global-setup.ts",
       ],
       "includeEntryExports": true,
       "ignoreFiles": [

@@ -6,6 +6,8 @@ import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harne
 import {
 	bunChromeChildren,
 	bunWebViewAvailable,
+	CHROME_WARM_UP_SLOT_WAIT_MS,
+	oneChromeWarmUpAtATime,
 	serveFixturePage,
 	type WebViewFixturePage,
 } from "./eval/webview-fixtures.ts";
@@ -47,7 +49,8 @@ function fixtureUrl(): string {
 // constructor alone starts nothing, so a blank navigation stands for it), then `navigate` loads the fixture and
 // `evaluate` reads it. The stage times go to SENPI_WEBVIEW_READINESS_LOG when it is set. No case deadline is raised.
 const WARM_UP_CELL_TIMEOUT_MS = 110_000;
-const WARM_UP_TIMEOUT_MS = WARM_UP_CELL_TIMEOUT_MS + 30_000;
+// The hook also waits for another file's warm-up to finish (senpi#7147).
+const WARM_UP_TIMEOUT_MS = CHROME_WARM_UP_SLOT_WAIT_MS + WARM_UP_CELL_TIMEOUT_MS + 30_000;
 
 function stdoutOf(messages: readonly KernelToHostMessage[]): string {
 	return messages
@@ -116,7 +119,7 @@ let chromeWarmUp: Promise<Error | undefined> | undefined;
 let chromeLeftByWarmUp: readonly number[] = [];
 
 function warmUpChromeOnce(): Promise<Error | undefined> {
-	chromeWarmUp ??= warmUpChromeCell().then(
+	chromeWarmUp ??= oneChromeWarmUpAtATime(warmUpChromeCell).then(
 		() => undefined,
 		(error: unknown) => (error instanceof Error ? error : new Error(String(error))),
 	);
