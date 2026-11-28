@@ -82,7 +82,7 @@ async function release(hold: EngineTurnHold) {
 it("replays a held peer delivery written twice as one item and consumes both notices with it", async () => {
 	const { hold, written } = replay([held(1, "notice-a"), held(2, "notice-b"), held(2, "notice-b-again")]);
 	expect(hold.noticeCount).toBe(2);
-	expect(hold.peerDeliveryCount).toBe(2);
+	expect(hold.peerDeliveryIds).toEqual(["rpc:local/delivery-1", "rpc:local/delivery-2"]);
 	expect(hold.messages().map(({ noticeIds }) => noticeIds)).toEqual([["notice-a"], ["notice-b", "notice-b-again"]]);
 	expect((await release(hold)).flat()).toEqual(["payload-1", "payload-2"]);
 	const consumed = written.flatMap(({ type, data }) =>

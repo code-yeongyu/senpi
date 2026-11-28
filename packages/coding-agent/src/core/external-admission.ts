@@ -47,16 +47,17 @@ export type ExternalAdmissionAnswer = ExternalAdmissionResult | HeldDeliveriesFu
 
 export interface ExternalAdmissionPort {
 	readonly projectedHold?: (depth: number) => ExternalAdmissionResult["hold"];
-	/** The held peer deliveries' ids still waiting for a resume, oldest first (senpi#7588); none when omitted. */
-	readonly heldDeliveries?: () => readonly string[];
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
 	readonly isBusy: () => boolean;
 	/** The holds a delivery cannot release, so a start is kept as a held notice instead (senpi#6490); empty when none. */
 	readonly heldBy: () => readonly HoldKind[];
 	/** The engine-turn cap that would stop a delivery's turn now, so a start is answered `held` (senpi#7138). */
 	readonly cappedBy: () => EngineTurnCap | undefined;
-	/** Distinct peer deliveries the session's held notices keep now (senpi#7588). */
-	readonly heldPeerDeliveries: () => number;
+	/**
+	 * The distinct peer deliveries the session's held notices keep now (senpi#7588), oldest first: the order a resume
+	 * takes them in, and so the head of the line a position is counted in (senpi#7590).
+	 */
+	readonly heldPeerDeliveries: () => readonly string[];
 	/** Synchronously enqueues into the runtime's own queue for `lane`. */
 	readonly enqueue: (message: SessionControlDeliveryMessage, lane: ExternalDeliverAs) => void;
 	/** Starts a turn carrying `message`; settles when that run is over, whether or not it wrote the entry. */
@@ -196,7 +197,7 @@ export class ExternalAdmission {
 			return { kind: "already_admitted", turn_epoch, ...this.position(id) };
 		}
 		// Every entry point shares the cap, and nothing is written past it, so the sender keeps the delivery (senpi#7628).
-		if (this.heldPeerDeliveries() >= MAX_HELD_PEER_DELIVERIES) return { kind: "held_deliveries_full", turn_epoch };
+		if (this.heldPeerDeliveryCount() >= MAX_HELD_PEER_DELIVERIES) return { kind: "held_deliveries_full", turn_epoch };
 		if (!this.gate().can_admit) return { kind: "held_draft", turn_epoch };
 		// While a delivery start has not begun its run, the turn it opens is already the one its admission was answered
 		// with (senpi#7478), so a steer naming it is meant for that run, as one naming the current epoch always was.
@@ -249,12 +250,12 @@ export class ExternalAdmission {
 
 	/**
 	 * Snapshot only the selected id and count, never other senders' identities. The line is the held deliveries a resume
-	 * takes, oldest first, then the pending ones: a held delivery leaves `pending` once its notice is written, yet keeps
-	 * its place, and while a session holds deliveries every new admission is held, so a pending one is newer than them.
+	 * takes, oldest first, then the pending ones. A held delivery keeps its place where `pending` no longer has it: after
+	 * a restart, the held notices still name it while this process's ledger starts empty.
 	 */
 	position(id: string): { queue_position: number | null; hold?: ExternalAdmissionResult["hold"] } {
 		this.releaseRestored();
-		const line = [...new Set([...(this.port.heldDeliveries?.() ?? []), ...this.pending.keys()])];
+		const line = [...new Set([...this.port.heldPeerDeliveries(), ...this.pending.keys()])];
 		const index = line.indexOf(id);
 		const queue_position = index === -1 ? null : index + 1;
 		const hold = queue_position === null ? undefined : this.port.projectedHold?.(line.length);
@@ -344,10 +345,10 @@ export class ExternalAdmission {
 	 * The held notices written, plus the held starts whose notice is still on its way: a delivery is written only after
 	 * an await, so a burst of admissions would otherwise all see the count from before it.
 	 */
-	private heldPeerDeliveries(): number {
+	private heldPeerDeliveryCount(): number {
 		let inFlight = 0;
 		for (const lane of this.pending.values()) if (lane === "held") inFlight += 1;
-		return this.port.heldPeerDeliveries() + inFlight;
+		return this.port.heldPeerDeliveries().length + inFlight;
 	}
 }
 

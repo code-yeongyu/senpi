@@ -165,10 +165,6 @@ export class EngineTurnHold {
 		return this.notices.noticeCount;
 	}
 
-	get peerDeliveryCount(): number {
-		return this.notices.peerDeliveryCount;
-	}
-
 	get peerDeliveryIds(): string[] {
 		return this.notices.peerDeliveryIds;
 	}
