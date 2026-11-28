@@ -127,6 +127,80 @@ function expectInvalidTerminal(events: readonly AssistantMessageEvent[], result:
 }
 
 export function registerInvokeRecoveryNativeLifecycleCases(tool: Tool): void {
+	it("keeps text recovery working after overlapping native calls finish out of order", async () => {
+		// given
+		const producer = new NativeStreamHarness();
+		const wrapped = wrapStreamWithInvokeRecovery(producer.inner, [tool]);
+		producer.start();
+		const first = nativeCall("toolu-first");
+		const second = nativeCall("toolu-second");
+		const firstIndex = producer.startNative(first);
+		const secondIndex = producer.startNative(second);
+
+		// when
+		producer.endNative(secondIndex, second);
+		producer.deltaNative(firstIndex, "{}", first);
+		producer.endNative(firstIndex, first);
+		const textIndex = producer.startText();
+		producer.textDelta(
+			textIndex,
+			'<invoke name="Bash"><parameter name="command">echo recovered</parameter></invoke>',
+		);
+		producer.endText(textIndex);
+		producer.finish();
+		const events = await collectEvents(wrapped);
+		const result = await wrapped.result();
+
+		// then
+		expect(result.stopReason).toBe("toolUse");
+		expect(result.content.filter((block) => block.type === "toolCall")).toEqual([
+			first,
+			second,
+			{
+				type: "toolCall",
+				id: "recovered-antml-0",
+				name: "Bash",
+				arguments: { command: "echo recovered" },
+			},
+		]);
+		expect(events.filter((event) => event.type === "error")).toEqual([]);
+		expect(events.filter((event) => event.type === "toolcall_end")).toHaveLength(3);
+	});
+
+	it.each(["repeated-start", "delta-after-end", "repeated-end"] as const)(
+		"rejects %s while another native call is active",
+		async (kind) => {
+			// given
+			const producer = new NativeStreamHarness();
+			const wrapped = wrapStreamWithInvokeRecovery(producer.inner, [tool]);
+			producer.start();
+			const first = nativeCall("toolu-first");
+			const firstIndex = producer.startNative(first);
+			producer.startNative(nativeCall("toolu-second"));
+			if (kind !== "repeated-start") producer.endNative(firstIndex, first);
+			const partial = structuredClone(producer.partial);
+
+			// when
+			if (kind === "repeated-start") {
+				producer.inner.push({ type: "toolcall_start", contentIndex: firstIndex, partial });
+			} else if (kind === "delta-after-end") {
+				producer.inner.push({ type: "toolcall_delta", contentIndex: firstIndex, delta: "{}", partial });
+			} else {
+				producer.inner.push({ type: "toolcall_end", contentIndex: firstIndex, toolCall: first, partial });
+			}
+			producer.finish();
+			const events = await collectEvents(wrapped);
+			const result = await wrapped.result();
+
+			// then
+			expectInvalidTerminal(events, result);
+			expect(events.filter((event) => event.type === "toolcall_start")).toHaveLength(2);
+			expect(events.filter((event) => event.type === "toolcall_end")).toHaveLength(
+				kind === "repeated-start" ? 0 : 1,
+			);
+		},
+	);
+
 	it("fails closed for native delta or end before start", async () => {
 		const outputs = await Promise.all([
 			collectInvalidBeforeStart(tool, "delta-before-start"),
