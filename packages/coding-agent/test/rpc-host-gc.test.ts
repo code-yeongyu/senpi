@@ -14,7 +14,6 @@ import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { gcHostEndpoints } from "../src/modes/rpc/host-gc.ts";
 import { endpointInUse } from "../src/modes/rpc/host-gc-evidence.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { HeldAnthropicModel, JsonlPeer, openedSessionId } from "./helpers/rpc-generation-support.ts";
 import {
 	endpointRow,
@@ -39,6 +38,7 @@ import {
 	writeJson,
 } from "./helpers/rpc-host-gc-fixtures.ts";
 import { waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 afterEach(sweepEndpointScratches, 180_000);
 
@@ -56,7 +56,7 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 		});
 		await expect(stat(paths.endpointFile)).resolves.toBeDefined();
 		await expect(stat(paths.pointerFile)).resolves.toBeDefined();
-		expect(await probeHost({ socket: qa.shard })).toBeDefined();
+		expect(await probeSandboxHost(qa, { socket: qa.shard })).toBeDefined();
 	}, 180_000);
 
 	it("removes an uncleanly killed endpoint, its socket and its siblings, and keeps the live one beside it", async () => {
@@ -82,7 +82,7 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 		]) {
 			await expect(stat(path)).rejects.toEqual(gone);
 		}
-		expect(await probeHost({ socket: qa.shard })).toBeDefined();
+		expect(await probeSandboxHost(qa, { socket: qa.shard })).toBeDefined();
 	}, 180_000);
 
 	it("removes an endpoint whose supervisor alone was SIGKILLed, after its host child's watchdog cleaned up", async () => {
@@ -157,7 +157,7 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 		const death = await killEndpointUnclean(qa.legacy, qa.agentDir);
 		tracked.internalDirs.push(...death.internalDirs);
 		expect(death.supervisorPid).toBe(successor.pid);
-		expect(await probeHost({ socket: qa.legacy, timeoutMs: 2_000 })).toBeUndefined();
+		expect(await probeSandboxHost(qa, { socket: qa.legacy, timeoutMs: 2_000 })).toBeUndefined();
 		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
 		const claims = await daemonTreeDigest(paths.reservationsDir);
 		expect(Object.keys(claims)).not.toHaveLength(0);
@@ -209,7 +209,7 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 		});
 		expect(evidenceWhileBooting).toEqual({ inUse: "live_generation" });
 		expect(successor).toMatchObject({ action: "handoff", socket: qa.legacy });
-		expect(await probeHost({ socket: qa.legacy })).toBeDefined();
+		expect(await probeSandboxHost(qa, { socket: qa.legacy })).toBeDefined();
 	}, 240_000);
 
 	it("lets an ensure that recreated endpoint.json while gc held the lock start a host that stays listed", async () => {

@@ -1940,6 +1940,9 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
   upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
   by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
   owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
+  That layout check runs first, on local files alone, before any dial; it can only refuse, never grant. A dial
+  that is then refused for the host's identity is the answer `{ action: "refuse", reason: "host_identity_unproven" }`
+  (or another endpoint auth code), never a thrown error. Stop, drain and idle handover answer the same way.
 - The successor must not run an OLDER engine than the running host (senpi#7018). `handoffHost` compares the
   successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
   host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
@@ -2248,7 +2251,7 @@ which prints the bare socket path).
   attach-only even when its caller requested an upgrade: a host generation never starts its own successor.
   This is process-local state, not an environment marker, so a shell child remains free to run the explicit
   `senpi host handoff` command.
-- `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
+- `status` prints `{ reachable, refusal, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
   zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, path_identity_resolver, env_keys, generations, pointer, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
@@ -2256,6 +2259,9 @@ which prints the bare socket path).
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
   and `null` when nobody answers or the answering host does not advertise its lifecycle. An unserved
   socket therefore includes both `"reachable": false` and `"lifecycle": null`; `null` is not `"ready"`.
+  `refusal` is `null` unless the host answered but could not be proven from the key root
+  (`{ code, detail }`, `code` one of the endpoint auth codes, such as `host_identity_unproven`): `reachable` is then
+  `true`, and nothing else is read from that host.
   `status --all` carries the same field and values on each endpoint row. While stopping, session listing
   is not queried and its empty counts are unobserved, not proof that all sessions have finished.
   Otherwise, `sessions` is what `list_sessions`
@@ -3107,6 +3113,38 @@ session it is attached to, without restarting anything; the contract is the sect
 confirmed the policy the change produces. Refusals: `invalid_telemetry_consent` (malformed `consent`, with
 `errorData.reason`), `session_not_attached` (this connection is not attached to the session) and
 `telemetry_update_unconfirmed` (the session did not confirm; nothing is kept).
+
+#### Session retirement (`session_retirement`)
+
+Retirement is always explicit. `close_session` with `retire: true` retires a disk-backed session when
+that close is its final one; a plain `close_session` does not, and the closed session still reopens
+from its file with a plain `open_session`. A detach, idle park, host stop, or `release_session` never
+retires. A host without `session_retirement` ignores the unknown `retire` field and closes without
+retiring, so probe the capability before relying on it. In particular, release with `reason: "takeover"` can hand the
+**same transcript** back to a terminal. A controller replacing it with a different session calls
+`retireSession({ agentDir, sessionPath, reason: "takeover" })` from `@code-yeongyu/senpi`.
+The same API accepts `"requested"` for a file-only close. It needs no running host, is idempotent,
+and returns `{ retiredAt, reason }`. With no transcript path (a memory-only session) it returns
+`{ reason: "memory_only" }`. Marking a **live** session does not stop its turn; close it to stop it.
+
+Retired sessions are not restored after handover or restart. Ordinary opens, including by-reference
+reads, refuse with `session_retired` and `errorData.{retiredAt,reason}`. Only an authorized
+`open_session` with `reopenRetired: true` can reopen one. On a session not retired the field has no
+effect. Send it only for an explicit create/reopen request, never as a retry after refusal.
+Probe `get_protocol_info.capabilities` first: without `session_retirement`, a controller cannot
+promise engine-enforced retirement.
+
+`find_session.found.retirement` reports the marker without opening the file. Resident
+`list_sessions` rows also report `retirement: { retiredAt, reason }` when a live session is marked.
+`get_state` does not carry it: it answers from memory in the tick it is asked.
+Retirement does not add a file-only session to the resident list.
+
+The store is `<agentDir>/retired-sessions/<durable-id>.json`, keyed by the transcript header.
+An absent directory means no retirements. A malformed or unreadable marker refuses that identity
+(`retirement_marker_unavailable`); an unreadable store refuses restore and explicit reopen
+(`retirement_store_unavailable`). Repair the named file or directory rather than treating the error
+as an absent marker. The marker is not a boundary against another process running as the same user:
+that process can write or remove it.
 
 #### Instructions and tool policy per session (`session_persona`)
 
@@ -6430,7 +6468,7 @@ Response:
 - `whenIdle`: `start` (default) starts a turn on an idle session; `queue` holds it for the next turn.
 - `expectedTurnId` is `get_state.currentTurnId` (a string). A steer whose `expectedTurnId` is not the current turn, or a mid-turn steer that names none, answers `kind: "turn_conflict"` and admits nothing. The reply's `turnId` is the session's turn at admission, in the same form.
 - `chainCount` is a thread call's hop count, checked against `threads.chainCountLimit` before anything is admitted (refused with `chain_count_limit` / `invalid_chain_count`, as on `prompt`/`steer`/`follow_up`); the admitted hop is written as `details.chain_count`.
-- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). `held` (senpi#6490): the session is idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run hold); the delivery is kept as a held notice and starts once that hold is released, and `holds` lists the hold kinds, for example `{ "kind": "held", "turnId": "0", "holds": ["session_hold"] }`. An `unattended` hold alone is released by the delivery, which answers `started`. `held` with `engineTurnCap` instead of `holds` (senpi#7138): the engine-turn cap stops the turn the delivery would start, for example `{ "kind": "held", "turnId": "8", "engineTurnCap": { "reason": "cap-per-resume-window", "count": 8 } }`; the delivery is recorded without a turn and is answered by the turn a person's message or `resume_session` starts (`get_state.engineTurnCap` shows the cap until then). A caller that predates `held` must treat it as neither success nor a refusal to retry: the delivery is admitted and waits on that device for its person. The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
+- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). `held` (senpi#6490): the session is idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run hold); the delivery is kept as a held notice and starts once that hold is released, and `holds` lists the hold kinds, for example `{ "kind": "held", "turnId": "0", "holds": ["session_hold"] }`. An `unattended` hold alone is released by the delivery, which answers `started`. `held` with `engineTurnCap` instead of `holds` (senpi#7138): the engine-turn cap stops the turn the delivery would start, for example `{ "kind": "held", "turnId": "8", "engineTurnCap": { "reason": "cap-per-resume-window", "count": 8 } }`; the delivery is recorded without a turn and is answered by the turn a person's message or `resume_session` starts (`get_state.engineTurnCap` shows the cap until then). A caller that predates `held` must treat it as neither success nor a refusal to retry: the delivery is admitted and waits on that device for its person. The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`. A delivery held while paused counts as such an entry, so its resend after a restart answers `already_admitted` and is not held twice (senpi#7588). A paused session holds at most 64 distinct peer deliveries (`MAX_HELD_PEER_DELIVERIES`); past that a new `deliveryId` is refused with `held_deliveries_full`, nothing is written and the delivery stays with its sender until the session is resumed. When an unattended session resumes, consecutive held deliveries from one sender under one origin reach the model as one turn, in admission order. A delivery from another sender, or admitted under another turn origin (for example a remote device's delegated connection beside a local one), keeps its own turn: one turn carries one origin, and folding a delegated delivery into another turn would run it under that turn's approval-mode rule instead of its own.
 - On a connection that speaks for a remote device (a delegated connection, or one whose `set_client_info` declared `remoteOrigin`), the engine stamps that device as `details.remote_origin` and writes `text` unchanged, so the model reads exactly what a delivery on a local connection carries and no device (senpi#6250). It keeps `text` as `details.display_text` when no `displayText` is given, and refuses a `command_line` sender (`sender_not_allowed`). A delegated connection that names no remote device is refused (`delegated_origin_unknown`), never admitted as a local delivery. A record that names `remote_origin` is refused on every connection. The turn that consumes the delivery takes the connection's origin, so a remote device's follow-up runs under the delegated approval-mode rule even inside a local turn.
 - Once `release_session` has closed the session's admission, the record answers `success: false` with the release's message: the delivery stays with its sender.
 

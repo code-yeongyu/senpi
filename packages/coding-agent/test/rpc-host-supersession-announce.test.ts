@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { signalGeneration } from "../src/modes/rpc/host-stop.ts";
 import {
 	GENERATION_HOST_ARGS,
@@ -20,6 +19,7 @@ import {
 	waitForPidGone,
 } from "./helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -63,7 +63,7 @@ async function rig(options: { held?: HeldAnthropicModel; monitor?: boolean; grac
 		_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
 	};
 	const host = await ensureHost({ ...launch, policy: { idleExitMs: 600_000 } });
-	const identity = await probeHost({ socket: qa.socket });
+	const identity = await probeSandboxHost(qa);
 	const connect = async () => {
 		const peer = await JsonlPeer.connect(qa.socket);
 		peers.push(peer);
