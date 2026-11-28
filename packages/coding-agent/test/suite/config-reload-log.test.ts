@@ -34,7 +34,7 @@ describe("config reload logger", () => {
 			message: "watcher closed",
 		});
 
-		expect(status).toEqual({ written: true, disabled: false });
+		expect(status).toEqual({ written: true, paused: false });
 		const entries = readFileSync(join(agentDir, "logs", "config-reload.log"), "utf8")
 			.trim()
 			.split("\n")
@@ -70,15 +70,15 @@ describe("config reload logger", () => {
 		expect(readFileSync(logPath, "utf8")).toContain('"id":"second-registration"');
 	});
 
-	it("disables silently and returns status when its log directory is unwritable", () => {
+	it("pauses silently and returns status when its log directory is unwritable", () => {
 		const agentDir = createTempDir();
 		const logsDir = join(agentDir, "logs");
 		mkdirSync(logsDir);
 		chmodSync(logsDir, 0o500);
 		const logger = createConfigReloadLogger(agentDir);
 
-		expect(logger.warn("watcher_started", { targetCount: 1 })).toEqual({ written: false, disabled: true });
-		expect(logger.warn("watcher_started", { targetCount: 2 })).toEqual({ written: false, disabled: true });
+		expect(logger.warn("watcher_started", { targetCount: 1 })).toEqual({ written: false, paused: true });
+		expect(logger.warn("watcher_started", { targetCount: 2 })).toEqual({ written: false, paused: true });
 		expect(existsSync(join(logsDir, "config-reload.log"))).toBe(false);
 	});
 });

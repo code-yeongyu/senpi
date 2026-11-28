@@ -107,6 +107,7 @@ class FileMcpLogger implements McpLogger {
 	readonly #maxFileBytes: number;
 	readonly #ring: string[] = [];
 	#fileSinkRetryAt = 0;
+	#fileSinkOutageNoted = false;
 
 	constructor(server: string, options: McpLoggerOptions) {
 		this.#server = server;
@@ -180,9 +181,17 @@ class FileMcpLogger implements McpLogger {
 			} finally {
 				closeSync(fd);
 			}
+			this.#fileSinkOutageNoted = false;
 		} catch {
 			this.#fileSinkRetryAt = Date.now() + LOG_SINK_RETRY_MS;
-			this.#pushRing(this.#formatLine("warning", "file sink disabled after write failure", undefined, "file"));
+			// The sink only pauses for LOG_SINK_RETRY_MS, so say it is retrying and note the outage
+			// once per outage instead of once per retry window (senpi#2981).
+			if (!this.#fileSinkOutageNoted) {
+				this.#fileSinkOutageNoted = true;
+				this.#pushRing(
+					this.#formatLine("warning", "file sink paused after write failure; retrying", undefined, "file"),
+				);
+			}
 		}
 	}
 }
