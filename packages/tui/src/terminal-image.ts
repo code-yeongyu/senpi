@@ -10,6 +10,7 @@ import {
 	type TerminalCapabilities,
 } from "./terminal-capabilities.ts";
 import { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
+import { isRexTermName } from "./tmux-image-capability.ts";
 import { isOldWindowsWezTerm, WEZTERM_WINDOWS_IMAGES_HINT } from "./wezterm-windows-images.ts";
 
 export type { ImageProtocol, TerminalCapabilities } from "./terminal-capabilities.ts";
@@ -100,6 +101,10 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 	}
 
 	if (termProgram === "ghostty" || term.includes("ghostty") || process.env.GHOSTTY_RESOURCES_DIR) {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
+	if (termProgram === "rex" || isRexTermName(term)) {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
