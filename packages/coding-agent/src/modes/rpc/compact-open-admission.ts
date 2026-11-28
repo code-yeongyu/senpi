@@ -162,7 +162,9 @@ export async function compactOpen(
 	} catch (cause) {
 		delivery?.resolve(undefined);
 		if (!(cause instanceof OpenRefused) && !(cause instanceof CompactAdmissionError)) {
-			// A throwing handler gets no reply from the router, so an accepted open still ends with its own typed refusal.
+			// An accepted open ends with its own typed refusal, tagged with its admission. It is queued before the
+			// rethrow, so the host, which answers a throwing handler only when nothing was answered under the request's
+			// id, adds no second answer.
 			const unexpected = { ...error(command.id, command.type, code(cause)), ...accepted };
 			if (accepted)
 				answerFinally(() => {
