@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
+import { fallbackClassificationText } from "./classification-text.ts";
 
 /**
  * The wall-clock moment (epoch ms) a failed request's limit lifts, when the failure names one:
@@ -21,7 +22,7 @@ export function limitResetAt(
 	) {
 		return resetsAt;
 	}
-	const text = message.errorMessage ?? "";
+	const text = fallbackClassificationText(message.errorMessage) ?? "";
 	const resetMs =
 		usageLimitResetMs(text, wallNow) ?? parseRetryAfterMsMarker(text) ?? extract429RetryAfterMs({ bodyText: text });
 	return resetMs !== undefined && Number.isFinite(resetMs) && resetMs > 0 ? wallNow + resetMs : undefined;

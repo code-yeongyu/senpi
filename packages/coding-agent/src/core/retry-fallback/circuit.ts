@@ -4,6 +4,7 @@ import { usageLimitReset } from "../credential-pool/reset-time.ts";
 import { isHealthExhaustionFailure } from "./circuit-probes.ts";
 import type { FallbackLogger } from "./log.ts";
 import { usageLimitScope } from "./usage-limit.ts";
+import { fallbackClassificationText } from "./classification-text.ts";
 
 /**
  * Fallback-chain circuit breaker. An entry that fails out of a configured chain
@@ -221,7 +222,7 @@ export function createFallbackCircuitAccess(deps: FallbackCircuitAccessDeps): Fa
 			if (!enabled()) return;
 			const { cooldownMs, maxCooldownMs } = deps.settings();
 			const now = deps.now();
-			const message = failure.errorMessage;
+			const message = fallbackClassificationText(failure.errorMessage);
 			const retryAfterMs =
 				failure.retryAfterMs ?? (message === undefined ? undefined : parseRetryAfterMsMarker(message));
 			// A usage limit sets the window only with an absolute reset (resets_at, "resets 3pm") or a

@@ -5,6 +5,7 @@ import {
 	isProviderTimeoutError,
 	isRetryableAssistantError,
 } from "@earendil-works/pi-ai/compat";
+import { fallbackClassificationText } from "./retry-fallback/classification-text.ts";
 import { isModelConfigFailure } from "./retry-fallback/model-config-error.ts";
 
 /** Providers mark post-delta failures with this prefix so a turn retry never replays visible text or tool calls. */
@@ -27,9 +28,11 @@ export function isExcludedFromTurnRetry(message: AssistantMessage, contextWindow
  * (senpi#6012).
  */
 export function isTurnRetryableFailure(message: AssistantMessage, contextWindow: number): boolean {
-	if (isExcludedFromTurnRetry(message, contextWindow)) return false;
-	if (isClassifierRefusal(message)) return true;
-	if (!message.errorMessage) return false;
-	if (message.stopReason === "aborted") return isProviderTimeoutError(message);
-	return isRetryableAssistantError(message);
+	const text = fallbackClassificationText(message.errorMessage);
+	const failure = text === message.errorMessage ? message : { ...message, errorMessage: text };
+	if (isExcludedFromTurnRetry(failure, contextWindow)) return false;
+	if (isClassifierRefusal(failure)) return true;
+	if (!text) return false;
+	if (failure.stopReason === "aborted") return isProviderTimeoutError(failure);
+	return isRetryableAssistantError(failure);
 }

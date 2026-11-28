@@ -2,6 +2,7 @@ import { type AssistantMessage, describeProviderFailureForUser, isQuotaExhaustio
 import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
 import type { SessionEntry } from "../session-manager.ts";
 import { isBillingErrorMessage } from "./billing.ts";
+import { fallbackClassificationText } from "./classification-text.ts";
 
 /**
  * Who a usage limit binds. `model`: the provider refused THIS model only (a
@@ -67,7 +68,7 @@ export function usageLimitScope(
 		const scope = failure.errorCause.scope;
 		if (scope === "account" || scope === "model") return scope;
 	}
-	const errorMessage = typeof failure === "object" ? failure.errorMessage : failure;
+	const errorMessage = fallbackClassificationText(typeof failure === "object" ? failure.errorMessage : failure);
 	if (errorMessage === undefined) return undefined;
 	// Claude Code's "You've reached your Fable limit. Switch to another model" carries
 	// none of the keywords below, yet it names the one family it binds (senpi#2555).
