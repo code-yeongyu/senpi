@@ -6,7 +6,7 @@
  * POSIX only: on Windows nothing is installed.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { isBunBinary, VERSION } from "../../config.ts";
@@ -290,8 +290,19 @@ export function withKillGuardRuntime(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv 
 	return active === undefined ? env : { ...env, ...killGuardEnvironment(env, active) };
 }
 
-/** The runtime layer's variables for a kernel session environment built on `base`; empty when none is active. */
-export function activeKillGuardEnvironment(base: NodeJS.ProcessEnv): Record<string, string> {
-	const active = activeKillGuardRuntime();
+/** The newest of this copy's held records installed under `agentDir` (senpi#5369). */
+function heldKillGuardRuntime(agentDir: string): KillGuardRuntime | undefined {
+	const root = `${join(agentDir, "kill-guard")}${sep}`;
+	let held: KillGuardRuntime | undefined;
+	for (const record of ownRecords.values()) if (record.dir.startsWith(root)) held = record;
+	return held;
+}
+
+/**
+ * The runtime layer's variables for a kernel session environment built on `base`; empty when none is active. With
+ * `agentDir`, the session's own layer when a holder holds one for that dir, else the active one (senpi#5369).
+ */
+export function activeKillGuardEnvironment(base: NodeJS.ProcessEnv, agentDir?: string): Record<string, string> {
+	const active = (agentDir === undefined ? undefined : heldKillGuardRuntime(agentDir)) ?? activeKillGuardRuntime();
 	return active === undefined ? {} : killGuardEnvironment(base, active);
 }

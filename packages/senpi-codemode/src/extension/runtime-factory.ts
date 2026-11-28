@@ -118,7 +118,7 @@ export async function createRuntime(
 	const pathEntry = bundledBunPathEntry();
 	// The kill guard's runtime layer (senpi#5349): kernels and their children get the shims first on PATH and
 	// bash's BASH_ENV wrapper, as the bash tool does.
-	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...pathEntry }) : {};
+	const killGuardEnv = killGuard ? activeKillGuardEnvironment({ ...process.env, ...pathEntry }, ctx.agentDir) : {};
 	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...pathEntry, ...killGuardEnv, ...withheldCredentialEntries() };
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
