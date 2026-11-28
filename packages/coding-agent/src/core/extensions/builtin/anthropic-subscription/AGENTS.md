@@ -44,7 +44,7 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 - Subscription-limit responses classify as account-failover conditions, not terminal errors.
 - A persisted restart binding is validated against the branch, not against who wrote to it: the committed assistant is the first `message` after the marker, and only entries the model can see (messages, non-goal custom messages, compaction, branch summaries) retire it. `custom` ledger records of any type never do (oh-my-openagent#7925).
 - A continuity binding is resumable only after the SDK acknowledged its session id (`system/init` or the replay echo); unconfirmed ids cold-seed (`session_unconfirmed`) and an id Claude Code reports missing is forgotten, never retried.
-- Idle resident sessions retire after 30 minutes; at most 32 stay resident; in-flight sessions are never evicted.
+- Idle resident sessions retire after 30 minutes; a child session (`spawnedBy` in its header) releases its resident process when its run settles; at most 8 idle residents stay per process (`SENPI_CLAUDE_SDK_OAUTH_MAX_IDLE_SESSIONS`, LRU); at most 32 stay resident; in-flight sessions are never evicted (senpi#5689).
 
 ## TESTS
 

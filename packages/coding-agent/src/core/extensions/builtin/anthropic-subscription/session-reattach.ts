@@ -127,12 +127,16 @@ export function bindingFromEntry(
  * Closes the live process but keeps its lineage resumable. A switch still waiting for Claude Code's confirmation is
  * recorded on the model it selects, so the next turn on that model resumes instead of re-sending (senpi#6411).
  */
-export function keepBindingThenClose(senpiSessionId: string, reason: string): void {
+export function rememberResidentBinding(senpiSessionId: string): void {
 	const entry = getSession(senpiSessionId);
 	if (entry) {
 		const binding = bindingFromEntry(entry, sentHashesForEntry(entry) ?? []);
 		rememberBinding({ ...binding, modelId: entry.pendingModelSwitch?.modelId ?? binding.modelId });
 	}
+}
+
+export function keepBindingThenClose(senpiSessionId: string, reason: string): void {
+	rememberResidentBinding(senpiSessionId);
 	closeSession(senpiSessionId, reason);
 }
 
