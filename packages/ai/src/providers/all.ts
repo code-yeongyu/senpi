@@ -165,6 +165,27 @@ export function getBuiltinProviders(): BuiltinProvider[] {
 	return Object.keys(BUILTIN_CATALOGS) as BuiltinProvider[];
 }
 
+/** If several routes serve the same id and API, inherit only the fields those routes agree on. */
+export function findBuiltinModelCompat(providerId: string, modelId: string, api: Api): Model<Api>["compat"] {
+	let shared: Model<Api>["compat"];
+	let matched = false;
+	for (const [provider, catalog] of Object.entries(BUILTIN_CATALOGS)) {
+		const model: Model<Api> | undefined = (catalog as Record<string, Model<Api>>)[modelId];
+		if (model?.api !== api) continue;
+		const compat = normalizeBuiltinModel(model)?.compat;
+		if (provider === providerId) return compat;
+		if (!matched) shared = compat;
+		else if (shared && compat) {
+			const fields = new Map(Object.entries(compat));
+			shared = Object.fromEntries(
+				Object.entries(shared).filter(([key, value]) => JSON.stringify(fields.get(key)) === JSON.stringify(value)),
+			);
+		} else shared = undefined;
+		matched = true;
+	}
+	return shared && Object.keys(shared).length > 0 ? shared : undefined;
+}
+
 /** Generation timestamp shared by all built-in provider catalogs. */
 export function getBuiltinModelDataGeneratedAt(): number | undefined {
 	const generatedAt = Date.parse(modelDataManifest.generatedAt);
