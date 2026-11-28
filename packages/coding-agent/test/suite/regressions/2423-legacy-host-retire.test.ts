@@ -15,7 +15,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { HostEnsureRefusedError } from "../../../src/modes/rpc/host-decision.ts";
 import { type EnsuredHost, ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
-import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import { signalGeneration, stopHost } from "../../../src/modes/rpc/host-stop.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import {
@@ -29,6 +28,7 @@ import {
 } from "../../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { reapProcessesUnder, waitForPidGone } from "../../helpers/spawned-host-reaper.ts";
+import { probeSandboxHost } from "../../helpers/rpc-sandbox-host.ts";
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
@@ -79,7 +79,7 @@ describe.skipIf(process.platform === "win32")("a live pre-layout-2 host (#2423)"
 		expect(ensured.reused).toBe(false);
 		expect(ensured.pid).not.toBe(legacy.pid);
 		expect(await waitForPidGone(legacy.pid, 60_000)).toBe(true);
-		expect(await probeHost({ socket: threadSocket, timeoutMs: 10_000 })).toBeDefined();
+		expect(await probeSandboxHost(legacy.qa, { socket: threadSocket, timeoutMs: 10_000 })).toBeDefined();
 	}, 240_000);
 
 	it("keeps refusing with an actionable legacy_host while it holds a session", async () => {
@@ -129,7 +129,7 @@ describe.skipIf(process.platform === "win32")("a live pre-layout-2 host (#2423)"
 			expect(stop).toEqual({ action: "refuse", reason: "unknown_owner" });
 			expect(ensured.pid).not.toBe(legacy.pid);
 			expect(processAlive(legacy.pid)).toBe(true);
-			expect(await probeHost({ socket: legacy.socket, timeoutMs: 10_000 })).toBeDefined();
+			expect(await probeSandboxHost(legacy.qa, { socket: legacy.socket, timeoutMs: 10_000 })).toBeDefined();
 		},
 		240_000,
 	);

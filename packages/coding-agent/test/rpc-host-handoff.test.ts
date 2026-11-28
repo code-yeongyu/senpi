@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseJson, readFileOrUndefined } from "../src/modes/rpc/host-daemon-state.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { signalGeneration, stopHost } from "../src/modes/rpc/host-stop.ts";
 import { processStartTimeMs, readProcessStartTime, sameProcessStartMs } from "../src/utils/process-identity.ts";
 import {
@@ -23,6 +22,7 @@ import {
 import { type FakeModelServer, startFakeModelServer } from "./helpers/rpc-fake-model.ts";
 import { writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
@@ -88,7 +88,7 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 	it("parks an old connection while a new generation serves the socket", async () => {
 		const qa = await generation("live");
 		const inodeBefore = await socketInode(qa.socket);
-		const before = await probeHost({ socket: qa.socket });
+		const before = await probeSandboxHost(qa);
 		const attached = await peer(qa);
 		const sessionId = openedSessionId(await attached.request({ id: "open", type: "open_session", cwd: qa.cwd }));
 		const parked = attached.waitFor((record) => record.type === "session_closed" && record.sessionId === sessionId);
@@ -99,7 +99,7 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		expect(await parked).toMatchObject({ reason: "handoff_parked", sessionPath: expect.any(String) });
 		await attached.waitForClose();
 		// A connection made after it reaches a DIFFERENT host process.
-		const after = await probeHost({ socket: qa.socket });
+		const after = await probeSandboxHost(qa);
 		expect(after?.instanceId).not.toBe(before?.instanceId);
 		expect(after?.generation).toBe(1);
 		const inodeAfter = await socketInode(qa.socket);
@@ -113,7 +113,7 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		// The old pair leaves without waiting for its client, and preserves the public socket.
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
 		expect(await socketInode(qa.socket)).toBe(inodeAfter);
-		expect((await probeHost({ socket: qa.socket }))?.instanceId).toBe(after?.instanceId);
+		expect((await probeSandboxHost(qa))?.instanceId).toBe(after?.instanceId);
 		expect(recordedPid(await pidFile(qa))).toBe(result.pid);
 	}, 120_000);
 
@@ -129,7 +129,7 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		await started;
 		const result = await handoff(qa);
 		const inodeAfter = await socketInode(qa.socket);
-		const live = await probeHost({ socket: qa.socket });
+		const live = await probeSandboxHost(qa);
 
 		expect(processAlive(firstPid(qa))).toBe(true);
 		expect(signalGeneration(firstPid(qa), "SIGKILL")).toBe(true);
@@ -138,7 +138,7 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 
 		expect(recordedPid(await pidFile(qa))).toBe(result.pid);
 		expect(await socketInode(qa.socket)).toBe(inodeAfter);
-		expect((await probeHost({ socket: qa.socket }))?.instanceId).toBe(live?.instanceId);
+		expect((await probeSandboxHost(qa))?.instanceId).toBe(live?.instanceId);
 	}, 120_000);
 
 	it("honors a legacy owner's claim until it parks when it publishes no route endpoint", async () => {

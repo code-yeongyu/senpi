@@ -1940,6 +1940,9 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
   upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
   by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
   owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
+  That layout check runs first, on local files alone, before any dial; it can only refuse, never grant. A dial
+  that is then refused for the host's identity is the answer `{ action: "refuse", reason: "host_identity_unproven" }`
+  (or another endpoint auth code), never a thrown error. Stop, drain and idle handover answer the same way.
 - The successor must not run an OLDER engine than the running host (senpi#7018). `handoffHost` compares the
   successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
   host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
@@ -2248,7 +2251,7 @@ which prints the bare socket path).
   attach-only even when its caller requested an upgrade: a host generation never starts its own successor.
   This is process-local state, not an environment marker, so a shell child remains free to run the explicit
   `senpi host handoff` command.
-- `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
+- `status` prints `{ reachable, refusal, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
   zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, path_identity_resolver, env_keys, generations, pointer, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
@@ -2256,6 +2259,9 @@ which prints the bare socket path).
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
   and `null` when nobody answers or the answering host does not advertise its lifecycle. An unserved
   socket therefore includes both `"reachable": false` and `"lifecycle": null`; `null` is not `"ready"`.
+  `refusal` is `null` unless the host answered but could not be proven from the key root
+  (`{ code, detail }`, `code` one of the endpoint auth codes, such as `host_identity_unproven`): `reachable` is then
+  `true`, and nothing else is read from that host.
   `status --all` carries the same field and values on each endpoint row. While stopping, session listing
   is not queried and its empty counts are unobserved, not proof that all sessions have finished.
   Otherwise, `sessions` is what `list_sessions`

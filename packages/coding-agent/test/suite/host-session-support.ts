@@ -8,10 +8,12 @@ import * as hostEnsure from "../../src/modes/rpc/host-ensure.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC } from "../../src/modes/rpc/host-launch-spec.ts";
 import { runHostSessionRequest } from "../../src/modes/rpc/host-session-runner.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
-import { RpcClient, type RpcClientEvent } from "../../src/modes/rpc/rpc-client.ts";
+import type { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
+import { type RpcClientEvent } from "../../src/modes/rpc/rpc-client.ts";
 import { type FakeModelServer, startFakeModelServer } from "../helpers/rpc-fake-model.ts";
 import { HeldAnthropicModel, supervisorLaunch } from "../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
+import { sandboxRpcClient } from "../helpers/rpc-sandbox-host.ts";
 import { hostCliSandbox, sweepHostCliSandboxes } from "./host-cli-support.ts";
 
 const dirs: string[] = [];
@@ -71,7 +73,7 @@ export async function rig(held = false, hostEnv: Readonly<Record<string, string>
 	});
 	expect(opened.exitCode, JSON.stringify(opened.payload)).toBe(0);
 	const ref = String(opened.payload.sessionId);
-	const client = new RpcClient({ socketPath: qa.socket });
+	const client = sandboxRpcClient(qa);
 	clients.push(client);
 	await client.start();
 	return { qa, cwd, target, spec, opened, ref, client, fake };

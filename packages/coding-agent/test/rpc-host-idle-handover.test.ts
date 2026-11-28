@@ -1,6 +1,5 @@
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { signalGeneration } from "../src/modes/rpc/host-stop.ts";
 import {
@@ -13,6 +12,7 @@ import {
 	waitForPidGone,
 } from "./helpers/rpc-generation-support.ts";
 import { beginHandoverCommand, connect, dataOf, startHandoverRig } from "./helpers/rpc-idle-handover-support.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
@@ -48,7 +48,7 @@ describe.skipIf(process.platform === "win32")("conditional idle handover between
 		const successor = answer.successor as { pid: number; runtimeBuildId: string };
 		pids.push(successor.pid);
 		expect(successor.runtimeBuildId).toBe(rig.buildB.runtimeBuildId);
-		const after = await probeHost({ socket: rig.qa.socket });
+		const after = await probeSandboxHost(rig.qa);
 		expect(after?.runtimeBuildId).toBe(rig.buildB.runtimeBuildId);
 		expect(after?.instanceId).not.toBe(rig.instanceId);
 		expect(await waitForPidGone(rig.firstPid, 45_000)).toBe(true);
@@ -77,14 +77,14 @@ describe.skipIf(process.platform === "win32")("conditional idle handover between
 		const refused = await worker.request({ id: "new-turn", type: "prompt", sessionId: idle, message: "new work" });
 		expect(refused).toMatchObject({ success: false, error: expect.stringContaining("handover_pending") });
 		expect(processAlive(rig.firstPid)).toBe(true);
-		expect((await probeHost({ socket: rig.qa.socket }))?.runtimeBuildId).toBe(rig.buildA.runtimeBuildId);
+		expect((await probeSandboxHost(rig.qa))?.runtimeBuildId).toBe(rig.buildA.runtimeBuildId);
 
 		const turnEnded = worker.waitFor((record) => record.type === "agent_end" && record.sessionId === busy, 60_000);
 		const superseded = worker.waitFor((record) => record.type === "host_superseded", 120_000);
 		held.release();
 		expect(await turnEnded).toMatchObject({ type: "agent_end" });
 		await superseded;
-		const after = await probeHost({ socket: rig.qa.socket });
+		const after = await probeSandboxHost(rig.qa);
 		expect(after?.runtimeBuildId).toBe(rig.buildB.runtimeBuildId);
 		expect(await waitForPidGone(rig.firstPid, 60_000)).toBe(true);
 		const status = await readHostStatus({ socket: rig.qa.socket, agentDir: rig.qa.agentDir });
