@@ -4,6 +4,7 @@ import type { PromptSurface } from "../../core/dynamic-prompt/build.ts";
 import {
 	type HandedPageSession,
 	handedPageText,
+	IMAGES_INLINED,
 	type PendingHandedPages,
 	reserveHandedPage,
 	SHOW_HTML_PAGE_NAME,
@@ -108,7 +109,7 @@ function budgetedEvent(
  * `tool_result` handler moved it; it alone is replaced, and every other part stays where it is. When no part equals it
  * (a handler rewrote it), nothing is replaced and the over-budget sentence is appended as its own part (senpi#6934).
  * A hand on an older version emits no `resultText`; its page's own text is then found by `olderHandOwnText`, and a
- * result with no text part gets the sentence first (senpi#6932).
+ * result with no text part gets the sentence first (senpi#6932; its regression test is senpi#6939's).
  */
 function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride {
 	const { ownText } = downgrade;
@@ -125,13 +126,20 @@ function applied(downgrade: PageDowngrade, content: ResultContent): PageOverride
 }
 
 /**
- * A hand on a release from before senpi#6934 sends no `details.resultText`. Its page text is then the first text part
- * that names the page's saved copy, else the first text part, as the brain read it before the marker (senpi#6937).
+ * A hand on a release from before senpi#6934 sends no `details.resultText`. Its page text is then the text part that
+ * names the page's saved copy and ends with IMAGES_INLINED, as the tool writes it, so a hand-side note quoting the path
+ * is not taken for it (senpi#7060); else the first part naming the path, else the first text part, as the brain read it
+ * before the marker (senpi#6937).
  */
 function olderHandOwnText(downgrade: PageDowngrade, content: ResultContent): number {
 	const path = downgrade.details.path;
-	const named =
-		typeof path === "string" ? content.findIndex((part) => part.type === "text" && part.text.includes(path)) : -1;
+	const names = (part: ResultContent[number]): boolean =>
+		part.type === "text" && typeof path === "string" && part.text.includes(path);
+	const written = content.findIndex(
+		(part) => names(part) && part.type === "text" && part.text.endsWith(IMAGES_INLINED),
+	);
+	if (written !== -1) return written;
+	const named = content.findIndex(names);
 	return named === -1 ? content.findIndex((part) => part.type === "text") : named;
 }
 

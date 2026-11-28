@@ -73,6 +73,15 @@ function handBeforeResultText(pi: ExtensionAPI): void {
 	);
 }
 
+/** A hand-side extension that puts a note quoting the page's saved path in front of the page text (senpi#7060). */
+function handPrependSavedAt(pi: ExtensionAPI): void {
+	pi.on("tool_result", (event) => {
+		if (event.toolName !== "show_html_page") return undefined;
+		const path = Reflect.get(Object(event.details), "path");
+		return { content: [{ type: "text", text: `HAND-SAVED-AT ${String(path)}` }, ...event.content] };
+	});
+}
+
 /** A hand-side extension that leaves an older hand's result with no text part at all: one image, no `resultText`. */
 function olderHandImageOnly(pi: ExtensionAPI): void {
 	pi.on("tool_result", (event) =>
@@ -256,6 +265,22 @@ describe("senpi#6921: show_html_page on a hand, seen from the brain session", ()
 		expect(Reflect.get(Object(messages[2]?.details), "resultText")).toBeUndefined();
 		expect(parts[3]).toHaveLength(2);
 		expect(parts[3]?.[0]).toBe("HAND-FIRST older-3");
+		expect(parts[3]?.[1]).toContain("this session's pages already carry");
+		expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
+	});
+
+	// senpi#7060: a note quoting the saved path names the path too; the page's own text is the part that also reports
+	// the inlined images, so the note stays.
+	it("replaces an older hand's page text, not a note in front of it that quotes the saved path", async () => {
+		const dirs = await handDirs("page-older-saved-at");
+		const { selection, session } = brainOnHand(dirs, [handBeforeResultText, handPrependSavedAt]);
+		expect(selection.select(SESSION_ID, session, ROW.device)).toEqual({ ok: true });
+
+		const { messages } = await run(session.agent.toolHost, dirs.cwd, pages(dirs, "saved", 4));
+
+		const parts = messages.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")));
+		expect(parts[3]).toHaveLength(2);
+		expect(parts[3]?.[0]).toMatch(/^HAND-SAVED-AT \//);
 		expect(parts[3]?.[1]).toContain("this session's pages already carry");
 		expect(pageDetails(messages[3]?.details).imagesInlined).toBe(false);
 	});
