@@ -136,8 +136,33 @@ export function socketSecretBridgeFile(target) {
 	return `native/socket-secret/prebuilds/${target}/senpi_socket_secret.${target}.node`;
 }
 
+// JavaScript under dist/ that ships as data, read from disk as text by the HTML export (config.ts getExportTemplateDir).
+const SHIPPED_JS_ASSETS = /^dist\/core\/export-html\/(?:template\.js$|vendor\/)/;
+
+/**
+ * One copy of the code per install: the package's JavaScript is the bundle, and the per-file tree it is built from ships
+ * only its declarations. Every `exports` target must be in the tarball, so a subpath cannot point at a file that was
+ * left out.
+ */
+function assertSenpiShipsOneCopy(filePaths, manifest) {
+	const perFile = [...filePaths].filter(
+		(path) => path.startsWith("dist/") && path.endsWith(".js") && !path.startsWith("dist/bundle/") && !SHIPPED_JS_ASSETS.test(path),
+	);
+	if (perFile.length > 0) {
+		throw new Error(
+			`senpi package tarball must not ship the per-file JavaScript tree (found ${perFile.length}, e.g. ${perFile.slice(0, 3).join(", ")}); its entries load dist/bundle/.`,
+		);
+	}
+	const targets = Object.values(manifest.exports ?? {}).flatMap((conditions) => Object.values(conditions));
+	const missing = targets.map((target) => target.replace(/^\.\//, "")).filter((target) => !filePaths.has(target));
+	if (missing.length > 0) {
+		throw new Error(`senpi package tarball is missing exported files: ${missing.join(", ")}`);
+	}
+}
+
 export function assertSenpiPackedWorkspaceFiles(packed, manifest, options = {}) {
 	const filePaths = packedFilePaths(packed);
+	assertSenpiShipsOneCopy(filePaths, manifest);
 	const missingBridges = (options.requiredSocketSecretTargets ?? [])
 		.map((target) => socketSecretBridgeFile(target))
 		.filter((path) => !filePaths.has(path));

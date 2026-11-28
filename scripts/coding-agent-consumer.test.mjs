@@ -46,7 +46,6 @@ export class SessionManager { static inMemory() {} }
 export class ModelRuntime { static create() {} }
 ` : 'export const marker = "local tarball";',
 			...(isAgent ? {
-				"dist/cli.js": 'console.log("1.0.0");',
 				"dist/bundle/cli.js": 'console.log("1.0.0");',
 			} : {}),
 		};

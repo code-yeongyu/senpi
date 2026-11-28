@@ -14,113 +14,126 @@
 		"pi": "dist/bundle/cli.js",
 		"senpi": "dist/bundle/cli.js"
 	},
-	"main": "./dist/index.js",
+	"main": "./dist/bundle/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
+			"import": "./dist/bundle/index.js"
 		},
 		"./bun-runtime": {
 			"types": "./dist/bun/runtime-modules.d.ts",
-			"import": "./dist/bun/runtime-modules.js"
+			"import": "./dist/bundle/bun-runtime.js"
 		},
 		"./rpc-entry": {
-			"import": "./dist/rpc-entry.js"
+			"types": "./dist/rpc-entry.d.ts",
+			"import": "./dist/bundle/rpc-entry.js"
 		},
 		"./client": {
 			"types": "./dist/client/index.d.ts",
-			"import": "./dist/client/index.js"
+			"import": "./dist/bundle/client.js"
 		},
 		"./pending-input": {
 			"types": "./dist/core/pending-input-public.d.ts",
-			"import": "./dist/core/pending-input-public.js"
+			"import": "./dist/bundle/pending-input.js"
 		},
 		"./session-worker-data": {
 			"types": "./dist/modes/rpc/session-worker-data.d.ts",
-			"import": "./dist/modes/rpc/session-worker-data.js"
+			"import": "./dist/bundle/session-worker-data.js"
 		},
 		"./private-fds": {
 			"types": "./dist/private-fds.d.ts",
-			"import": "./dist/private-fds.js"
+			"import": "./dist/bundle/private-fds.js"
 		},
 		"./program-resume-startup": {
 			"types": "./dist/program-resume-startup.d.ts",
-			"import": "./dist/program-resume-startup.js"
+			"import": "./dist/bundle/program-resume-startup.js"
 		},
 		"./mcp-env-grants": {
 			"types": "./dist/core/extensions/builtin/mcp/env-grants-store.d.ts",
-			"import": "./dist/core/extensions/builtin/mcp/env-grants-store.js"
+			"import": "./dist/bundle/mcp-env-grants.js"
 		},
 		"./prompt-presets": {
 			"types": "./dist/core/extensions/builtin/prompt-preset/public.d.ts",
-			"import": "./dist/core/extensions/builtin/prompt-preset/public.js"
+			"import": "./dist/bundle/prompt-presets.js"
 		},
 		"./engine-trust": {
 			"types": "./dist/engine-trust/index.d.ts",
-			"import": "./dist/engine-trust/index.js"
+			"import": "./dist/bundle/engine-trust.js"
 		},
 		"./subscription-egress": {
 			"types": "./dist/subscription-egress/index.d.ts",
-			"import": "./dist/subscription-egress/index.js"
+			"import": "./dist/bundle/subscription-egress.js"
 		},
 		"./presenter-authority": {
 			"types": "./dist/presenter-authority-slot.d.ts",
-			"import": "./dist/presenter-authority-slot.js"
+			"import": "./dist/bundle/presenter-authority.js"
 		},
 		"./engine": {
 			"types": "./dist/engine/index.d.ts",
-			"import": "./dist/engine/index.js"
+			"import": "./dist/bundle/engine.js"
 		},
 		"./tools-core": {
 			"types": "./dist/tools-core.d.ts",
-			"import": "./dist/tools-core.js"
+			"import": "./dist/bundle/tools-core.js"
 		},
 		"./cli": {
-			"import": "./dist/cli.js"
+			"types": "./dist/cli.d.ts",
+			"import": "./dist/bundle/cli.js"
 		},
 		"./valid-cwd": {
-			"import": "./dist/valid-cwd.js"
+			"types": "./dist/valid-cwd.d.ts",
+			"import": "./dist/bundle/valid-cwd.js"
 		},
 		"./private-fd-startup-release": {
-			"import": "./dist/private-fd-startup-release.js"
+			"types": "./dist/private-fd-startup-release.d.ts",
+			"import": "./dist/bundle/private-fd-startup-release.js"
 		},
 		"./session-worker": {
-			"import": "./dist/modes/rpc/session-worker.js"
+			"types": "./dist/modes/rpc/session-worker.d.ts",
+			"import": "./dist/bundle/session-worker.js"
 		},
 		"./kill-guard-command": {
 			"types": "./dist/cli/kill-guard-command.d.ts",
-			"import": "./dist/cli/kill-guard-command.js"
+			"import": "./dist/bundle/kill-guard-command.js"
 		},
 		"./kill-guard": {
 			"types": "./dist/core/kill-guard/index.d.ts",
-			"import": "./dist/core/kill-guard/index.js"
+			"import": "./dist/bundle/kill-guard.js"
 		},
 		"./host-probe": {
 			"types": "./dist/modes/rpc/host-probe.d.ts",
-			"import": "./dist/modes/rpc/host-probe.js"
+			"import": "./dist/bundle/host-probe.js"
 		},
 		"./supervisor-route": {
 			"types": "./dist/modes/rpc/supervisor-route.d.ts",
-			"import": "./dist/modes/rpc/supervisor-route.js"
+			"import": "./dist/bundle/supervisor-route.js"
 		},
 		"./config": {
 			"types": "./dist/config.d.ts",
-			"import": "./dist/config.js"
+			"import": "./dist/bundle/config.js"
 		},
 		"./model-coverage": {
 			"types": "./dist/model-coverage.d.ts",
-			"import": "./dist/model-coverage.js"
+			"import": "./dist/bundle/model-coverage.js"
 		},
 		"./runtime-manifest.json": {
 			"default": "./dist/bundle/runtime-manifest.json"
 		}
 	},
 	"files": [
-		"dist",
+		"dist/bundle",
+		"dist/**/*.d.ts",
 		"!dist/**/*.map",
 		"!dist/experimental",
 		"!dist/cli/experimental",
+		"dist/modes/interactive/theme/*.json",
+		"dist/modes/interactive/assets/*.png",
+		"dist/core/export-html/template.html",
+		"dist/core/export-html/template.css",
+		"dist/core/export-html/template.js",
+		"dist/core/export-html/vendor",
+		"dist/core/extensions/builtin/imagegen/skill/SKILL.md",
 		"docs",
 		"!docs/images",
 		"!docs/engine-socket/fixtures",
@@ -152,35 +165,18 @@
 		"@earendil-works/pi-tui": "^2026.11.28-1",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"ajv": "8.20.0",
-		"chalk": "6.0.0",
-		"cross-spawn": "7.0.6",
-		"diff": "9.0.0",
-		"es-module-lexer": "3.0.2",
-		"grok-mermaid": "0.2.3",
-		"highlight.js": "11.12.0",
-		"hosted-git-info": "10.1.1",
 		"ignore": "7.0.9",
 		"jiti": "2.7.0",
-		"minimatch": "11.0.5",
 		"proper-lockfile": "4.1.2",
-		"re2js": "2.8.8",
-		"semver": "7.8.5",
 		"typebox": "1.3.34",
-		"undici": "8.12.4",
-		"yaml": "2.9.1",
 		"@anthropic-ai/claude-agent-sdk": "0.3.321",
 		"@anthropic-ai/sdk": "0.127.0",
 		"@code-yeongyu/senpi-codemode": "^2026.11.28-1",
 		"@code-yeongyu/senpi-machine-ops": "^2026.11.28-1",
 		"@earendil-works/pi-pty": "^2026.11.28-1",
 		"@modelcontextprotocol/sdk": "1.32.1",
-		"@mozilla/readability": "0.6.0",
-		"linkedom": "0.18.13",
-		"marked": "18.0.13",
-		"picomatch": "4.0.7",
-		"signal-exit": "3.0.7",
-		"turndown": "7.2.4",
-		"zod": "4.6.7"
+		"zod": "4.6.7",
+		"undici": "8.12.4"
 	},
 	"overrides": {
 		"protobufjs": "7.6.5",
@@ -191,16 +187,33 @@
 		"@hono/node-server": "2.1.8"
 	},
 	"devDependencies": {
+		"@mozilla/readability": "0.6.0",
 		"@types/cross-spawn": "6.0.6",
 		"@types/hosted-git-info": "3.0.5",
 		"@types/node": "26.6.2",
+		"@types/picomatch": "4.0.3",
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.8.0",
+		"@types/turndown": "5.0.6",
+		"chalk": "6.0.0",
+		"cross-spawn": "7.0.6",
+		"diff": "9.0.0",
+		"es-module-lexer": "3.0.2",
+		"grok-mermaid": "0.2.3",
+		"highlight.js": "11.12.0",
+		"hosted-git-info": "10.1.1",
+		"linkedom": "0.18.13",
+		"marked": "18.0.13",
+		"minimatch": "11.0.5",
+		"picomatch": "4.0.7",
+		"re2js": "2.8.8",
+		"semver": "7.8.5",
 		"shx": "0.4.0",
+		"signal-exit": "3.0.7",
+		"turndown": "7.2.4",
 		"typescript": "7.0.2",
 		"vitest": "5.0.1",
-		"@types/picomatch": "4.0.3",
-		"@types/turndown": "5.0.6"
+		"yaml": "2.9.1"
 	},
 	"keywords": [
 		"coding-agent",

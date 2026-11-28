@@ -15,12 +15,12 @@ describe("@code-yeongyu/senpi/pending-input", () => {
 		]);
 	});
 
-	it("is declared as a package export that points at the built barrel", () => {
+	it("is declared as a package export served by the bundle, typed by the built barrel", () => {
 		const manifest = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 
 		expect(manifest.exports["./pending-input"]).toEqual({
 			types: "./dist/core/pending-input-public.d.ts",
-			import: "./dist/core/pending-input-public.js",
+			import: "./dist/bundle/pending-input.js",
 		});
 	});
 });

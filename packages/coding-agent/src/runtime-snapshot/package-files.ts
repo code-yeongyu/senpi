@@ -62,6 +62,7 @@ export function planPackageRoot(packageDir: string, target: string, files: FileP
 		}
 	};
 	mkdirSync(target, { recursive: true });
+	const firstPlanned = files.length;
 	const topLevel = readdirSync(root).filter((name) => name !== "node_modules");
 	for (const name of topLevel) if (ALWAYS_SHIPPED.test(name)) plan(name);
 	for (const entry of shipped.include) {
@@ -75,4 +76,12 @@ export function planPackageRoot(packageDir: string, target: string, files: FileP
 			for (const name of topLevel) if (pattern.test(name)) plan(name);
 		}
 	}
+	// Overlapping entries (`dist/bundle` and `dist/**/*.d.ts`, which plans all of `dist`) select a file twice; copy it once.
+	const destinations = new Set<string>();
+	const unique = files.splice(firstPlanned).filter(([, to]) => {
+		if (destinations.has(to)) return false;
+		destinations.add(to);
+		return true;
+	});
+	files.push(...unique);
 }

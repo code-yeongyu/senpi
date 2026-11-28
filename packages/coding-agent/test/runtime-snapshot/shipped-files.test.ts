@@ -55,6 +55,23 @@ describe("runtime snapshot copies only the shipped package files (#3083)", () =>
 		expect(existsSync(join(snapshotDir, "node_modules/native-ext/package.json"))).toBe(true);
 	});
 
+	// senpi#7659: npm accepts overlapping entries (a directory and a glob inside its parent). The snapshot plans each file
+	// once; planning one twice made the copy fail with EEXIST and every launch run without its snapshot.
+	it("copies a file that two overlapping files entries select exactly once", async () => {
+		// Given: the published layout, the bundle directory plus every declaration under dist
+		const install = createFakeInstall("build-a", "nested");
+		installs.push(install);
+		asCheckout(install, ["dist/bundle", "dist/**/*.d.ts", "!dist/experimental"]);
+		write(join(install.packageDir, "dist/index.d.ts"), "export {};\n");
+
+		// When
+		const snapshotDir = await snapshotOf(install);
+
+		// Then
+		expect(existsSync(join(snapshotDir, "dist/bundle/cli.js"))).toBe(true);
+		expect(existsSync(join(snapshotDir, "dist/experimental"))).toBe(false);
+	});
+
 	it("copies the whole package directory when package.json has no files field", async () => {
 		// Given
 		const install = createFakeInstall("build-a", "nested");
