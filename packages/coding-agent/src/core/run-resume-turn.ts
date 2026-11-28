@@ -1,4 +1,5 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { deliveryIdsIn } from "./delivery-ids.ts";
 import type { CustomMessage } from "./messages.ts";
 import { type ResumeCause, stopResumeDirective } from "./stop-resume-directive.ts";
 
@@ -43,6 +44,8 @@ export async function startRunResumeTurn(
 	const continues = ports.continueInputs();
 	const wakes = ports.heldWakes();
 	const directive = stopResumeDirective(ports.resumeCause);
+	// The one message carries the held peer deliveries, so its entry is the one that settles them (senpi#7628).
+	const carried = wakes.flatMap((wake) => deliveryIdsIn(wake.message));
 	const content: Part[] = [
 		...inputs.flatMap((input): Part[] => [
 			{ type: "text", text: `The user wrote while the run was paused:\n${input.text}` },
@@ -53,7 +56,12 @@ export async function startRunResumeTurn(
 	];
 	const sendSettled = Promise.withResolvers<void>();
 	const started = ports.turnStarted(sendSettled.promise);
-	const sending = ports.send({ ...directive, content, display: inputs.length > 0 });
+	const sending = ports.send({
+		...directive,
+		content,
+		display: inputs.length > 0,
+		...(carried.length === 0 ? {} : { details: { ...directive.details, folded_delivery_ids: carried } }),
+	});
 	sending.then(sendSettled.resolve, sendSettled.resolve);
 	const turnId = await started;
 	const delivered = (async () => {
