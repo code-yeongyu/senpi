@@ -77,8 +77,10 @@ describe.skipIf(!(await hasPython3()))("PythonKernel live", () => {
 				valueRepr: "42",
 			});
 			const failed = await runCell(kernel, "raise RuntimeError('kaput')");
-			expect(failed.ok).toBe(false);
-			if (!failed.ok) expect(failed.error.stack).toContain("RuntimeError: kaput");
+			expect(failed, JSON.stringify(failed)).toMatchObject({
+				ok: false,
+				error: { stack: expect.stringContaining("RuntimeError: kaput") },
+			});
 		} finally {
 			await kernel.close();
 		}
