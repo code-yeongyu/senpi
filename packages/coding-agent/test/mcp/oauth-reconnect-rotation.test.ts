@@ -468,4 +468,127 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 		// Then: the reconnect says the server is no longer configured instead of resolving quietly or naming a retired state
 		expect(await outcome).toMatch(/fix is no longer configured/);
 	});
+	// senpi#7655 review LOW 2: on the common path (credentials current when the reconnect starts), a re-key that lands
+	// during the reconnect retires the connection being reconnected; the caller must get the current connection's state,
+	// not the retired one's "is disabled".
+	it("reconnects the current connection when a re-key lands during the reconnect of an unchanged one", async () => {
+		// Given: a connected server with current credentials, and a gate on the original connection's renew
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await writeMcpConfig(dir, harness.deps.config);
+		const service = new McpService();
+		cleanups.push(() => service.dispose("quit"));
+		const session = { cwd: dir, isProjectTrusted: () => true };
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		const original = service.getConnection("fix");
+		expect(original?.state).toBe("connected");
+		await harness.store.update((current) => ({ ...current, expiresAt: Date.now() + 3_600_000 }));
+		expect(service.getConnection("fix")).toBe(original);
+		const released = Promise.withResolvers<void>();
+		const reached = Promise.withResolvers<void>();
+		const renew = ServerConnection.prototype.renew;
+		const gate = vi.spyOn(ServerConnection.prototype, "renew").mockImplementation(async function (
+			this: ServerConnection,
+		) {
+			if (this === original) {
+				reached.resolve();
+				await released.promise;
+			}
+			return renew.call(this);
+		});
+		cleanups.push(async () => gate.mockRestore());
+		const retired = new Promise<void>((resolve) => {
+			const unsubscribe = original?.onStateChange((event) => {
+				if (event.state !== "disabled") return;
+				unsubscribe?.();
+				resolve();
+			});
+		});
+
+		// When: the grant identity changes to a new valid one while the original connection reconnects, and another session's
+		// start re-keys the server, retiring it
+		const outcome = service.reconnectServer("fix").then(
+			() => "resolved",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+		await bounded(reached.promise, "the reconnect of the original connection");
+		await harness.store.update((current) => ({ ...current, refreshToken: "RT_SWAPPED" }));
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		await bounded(retired, "the original connection to reach disabled");
+		released.resolve();
+
+		// Then: the reconnect acts on the current connection, which connects with the new grant
+		expect(await outcome).toBe("resolved");
+		expect(service.getConnection("fix")).not.toBe(original);
+		expect(service.getConnection("fix")?.state).toBe("connected");
+	});
+
+	// senpi#7655 review LOW 1: on the common path, a server removed from the config while it reconnects must be
+	// reported as no longer configured, not as the retired connection's "is disabled" or a quiet return.
+	it("reports a server removed from the config while the reconnect of an unchanged connection runs", async () => {
+		// Given: a connected server with current credentials, and a gate on the original connection's renew
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await writeMcpConfig(dir, harness.deps.config);
+		const service = new McpService();
+		cleanups.push(() => service.dispose("quit"));
+		const session = { cwd: dir, isProjectTrusted: () => true };
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		const original = service.getConnection("fix");
+		expect(original?.state).toBe("connected");
+		await harness.store.update((current) => ({ ...current, expiresAt: Date.now() + 3_600_000 }));
+		expect(service.getConnection("fix")).toBe(original);
+		const released = Promise.withResolvers<void>();
+		const reached = Promise.withResolvers<void>();
+		const renew = ServerConnection.prototype.renew;
+		const gate = vi.spyOn(ServerConnection.prototype, "renew").mockImplementation(async function (
+			this: ServerConnection,
+		) {
+			if (this === original) {
+				reached.resolve();
+				await released.promise;
+			}
+			return renew.call(this);
+		});
+		cleanups.push(async () => gate.mockRestore());
+		const retired = new Promise<void>((resolve) => {
+			const unsubscribe = original?.onStateChange((event) => {
+				if (event.state !== "disabled") return;
+				unsubscribe?.();
+				resolve();
+			});
+		});
+
+		// When: the server is removed from the config while the original connection reconnects, and a session re-attaches
+		const outcome = service.reconnectServer("fix").then(
+			() => "resolved",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+		await bounded(reached.promise, "the reconnect of the original connection");
+		await writeFile(join(dir, "mcp.json"), `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`);
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		await bounded(retired, "the original connection to reach disabled");
+		released.resolve();
+
+		// Then: the reconnect says the server is no longer configured
+		expect(await outcome).toMatch(/fix is no longer configured/);
+	});
 });
