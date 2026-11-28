@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { CONFIG_DIR_NAME, DISPLAY_VERSION } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 
 const CACHE_FILE_VERSION = 1;
 const MAX_CACHED_SCOPES = 8;
+/** Coarse filesystem clocks (FAT's 2 s, HFS+'s 1 s) can hide a later write inside the stamped tick. */
+const RACY_TIMESTAMP_MS = 2_000;
 
 export interface HelpFlagsScope {
 	readonly cwd: string;
@@ -18,6 +20,8 @@ export interface HelpFlagsScope {
 interface InputStamp {
 	readonly path: string;
 	readonly state: string;
+	/** Content digest, kept only for an input changed too recently for its timestamps to be trusted. */
+	readonly content?: string;
 }
 
 interface CachedScope {
@@ -47,17 +51,43 @@ function scopeKey(scope: HelpFlagsScope): string {
 }
 
 /**
- * A path's identity for cache validation. Directories carry only their mtime, which is what
- * changes when an extension file is added or removed inside them; files carry mtime and size,
- * so an in-place upgrade of a bundled plugin invalidates the entry it produced.
+ * A path's identity for cache validation. Directories carry their inode, mtime and ctime, which
+ * change when an extension file is added or removed inside them; files also carry their size, so
+ * an in-place upgrade of a bundled plugin invalidates the entry it produced. ctime moves on every
+ * write and cannot be set back from userland, so restoring an old mtime does not hide an edit
+ * (senpi#4561).
  */
 function stamp(path: string): string {
 	try {
 		const stats = statSync(path);
-		if (stats.isDirectory()) return `d:${stats.mtimeMs}`;
-		return `f:${stats.mtimeMs}:${stats.size}`;
+		const identity = `${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}`;
+		return stats.isDirectory() ? `d:${identity}` : `f:${identity}:${stats.size}`;
 	} catch {
 		return "absent";
+	}
+}
+
+/**
+ * The content of an input whose newest timestamp falls within the racy window of the cache write
+ * (git's "racy clean" rule): a change in the same coarse tick leaves every timestamp unchanged, so
+ * such an entry is validated by content. Settled inputs pay nothing on the cache-hit path.
+ */
+function racyContent(path: string, now: number): string | undefined {
+	try {
+		const stats = statSync(path);
+		if (now - Math.max(stats.mtimeMs, stats.ctimeMs) > RACY_TIMESTAMP_MS) return undefined;
+		return contentDigest(path);
+	} catch {
+		return undefined;
+	}
+}
+
+function contentDigest(path: string): string | undefined {
+	try {
+		const bytes = statSync(path).isDirectory() ? readdirSync(path).sort().join("\u0000") : readFileSync(path);
+		return createHash("sha256").update(bytes).digest("hex");
+	} catch {
+		return undefined;
 	}
 }
 
@@ -102,6 +132,7 @@ export function readHelpFlagsCache(scope: HelpFlagsScope): ExtensionFlag[] | und
 	if (!cached || cached.appVersion !== DISPLAY_VERSION || !Array.isArray(cached.inputs)) return undefined;
 	for (const input of cached.inputs) {
 		if (stamp(input.path) !== input.state) return undefined;
+		if (input.content !== undefined && contentDigest(input.path) !== input.content) return undefined;
 	}
 	return [...cached.flags];
 }
@@ -119,10 +150,14 @@ export function writeHelpFlagsCache(options: {
 	try {
 		const existing = readCacheFile(scope.agentDir);
 		const scopes: Record<string, CachedScope> = { ...(existing?.scopes ?? {}) };
+		const writtenAt = Date.now();
 		scopes[scopeKey(scope)] = {
-			writtenAt: Date.now(),
+			writtenAt,
 			appVersion: DISPLAY_VERSION,
-			inputs: discoveryInputs(scope, extensionPaths).map((path) => ({ path, state: stamp(path) })),
+			inputs: discoveryInputs(scope, extensionPaths).map((path) => {
+				const content = racyContent(path, writtenAt);
+				return content === undefined ? { path, state: stamp(path) } : { path, state: stamp(path), content };
+			}),
 			flags: [...flags],
 		};
 		const keptEntries = Object.entries(scopes)

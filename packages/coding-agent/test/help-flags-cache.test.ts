@@ -79,6 +79,25 @@ describe("help flags cache (oh-my-openagent#8371, senpi#4554)", () => {
 		expect(readHelpFlagsCache(scope)).toBeUndefined();
 	});
 
+	// senpi#4561: on a coarse-timestamp filesystem a change in the cached tick keeps mtime (and size) unchanged.
+	test("#given a same-size edit that keeps the cached mtime #when the cache is read #then it is rejected", () => {
+		utimesSync(extensionPath, nextMtimeSeconds, nextMtimeSeconds);
+		cacheAlpha();
+		writeFileSync(extensionPath, "export default function omega() {}\n");
+		utimesSync(extensionPath, nextMtimeSeconds, nextMtimeSeconds);
+
+		expect(readHelpFlagsCache(scope)).toBeUndefined();
+	});
+
+	test("#given a new extension file that keeps the directory mtime #when the cache is read #then it is rejected", () => {
+		utimesSync(extensionsDir, nextMtimeSeconds, nextMtimeSeconds);
+		cacheAlpha();
+		writeFileSync(join(extensionsDir, "help-probe-3.js"), "export default function delta() {}\n");
+		utimesSync(extensionsDir, nextMtimeSeconds, nextMtimeSeconds);
+
+		expect(readHelpFlagsCache(scope)).toBeUndefined();
+	});
+
 	test("#given global settings appeared after caching #when the cache is read #then it is rejected", () => {
 		cacheAlpha();
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
