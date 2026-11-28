@@ -4445,6 +4445,15 @@ An unattached connection is refused (senpi#6245) with
 `errorCode: "session_not_attached"`, `errorData.reason` and
 `errorData.action: "attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }"`.
 `SENPI_RPC_REQUIRE_ATTACH` is no longer read.
+The refusal is the same whether or not the session exists: an unattached caller of a gated command gets
+`session_not_attached` for a live handle, a closing one and one the host never had, so the answer does not tell a
+connection which handles are live. `unknown_session` for a gated command is answered only to an attached caller (and
+under the opt-out below). An exempt read, such as `get_project_mcp_servers`, still answers `unknown_session` for a
+missing handle, as before.
+One gated command passes without an attachment: `unload_session` of a session sealed by output overflow (senpi#3913).
+Such a session has dropped every attachment and refuses reattach, answering each command with
+`session_output_overflow` and the action `unload_and_reopen`, so its unload is the only way back. The pass does not
+reveal more than that refusal already does, and an unload of a live, held or missing session is still refused.
 
 A host started with `SENPI_RPC_ALLOW_UNATTACHED=1` serves those commands instead, for a caller that does not attach
 yet. It is read once when the host starts, writes one stderr line then, and one line per served violation:

@@ -109,6 +109,10 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	)
 		return undefined;
 	if (host.sessionsByConnection.get(owner)?.has(command.sessionId)) return undefined;
+	// A session sealed by output overflow has dropped every attachment and refuses reattach, answering each command with
+	// `session_output_overflow` and the action `unload_and_reopen` (senpi#3913). Its unload is the only way back, so it is
+	// not gated: nothing of the session is readable or drivable through it, and refusing it would strand the session.
+	if (command.type === "unload_session" && host.writer.isSessionSealed(command.sessionId)) return undefined;
 	// senpi#6305: the forwarder's peer lane delivers an agent's message without ever attaching; only its admit passes.
 	if (command.type === "admit_external_message" && host.connectionRoles.grantedByForwarder(owner, "peer_agent"))
 		return undefined;
