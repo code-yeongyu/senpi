@@ -85,9 +85,26 @@ export function engineBuildIdentity(): EngineBuildIdentity {
 /** No senpi release predates 2000, so a CalVer ordinal's first part is a year at or after it. */
 const FIRST_CALVER_YEAR = 2000;
 
-/** Whether both ordinals are senpi CalVer, the only vocabulary two builds are ordered in (senpi#7040). */
+/**
+ * An omo dev build: its version carries the prerelease part `omob` (`0.0.0-omob.<omo>.<senpi>`, omo's own stamp, or a
+ * dated base with an `-omob.` suffix). That version names no release position (senpi#7428).
+ */
+function isDevBuild(identity: EngineBuildIdentity): boolean {
+	const version = identity.text.split("+")[0] ?? "";
+	return version.split(/[-.]/).slice(1).includes("omob");
+}
+
+/** A pair with a dev build is ordered by the engine-build epoch alone, and only when both sides carry one. */
+function orderedByEpoch(a: EngineBuildIdentity, b: EngineBuildIdentity): boolean {
+	return (isDevBuild(a) || isDevBuild(b)) && a.scheme === "epoch" && b.scheme === "epoch";
+}
+
+/**
+ * Whether two builds name positions in one order: both senpi CalVer (senpi#7040), or a dev build beside any build
+ * when both carry a build epoch (senpi#7428).
+ */
 export function comparableEngines(a: EngineBuildIdentity, b: EngineBuildIdentity): boolean {
-	return a.ordinal[0] >= FIRST_CALVER_YEAR && b.ordinal[0] >= FIRST_CALVER_YEAR;
+	return orderedByEpoch(a, b) || (a.ordinal[0] >= FIRST_CALVER_YEAR && b.ordinal[0] >= FIRST_CALVER_YEAR);
 }
 
 /**
@@ -95,11 +112,12 @@ export function comparableEngines(a: EngineBuildIdentity, b: EngineBuildIdentity
  * OR uncomparable. `[y, m, d, n]` is compared lexicographically; the build epoch breaks
  * a tie ONLY when BOTH sides carry one, so a build of unknown age can never outrank a
  * known one - the caller's handoff rule is "strictly greater", and 0 attaches instead.
- * A pair with an ordinal outside senpi CalVer (an omo version, an unparseable version) is
- * uncomparable: `[2026, 11, 18]` is not newer than an omo `[5, 1, 78]` that runs a later engine.
+ * A pair with an omo dev build is ordered by the build epoch alone (senpi#7428). Any other pair with an ordinal
+ * outside senpi CalVer (an omo version, an unparseable version) is uncomparable: `[2026, 11, 18]` is not newer than an omo `[5, 1, 78]` that runs a later engine.
  */
 export function compareEngineOrdinal(a: EngineBuildIdentity, b: EngineBuildIdentity): -1 | 0 | 1 {
 	if (!comparableEngines(a, b)) return 0;
+	if (orderedByEpoch(a, b)) return a.ordinal[4] === b.ordinal[4] ? 0 : a.ordinal[4] > b.ordinal[4] ? 1 : -1;
 	for (let index = 0; index < 4; index++) {
 		if (a.ordinal[index] !== b.ordinal[index]) return a.ordinal[index] > b.ordinal[index] ? 1 : -1;
 	}

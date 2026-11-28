@@ -1947,7 +1947,9 @@ Three guards decide whether a handoff is attempted at all, and all of them fail 
   successor's engine (this process's build, or the requester's `target_engine` in an idle handover) with the
   host's advertised `engineOrdinal` by `compareEngineOrdinal` (`[y, m, d, n]`, then the build epoch when both
   sides carry one; equal builds and builds uncomparable only for a missing epoch are not older; version strings
-  are never compared) and refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
+  are never compared). An omo dev build, whose version has the prerelease part `omob` (`0.0.0-omob.<omo>.<senpi>`),
+  names no release position: a pair with one is ordered by the build epoch alone when both sides carry one
+  (senpi#7428). It refuses `{ action: "refuse", reason: "older_engine", upgradeable: false }` before
   spawning anything when the successor is strictly older, or when either ordinal is not senpi CalVer and the
   successor therefore cannot be proven not older (senpi#7040); `detail` names both engines. An `ensure` with the
   upgrade policy keeps such a host and writes one `engine order uncomparable` line to stderr. `allowDowngrade` (`host handoff --allow-downgrade`)
@@ -2065,8 +2067,11 @@ owns the operation:
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
 3. it waits for its next safe idle point: no request in flight and no open session busy by the same activity
-   judgement a drain parks by. A retained session with no work is idle. The wait has no deadline; a long turn
-   delays the handover and is never aborted for it;
+   judgement a drain parks by. A retained session with no work is idle. A long turn delays the handover and is
+   never aborted for it, but the wait is bounded at 10 minutes (senpi#7427): a host that finds no idle point by
+   then abandons the operation as `handover_blocked` with a `reason` starting `idle_wait_expired:`, keeps
+   serving and admits work again, so work that never stops cannot keep it refusing everything. A new
+   `host handoff --when idle` may then be asked for;
 4. it hands the socket over through the generation handoff above, launched from the CLI's runtime with the
    CLI's daemon environment, and drains. The successor is told the target id and exits before it listens when
    its own runtime digests to another one (its files changed since the request). A successor that never

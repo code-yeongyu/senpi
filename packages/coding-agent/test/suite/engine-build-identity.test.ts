@@ -17,6 +17,7 @@ import {
 	type EngineBuildIdentity,
 	engineBuildIdentity,
 	engineBuildIdentityFrom,
+	engineIdentityOf,
 	olderEngineDetail,
 } from "../../src/core/engine-build-identity.ts";
 
@@ -179,5 +180,40 @@ describe("ordinals outside senpi CalVer", () => {
 	it("refuses a handoff across vocabularies in either direction", () => {
 		expect(olderEngineDetail(calver, omoVersion)).toContain("5.1.78");
 		expect(olderEngineDetail(omoVersion, calver)).toContain("5.1.78");
+	});
+});
+
+// senpi#7428: an omo dev build is stamped `0.0.0-omob.<omo sha>.<senpi sha>` by omo's own contract, so its version names no
+// release position; a dated build outranked every one of them, and a later dev build was refused `older_engine`.
+describe("omo dev builds (omob)", () => {
+	const running = engineBuildIdentityFrom({
+		version: "2026.11.19-2-1-omob.6d05a3b.1975499",
+		epoch: 1_795_063_675,
+		sha7: "1975499",
+	});
+	const successor = engineBuildIdentityFrom({
+		version: "0.0.0-omob.2a41028.6cbd012",
+		epoch: 1_795_530_578,
+		sha7: "6cbd012",
+	});
+
+	it("orders a dev build against any build by the engine-build epoch both carry", () => {
+		expect(running.text).toBe("2026.11.19-2-1-omob.6d05a3b.1975499+1795063675.1975499");
+		expect(successor.text).toBe("0.0.0-omob.2a41028.6cbd012+1795530578.6cbd012");
+		expect(olderEngineDetail(successor, running)).toBeUndefined();
+		expect(compareEngineOrdinal(successor, running)).toBe(1);
+		expect(olderEngineDetail(running, successor)).toContain("is older than");
+	});
+
+	it("orders by the epoch read back from a host's advertised text and ordinal", () => {
+		const advertised = engineIdentityOf(running.text, running.ordinal);
+		expect(olderEngineDetail(successor, advertised)).toBeUndefined();
+	});
+
+	it("keeps a dev build without an epoch unordered, and a release pair ordered by version", () => {
+		const unstamped = engineBuildIdentityFrom({ version: "0.0.0-omob.2a41028.6cbd012" });
+		expect(compareEngineOrdinal(unstamped, running)).toBe(0);
+		expect(olderEngineDetail(unstamped, running)).toContain("cannot be ordered");
+		expect(compareEngineOrdinal(identity("2026.11.19", EPOCH + 500_000), identity("2026.11.19-2", EPOCH))).toBe(-1);
 	});
 });
