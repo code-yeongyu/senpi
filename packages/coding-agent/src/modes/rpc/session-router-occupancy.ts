@@ -173,7 +173,8 @@ export async function evictIdleSession(
 				: host.writer.closeSession(
 						sessionId,
 						{ type: "response", command: "close_session", success: true, data: {} },
-						reason ?? "idle_evicted",
+						// A memory-only session has nothing a successor could reopen: the controller opens a new one (senpi#7567).
+						handoff && retained?.profile.persistence === "none" ? "not_persisted" : (reason ?? "idle_evicted"),
 						reason === "handoff_parked" ? parkedPath : undefined,
 					),
 		);

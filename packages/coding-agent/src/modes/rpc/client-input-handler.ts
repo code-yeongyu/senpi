@@ -104,8 +104,12 @@ export async function handleClientInput(
 				// atomically whether the input starts a turn or joins the running one.
 				const promptPath = (options: PromptPathOptions): Promise<PromptDisposition> => {
 					const accepted = Promise.withResolvers<PromptDisposition>();
-					let preflightSucceeded = false;
 					let acceptedAdmission: ClientMessageAdmission | undefined;
+					const answer = (next: PromptDisposition) => {
+						disposition = next;
+						accepted.resolve(next);
+						respond(acceptedAdmission);
+					};
 					const call = session
 						.prompt(command.message, {
 							...clientMessageIdentity(command),
@@ -115,29 +119,32 @@ export async function handleClientInput(
 							interactiveUser: client.interactiveUser,
 							...(client.connectionOrigin === undefined ? {} : { connectionOrigin: client.connectionOrigin }),
 							...chain,
-							onQueuedInput: hooks.queued,
+							onQueuedInput: (prepared) => {
+								hooks.queued(prepared);
+								// Custody is recorded, but the engine cannot take the input or announce it yet.
+								// A lost start race can also reach this hook after the started answer.
+								if (!responded) {
+									acceptedAdmission = hooks.accepted("queued");
+									answer("queued");
+								}
+							},
 							promptDisposition: (next) => {
 								disposition = next;
-								if (next !== "started") acceptedAdmission = hooks.accepted(next);
+								if (!responded && next !== "started") acceptedAdmission = hooks.accepted(next);
 							},
 							preflightResult: (succeeded) => {
-								if (succeeded && disposition !== undefined && disposition !== "started") {
-									preflightSucceeded = true;
-									accepted.resolve(disposition);
-									respond(acceptedAdmission);
-								}
+								if (!responded && succeeded && disposition !== undefined && disposition !== "started")
+									answer(disposition);
 							},
 							onTurnAdmitted: () => {
 								// The epoch exists here, before agent.prompt emits the user message.
 								turnId = session.currentTurnId;
 								acceptedAdmission = hooks.accepted("started", turnId);
-								preflightSucceeded = true;
-								accepted.resolve("started");
-								respond(acceptedAdmission);
+								answer("started");
 							},
 						})
 						.catch((error: unknown) => {
-							if (!preflightSucceeded) accepted.reject(error);
+							if (!responded) accepted.reject(error);
 						});
 					io.promptCalls.add(call);
 					void call.finally(() => io.promptCalls.delete(call));

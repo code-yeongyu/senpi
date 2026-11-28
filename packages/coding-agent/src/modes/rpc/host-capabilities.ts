@@ -39,6 +39,8 @@ import {
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_PERSONA_CAPABILITY,
+	SESSION_PERSISTENCE_NONE_CAPABILITY,
+	SESSION_TOOLS_NONE_ENFORCED_CAPABILITY,
 	SESSION_RETIREMENT_CAPABILITY,
 	TELEMETRY_CONSENT_CAPABILITY,
 	SESSION_ENV_CAPABILITY,
@@ -211,6 +213,10 @@ export function multiSessionHostCapabilities(options: {
 			RETRY_FALLBACK_PROFILE_CAPABILITY,
 			// Each session's instructions and tool policy narrow its own runtime, held on its launch profile (omo#13057).
 			SESSION_PERSONA_CAPABILITY,
+			// A session can be opened in memory only: no file, no record, gone with its last attachment (senpi#7567).
+			SESSION_PERSISTENCE_NONE_CAPABILITY,
+			// A no-tools session's `bash` is refused with `tools_disabled`, not only hidden from its model (senpi#7567).
+			SESSION_TOOLS_NONE_ENFORCED_CAPABILITY,
 			SESSION_RETIREMENT_CAPABILITY,
 			// Each session's telemetry is decided from the host's setting and its own callers' answers (senpi#7446).
 			TELEMETRY_CONSENT_CAPABILITY,

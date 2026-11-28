@@ -1540,6 +1540,13 @@ export class ModelRuntime implements Models {
 		await this.refresh({ allowNetwork: this.modelNetworkEnabled });
 	}
 
+	/** Rebuilds every provider when models.json changed since this runtime last read it; answers whether it did (senpi#7645). */
+	async refreshIfConfigChanged(options: ModelsRefreshOptions = {}): Promise<boolean> {
+		if ((await ModelConfig.load(this.modelsPath)).readsSameFileAs(this.config)) return false;
+		await this.refresh(options);
+		return true;
+	}
+
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		const previous = this.config;
 		const loaded = await ModelConfig.load(this.modelsPath);
