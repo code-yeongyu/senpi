@@ -838,8 +838,6 @@
       "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-overflow-file.ts": ["monitorOverflowPath"],
       // pre-existing at origin main aceb1cc1d9: unused exports monitorParent
       "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-permission.ts": ["monitorParent"],
-      // pre-existing at origin main aceb1cc1d9: unused exports monitorElapsedSeconds
-      "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-status.ts": ["monitorElapsedSeconds"],
       // pre-existing at origin main aceb1cc1d9: unused exports OWNER_START_TOLERANCE_MS, DEFAULT_KILL_GRACE_MS, isProcessAlive
       "packages/coding-agent/src/core/extensions/builtin/terminal/orphan-reaper.ts": ["DEFAULT_KILL_GRACE_MS", "OWNER_START_TOLERANCE_MS", "isProcessAlive"],
       // pre-existing at origin main aceb1cc1d9: unused exports RESTORE_STATUS_KEY

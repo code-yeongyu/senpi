@@ -11,6 +11,8 @@ export interface RegisterFileMonitorOptions {
 	readonly deadlineMs?: number | null;
 	/** Caller-supplied stable identity so a restore can re-bind the same "mon_" id. */
 	readonly monitorId?: string;
+	/** Original registration time when restoring a durable watch. */
+	readonly startedAtMs?: number;
 	readonly event: "create" | "modify";
 	readonly timeoutMs: number;
 	readonly cwd: string;
@@ -80,7 +82,7 @@ export function newFileRecord(input: NewFileRecordInput): FileMonitorRecord {
 		monitorId: options.monitorId ?? allocateMonitorId(),
 		sessionId: id,
 		description: options.description,
-		startedAtMs: Date.now(),
+		startedAtMs: options.startedAtMs ?? Date.now(),
 		command: null,
 		filter: null,
 		persistent,
