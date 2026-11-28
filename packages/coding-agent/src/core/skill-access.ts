@@ -45,7 +45,7 @@ export function buildSkillAllowedSet(sources: readonly string[]): SkillAllowedSe
 	const roots = new Set<string>();
 	const files = new Set<string>();
 	// Package resolution retains the selected root on every discovered skill.
-	// Walk each spelling once, without collapsing differently ignored aliases.
+	// Dedupe exact spellings only; distinct aliases are still walked.
 	const realpaths = new Map<string, string>();
 	const realpath = (path: string): string => {
 		let canonical = realpaths.get(path);
