@@ -45,23 +45,43 @@ export async function captureStdout<T>(print: () => T | Promise<T>): Promise<{ r
 	}
 }
 
+/** Larger than any pipe buffer, so each awaited write completes on its own under Bun (senpi#2947). */
+const DELIVERY_CHUNK_CHARS = 32 * 1024;
+
 function delivered(stream: NodeJS.WriteStream, text: string): Promise<void> {
-	if (stream.destroyed || stream.writableEnded) return Promise.resolve();
-	return new Promise((resolve) => {
-		const timer = setTimeout(resolve, OUTPUT_DELIVERY_LIMIT_MS);
-		timer.unref();
-		const done = (): void => {
-			clearTimeout(timer);
-			resolve();
-		};
-		// A reader that went away (`| head -1`) surfaces as EPIPE: it ends the wait instead of crashing.
-		stream.once("error", done);
-		try {
-			stream.write(text, done);
-		} catch {
-			done();
-		}
-	});
+	if (stream.destroyed || stream.writableEnded || text.length === 0) return Promise.resolve();
+	const deadline = Date.now() + OUTPUT_DELIVERY_LIMIT_MS;
+	const writeChunk = (chunk: string): Promise<void> =>
+		new Promise((resolve) => {
+			const timer = setTimeout(resolve, Math.max(deadline - Date.now(), 0));
+			timer.unref();
+			const done = (): void => {
+				clearTimeout(timer);
+				resolve();
+			};
+			// A reader that went away (`| head -1`) surfaces as EPIPE: it ends the wait instead of crashing.
+			stream.once("error", done);
+			try {
+				stream.write(chunk, done);
+			} catch {
+				done();
+			}
+		});
+	const chunks: string[] = [];
+	for (let i = 0; i < text.length; i += DELIVERY_CHUNK_CHARS) chunks.push(text.slice(i, i + DELIVERY_CHUNK_CHARS));
+	return chunks.reduce<Promise<void>>((chain, chunk) => chain.then(() => writeChunk(chunk)), Promise.resolve());
+}
+
+/**
+ * Runs `run` with stdout collected when the runtime can drop queued writes at exit behind a slow
+ * pipe reader (Bun, senpi#2947); on Node, or when stdout is a terminal a reader cannot fall behind
+ * on, `run` streams unchanged. The returned text is what `exitAfterOutput` must deliver as its one
+ * awaited write - the only shape Bun delivers in full.
+ */
+export async function captureStdoutWhenDroppable<T>(run: () => T | Promise<T>): Promise<{ result: T; output: string }> {
+	const bun = (globalThis as { Bun?: unknown }).Bun !== undefined;
+	if (bun && !process.stdout.isTTY) return captureStdout(run);
+	return { result: await run(), output: "" };
 }
 
 export async function exitAfterOutput(output = "", code?: ExitCode): Promise<never> {
