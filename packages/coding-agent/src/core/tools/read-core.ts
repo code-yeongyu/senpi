@@ -8,6 +8,7 @@ import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "
 import { decodeUtf8, encodeBase64 } from "./encoding.ts";
 import {
 	lexicalCanonicalPath,
+	refuseSpecialFile,
 	resolvePosixToolPath,
 	resolveReadPathVariants,
 	type ToolPathCanonicalizer,
@@ -192,6 +193,11 @@ export function createCoreReadToolDefinition(
 							// Check if file exists and is readable.
 							await ops.access(absolutePath);
 							if (aborted) return;
+							// Custom operations own their filesystem; the machine's would block opening a FIFO or a device.
+							if (!customOps) {
+								await refuseSpecialFile(machine, machine.context(signal), absolutePath, path, "read");
+								if (aborted) return;
+							}
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
 							let content: (TextContent | ImageContent)[];
 							let details: ReadToolDetails | undefined;

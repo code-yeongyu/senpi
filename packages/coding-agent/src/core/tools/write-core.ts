@@ -8,6 +8,7 @@ import {
 	inProcessFileMutationQueue,
 	lexicalCanonicalPath,
 	posixDirname,
+	refuseSpecialFile,
 	resolvePosixToolPath,
 	type ToolPathCanonicalizer,
 	type ToolPathResolver,
@@ -161,6 +162,11 @@ export function createCoreWriteToolDefinition(
 						toolName: "write",
 					});
 					if (!decision.allow) throw new Error(decision.reason);
+					throwIfAborted();
+				}
+				// Before the baseline read: custom operations own their filesystem; the machine's would block on a FIFO.
+				if (!options.operations) {
+					await refuseSpecialFile(machine, machine.context(signal, "caller"), absolutePath, path, "write");
 					throwIfAborted();
 				}
 				const baseline = readBaseline ? await readBaseline(absolutePath) : ({ kind: "unavailable" } as const);

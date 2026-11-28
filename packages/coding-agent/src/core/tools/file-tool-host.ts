@@ -1,6 +1,9 @@
 // What the file tools need from the host they run for, with defaults that need no Node runtime. The local tools
 // pass their Node implementations (path-utils.ts, the machine-ops mutation queue and realpath canonicalization).
 
+import type { OpContext } from "@code-yeongyu/senpi-machine-ops";
+import type { ToolMachine } from "./tool-machine.ts";
+
 /** Resolves a model-given path against the working directory. */
 export type ToolPathResolver = (path: string, cwd: string) => string;
 /** Serializes the mutations of one file. */
@@ -59,6 +62,27 @@ export const inProcessFileMutationQueue: FileMutationQueue = async (absolutePath
 };
 
 export const lexicalCanonicalPath: ToolPathCanonicalizer = async (absolutePath) => absolutePath;
+
+/**
+ * Refuses a target the machine's `files.stat` reports as `other`: neither a regular file, a directory nor a symlink,
+ * such as a FIFO, a device or a socket. Opening a FIFO waits for a peer that may never come and a device may never
+ * reach end of file, so the file tools refuse such a target before they open it (senpi#2888). A target the machine
+ * cannot stat passes, so the tool's own access check or open still reports it as before.
+ */
+export async function refuseSpecialFile(
+	machine: ToolMachine,
+	ctx: OpContext,
+	absolutePath: string,
+	displayPath: string,
+	verb: "edit" | "write" | "read",
+): Promise<void> {
+	const type = await machine.ops.files.stat({ path: absolutePath }, ctx).then(
+		(stat) => stat.type,
+		() => undefined,
+	);
+	if (type !== "other") return;
+	throw new Error(`Could not ${verb} file: ${displayPath}. It is a special file, not a regular file.`);
+}
 
 const NARROW_NO_BREAK_SPACE = "\u202F";
 
