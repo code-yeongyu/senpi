@@ -15,6 +15,7 @@
  *     live_claim        a session-path claim in `reservations/` has a live owner
  *     reachable         the socket (or a `.next-*` successor bind) did not refuse the connection
  *     credential_unavailable  win32: the socket secret cannot be read, so its pipe cannot be proven silent
+ *     session_record    only under `keepDeadNamingSessions`: a dead `tui` endpoint still names a session
  *     locked            the ensure lock was not free within 2 s
  *     legacy_layout     the agent dir predates layout 2; its flat files belong to a legacy host
  *     unknown_identity  nothing in the directory names its socket, so its lock cannot be taken
@@ -29,8 +30,10 @@
  *
  * `kinds` narrows a run to endpoints of those `endpoint_kind`s - a TUI reaping dead `tui` endpoints at
  * its own startup - and every other endpoint is neither judged nor reported; the evidence rule for the
- * ones it does judge is the same three-part rule. The flat legacy directory is a host's, so it is only
- * reported when `rpc_host` is among the kinds.
+ * ones it does judge is the same three-part rule. That sweep and the budgeted pass also pass
+ * `keepDeadNamingSessions`, so a dead terminal's endpoint survives while it can still name the session
+ * it held; an explicit `senpi host gc` does not, and reclaims it on the same evidence. The flat legacy
+ * directory is a host's, so it is only reported when `rpc_host` is among the kinds.
  *
  * `staleEngine` adds the one case where gc ends a RUNNING host (#3268): an endpoint kept as
  * `live_generation` or `reachable` is judged by `host-stale-engine.ts` inside the same lock, and a
@@ -46,6 +49,7 @@ import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { listHostEndpoints } from "./host-endpoints.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { type EndpointInUse, endpointInUse, type SocketSilence, socketSiblings } from "./host-gc-evidence.ts";
+import { readTuiSessionRecord } from "./host-tui-session-record.ts";
 import { judgeStaleEngine, type StaleEngineKeep, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { stopHost } from "./host-stop.ts";
 import { gcRpcPublicKeys } from "./rpc-public-key.ts";
@@ -55,6 +59,7 @@ import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 export type HostGcKeptReason =
 	| EndpointInUse
 	| StaleEngineKeep
+	| "session_record"
 	| "locked"
 	| "legacy_layout"
 	| "unknown_identity"
@@ -86,6 +91,10 @@ export interface HostGcResult {
 export interface HostGcOptions {
 	/** Only endpoints of these kinds; every kind when absent. */
 	readonly kinds?: readonly EndpointKind[];
+	/** Keep a dead endpoint whose directory still names a session (senpi#2680): the registration sweep
+	 * and the budgeted pass pass it, so a dead terminal keeps naming its session; an explicit
+	 * `senpi host gc` does not, and reclaims the endpoint on the same evidence. */
+	readonly keepDeadNamingSessions?: boolean;
 	/** Also stop running stale older-engine hosts; `{}` judges against this build. */
 	readonly staleEngine?: StaleEngineOptions;
 	readonly _test?: {
@@ -144,7 +153,8 @@ export async function gcEndpoint(
 	if (release === undefined) return { removed: false, reason: "locked" };
 	try {
 		await options._test?.afterLockAcquired?.(socket);
-		const evidence = await endpointInUse(hostDaemonDirectoryPaths(dir), socket);
+		const paths = hostDaemonDirectoryPaths(dir);
+		const evidence = await endpointInUse(paths, socket);
 		if (
 			evidence.inUse === "live_claim" ||
 			evidence.inUse === "credential_unavailable" ||
@@ -154,6 +164,9 @@ export async function gcEndpoint(
 		}
 		if (evidence.inUse !== undefined)
 			return await stopIfStale(socket, dir, evidence.inUse, options.staleEngine ?? {});
+		if (options.keepDeadNamingSessions === true && (await readTuiSessionRecord(paths)) !== undefined) {
+			return { removed: false, reason: "session_record" };
+		}
 		const skipped = await removeEndpoint(socket, dir);
 		return { removed: true, reason: evidence.silence, skipped };
 	} finally {

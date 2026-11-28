@@ -92,9 +92,10 @@ export async function gcHostEndpointsOpportunistically(
 		}
 		examined += 1;
 		cursor = endpoint.name;
-		const outcome = await gcEndpoint(endpoint.socket, endpoint.dir, { staleEngine: {} }).catch(
-			() => ({ removed: false }) as const,
-		);
+		const outcome = await gcEndpoint(endpoint.socket, endpoint.dir, {
+			staleEngine: {},
+			keepDeadNamingSessions: true,
+		}).catch(() => ({ removed: false }) as const);
 		// A stopped stale host leaves a dead endpoint the next pass collects without waiting out a backoff.
 		if ("stopped" in outcome) delete skip[endpoint.name];
 		else if (outcome.removed) {

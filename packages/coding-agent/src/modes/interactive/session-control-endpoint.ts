@@ -7,8 +7,8 @@
  * durable, and only once both are done is the endpoint registered - a visible endpoint is one that
  * answers, and its session id is already on disk. Nothing a sender needs waits on work it does not
  * need: the writer stamp's process lookup starts at entry, the inbox watch arms after registration
- * returned, and dead `tui` endpoints of other terminals are reaped after activation. Wakes come
- * from edges only (see `session-control-wake.ts`).
+ * returned, and dead `tui` endpoints of other terminals that name no session are reaped after
+ * activation. Wakes come from edges only (see `session-control-wake.ts`).
  */
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -124,7 +124,17 @@ async function openEndpoint(
 	});
 	cleanups.push(() => server.close());
 	await headerDurable;
-	const entry = await registerTuiEndpoint({ agentDir, socket, instanceId });
+	const entry = await registerTuiEndpoint({
+		agentDir,
+		socket,
+		instanceId,
+		session: {
+			id: session.sessionId,
+			path: session.sessionFile ?? null,
+			name: session.sessionName ?? null,
+			cwd: session.sessionManager.getCwd(),
+		},
+	});
 	cleanups.push(() => unregisterTuiEndpoint(entry));
 	const inbox = await watchInbox(
 		options.inboxDir,
@@ -146,9 +156,10 @@ async function openEndpoint(
 	// written after it but before the watch was armed (no event for it) by the pass once arming settled.
 	endpoint.wake("inbox");
 	void inbox.armed.then(() => endpoint.wake("inbox"));
-	// Other terminals' dead records are nothing a sender reads: reaped after activation, off the path.
+	// Other terminals' dead records can still name a session its next run needs, so the sweep keeps
+	// those; the ones that name nothing are reaped here, off the path.
 	setImmediate(() => {
-		gcHostEndpoints(agentDir, { kinds: ["tui"] }).catch((error: unknown) =>
+		gcHostEndpoints(agentDir, { kinds: ["tui"], keepDeadNamingSessions: true }).catch((error: unknown) =>
 			surface.notice(`control endpoint gc of dead terminals failed: ${errorText(error)}`),
 		);
 	});

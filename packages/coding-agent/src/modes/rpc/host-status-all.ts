@@ -16,23 +16,28 @@
  * TUI_PROBE_TIMEOUT_MS whatever budget the caller grants the hosts, so one suspended terminal costs the
  * listing 1.5 s, not 10; it is sent `get_protocol_info` and `list_sessions` only - the two commands a
  * terminal endpoint and a host both answer - and carries `owner`: the terminal process and the one
- * session it holds. A host row also carries `stale_old_engine`: whether `senpi host gc` would stop it as a
+ * session it holds, from the socket's answer while it answers and, after an unclean exit, from the
+ * session record its registration wrote (guarded by pid and processStartTime, senpi#2680). A host row
+ * also carries `stale_old_engine`: whether `senpi host gc` would stop it as a
  * stale older-engine leftover (`host-stale-engine.ts`, #3268), judged with observing reads only.
  */
 
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { isHostCrash, readHostCrashRecords } from "./host-crash-record.ts";
-import { type EndpointKind, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
+import { readHostRegistration } from "./host-daemon-registration.ts";
+import { type EndpointKind, type HostDaemonDirectory, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { type EndpointLiveness, endpointProbeTimeoutMs, judgeEndpointLiveness } from "./host-endpoint-liveness.ts";
 import { type HostEndpointEntry, type HostEndpointIdentitySource, listHostEndpoints } from "./host-endpoints.ts";
 import { readGenerationRows } from "./host-generations.ts";
+import { readTuiSessionRecord, tuiSessionRecordMatches } from "./host-tui-session-record.ts";
 import { withHostUnits } from "./host-unit-placement.ts";
 import { judgeStaleEngine, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { type HostStatusReport, probeHostStatus } from "./host-status.ts";
 import { type HostSessionRow, readClaimRows } from "./host-status-rows.ts";
 import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 
-/** Who serves a `tui` endpoint: the terminal process (as recorded) and the session it holds, when it answered. */
+/** Who serves a `tui` endpoint: the terminal process (as recorded) and the session it holds - from its
+ * answer while it answers, and from the registration record after an unclean exit (senpi#2680). */
 export interface TuiEndpointOwner {
 	readonly pid: number | null;
 	readonly cwd: string | null;
@@ -102,7 +107,7 @@ async function endpointStatus(endpoint: HostEndpointEntry, options: StatusAllOpt
 	if (endpoint.socket === null) {
 		const verdict = livenessFields(await judgeEndpointLiveness(paths, undefined));
 		const status = await unaddressableStatus(endpoint.dir);
-		const owner = endpoint.endpoint_kind === "tui" ? tuiOwner(status, []) : null;
+		const owner = endpoint.endpoint_kind === "tui" ? await tuiOwner(paths, status, []) : null;
 		return { ...status, socket: null, ...located, ...verdict, owner, stale_old_engine: false };
 	}
 	const { report, answered, listing } = await probeHostStatus(
@@ -114,7 +119,7 @@ async function endpointStatus(endpoint: HostEndpointEntry, options: StatusAllOpt
 		paths,
 		report.refusal !== null ? null : answered === undefined ? undefined : (answered.instanceId ?? null),
 	);
-	const owner = endpoint.endpoint_kind === "tui" ? tuiOwner(report, listing) : null;
+	const owner = endpoint.endpoint_kind === "tui" ? await tuiOwner(paths, report, listing) : null;
 	const stale =
 		endpoint.endpoint_kind === "rpc_host" && verdict === "routable"
 			? await staleOldEngine(endpoint.socket, options)
@@ -128,14 +133,28 @@ async function staleOldEngine(socket: string, options: StatusAllOptions): Promis
 		.stale;
 }
 
-/** The recorded pid of the pointer's generation, and the one session row a terminal endpoint lists. */
-function tuiOwner(status: Pick<HostStatusReport, "generations">, listing: readonly HostSessionRow[]): TuiEndpointOwner {
+/**
+ * The recorded pid of the pointer's generation, and the one session row a terminal endpoint lists; a
+ * terminal that does not answer is named by the session record its registration wrote - and only
+ * when that record's pid and processStartTime match the current generation, so a socket path a new
+ * terminal reuses never inherits the session the previous one held (senpi#2680).
+ */
+async function tuiOwner(
+	paths: HostDaemonDirectory,
+	status: Pick<HostStatusReport, "generations">,
+	listing: readonly HostSessionRow[],
+): Promise<TuiEndpointOwner> {
 	const row = listing[0];
-	return {
-		pid: status.generations.find((generation) => generation.current)?.pid ?? null,
-		cwd: row?.cwd ?? null,
-		session: row === undefined ? null : { id: row.id, path: row.session_path, name: row.name },
-	};
+	const pid = status.generations.find((generation) => generation.current)?.pid ?? null;
+	if (row !== undefined) {
+		return { pid, cwd: row.cwd ?? null, session: { id: row.id, path: row.session_path, name: row.name } };
+	}
+	const registered = await readHostRegistration(paths);
+	const record = registered === undefined ? undefined : await readTuiSessionRecord(paths);
+	if (registered === undefined || record === undefined || !tuiSessionRecordMatches(record, registered.record)) {
+		return { pid, cwd: null, session: null };
+	}
+	return { pid, cwd: record.cwd, session: { id: record.id, path: record.path, name: record.name } };
 }
 
 function livenessFields(verdict: EndpointLiveness): Pick<HostEndpointStatus, "alive" | "reason"> {

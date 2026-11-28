@@ -9,6 +9,9 @@
  *       <sha256(canonical socket)[:16]>/          0700, one per endpoint
  *         endpoint.json                           { layout, registry_version, endpoint_kind, socket, created_at }
  *                                                 - WHICH socket this is, and what serves it
+ *         tui-session.json                        { id, path, name, cwd, pid, processStartTime } - the
+ *                                                 session a `tui` endpoint holds, for readers after
+ *                                                 an unclean terminal exit (senpi#2680)
  *         host.pid                                POINTER: { layout, instance_id, generation_dir, writer }
  *         settings.json                           what the supervisor reads at boot
  *         daemon.lock  stderr.log
@@ -88,6 +91,8 @@ export interface HostDaemonPaths {
 	readonly dir: string;
 	/** Durable identity `{ layout, registry_version, endpoint_kind, socket, created_at }`: survives every generation's release. */
 	readonly endpointFile: string;
+	/** The session a `tui` endpoint holds, recorded at registration (senpi#2680). */
+	readonly tuiSessionFile: string;
 	/** The pointer at the current generation. Deliberately unparseable as a legacy pidfile. */
 	readonly pointerFile: string;
 	/** Cross-version ensure lock for this endpoint (the endpoint lock itself lives in the temp dir). */
@@ -130,6 +135,7 @@ export function hostDaemonDirectoryPaths(dir: string): HostDaemonDirectory {
 	return {
 		dir,
 		endpointFile: join(dir, "endpoint.json"),
+		tuiSessionFile: join(dir, "tui-session.json"),
 		pointerFile: join(dir, "host.pid"),
 		lockFile: join(dir, "daemon.lock"),
 		settingsFile: join(dir, "settings.json"),

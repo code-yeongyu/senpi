@@ -2093,6 +2093,8 @@ directory can never read each other's state:
   <sha256(canonical socket)[:16]>/             0700
     endpoint.json                              { layout: 2, registry_version: 1, endpoint_kind, socket,
                                                  created_at } - durable identity
+    tui-session.json                          { id, path, name, cwd, pid, processStartTime } - the
+                                                 session a `tui` endpoint holds (registration record)
     host.pid                                   POINTER: { layout, instance_id, generation_dir, writer }
     settings.json                              what the supervisor reads at boot
     daemon.lock  stderr.log
@@ -2344,7 +2346,11 @@ which prints the bare socket path).
   terminal is reported `live_unresponsive` without stalling the listing. A `tui` endpoint is sent
   `get_protocol_info` and `list_sessions` only - the two commands both endpoint kinds answer - and its row
   carries `owner: { pid, cwd, session: { id, path, name } | null }`: the terminal's recorded pid and the one
-  session it lists (`cwd`/`session` are `null` when it did not answer). `owner` is `null` on a host row. A directory none of them names is still listed with
+  session it lists. When the terminal did not answer, the session record its registration wrote
+  (`tui-session.json`) names `cwd`/`session` instead - but only while its `pid` and `processStartTime`
+  match the endpoint's current generation, so a terminal reusing a socket path never inherits the
+  previous one's session; a directory without a matching record keeps `cwd`/`session` `null`.
+  `owner` is `null` on a host row. A directory none of them names is still listed with
   `socket: null` and `identity: "unknown"`, built from the directory alone - the ensure lock is keyed by a
   longer hash of the socket's transport address and cannot be rebuilt from the 16-hex name, so it can be
   shown but never addressed. Before layout 2 (no `layout.json`) the answer is `{ "endpoints": [] }`. Unlike
@@ -2399,7 +2405,11 @@ which prints the bare socket path).
   The library call `gcHostEndpoints(agentDir, { kinds: ["tui"] })` narrows a run to endpoints of those
   `endpoint_kind`s (a terminal reaping dead `tui` endpoints at its own startup): every other endpoint, and
   the legacy flat directory unless `rpc_host` is listed, is neither judged nor reported, and the ones it
-  judges face the same three-part evidence. `classifyEndpointLiveness(entry)` returns the `alive`/`reason`
+  judges face the same three-part evidence. The terminal's startup sweep and the budgeted pass also pass
+  `keepDeadNamingSessions`, which keeps a dead `tui` endpoint whose directory still names a session
+  (reported as `session_record`) - so a terminal that exited uncleanly keeps naming the session it held
+  for the clients that read it after the fact; an explicit `host gc` reclaims it on the same evidence.
+  `classifyEndpointLiveness(entry)` returns the `alive`/`reason`
   verdict above for one `listHostEndpoints` entry, probing it once under its kind's budget; it reads only.
 - `ensure`, `handoff` and `stop` never act on a terminal control endpoint: a `--socket` whose directory's
   `endpoint.json` says `endpoint_kind: "tui"`, or whose name is a terminal socket's (`t-<16hex>.sock`, which a
