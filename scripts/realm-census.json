@@ -4067,6 +4067,10 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/config-reload/reload-queue.ts#processReloadScheduler": {
+			"class": "realm-registry",
+			"reason": "config-reload-scheduler/v1: every copy serving sessions on the host event loop must share the same reload queue"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts#ROUTINE_SETTINGS_KEYS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -6382,14 +6386,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/generated-shim-banner.ts#ACCEPTED_SHIM_BANNERS": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
-		"packages/coding-agent/src/core/generated-shim-banner.ts#ACCEPTED_SHIM_BANNER_PREFIXES": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
 		"packages/coding-agent/src/core/generated-shim-banner.ts#GENERATED_SHIM_BANNER": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
@@ -6902,10 +6898,6 @@
 		"packages/coding-agent/src/core/resource-loader.ts#HOST_PROVIDED_EXTENSION_PACKAGES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
-		},
-		"packages/coding-agent/src/core/resource-loader.ts#LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
 		},
 		"packages/coding-agent/src/core/resource-loader.ts#VENDORED_BUILTIN_EXTENSION_PACKAGES": {
 			"class": "constant",

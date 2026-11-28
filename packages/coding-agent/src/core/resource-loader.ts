@@ -16,7 +16,7 @@ import { APP_NAME, CONFIG_DIR_NAME, findNodePackageDir, getAgentDir, getPackageD
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import { resolveInstallPath } from "../runtime-snapshot/marker.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
-import { ACCEPTED_SHIM_BANNERS, GENERATED_SHIM_BANNER } from "./generated-shim-banner.ts";
+import { GENERATED_SHIM_BANNER, generatedShimTarget } from "./generated-shim-banner.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 export { loadProjectContextFiles };
@@ -30,10 +30,16 @@ import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
 	type BuiltinExtensionFactory,
 	builtinExtensions,
-	globalDefaultExtensionFactories,
 	globalDefaultExtensionIds,
 } from "./extensions/builtin/index.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
+import {
+	deadGeneratedShimTarget,
+	type GlobalDefaultExtensionId,
+	getGlobalDefaultExtensionShimPath,
+	namesBuiltin,
+	resolveGeneratedDefaultExtensionFactory,
+} from "./extensions/generated-default-shim.ts";
 import { createMcpExtension } from "./extensions/builtin/mcp/index.ts";
 import { McpService } from "./extensions/builtin/mcp/service.ts";
 import {
@@ -228,8 +234,6 @@ function resolvePromptInput(input: string | undefined, description: string): str
 }
 
 const GENERATED_GLOBAL_EXTENSION_BANNER = GENERATED_SHIM_BANNER;
-const LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS = ACCEPTED_SHIM_BANNERS;
-type GlobalDefaultExtensionId = (typeof globalDefaultExtensionIds)[number];
 
 const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; packageName: string }> = [
 	{ builtinId: "anthropic-bash", packageName: "pi-anthropic-bash" },
@@ -240,10 +244,6 @@ const VENDORED_BUILTIN_EXTENSION_PACKAGES: ReadonlyArray<{ builtinId: string; pa
 	{ builtinId: "todowrite", packageName: "pi-todotools" },
 	{ builtinId: "codemode", packageName: "@code-yeongyu/senpi-codemode" },
 ];
-function isGeneratedGlobalDefaultExtensionShim(content: string): boolean {
-	return LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.some((banner) => content.startsWith(banner));
-}
-
 /**
  * The shim records an absolute path, and `getPackageDir()` derives from
  * `import.meta.url`. A session launched through the npm bin symlink and one
@@ -299,56 +299,8 @@ function buildGlobalDefaultExtensionShim(modulePath: string): string {
 	return `${GENERATED_GLOBAL_EXTENSION_BANNER}export { default } from ${JSON.stringify(pathToFileURL(modulePath).href)};\n`;
 }
 
-function getGlobalDefaultExtensionShimPath(agentDir: string, extensionId: GlobalDefaultExtensionId): string {
-	return join(agentDir, "extensions", `${extensionId}.js`);
-}
-
-function isGlobalDefaultExtensionShimLocation(extensionPath: string, agentDir: string): boolean {
-	const resolvedExtensionPath = resolve(extensionPath);
-	return globalDefaultExtensionIds.some(
-		(extensionId) => resolvedExtensionPath === resolve(getGlobalDefaultExtensionShimPath(agentDir, extensionId)),
-	);
-}
-
-function findGeneratedGlobalDefaultExtensionId(
-	extensionPath: string,
-	agentDir: string,
-): GlobalDefaultExtensionId | undefined {
-	if (resolve(agentDir) !== resolve(getAgentDir())) {
-		return undefined;
-	}
-
-	const resolvedExtensionPath = resolve(extensionPath);
-	for (const extensionId of globalDefaultExtensionIds) {
-		if (resolvedExtensionPath === resolve(getGlobalDefaultExtensionShimPath(agentDir, extensionId))) {
-			return extensionId;
-		}
-	}
-	return undefined;
-}
-
-/** The module a generated shim re-exports, when it is a generated shim whose target no longer exists. */
-// Exactly what `buildGlobalDefaultExtensionShim` writes: one export line after the banner, nothing else.
-const GENERATED_SHIM_EXPORT_LINE = /^export \{ default \} from ("[^"\n]*");\n?$/;
-
-/**
- * The module a generated shim re-exports, when the file is exactly a generated shim (an accepted banner
- * followed by the single export line and nothing else) and that module no longer exists. A file that
- * carries the banner but also anything a person wrote is never treated as a shim.
- */
-function deadGeneratedShimTarget(content: string): string | undefined {
-	const banner = LEGACY_GENERATED_GLOBAL_EXTENSION_BANNERS.find((candidate) => content.startsWith(candidate));
-	if (banner === undefined) return undefined;
-	const specifier = GENERATED_SHIM_EXPORT_LINE.exec(content.slice(banner.length))?.[1];
-	if (specifier === undefined) return undefined;
-	let target: string;
-	try {
-		const parsed = JSON.parse(specifier) as string;
-		target = parsed.startsWith("file:") ? fileURLToPath(parsed) : parsed;
-	} catch {
-		return undefined;
-	}
-	return existsSync(target) ? undefined : target;
+function pointsToLiveBuiltin(target: string, id: GlobalDefaultExtensionId): boolean {
+	return namesBuiltin(target, id) && statSync(target, { throwIfNoEntry: false })?.isFile() === true;
 }
 
 function removeDeadGeneratedShim(shimPath: string): void {
@@ -363,36 +315,6 @@ function removeDeadGeneratedShim(shimPath: string): void {
 		unlinkSync(shimPath);
 	} catch {
 		// The loader skips a dead generated shim on its own; a failed removal only retries next start.
-	}
-}
-
-// A generated shim whose target is gone stands for "load the default extension" from an install that no
-// longer exists. Importing it can only fail with "Cannot find module", so it is skipped without an error.
-const skipDeadGeneratedShim: ExtensionFactory = () => {};
-
-function resolveGeneratedGlobalDefaultExtensionFactory(
-	extensionPath: string,
-	agentDir: string,
-): ExtensionFactory | undefined {
-	if (isGlobalDefaultExtensionShimLocation(extensionPath, agentDir)) {
-		try {
-			if (deadGeneratedShimTarget(readFileSync(extensionPath, "utf-8")) !== undefined) return skipDeadGeneratedShim;
-		} catch {
-			// Unreadable: let the regular load report it.
-		}
-	}
-	const extensionId = findGeneratedGlobalDefaultExtensionId(extensionPath, agentDir);
-	if (!extensionId) {
-		return undefined;
-	}
-
-	try {
-		const expectedShim = buildGlobalDefaultExtensionShim(getGlobalDefaultExtensionModulePath(extensionId));
-		return readFileSync(extensionPath, "utf-8") === expectedShim
-			? globalDefaultExtensionFactories[extensionId]
-			: undefined;
-	} catch {
-		return undefined;
 	}
 }
 
@@ -934,7 +856,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const shim = buildGlobalDefaultExtensionShim(modulePath);
 			if (existsSync(targetPath)) {
 				const existing = readFileSync(targetPath, "utf-8");
-				if (existing === shim || !isGeneratedGlobalDefaultExtensionShim(existing)) {
+				if (existing === shim) continue;
+				const target = generatedShimTarget(existing);
+				if (target === undefined || pointsToLiveBuiltin(target, extensionId)) {
 					continue;
 				}
 
@@ -971,7 +895,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	} {
 		return {
 			factoryResolver: (_extensionPath, resolvedPath) =>
-				resolveGeneratedGlobalDefaultExtensionFactory(resolvedPath, this.agentDir),
+				resolveGeneratedDefaultExtensionFactory(resolvedPath, this.agentDir),
 			...this.extensionSession,
 		};
 	}
@@ -1754,7 +1678,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			return false;
 		}
 		try {
-			return isGeneratedGlobalDefaultExtensionShim(readFileSync(shimPath, "utf-8"));
+			return generatedShimTarget(readFileSync(shimPath, "utf-8")) !== undefined;
 		} catch {
 			return false;
 		}
