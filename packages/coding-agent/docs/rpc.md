@@ -3108,6 +3108,38 @@ confirmed the policy the change produces. Refusals: `invalid_telemetry_consent` 
 `errorData.reason`), `session_not_attached` (this connection is not attached to the session) and
 `telemetry_update_unconfirmed` (the session did not confirm; nothing is kept).
 
+#### Session retirement (`session_retirement`)
+
+Retirement is always explicit. `close_session` with `retire: true` retires a disk-backed session when
+that close is its final one; a plain `close_session` does not, and the closed session still reopens
+from its file with a plain `open_session`. A detach, idle park, host stop, or `release_session` never
+retires. A host without `session_retirement` ignores the unknown `retire` field and closes without
+retiring, so probe the capability before relying on it. In particular, release with `reason: "takeover"` can hand the
+**same transcript** back to a terminal. A controller replacing it with a different session calls
+`retireSession({ agentDir, sessionPath, reason: "takeover" })` from `@code-yeongyu/senpi`.
+The same API accepts `"requested"` for a file-only close. It needs no running host, is idempotent,
+and returns `{ retiredAt, reason }`. With no transcript path (a memory-only session) it returns
+`{ reason: "memory_only" }`. Marking a **live** session does not stop its turn; close it to stop it.
+
+Retired sessions are not restored after handover or restart. Ordinary opens, including by-reference
+reads, refuse with `session_retired` and `errorData.{retiredAt,reason}`. Only an authorized
+`open_session` with `reopenRetired: true` can reopen one. On a session not retired the field has no
+effect. Send it only for an explicit create/reopen request, never as a retry after refusal.
+Probe `get_protocol_info.capabilities` first: without `session_retirement`, a controller cannot
+promise engine-enforced retirement.
+
+`find_session.found.retirement` reports the marker without opening the file. Resident
+`list_sessions` rows also report `retirement: { retiredAt, reason }` when a live session is marked.
+`get_state` does not carry it: it answers from memory in the tick it is asked.
+Retirement does not add a file-only session to the resident list.
+
+The store is `<agentDir>/retired-sessions/<durable-id>.json`, keyed by the transcript header.
+An absent directory means no retirements. A malformed or unreadable marker refuses that identity
+(`retirement_marker_unavailable`); an unreadable store refuses restore and explicit reopen
+(`retirement_store_unavailable`). Repair the named file or directory rather than treating the error
+as an absent marker. The marker is not a boundary against another process running as the same user:
+that process can write or remove it.
+
 #### Instructions and tool policy per session (`session_persona`)
 
 `open_session.persona: { appendSystemPrompt?: string, tools?: string[], excludeTools?: string[] }` gives THIS session

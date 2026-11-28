@@ -202,6 +202,7 @@ export const RETRY_FALLBACK_PROFILE_CAPABILITY = "retry_fallback_profile";
  * A caller sends a persona only to a host that names this.
  */
 export const SESSION_PERSONA_CAPABILITY = "session_persona";
+export const SESSION_RETIREMENT_CAPABILITY = "session_retirement";
 
 /**
  * HOST capability: this host takes each caller's live telemetry answer (senpi#7446) on `open_session.telemetry`,

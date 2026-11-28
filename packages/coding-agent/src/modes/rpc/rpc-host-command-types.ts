@@ -135,6 +135,8 @@ type RpcCommandBody =
 			 * value is refused with `invalid_launch_profile`.
 			 */
 			persona?: SessionPersona;
+			/** Explicitly reopen the retired identity. Ordinary opens never consume retirement. */
+			reopenRetired?: true;
 			/**
 			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
 			 * one session after the daemon's own allowlist, never merged into the host process or carried to
@@ -155,7 +157,17 @@ type RpcCommandBody =
 			 */
 			telemetry?: TelemetryDeclaration;
 	  }
-	| { id?: string; type: "close_session"; sessionId: string }
+	| {
+			id?: string;
+			type: "close_session";
+			sessionId: string;
+			/**
+			 * Also retire the session when this close is its final one: no restore and no plain `open_session` reopens it
+			 * until an `open_session` with `reopenRetired: true`. Default false: a closed session reopens from its file.
+			 * A session with no transcript file has nothing to retire and closes as usual. Requires `session_retirement`.
+			 */
+			retire?: boolean;
+	  }
 	| RpcMoveSessionCommand
 	| {
 			id?: string;
@@ -338,7 +350,7 @@ export type RpcCommand = (
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  }
-	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd" | "reopenRetired"> & {
 			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
 			type: "claim_session";
 			cwd: string;
