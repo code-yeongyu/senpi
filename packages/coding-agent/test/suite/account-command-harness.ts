@@ -8,11 +8,12 @@ import type {
 	RegisteredCommand,
 } from "../../src/core/extensions/types.ts";
 
-export type Command = Pick<RegisteredCommand, "handler">;
+export type Command = Pick<RegisteredCommand, "handler" | "getArgumentCompletions">;
 export type Notice = { message: string; type: "info" | "warning" | "error" | undefined };
 export type DialogCall =
 	| { kind: "select"; title: string; options: string[]; signal: AbortSignal | undefined }
-	| { kind: "input"; title: string; placeholder: string | undefined; signal: AbortSignal | undefined };
+	| { kind: "input"; title: string; placeholder: string | undefined; signal: AbortSignal | undefined }
+	| { kind: "confirm"; title: string; message: string; signal: AbortSignal | undefined };
 export type DialogAnswers = {
 	select?: (title: string, options: string[]) => string | undefined;
 	input?: (
@@ -20,6 +21,7 @@ export type DialogAnswers = {
 		placeholder: string | undefined,
 		opts: ExtensionUIDialogOptions | undefined,
 	) => Promise<string | undefined>;
+	confirm?: (title: string, message: string) => boolean;
 };
 export type ContextOptions = { mode?: ExtensionMode; dialogs?: DialogAnswers; signal?: AbortSignal };
 export type LoginFn = (provider: string, method: string, interaction: AuthInteraction) => Promise<void>;
@@ -66,6 +68,10 @@ export function createAccountCommandContext(
 				input: async (title: string, placeholder?: string, opts?: ExtensionUIDialogOptions) => {
 					dialogs.push({ kind: "input", title, placeholder, signal: opts?.signal });
 					return options.dialogs?.input ? options.dialogs.input(title, placeholder, opts) : "";
+				},
+				confirm: async (title: string, message: string, opts?: ExtensionUIDialogOptions) => {
+					dialogs.push({ kind: "confirm", title, message, signal: opts?.signal });
+					return options.dialogs?.confirm?.(title, message) ?? false;
 				},
 			},
 		} as unknown as ExtensionCommandContext,

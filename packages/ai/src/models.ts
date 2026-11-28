@@ -10,6 +10,8 @@ import { stampLogin } from "./auth/pool/login-id.ts";
 import {
 	appendLoginSlot,
 	assertLoginKeyPresent,
+	listSlots,
+	type PooledCredential,
 	ReauthorizeAccountMismatchError,
 	removeSlot,
 	withoutBlankKey,
@@ -821,6 +823,17 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
+				if (
+					providerId === "anthropic" &&
+					type === "api_key" &&
+					credential.type === "api_key" &&
+					credential.key !== undefined &&
+					current?.type === "api_key" &&
+					(current.key === credential.key ||
+						listSlots(current as PooledCredential).some((slot) => slot.key === credential.key))
+				) {
+					throw new ModelsError("auth", "Anthropic API key is already added.");
+				}
 				return stampLogin(
 					appendLoginSlot(
 						current,
@@ -859,6 +872,8 @@ class ModelsImpl implements MutableModels {
 			signal.throwIfAborted();
 			// The user must see why a reauthorization changed nothing, not a storage failure.
 			if (error instanceof ReauthorizeAccountMismatchError) throw error;
+			// A duplicate-key refusal is already the user-facing reason.
+			if (error instanceof ModelsError) throw error;
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
 		}
 		if (committedName !== undefined && committedOrigin !== undefined) {
