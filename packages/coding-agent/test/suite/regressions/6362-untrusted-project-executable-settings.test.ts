@@ -191,6 +191,23 @@ describe("settings that name an executable, when the project file is read again 
 		expect(manager.getNpmCommand()).toEqual([r.program]);
 	});
 
+	it("a project write from that manager leaves them in the user's settings file", async () => {
+		const r = rig(everyKey);
+		const file = join(r.project, ".senpi", "settings.json");
+		const onDisk = JSON.parse(readFileSync(file, "utf8"));
+		const manager = SettingsManager.create(r.project, r.agentDir);
+		await manager.reload();
+		manager.setProjectPackages(["npm:@scope/pkg"]);
+		await manager.setProjectSetting("theme", "dark");
+		await manager.flush();
+		expect(executableSettingPathsIn(manager.getProjectSettings())).toEqual([]);
+		expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+			...onDisk,
+			packages: ["npm:@scope/pkg"],
+			theme: "dark",
+		});
+	});
+
 	it("stay ignored when setProjectTrusted(true) reads the project file again", () => {
 		const r = rig(everyKey);
 		const manager = SettingsManager.create(r.project, r.agentDir);
