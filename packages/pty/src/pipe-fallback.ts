@@ -1,6 +1,11 @@
 import { spawn } from "node:child_process";
 import type { NativePtyLoadResult } from "./native-loader.ts";
-import { LeftoverProcessGroup, terminateChildTree, terminateWindowsTree } from "./process-tree.ts";
+import {
+	LeftoverProcessGroup,
+	recordWindowsRootIdentity,
+	terminateChildTree,
+	terminateWindowsTree,
+} from "./process-tree.ts";
 
 export { terminateChildTree } from "./process-tree.ts";
 
@@ -92,6 +97,8 @@ export class PipeFallbackSession {
 	private timeoutHandle: NodeJS.Timeout | undefined;
 	private drainHandle: NodeJS.Timeout | undefined;
 	private readonly leftover = new LeftoverProcessGroup();
+	/** Windows only: the root's creation time, read at start while its handle is held (see recordWindowsRootIdentity). */
+	private windowsRootIdentity: Promise<bigint | undefined> = Promise.resolve(undefined);
 	private readonly dataHandlers = new Set<DataHandler>();
 	private readonly exitHandlers = new Set<ExitHandler>();
 
@@ -134,6 +141,8 @@ export class PipeFallbackSession {
 				windowsHide: true,
 			});
 			this.child = child;
+			if (process.platform === "win32" && child.pid !== undefined)
+				this.windowsRootIdentity = recordWindowsRootIdentity(child, child.pid);
 			child.stdout?.on("data", (chunk: string | Buffer) => this.emitData(toBuffer(chunk)));
 			child.stderr?.on("data", (chunk: string | Buffer) => this.emitData(toBuffer(chunk)));
 			child.stdin?.on("error", () => {});
@@ -244,7 +253,7 @@ export class PipeFallbackSession {
 		const child = this.child;
 		const pid = child.pid;
 		if (process.platform === "win32" && pid !== undefined)
-			return { ok: true, note: terminateWindowsTree(child, pid, signal) };
+			return { ok: true, note: terminateWindowsTree(child, pid, signal, this.windowsRootIdentity) };
 		const route = terminateChildTree(this.child, signal);
 		if (route === "none") {
 			return {

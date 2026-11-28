@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import process from "node:process";
+import { windowsProcessCreatedAtAsync, windowsTreeKillArgsAsync } from "../runtime/windows-process-tree.mjs";
 import type { TerminalSessionHandle, TerminalSessionSignal } from "./session-types.ts";
 
 /** How often a stop path re-checks whether a process group still has members; no event reports it. */
@@ -11,7 +12,7 @@ const LEFTOVER_PROBE_MS = 1000;
  * Terminate the child, preferring its whole process group on POSIX. The
  * detached child is its own group leader and grandchildren inherit the stdio
  * pipes, so leaving them alive keeps 'close' from ever firing (the POSIX twin
- * of the Windows taskkill /T branch below). Every path that stops a child must
+ * of the Windows descendant cleanup below). Every path that stops a child must
  * go through here: when the group signal is unavailable (Windows, no pid) or
  * the group is already gone, it still falls back to a direct kill, so the
  * child is never left running.
@@ -38,20 +39,42 @@ export function terminateChildTree(
 /**
  * On Windows child.kill() TerminateProcess-es only the direct child, leaving
  * grandchildren (e.g. `sleep` under `bash.exe -c`) alive and holding the stdout
- * pipe open — so 'close' never fires and waitExit() hangs teardown. taskkill /T /F
- * terminates the whole tree so the pipe EOFs and the session settles. Returns the note.
+ * pipe open — so 'close' never fires and waitExit() hangs teardown. Enumerate asynchronously and
+ * select by creation time: a recycled parent PID alone does not establish descent.
  */
-export function terminateWindowsTree(child: ChildProcess, pid: number, signal: NodeJS.Signals): string {
-	try {
-		const killer = spawn("taskkill.exe", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-		killer.once("error", () => {
-			terminateChildTree(child, signal);
-		});
-		return `Terminated child_process pipe fallback process tree (pid ${pid}).`;
-	} catch {
-		terminateChildTree(child, signal);
-		return `Sent ${signal} to child_process pipe fallback session.`;
-	}
+/** The root's creation time, kept only when the handle was still open when it was read (so the PID was not reused). */
+export function recordWindowsRootIdentity(
+	child: Pick<ChildProcess, "exitCode" | "signalCode">,
+	pid: number,
+): Promise<bigint | undefined> {
+	return windowsProcessCreatedAtAsync(pid).then(
+		(createdAt) => (child.exitCode === null && child.signalCode === null ? createdAt : undefined),
+		() => undefined,
+	);
+}
+
+export function terminateWindowsTree(
+	child: Pick<ChildProcess, "exitCode" | "signalCode" | "kill">,
+	pid: number,
+	signal: NodeJS.Signals,
+	rootIdentity: Promise<bigint | undefined>,
+): string {
+	const direct = () => {
+		if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+	};
+	void rootIdentity
+		.then(async (createdAt) => {
+			// Descendants only when the root's identity was recorded; the root itself only through the owned handle,
+			// because its PID can be reused once that handle closes.
+			if (createdAt !== undefined) {
+				const args = await windowsTreeKillArgsAsync(pid, undefined, undefined, createdAt);
+				if (args.length > 0)
+					spawn("taskkill.exe", args, { stdio: "ignore", windowsHide: true }).once("error", () => {});
+			}
+			direct();
+		})
+		.catch(direct);
+	return `Requested termination of child_process pipe fallback process tree (pid ${pid}).`;
 }
 
 /** Whether process group `pgid` has a member. Only ESRCH means empty: EPERM still names a live group. */

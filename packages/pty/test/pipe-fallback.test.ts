@@ -233,7 +233,7 @@ describe("PipeFallbackSession terminal detachment", () => {
 		async () => {
 			// Without a group kill, SIGTERM reaches only the direct shell; the
 			// backgrounded grandchild keeps the stdout pipe open and 'close'
-			// never fires (the POSIX twin of the Windows taskkill /T branch).
+			// never fires (the POSIX twin of the Windows descendant-cleanup path).
 			const session = new PipeFallbackSession({
 				command: "sh",
 				args: ["-c", "sleep 300 & echo READY; wait"],
@@ -260,6 +260,86 @@ describe("PipeFallbackSession terminal detachment", () => {
 });
 
 describe("PipeFallbackSession Windows process-tree cleanup", () => {
+	// Review of #7315: the root is identified by the creation time recorded while its handle was open, and signalled only
+	// through that handle; verified descendants are still ended by explicit PID after the root exits; a stranger that
+	// reused the root's PID, and its children, are never signalled.
+	const OURS = [
+		"100 9 200 root.exe",
+		"101 100 210 child.exe",
+		"102 100 50 older.exe",
+		"103 102 220 unrelated.exe",
+		"104 101 230 grandchild.exe",
+	];
+	const REUSED = [
+		"100 9 300 stranger.exe",
+		"105 100 310 stranger-child.exe",
+		"101 100 210 child.exe",
+		"104 101 230 grandchild.exe",
+	];
+	it.each([
+		[
+			"root alive and listed",
+			{ alive: true, rows: OURS, identity: "200" },
+			[
+				["/F", "/PID", "101", "/PID", "104"],
+				["owned handle", "SIGTERM"],
+			],
+		],
+		[
+			"root exited, descendants still running",
+			{ alive: false, rows: OURS.slice(1), identity: "200" },
+			[["/F", "/PID", "101", "/PID", "104"]],
+		],
+		[
+			"root exited and its PID reused",
+			{ alive: false, rows: REUSED, identity: "200" },
+			[["/F", "/PID", "101", "/PID", "104"]],
+		],
+		["listing unavailable", { alive: true, rows: null, identity: "200" }, [["owned handle", "SIGTERM"]]],
+		["root identity never recorded", { alive: true, rows: OURS, identity: null }, [["owned handle", "SIGTERM"]]],
+	])("signals only verified processes when %s (#4053)", (_name, setup, expected) => {
+		const moduleUrl = new URL("../src/process-tree.ts", import.meta.url).href;
+		// Intercept both OS commands before importing production code. No real process is listed or signalled.
+		const script = `
+			import childProcess from "node:child_process";
+			import { EventEmitter } from "node:events";
+			import { syncBuiltinESMExports } from "node:module";
+			const setup = ${JSON.stringify(setup)};
+			childProcess.execFile = (file, args, options, cb) => {
+				if (file !== "powershell.exe") throw new Error("unexpected listing command");
+				if (setup.rows) cb(null, setup.rows.join("\\n"));
+				else cb(new Error("listing unavailable"), "");
+			};
+			childProcess.spawn = (file, args) => {
+				if (file !== "taskkill.exe") throw new Error("unexpected termination command");
+				console.log(JSON.stringify(args));
+				return new EventEmitter();
+			};
+			syncBuiltinESMExports();
+			const { terminateWindowsTree } = await import(${JSON.stringify(moduleUrl)});
+			terminateWindowsTree(
+				{
+					pid: 100, exitCode: setup.alive ? null : 0, signalCode: null,
+					kill: signal => console.log(JSON.stringify(["owned handle", signal])),
+				},
+				100,
+				"SIGTERM",
+				Promise.resolve(setup.identity === null ? undefined : BigInt(setup.identity)),
+			);
+		`;
+		const probe = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+			encoding: "utf8",
+			timeout: 5000,
+		});
+		expect(probe.status, probe.stderr).toBe(0);
+		const requests = probe.stdout
+			.trim()
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
+		expect(requests).toEqual(expected);
+	});
+
 	it("does not crash when taskkill is unavailable during kill", () => {
 		const moduleUrl = new URL("../src/pipe-fallback.ts", import.meta.url).href;
 		const script = `
