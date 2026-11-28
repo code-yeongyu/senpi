@@ -4,6 +4,7 @@ import { annotateShellTrust } from "../../../../../engine-trust/shell-trust.ts";
 import { createSessionLogger, type SessionLogger } from "../../../../session-log.ts";
 import { stallThresholdMs, watchForStall } from "../../../../stall-warning.ts";
 import type { AgentToolUpdateCallback } from "../../../types.ts";
+import { emptyOutputPlaceholder } from "../../../../tools/model-only-text.ts";
 import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import {
@@ -435,12 +436,9 @@ async function runForeground(
 			isError: true,
 		});
 	}
-	return noticedResult(output || "(no output)", [formatted.marker], {
-		details: {
-			status,
-			...(formatted.truncated ? { truncation: formatted.truncation } : {}),
-		},
-	});
+	const details = { status, ...(formatted.truncated ? { truncation: formatted.truncation } : {}) };
+	if (!output) return { content: [emptyOutputPlaceholder()], details };
+	return noticedResult(output, [formatted.marker], { details });
 }
 
 async function runBackground(
