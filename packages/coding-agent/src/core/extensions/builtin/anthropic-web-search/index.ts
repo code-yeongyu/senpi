@@ -214,9 +214,7 @@ function syncUi(ctx: ExtensionContext): void {
 export const ANTHROPIC_WEB_SEARCH_SECTION = `
 ## Web Search
 
-The native web_search tool is available in this session.
-Use web_search when the user asks for current or online information.
-Prefer web_search over guessing when freshness matters.
+Use native web_search for current information. Pass only the query: allowed_domains and blocked_domains are standalone web_search arguments, not native call arguments.
 `;
 
 export default function anthropicWebSearchExtension(pi: ExtensionAPI): void {

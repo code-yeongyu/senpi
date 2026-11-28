@@ -42,6 +42,17 @@ function firstText(result: { content: Array<{ type: string; text?: string }> }):
 }
 
 describe("bash_output peek", () => {
+	it("distinguishes an already-read delta from unread lines that do not match the filter", async () => {
+		const runtime = new FakeRuntime();
+		const tool = createFixture(runtime);
+		runtime.emit("already shown");
+		runtime.readDelta();
+		const read = () => tool.execute("peek", { bash_id: "bash-1", filter: "needle" });
+		expect(firstText(await read())).toContain("no unread output to filter");
+		runtime.emit("something else");
+		expect(firstText(await read())).toContain("no new output lines matched");
+	});
+
 	it("returns status and new output immediately", async () => {
 		const runtime = new FakeRuntime();
 		const tool = createFixture(runtime);

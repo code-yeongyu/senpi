@@ -167,8 +167,8 @@ export default function (pi: ExtensionAPI): void {
 					failed
 						? "Use the standalone web_search tool when current information is needed. Native search failed for this session model."
 						: full
-							? "Use the provider's in-turn server web search when current information is needed."
-							: "web_search = provider server-side search. Use when current info needed; cite returned URLs in final answer."
+							? "Use the provider's in-turn server web search for current information. allowed_domains and blocked_domains are standalone web_search arguments, not native call arguments."
+							: "web_search = provider server-side search. Use for current info; cite returned URLs. Only standalone search accepts allowed_domains or blocked_domains as call arguments."
 				}`,
 			};
 		},
