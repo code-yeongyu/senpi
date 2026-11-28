@@ -221,9 +221,15 @@ describe("Claude SDK OAuth query options", () => {
 	// One compaction owner per session: senpi owns by default, so native auto-compact is pinned off
 	// (overriding the user's global Claude Code preference) and back on only for the `sdk` opt-out.
 	it("pins native auto-compaction off by default and on for the sdk compaction owner", () => {
-		expect(optionsFor({}).settings).toEqual({ autoCompactEnabled: false });
-		expect(optionsFor({ compactionOwner: "senpi" }).settings).toEqual({ autoCompactEnabled: false });
-		expect(optionsFor({ compactionOwner: "sdk" }).settings).toEqual({ autoCompactEnabled: true });
+		expect(optionsFor({}).settings).toEqual({ autoCompactEnabled: false, disableClaudeAiConnectors: true });
+		expect(optionsFor({ compactionOwner: "senpi" }).settings).toEqual({
+			autoCompactEnabled: false,
+			disableClaudeAiConnectors: true,
+		});
+		expect(optionsFor({ compactionOwner: "sdk" }).settings).toEqual({
+			autoCompactEnabled: true,
+			disableClaudeAiConnectors: true,
+		});
 	});
 
 	// Claude Code's per-turn token reminder rewrites the prompt each turn and defeats prompt-cache reuse.

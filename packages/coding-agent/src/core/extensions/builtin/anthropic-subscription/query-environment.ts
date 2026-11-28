@@ -1,7 +1,29 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { CLAUDE_SDK_OAUTH_API_ID } from "./api-id.ts";
 import { claudeCodeMaxContextTokens, plannedContextWindow } from "./context-window.ts";
+import type { Options } from "./sdk-boundary.ts";
+import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
 
+type ClaudeCodeInlineSettings = Exclude<Options["settings"], string | undefined>;
+
+/**
+ * The inline settings (`--settings`) the lane sends to the Claude Code subprocess; `configFingerprint` hashes them, so
+ * a change restarts the resident process.
+ *
+ * - Compaction owner: native auto-compact is on only when the SDK owns compaction.
+ * - claude.ai connectors: the child runs with `--setting-sources=`, so a user's own Claude Code settings cannot turn
+ *   the account connectors off, and each attach adds their tool schemas to the context (oh-my-openagent#12166).
+ *   The lane disables these connectors unless the user explicitly opts in.
+ */
+export function claudeCodeInlineSettings(
+	providerSettings: Pick<AnthropicSubscriptionProviderSettings, "claudeAiConnectors">,
+	senpiOwnsCompaction: boolean,
+): ClaudeCodeInlineSettings {
+	return {
+		autoCompactEnabled: !senpiOwnsCompaction,
+		...(providerSettings.claudeAiConnectors === true ? {} : { disableClaudeAiConnectors: true }),
+	};
+}
 const MCP_DESCRIPTION_LENGTH_VARIABLE = "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH";
 /** Claude Code's own ceiling for a tool loaded through its tool search; its default prompt cap is 4096. */
 const MCP_DESCRIPTION_LENGTH = "16384";

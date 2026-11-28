@@ -111,7 +111,11 @@ describe("claude-sdk-oauth request environment", () => {
 
 				expect(captured).toHaveLength(1);
 				expect(captured[0]?.cwd).toBe(cwd);
-				expect(captured[0]?.settings).toEqual({ autoCompactEnabled: true, autoMemoryEnabled: false });
+				expect(captured[0]?.settings).toEqual({
+					autoCompactEnabled: true,
+					autoMemoryEnabled: false,
+					disableClaudeAiConnectors: true,
+				});
 				expect(captured[0]?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
 			} finally {
 				closeSession(residentSessionId, "test_cleanup");
