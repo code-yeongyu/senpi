@@ -10,9 +10,14 @@ import { z } from "zod";
 
 const repo = resolve(import.meta.dir, "..");
 const cli = join(repo, "packages/coding-agent/dist/bundle/cli.js");
-const version = z
-	.object({ version: z.string() })
-	.parse(JSON.parse(readFileSync(join(repo, "packages/coding-agent/package.json"), "utf8"))).version;
+const manifest = z
+	.object({ version: z.string(), exports: z.record(z.string(), z.unknown()) })
+	.parse(JSON.parse(readFileSync(join(repo, "packages/coding-agent/package.json"), "utf8")));
+const version = manifest.version;
+// Subpaths that are programs, not libraries: `./rpc-entry` and `./program-resume-startup` run on import, `./bun-runtime`
+// registers Bun-only modules inside a standalone Bun isolate; `./client` is the unpublished remote client.
+const PROGRAM_SUBPATHS = new Set(["./rpc-entry", "./program-resume-startup", "./bun-runtime", "./client"]);
+const librarySubpaths = Object.keys(manifest.exports).filter((subpath) => !PROGRAM_SUBPATHS.has(subpath));
 // `bin.pi` ships this one file, and whichever runtime installed the package executes it: npm
 // installs run it on Node through its shebang, `bun install -g` runs the same file on Bun.
 const runtimes = ["node", "bun"] as const;
@@ -36,6 +41,40 @@ export default function bundleSmokeExtension(pi: ExtensionAPI): void {
 	pi.registerFlag(flag.value, { description: flag.label, type: "boolean", default: false });
 }
 `;
+
+// An extension importing every library subpath, then loading the running bundle's own entry for it through the runtime's
+// native loader (`createRequire`, so the extension compiler cannot serve its own copy). The running bundle is the
+// launch's runtime snapshot (#2358) when it handed off to one, else the package's own. It reports, per subpath, the
+// exports that differ between the two.
+function subpathIdentityExtension(report: string): string {
+	const imports = librarySubpaths.map((subpath, index) => `import * as m${index} from "@code-yeongyu/senpi${subpath.slice(1)}";`);
+	const pairs = librarySubpaths.map(
+		(subpath, index) => `[${JSON.stringify(subpath)}, m${index}, ${JSON.stringify(subpath === "." ? "index" : subpath.slice(2))}]`,
+	);
+	return `${imports.join("\n")}
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+
+const snapshots = join(process.env.SENPI_CODING_AGENT_DIR, "runtime");
+const running = existsSync(snapshots)
+	? readdirSync(snapshots).map((name) => join(snapshots, name, "dist", "bundle")).filter((dir) => existsSync(dir))
+	: [];
+const bundle = running.length === 1 ? running[0] : ${JSON.stringify(join(repo, "packages/coding-agent/dist/bundle"))};
+const nativeRequire = createRequire(join(bundle, "cli.js"));
+
+export default function subpathIdentityExtension(pi) {
+	const report = {};
+	for (const [subpath, imported, entry] of [${pairs.join(", ")}]) {
+		const own = nativeRequire(join(bundle, entry + ".js"));
+		const names = Object.keys(own);
+		report[subpath] = names.length === 0 ? "no exports" : names.filter((name) => own[name] !== imported[name]);
+	}
+	writeFileSync(${JSON.stringify(report)}, JSON.stringify(report));
+	pi.registerFlag("subpath-identity", { description: "Subpath identity probe", type: "boolean", default: false });
+}
+`;
+}
 
 /** Isolated agent state: no inherited config, no provider request, no user extensions. */
 function createState(): string {
@@ -164,6 +203,32 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 			// Then
 			expect(result.status, result.stderr).toBe(0);
 			expect(result.stdout).toContain("--bundle-smoke");
+		} finally {
+			rmSync(extensionDir, { recursive: true, force: true });
+			rmSync(state, { recursive: true, force: true });
+		}
+	}, SPAWN_BUDGET_MS + 10_000);
+
+	// Package contract of the `exports` map: the bundle emits an entry for every library subpath, and an extension in a
+	// bundled run gets that same module instance, never a second copy with its own module state (senpi S2a).
+	test("hands an extension the bundle's own instance of every library subpath", () => {
+		// Given: an extension outside any install, so only the host can serve the subpaths it imports.
+		const state = createState();
+		const extensionDir = mkdtempSync(join(tmpdir(), "senpi-bundle-subpaths-"));
+		const extension = join(extensionDir, "extension.ts");
+		const report = join(extensionDir, "report.json");
+		writeFileSync(extension, subpathIdentityExtension(report));
+		try {
+			// When
+			const result = spawnSync(runtime, [cli, "--extension", extension, "--help"], {
+				encoding: "utf8", env: hermeticEnv(state), timeout: SPAWN_BUDGET_MS,
+			});
+			// Then
+			expect(result.status, result.stderr).toBe(0);
+			expect(result.stdout, result.stderr).toContain("--subpath-identity");
+			expect(JSON.parse(readFileSync(report, "utf8"))).toEqual(
+				Object.fromEntries(librarySubpaths.map((subpath) => [subpath, []])),
+			);
 		} finally {
 			rmSync(extensionDir, { recursive: true, force: true });
 			rmSync(state, { recursive: true, force: true });

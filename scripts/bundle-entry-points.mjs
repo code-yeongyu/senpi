@@ -1,4 +1,21 @@
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+/**
+ * One entry of the main split build per `exports` subpath of the coding-agent manifest, named for the subpath (`.` is
+ * `index`) and built from the compiled file its `import` condition names. Sharing one split build gives every subpath
+ * the same module instances as `cli.js`.
+ */
+export function exportEntryPoints({ codingAgentDistDir }) {
+	const codingAgentDir = dirname(codingAgentDistDir);
+	const { exports } = JSON.parse(readFileSync(join(codingAgentDir, "package.json"), "utf8"));
+	return Object.fromEntries(
+		Object.entries(exports).map(([subpath, conditions]) => [
+			subpath === "." ? "index" : subpath.slice(2),
+			join(codingAgentDir, conditions.import),
+		]),
+	);
+}
 
 /**
  * Compiled modules the release bundle reads directly; the build refuses to start while one is missing.
@@ -7,10 +24,8 @@ import { join } from "node:path";
 export function bundleRequiredInputs({ codingAgentDistDir, aiDistDir }) {
 	return [
 		join(codingAgentDistDir, "cli.js"),
-		join(codingAgentDistDir, "index.js"),
-		join(codingAgentDistDir, "rpc-entry.js"),
+		...Object.values(exportEntryPoints({ codingAgentDistDir })),
 		join(codingAgentDistDir, "modes", "rpc", "host-supervisor-entry.js"),
-		join(codingAgentDistDir, "client", "index.js"),
 		join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 		join(codingAgentDistDir, "core", "extensions", "builtin", "permission-system", "path-identity-worker.js"),
 		join(aiDistDir, "api", "bedrock-converse-stream.js"),
