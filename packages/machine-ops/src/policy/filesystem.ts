@@ -17,14 +17,32 @@ export interface FilesystemPolicyRequest {
 /** A filesystem policy must explicitly allow or deny each request. */
 export type FilesystemPolicyDecision = { allow: true } | { allow: false; reason: string };
 
+/** True leaves the walked entry at `canonicalPath` out of a `find`, `ls` or `grep` result. */
+export type FilesystemEntryExclusion = (canonicalPath: string, toolName: string) => boolean;
+
 /** One registered filesystem access policy. `deniedRoots` is metadata; callers enforce `check`. */
 export interface FilesystemPolicy {
 	check(request: Readonly<FilesystemPolicyRequest>): FilesystemPolicyDecision | Promise<FilesystemPolicyDecision>;
+	/**
+	 * Asked for every entry a walk below an allowed root would return, before anything is counted from it, so the
+	 * result reads as if the entry did not exist. Synchronous because a walk asks it per entry.
+	 */
+	excludesEntry?: FilesystemEntryExclusion;
+	/**
+	 * Whether `excludesEntry` could exclude anything below `canonicalRoot`. A walk it answers false for skips the
+	 * per-entry filter and the work that filter needs; absent, or throwing, counts as true.
+	 */
+	prunesBelow?: (canonicalRoot: string, toolName: string) => boolean;
 	deniedRoots?: readonly string[];
 }
 
-/** Composed deny-wins checker. */
-export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest>) => Promise<FilesystemPolicyDecision>;
+/** Composed deny-wins checker; `entryExclusionBelow` is present when any policy prunes walked entries. */
+export type FilesystemPolicyChecker = ((
+	request: Readonly<FilesystemPolicyRequest>,
+) => Promise<FilesystemPolicyDecision>) & {
+	/** The entry filter for a walk below `canonicalRoot`, or undefined when no policy prunes anything there. */
+	readonly entryExclusionBelow?: (canonicalRoot: string, toolName: string) => FilesystemEntryExclusion | undefined;
+};
 
 const ALLOW: FilesystemPolicyDecision = { allow: true };
 
@@ -101,11 +119,31 @@ async function canonicalizeUnderAutomount(absolutePath: string): Promise<string>
 export function composeFilesystemPolicies(policies: readonly FilesystemPolicy[]): FilesystemPolicyChecker | undefined {
 	if (policies.length === 0) return undefined;
 
-	return async (request) => {
+	const check = async (request: Readonly<FilesystemPolicyRequest>): Promise<FilesystemPolicyDecision> => {
 		for (const policy of policies) {
 			const decision = await policy.check(request);
 			if (!decision.allow) return decision;
 		}
 		return ALLOW;
 	};
+	const pruning = policies.filter((policy) => policy.excludesEntry !== undefined);
+	if (pruning.length === 0) return check;
+	// A policy that throws prunes and excludes: an answer that failed has not cleared the walk or the entry.
+	const entryExclusionBelow = (canonicalRoot: string, toolName: string): FilesystemEntryExclusion | undefined => {
+		const active = pruning.filter((policy) =>
+			answersTrue(() => policy.prunesBelow?.(canonicalRoot, toolName) ?? true),
+		);
+		if (active.length === 0) return undefined;
+		return (canonicalPath, entryTool) =>
+			active.some((policy) => answersTrue(() => policy.excludesEntry?.(canonicalPath, entryTool) ?? false));
+	};
+	return Object.assign(check, { entryExclusionBelow });
+}
+
+function answersTrue(ask: () => boolean): boolean {
+	try {
+		return ask();
+	} catch {
+		return true;
+	}
 }

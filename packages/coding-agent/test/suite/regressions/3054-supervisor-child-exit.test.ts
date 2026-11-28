@@ -222,26 +222,44 @@ function signalsSince(r: RigHandle, index: number): unknown[] {
 		.map((message) => message.signal);
 }
 
-async function stderrIncludes(r: RigHandle, text: string): Promise<void> {
-	if (r.stderr().includes(text)) return;
+/** Resolves with the first of `texts` the supervisor has logged; the bound only reports a line that never comes. */
+async function stderrIncludes(r: RigHandle, ...texts: readonly [string, ...string[]]): Promise<string> {
+	const logged = () => texts.find((text) => r.stderr().includes(text));
+	const already = logged();
+	if (already !== undefined) return already;
 	const stream = r.child.stderr;
 	if (!stream) throw new Error("supervisor stderr unavailable");
-	await new Promise<void>((resolve, reject) => {
+	return new Promise<string>((resolve, reject) => {
 		const timer = setTimeout(
-			() => finish(new Error(`supervisor never logged ${JSON.stringify(text)}: ${r.stderr()}`)),
+			() => finish(new Error(`supervisor never logged any of ${JSON.stringify(texts)}: ${r.stderr()}`)),
 			20_000,
 		);
 		const onData = () => {
-			if (r.stderr().includes(text)) finish();
+			const text = logged();
+			if (text !== undefined) finish(undefined, text);
 		};
-		const finish = (error?: Error) => {
+		const finish = (error?: Error, text?: string) => {
 			clearTimeout(timer);
 			stream.off("data", onData);
 			if (error) reject(error);
-			else resolve();
+			else if (text !== undefined) resolve(text);
 		};
 		stream.on("data", onData);
 	});
+}
+
+const GONE_UNOBSERVED = "its exit was not observed; confirming";
+const STILL_RUNNING_AT_EOF = "closed its lifetime pipe but is still running";
+
+/**
+ * senpi#7606: the first `gone` observation of a drained host whose exit is held. The lifetime EOF prompts a check, but
+ * a dying process closes its descriptors before it is a zombie, so that check may still see the child running. Then
+ * the next periodic re-check (held by the fixture until expired) is the first to see it gone.
+ */
+async function firstGoneObservation(r: RigHandle): Promise<void> {
+	if ((await stderrIncludes(r, GONE_UNOBSERVED, STILL_RUNNING_AT_EOF)) === GONE_UNOBSERVED) return;
+	await expireLivenessRecheck(r);
+	await stderrIncludes(r, GONE_UNOBSERVED);
 }
 
 afterEach(async () => {
@@ -469,9 +487,9 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 		const before = r.messages.length;
 		r.child.kill("SIGUSR1");
 		await r.wait("exit-held", before);
-		// The lifetime EOF's own check is the first observation. Off Linux it waits on `ps`, so the confirming re-check is
-		// fired only once that first one has seen the child gone.
-		await stderrIncludes(r, "its exit was not observed; confirming");
+		// The first observation that sees the child gone; off Linux it waits on `ps`, so the confirming re-check is fired
+		// only once that first one has seen the child gone.
+		await firstGoneObservation(r);
 		await expireLivenessRecheck(r);
 
 		expect(await r.exited, r.stderr()).toEqual([1, null]);
@@ -483,6 +501,22 @@ describe.skipIf(process.platform !== "darwin" && process.platform !== "linux")("
 		await expect(access(r.paths.pointerFile)).rejects.toMatchObject({ code: "ENOENT" });
 		await expect(prepareSocketPath(r.qa.socket)).resolves.toBeUndefined();
 		await expect(access(r.qa.socket)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	// senpi#7606: a dying host closes its lifetime pipe before it is a zombie, so the EOF check can still see it running.
+	// This host makes that order certain; the case must reach the same verdict through the periodic re-check.
+	it("gives up the public socket when its draining host closed its lifetime pipe before it was gone", async () => {
+		const r = await rig("early-close-gate-exit");
+		const before = r.messages.length;
+		r.child.kill("SIGUSR1");
+		await r.wait("exit-held", before);
+		await firstGoneObservation(r);
+		await expireLivenessRecheck(r);
+
+		expect(await r.exited, r.stderr()).toEqual([1, null]);
+		expect(signalsSince(r, before)).toEqual([]);
+		expect(r.stderr()).toContain(STILL_RUNNING_AT_EOF);
+		expect(r.stderr()).toContain("its exit was never observed");
 	});
 
 	// senpi#7525 review: a stop must prove the pid is still its own live child before signalling it.

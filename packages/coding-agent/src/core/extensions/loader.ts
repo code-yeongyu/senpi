@@ -25,7 +25,6 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime,
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @code-yeongyu/senpi.
 import * as _bundledPiCodingAgent from "../../index.ts";
-import * as _bundledSessionWorkerData from "../../modes/rpc/session-worker-data.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
@@ -44,6 +43,7 @@ import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-model
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import { type RpcRemoteSource, registerRpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import { McpServerRegistry } from "./mcp-server-registry.ts";
+import { SENPI_SUBPATH_MODULES } from "./senpi-subpath-modules.ts";
 import { readPermissionPreset } from "./builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
@@ -77,6 +77,7 @@ import type {
 	ExtensionSide,
 	ExtensionVirtualModel,
 	FilesystemPolicy,
+	FilesystemPolicyRegistration,
 	LazyToolActivator,
 	LoadExtensionsResult,
 	ProviderHookOptions,
@@ -169,7 +170,7 @@ const VIRTUAL_MODULES: Record<string, Record<string, unknown>> = {
 	"@mariozechner/pi-ai/providers/all": _bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 	"@code-yeongyu/senpi": _bundledPiCodingAgent,
-	"@code-yeongyu/senpi/session-worker-data": _bundledSessionWorkerData,
+	...SENPI_SUBPATH_MODULES,
 };
 
 const require = createRequire(import.meta.url);
@@ -618,11 +619,18 @@ function createExtensionAPI(
 			extension.childModules = modules;
 		},
 
-		registerFilesystemPolicy(policy: FilesystemPolicy): void {
+		registerFilesystemPolicy(policy: FilesystemPolicy): FilesystemPolicyRegistration {
 			runtime.assertActive();
+			// Recording it would report a policy no tool consults (omo#15251): refuse loudly instead.
+			if (runtime.filesystemPoliciesComposed) {
+				const reason = `Extension "${extension.path}" registered a filesystem policy after the session's tools composed their policies, so it would never apply; register it while the extension loads.`;
+				console.warn(`[extensions] ${reason}`);
+				return { applied: false, reason };
+			}
 			const policies = extension.filesystemPolicies ?? [];
 			policies.push(policy);
 			extension.filesystemPolicies = policies;
+			return { applied: true, entryPruning: true };
 		},
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {

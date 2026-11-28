@@ -53,6 +53,7 @@ export async function enumerateCandidates({
 	run,
 	check,
 	result,
+	excludes,
 	budget = argvBudget(),
 }: {
 	roots: Root[];
@@ -61,6 +62,8 @@ export async function enumerateCandidates({
 	run: RgRun;
 	check: () => void;
 	result: GrepEngineResult;
+	/** A file it excludes is dropped here, before ordinals, binary counts and the search see it (omo#12466). */
+	excludes?: ((canonicalPath: string) => boolean) | undefined;
 	budget?: number | undefined;
 }): Promise<Candidate[]> {
 	const candidates = new Map<string, Omit<Candidate, "ordinal" | "binary">>();
@@ -80,6 +83,7 @@ export async function enumerateCandidates({
 					throw new GrepEngineError("ENGINE_UNAVAILABLE", `${root.path}: No such file or directory`);
 				throw error;
 			});
+			if (excludes?.(canonical)) continue;
 			const alias = resolve(root.alias, relative(root.path, absolute));
 			const display = slashPath(relative(cwd, alias)) || basename(alias);
 			const existing = candidates.get(canonical);

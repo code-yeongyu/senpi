@@ -41,7 +41,16 @@ describe("package distribution entrypoints", () => {
 		const excluded = buildConfig.exclude.filter((path) => path.startsWith("src/")).map((path) => `${path}/`);
 		expect(excluded.length).toBeGreaterThan(0);
 		for (const [name, entry] of Object.entries(packageJson.exports)) {
-			const module = /^\.\/dist\/(.+)\.js$/.exec(entry.import ?? "")?.[1];
+			// A data export names a JSON file the bundle build writes into `dist/bundle/` (`./runtime-manifest.json`);
+			// scripts/build-coding-agent-bundle.test.mjs checks that the built bundle carries it.
+			if (entry.import === undefined) {
+				expect({ name, target: entry.default }).toEqual({
+					name,
+					target: expect.stringMatching(/^\.\/dist\/bundle\/[^/]+\.json$/),
+				});
+				continue;
+			}
+			const module = /^\.\/dist\/(.+)\.js$/.exec(entry.import)?.[1];
 			expect({ name, built: module !== undefined }).toEqual({ name, built: true });
 			const source = `src/${module}.ts`;
 			expect({ name, source, exists: existsSync(new URL(`../${source}`, import.meta.url)) }).toEqual({

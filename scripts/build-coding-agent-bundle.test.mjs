@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -82,6 +82,28 @@ describe("build-coding-agent-bundle", () => {
 		} finally {
 			rmSync(scratch, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("built bundle exports", () => {
+	// Package contract of the `exports` map: every subpath resolves to a file the built bundle carries, either its own
+	// entry (named for the subpath, `.` as index.js) or, for a data export, the file it names inside dist/bundle.
+	it("emits an entry or the named file for every exports subpath", () => {
+		// Given: the built bundle and the manifest that ships it.
+		const codingAgentDir = join(repoRoot, "packages", "coding-agent");
+		const { exports } = JSON.parse(readFileSync(join(codingAgentDir, "package.json"), "utf8"));
+
+		// When
+		const missing = Object.entries(exports)
+			.map(([subpath, conditions]) =>
+				conditions.import === undefined
+					? conditions.default
+					: `./dist/bundle/${subpath === "." ? "index" : subpath.slice(2)}.js`,
+			)
+			.filter((target) => !existsSync(join(codingAgentDir, target)));
+
+		// Then
+		assert.deepEqual(missing, []);
 	});
 });
 

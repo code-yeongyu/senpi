@@ -60,6 +60,8 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 	const filesystemPolicy = composeFilesystemPolicies(
 		extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
 	);
+	// A policy registered from here on would never reach the tools built below: the loader refuses it (omo#15251).
+	extensionsResult.runtime.filesystemPoliciesComposed = true;
 	const shellPath = settingsManager.getShellPath();
 	// A runtime without a session has no model and no session state for the built-in tools to read (senpi#5413).
 	const sessionless = options.sessionManager === undefined;

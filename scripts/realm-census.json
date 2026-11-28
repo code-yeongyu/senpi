@@ -6378,6 +6378,10 @@
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
 		},
+		"packages/coding-agent/src/core/extensions/senpi-subpath-modules.ts#SENPI_SUBPATH_MODULES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/virtual-modules.ts#VIRTUAL_MODULES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

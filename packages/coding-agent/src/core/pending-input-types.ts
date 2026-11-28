@@ -46,6 +46,7 @@ export interface SupersededVersion {
 export interface PendingInputFailure {
 	readonly delivery: DeliveryCertainty;
 	readonly reason: string;
+	readonly code?: "account_usage_limit";
 	/** The reservation that failed, kept so later evidence must name the attempt it is about. */
 	readonly attempt?: DeliveryToken;
 }
@@ -99,7 +100,7 @@ export interface MutationTarget {
 
 export type PendingInputEvent =
 	| SubmitEvent
-	| { readonly type: "reject_before_dispatch"; readonly reason: string }
+	| { readonly type: "reject_before_dispatch"; readonly reason: string; readonly code?: PendingInputFailure["code"] }
 	| ({ readonly type: "edit"; readonly text: string; readonly attachments: readonly string[] } & MutationTarget)
 	| ({ readonly type: "remove" } & MutationTarget)
 	| { readonly type: "retry"; readonly effectId: string; readonly handle: PendingInputHandle }

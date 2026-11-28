@@ -541,14 +541,35 @@ export type FilesystemPolicyDecision = { allow: true } | { allow: false; reason:
  *
  * `deniedRoots` is metadata for future inherited process sandbox support. The
  * built-in file tools enforce `check`; they do not interpret the metadata.
+ *
+ * `excludesEntry` prunes a walk below a root `check` allowed: `find`, `ls` and `grep` ask it for every entry they
+ * would return (its canonical path), before counting anything from it, and leave out the entries it excludes. It
+ * is synchronous, and one that throws excludes the entry. `prunesBelow` tells a walk whether anything below its
+ * root could be excluded, so a walk that cannot meet a pruned entry pays nothing for the filter; absent or throwing
+ * counts as true.
  */
 export interface FilesystemPolicy {
 	check(request: Readonly<FilesystemPolicyRequest>): FilesystemPolicyDecision | Promise<FilesystemPolicyDecision>;
+	excludesEntry?: (canonicalPath: string, toolName: string) => boolean;
+	prunesBelow?: (canonicalRoot: string, toolName: string) => boolean;
 	deniedRoots?: readonly string[];
 }
 
+/** What `registerFilesystemPolicy` answers: whether the built-in tools will consult the policy. */
+export type FilesystemPolicyRegistration =
+	| { readonly applied: true; readonly entryPruning: true }
+	| { readonly applied: false; readonly reason: string };
+
 /** Composed deny-wins checker used by built-in tool executors. */
-export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest>) => Promise<FilesystemPolicyDecision>;
+export type FilesystemPolicyChecker = ((
+	request: Readonly<FilesystemPolicyRequest>,
+) => Promise<FilesystemPolicyDecision>) & {
+	/** The entry filter for a walk below `canonicalRoot`, or undefined when no policy prunes anything there. */
+	readonly entryExclusionBelow?: (
+		canonicalRoot: string,
+		toolName: string,
+	) => ((canonicalPath: string, toolName: string) => boolean) | undefined;
+};
 
 /**
  * Context passed to extension event handlers.
@@ -3043,9 +3064,12 @@ export interface ExtensionAPI {
 
 	/**
 	 * Register a deny-wins filesystem policy for Senpi's built-in read, write,
-	 * edit, ls, find, and grep tools. Factory-time only.
+	 * edit, ls, find, and grep tools. Factory-time only: the tools compose the
+	 * policies when the session's runtime is built, so a policy registered later
+	 * is refused (`applied: false`, with a warning) instead of silently ignored.
+	 * `entryPruning: true` says this host applies `excludesEntry`.
 	 */
-	registerFilesystemPolicy(policy: FilesystemPolicy): void;
+	registerFilesystemPolicy(policy: FilesystemPolicy): FilesystemPolicyRegistration;
 
 	/** Registers a file-backed module `ctx.offload(id, ...)` can run (see {@link ChildModuleRegistration}). */
 	registerChildModule(registration: ChildModuleRegistration): void;
@@ -3860,6 +3884,8 @@ export interface ExtensionRuntimeState {
 	isLoopRemote: () => boolean;
 	/** The device the session's tools run on, and the extension that registered it (registerDeviceMachine). */
 	deviceMachine: { readonly machine: ToolMachine; readonly extensionPath: string } | undefined;
+	/** Set once the built-in tools composed this runtime's filesystem policies; a later registration is refused. */
+	filesystemPoliciesComposed?: boolean;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
 	pendingProviderRegistrations: PendingProviderConfigRegistration[];
 	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */

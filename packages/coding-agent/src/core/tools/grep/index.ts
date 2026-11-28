@@ -11,6 +11,7 @@ import { DEFAULT_MAX_BYTES, GREP_MAX_LINE_LENGTH, type TruncationResult } from "
 import type { GrepEngineMatch, GrepEngineRequest, GrepEngineResult } from "./engine.ts";
 import { formatGrepContent } from "./format.ts";
 import { searchPattern } from "./pattern.ts";
+import { createRgEngine } from "./rg-engine.ts";
 import { resolveGrepEngine } from "./select-engine.ts";
 
 const strings = () => Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())]));
@@ -119,6 +120,7 @@ export function createGrepToolDefinition(
 			const workingCwd = ctx?.cwd || cwd;
 			const paths: string[] = [];
 			const missingPaths: string[] = [];
+			let excludesEntry: ((canonicalPath: string, toolName: string) => boolean) | undefined;
 			let lineStart: number | undefined;
 			let lineEnd: number | undefined;
 			let singleFile = false;
@@ -147,6 +149,7 @@ export function createGrepToolDefinition(
 						toolName: "grep",
 					});
 					if (!decision.allow) throw new Error(decision.reason);
+					excludesEntry ??= options.filesystemPolicy.entryExclusionBelow?.(canonicalPath, "grep");
 				}
 				if (!info) {
 					missingPaths.push(path);
@@ -182,7 +185,11 @@ export function createGrepToolDefinition(
 				lineEnd,
 				mode,
 			};
-			let engine = await resolveGrepEngine();
+			// A policy that may prune below these roots needs the engine that walks in JS: rg drops those files before
+			// anything is counted or searched, which the native engine cannot be asked to do (omo#12466).
+			const exclusion = excludesEntry;
+			if (exclusion) request.excludeEntry = (canonicalPath) => exclusion(canonicalPath, "grep");
+			let engine = exclusion ? createRgEngine() : await resolveGrepEngine();
 			let preselection: GrepEngineResult | undefined;
 			let selected: string[] = [];
 			let more = false;

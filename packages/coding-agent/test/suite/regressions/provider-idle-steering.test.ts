@@ -244,7 +244,7 @@ describe("provider idle steering", () => {
 		expect(harness.agent.hasQueuedMessages()).toBe(false);
 	});
 
-	it("keeps late steering parked when a non-deferred retry ends in a provider timeout", async () => {
+	it("starts a turn with late steering when a non-deferred retry ends in a provider timeout (#6868)", async () => {
 		const harness = await createHarness({
 			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
 		});
@@ -258,7 +258,7 @@ describe("provider idle steering", () => {
 				await releaseRetryResponse.promise;
 				return idleTimeoutError();
 			},
-			fauxAssistantMessage("must not run"),
+			fauxAssistantMessage("handled late steering"),
 		]);
 
 		const prompt = harness.session.prompt("original request");
@@ -268,9 +268,13 @@ describe("provider idle steering", () => {
 		await prompt;
 		await harness.session.waitForSettledSessionWork();
 
-		expect(harness.faux.state.callCount).toBe(2);
-		expect(harness.session.getSteeringMessages()).toEqual(["late steering after retry poll"]);
-		expect(harness.agent.hasQueuedMessages()).toBe(true);
+		expect(getRequestUserTexts(harness)).toEqual([
+			["original request"],
+			["original request"],
+			["original request", "late steering after retry poll"],
+		]);
+		expect(harness.session.getSteeringMessages()).toEqual([]);
+		expect(harness.agent.hasQueuedMessages()).toBe(false);
 	});
 
 	it("retains queued steering when the user aborts during retry backoff", async () => {

@@ -21,6 +21,7 @@ export interface GrepEngineRequest {
 	lineStart?: number; // 1-based inclusive; only valid with exactly one file path
 	lineEnd?: number;
 	pcre2?: boolean; // rg-engine only; native rejects with UNSUPPORTED_REGEX when true
+	excludeEntry?: (canonicalPath: string) => boolean; // rg-engine only: true drops a walked file before it is counted or searched
 }
 export interface GrepEngineMatch {
 	path: string;

@@ -24,6 +24,22 @@ export function relativizeFindResultPath(
 	return hadTrailingSeparator && !posixPath.endsWith("/") ? `${posixPath}/` : posixPath;
 }
 
+/**
+ * Up to `limit` entries `kept` accepts. A walk page short of `limit` because entries were left out is asked again
+ * for twice as many, so the page and its limit notice read as if those entries did not exist (omo#12466).
+ */
+async function listKept(
+	list: (limit: number) => Promise<string[]>,
+	limit: number,
+	kept: (entry: string) => boolean,
+): Promise<string[]> {
+	for (let asked = limit; ; asked *= 2) {
+		const listed = await list(asked);
+		const remaining = listed.filter(kept);
+		if (remaining.length >= limit || listed.length < asked) return remaining.slice(0, limit);
+	}
+}
+
 const findSchema = Type.Object({
 	pattern: Type.String({
 		description: "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
@@ -120,10 +136,21 @@ export function createFindToolDefinition(
 						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd || cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						const ops = customOps ?? defaultFindOperations;
+						// Without a policy that prunes entries, one walk of `limit` entries, as before.
+						let list = (walk: (limit: number) => Promise<string[]>) => walk(effectiveLimit);
 						if (filesystemPolicy) {
+							const canonicalSearchPath = await canonicalizeFilesystemPath(searchPath);
+							const excludesEntry = filesystemPolicy.entryExclusionBelow?.(canonicalSearchPath, "find");
+							if (excludesEntry) {
+								const kept = (entry: string) => {
+									const relative = relativizeFindResultPath(entry.replace(/\r$/, "").trim(), searchPath);
+									return !excludesEntry(path.join(canonicalSearchPath, relative.replace(/\/$/, "")), "find");
+								};
+								list = (walk) => listKept(walk, effectiveLimit, kept);
+							}
 							const decision = await filesystemPolicy({
 								operation: "enumerate",
-								canonicalPath: await canonicalizeFilesystemPath(searchPath),
+								canonicalPath: canonicalSearchPath,
 								toolName: "find",
 							});
 							if (!decision.allow) throw new Error(decision.reason);
@@ -143,10 +170,9 @@ export function createFindToolDefinition(
 								settle(() => reject(new Error("Operation aborted")));
 								return;
 							}
-							const results = await ops.glob(pattern, searchPath, {
-								ignore: ["**/node_modules/**", "**/.git/**"],
-								limit: effectiveLimit,
-							});
+							const results = await list(async (pageLimit) =>
+								ops.glob(pattern, searchPath, { ignore: ["**/node_modules/**", "**/.git/**"], limit: pageLimit }),
+							);
 							if (signal?.aborted) {
 								settle(() => reject(new Error("Operation aborted")));
 								return;
@@ -191,15 +217,17 @@ export function createFindToolDefinition(
 						}
 
 						// Default implementation: the shared operation layer's fd search (files.glob).
-						const { entries } = await machine.ops.files.glob(
-							{ pattern, cwd: searchPath, limit: effectiveLimit },
-							machine.context(signal),
-						);
+						const lines = await list(async (pageLimit) => {
+							const { entries } = await machine.ops.files.glob(
+								{ pattern, cwd: searchPath, limit: pageLimit },
+								machine.context(signal),
+							);
+							return entries.map((entry) => entry.path);
+						});
 						if (signal?.aborted) {
 							settle(() => reject(new Error("Operation aborted")));
 							return;
 						}
-						const lines = entries.map((entry) => entry.path);
 						const output = lines.join("\n");
 						if (!output) {
 							settle(() =>
