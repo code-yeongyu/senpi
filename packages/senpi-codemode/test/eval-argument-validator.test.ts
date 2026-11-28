@@ -107,6 +107,29 @@ describe("eval argument validator", () => {
 		});
 	});
 
+	// senpi#6618: a quoting slip such as `"js\""` must not surface the anyOf dump.
+	it("recovers an enabled language from quote and whitespace junk, and treats any other junk as omitted", () => {
+		for (const [language, recovered] of [
+			['js"', "js"],
+			["'py'", "py"],
+			[" `js` \n", "js"],
+		] as const) {
+			expect(validate(tool, { ...run, language })).toEqual({ ...run, language: recovered });
+		}
+		for (const language of ["javascript", 'rb"', '""']) {
+			const lines = validationLines(tool, { ...run, language });
+			expect(lines.map(({ field, keyword }) => ({ field, keyword }))).toEqual([
+				{ field: "language", keyword: "required" },
+			]);
+			expect(validate(tool, { ...run, language, code: "const total = 1 + 1;" })).toEqual({
+				...run,
+				language: "js",
+				code: "const total = 1 + 1;",
+				language_inferred: "code-markers",
+			});
+		}
+	});
+
 	it("keeps list, peek and stop validating without run fields", () => {
 		expect(validate(tool, { action: "list" })).toEqual({ action: "list" });
 		for (const action of ["peek", "stop"]) {

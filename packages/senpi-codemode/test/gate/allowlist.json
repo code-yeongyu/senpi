@@ -7384,6 +7384,13 @@
 			],
 			"reason": "senpi#7381 (#7489): `using` / `await using` blocks, TypeScript cells and scoped cleanup in JS eval cells. New modules in BOTH import scopes (extension and firstKernel): kernels/js/babel-ast.ts imports @babel/parser (to parse a cell so its TypeScript can be erased; not a new dependency: senpi-codemode already depends on it, pinned at 8.0.4 in package.json and bun.lock, and node_modules/@babel/parser is already in both scopes in the baseline through the existing tool/js-cell-parse-message.ts and tool/display-js-ast.ts); kernels/js/erase-types.ts builds on it, kernels/js/typescript-cell.ts on erase-types.ts and the existing ./rewrite-imports.ts; tool/scoped-watches.ts imports only ../bridge/reserved.ts. New modules in the firstKernel scope ONLY (the JS kernel worker): kernels/js/js-source-scan.js imports nothing; binding-patterns.js, declaration-extent.js and last-expression.js import only ./js-source-scan.js; persist-declarations.js imports those siblings and the existing ./worker-shadow-guard.js; worker-scope.js imports the existing ./cell-run-context.js and ./process-tree.js plus node:fs, node:fs/promises, node:os and node:path. No host runtime module enters either scope. The contract rows are the new tests: TypeScript cells (top-level bindings kept for later cells, valid JavaScript never reinterpreted, refusal of TypeScript that generates runtime code with its construct and position, a syntax error when jsCells.typescript is off, error position at the cell's own line and column); last-expression capture with `using` and `await using` (a block holding a using declaration, await using followed by a statement on the same line, bare top-level using disposed at cell end); scope() under Bun closing what a scope opened on success, throw, repeat disposal and a stopped cell; scoped watches a JS cell still holds (stopped when the cell ends without an ok result, left to a cell that settled ok, a watch that would not stop reported); jsCells settings staying strict on an unknown key; and the prompt documenting TypeScript cells and scope() only under jsCells and scope() only on a Bun kernel. Listed in senpi#7535 because #7489 merged without them.",
 			"changes": []
+		},
+		"senpi#6618": {
+			"additions": [
+				"legacyContracts/test/eval-argument-validator.test.ts/eval argument validator recovers an enabled language from quote and whitespace junk, and treats any other junk as omitted"
+			],
+			"reason": "senpi#6618: the eval argument validator now recovers an enabled run language from quote and whitespace junk before inference, and the new contract pins recovery, omission and disabled-language validation. No prompt, schema, helper or invariant cell moves; the baseline is unchanged.",
+			"changes": []
 		}
 	}
 }
