@@ -133,6 +133,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 	it.each([
 		makeGemini3Model("google-generative-ai", "google"),
 		makeGemini3Model("google-generative-ai", "google", "gemini-3.6-flash"),
+		makeGemini3Model("google-generative-ai", "google", "google-gemini-4-hydrogen"),
 		makeGemini3Model("google-vertex", "google-vertex"),
 	])("preserves tool call IDs for $id via $api history", (model) => {
 		const context = makeContext(model, VALID_SIG);
@@ -171,6 +172,17 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		expect(resultParts[0]?.text).toBe("[Tool Result: bash (id: call_1)]\nhi");
 		expect(resultParts[1]?.text).toBe("[Tool Result: bash (id: call_2)]\nfiles");
 		expect(JSON.stringify(contents)).not.toContain("skip_thought_signature_validator");
+	});
+
+	it("replays unsigned tool calls as text for a vendor-prefixed Gemini 4 id on a custom google-generative-ai provider", () => {
+		// A gateway-backed custom provider lists its models as `google-gemini-4-argon`, not `gemini-4-argon`.
+		const model = makeGemini3Model("google-generative-ai", "google", "google-gemini-4-argon");
+		const contents = convertMessages(model, normalizeContext(makeContext(FOREIGN_MODEL)));
+
+		const parts = contents.flatMap((content) => content.parts ?? []);
+		expect(parts.some((part) => part.functionCall !== undefined)).toBe(false);
+		expect(parts.some((part) => part.functionResponse !== undefined)).toBe(false);
+		expect(parts.filter((part) => part.text?.startsWith("[Tool Call: bash (id: call_"))).toHaveLength(2);
 	});
 
 	it("replays same-model unsigned tool calls as text too", () => {
@@ -484,7 +496,12 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 describe("requiresToolCallId", () => {
 	it.each([
 		[false, "gemini-2.5-flash"],
+		[false, "google-gemini-2.5-flash"],
 		[true, "gemini-3.6-flash"],
+		[true, "google-gemini-4-hydrogen"],
+		[true, "google-gemini-3_7-flash"],
+		[true, "models/gemini-3-pro-preview"],
+		[false, "gemma-3-27b-it"],
 		[true, "claude-sonnet-4-5"],
 		[true, "gpt-oss-120b"],
 	] as const)("returns %s for %s", (expected, modelId) => {

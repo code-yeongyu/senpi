@@ -190,8 +190,10 @@ function requiresThoughtSignatureReplay(modelId: string): boolean {
 	return geminiMajorVersion !== undefined && geminiMajorVersion >= 3;
 }
 
+// `gemini` may follow a vendor prefix or path segment (`google-gemini-4-hydrogen`, `models/gemini-3-pro`):
+// custom providers that front Gemini through a Google-API-compatible gateway list their models that way.
 function getGeminiMajorVersion(modelId: string): number | undefined {
-	const match = modelId.toLowerCase().match(/^gemini(?:-live)?-(\d+)/);
+	const match = modelId.toLowerCase().match(/(?:^|[^a-z0-9])gemini(?:-live)?-(\d+)/);
 	if (!match) return undefined;
 	return Number.parseInt(match[1], 10);
 }
