@@ -3823,6 +3823,94 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/availability.ts#acpSupportedByExecutable": {
+			"class": "per-copy-safe",
+			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/availability.ts#mostRecentDefaultProbeModels": {
+			"class": "per-copy-safe",
+			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/availability.ts#readAgyAuthStatus": {
+			"class": "per-copy-safe",
+			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/bridge-server.ts#server": {
+			"class": "per-copy-safe",
+			"reason": "loopback HTTP bridge server owned by this copy and stopped on session shutdown"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/bridge-server.ts#serverUrl": {
+			"class": "per-copy-safe",
+			"reason": "URL of this copy's loopback HTTP bridge server"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/bridge-server.ts#sessions": {
+			"class": "per-copy-safe",
+			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/bridge-server.ts#sockets": {
+			"class": "per-copy-safe",
+			"reason": "open loopback sockets belonging to this copy's bridge server"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/bridge-server.ts#startPromise": {
+			"class": "per-copy-safe",
+			"reason": "singleflight startup promise for this copy's loopback HTTP bridge server"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/constants.ts#BRIDGE_TOOL_PREFIX": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/models.ts#ANSI_ESCAPE_SEQUENCE": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/models.ts#PREFERENCE_BY_REASONING": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/models.ts#STATIC_AGY_MODELS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/models.ts#activeEntries": {
+			"class": "per-copy-safe",
+			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/session.ts#bindings": {
+			"class": "per-copy-safe",
+			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/session.ts#lastWorkspacePruneAt": {
+			"class": "per-copy-safe",
+			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/session.ts#lastWorkspaceRoot": {
+			"class": "per-copy-safe",
+			"reason": "derived-value cache; a split only recomputes or misses"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/session.ts#reaper": {
+			"class": "per-copy-safe",
+			"reason": "idle timer for this copy's own session map; cleared on session shutdown"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/session.ts#sessions": {
+			"class": "per-copy-safe",
+			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/session.ts#terminating": {
+			"class": "per-copy-safe",
+			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/stream.ts#AGY_TOOLS_WITHOUT_HOST_EFFECT": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/stream.ts#COMPACTION_PASSES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/extensions/builtin/antigravity-acp/workspace.ts#AGENT_DESCRIPTION": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/ask-user/escape-residue.ts#BARE_RUN": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
