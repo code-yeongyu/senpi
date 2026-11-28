@@ -19,6 +19,7 @@ vi.mock("openai", () => {
 					const stream = {
 						async *[Symbol.asyncIterator]() {
 							for (const chunk of chunks) {
+								if (chunk instanceof Error) throw chunk;
 								yield chunk;
 							}
 						},
@@ -150,6 +151,40 @@ describe("openai-completions reasoning_details streaming", () => {
 	beforeEach(() => {
 		mockState.chunkSets = [];
 		mockState.payloads = [];
+	});
+
+	// senpi#3934: serialize each block's replay metadata once, including unfinished blocks on error.
+	it.each(["stop", "error"] as const)("serializes each thinking signature once on %s", async (stopReason) => {
+		const first = { type: "reasoning.text", id: "first", text: "one" };
+		const second = { type: "reasoning.summary", id: "second", summary: "two" };
+		const expected = [JSON.stringify([{ ...first, text: "one!" }]), JSON.stringify([{ ...second, summary: "two!" }])];
+		mockState.chunkSets = [
+			[
+				chunk({ reasoning_details: [first] }),
+				chunk({ reasoning_details: [{ type: "reasoning.text", text: "!" }] }),
+				chunk({ content: "between blocks" }),
+				chunk({ reasoning_details: [second] }),
+				chunk({ reasoning_details: [{ type: "reasoning.summary", summary: "!" }] }),
+				stopReason === "error" ? new Error("fixture stream interrupted") : chunk({}, "stop"),
+			],
+		];
+
+		const stringify = vi.spyOn(JSON, "stringify");
+		try {
+			const message = await runOpenAICompletionsStream();
+			const serializedBlocks = stringify.mock.calls
+				.map(([value]) => (Array.isArray(value) ? value[0]?.id : undefined))
+				.filter((id) => id === first.id || id === second.id);
+			expect(message.stopReason).toBe(stopReason);
+			if (stopReason === "error") expect(message.errorMessage).toContain("fixture stream interrupted");
+			const signatures = message.content
+				.filter((block) => block.type === "thinking")
+				.map((block) => block.thinkingSignature);
+			expect(signatures).toEqual(expected);
+			expect(serializedBlocks).toEqual([first.id, second.id]);
+		} finally {
+			stringify.mockRestore();
+		}
 	});
 
 	it("preserves reasoning_details in the thinking signature", async () => {
