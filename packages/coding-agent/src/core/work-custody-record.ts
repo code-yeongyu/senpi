@@ -47,7 +47,7 @@ export function readWorkCustody(value: unknown): WorkCustodyRecord | undefined {
 			return undefined;
 	}
 	const payload = readPayload(value.payload);
-	return {
+	const record: WorkCustodyRecord = {
 		id: value.id,
 		key: value.key,
 		kind: value.kind,
@@ -62,6 +62,24 @@ export function readWorkCustody(value: unknown): WorkCustodyRecord | undefined {
 		...(typeof value.transcriptEntryId === "string" ? { transcriptEntryId: value.transcriptEntryId } : {}),
 		...(typeof value.noticeId === "string" ? { noticeId: value.noticeId } : {}),
 		...(value.delivery === "failed" || value.delivery === "retired" ? { delivery: value.delivery } : {}),
+	};
+	return custodyIsOpen(record) ? record : closedCustody(record);
+}
+
+/**
+ * What memory keeps of a closed record (senpi#7603). Closed states are terminal and nothing in the process reads a
+ * closed record's payload, items or run, so the registry and the history fold keep only what identifies it and answers
+ * its ticket's admission. The journal is not touched: closing records are written as before, and restore to this.
+ */
+export function closedCustody(record: WorkCustodyRecord): WorkCustodyRecord {
+	const { id, key, kind, state, ticketId, noticeId } = record;
+	return {
+		id,
+		key,
+		kind,
+		state,
+		...(ticketId === undefined ? {} : { ticketId }),
+		...(noticeId === undefined ? {} : { noticeId }),
 	};
 }
 

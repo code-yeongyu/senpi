@@ -2,7 +2,7 @@ import { isLifecycleBookkeeping } from "./lifecycle-bookkeeping.ts";
 import { readLifecycleRecord } from "./lifecycle-record.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
-import { isRecord, readWorkCustody } from "./work-custody-record.ts";
+import { custodyIsOpen, isRecord, readWorkCustody } from "./work-custody-record.ts";
 
 /** Where each folded record sits in a `lifecycleHistory` state, so a newer record replaces it in place. */
 const foldedSlots = new WeakMap<SessionEntry[], Map<string, { index: number; seq: number | undefined }>>();
@@ -10,19 +10,25 @@ const foldedSlots = new WeakMap<SessionEntry[], Map<string, { index: number; seq
 /**
  * The slot a bookkeeping entry folds into, or undefined for an entry that is kept as written. A
  * `session-lifecycle` slot carries its record's `seq`: restoration takes the highest of a session. A
- * `work-custody` slot carries none: restoration takes the last record of a record id.
+ * `work-custody` slot carries none: restoration takes the last record of a record id. A closed custody record is
+ * held as the identity restoration reads of it, not as written (senpi#7603): an older journal repeats the payload
+ * of a delivery in every closing record.
  */
-function foldSlot(entry: SessionEntry): { key: string; seq: number | undefined } | undefined {
+function foldSlot(entry: SessionEntry): { key: string; seq: number | undefined; held: SessionEntry } | undefined {
 	if (entry.type !== "custom") return undefined;
 	if (entry.customType === "session-lifecycle") {
 		const record = readLifecycleRecord(entry.data);
-		return record ? { key: `lifecycle:${record.sessionId}`, seq: record.seq } : undefined;
+		return record ? { key: `lifecycle:${record.sessionId}`, seq: record.seq, held: entry } : undefined;
 	}
 	if (entry.customType === "work-custody") {
 		const record = readWorkCustody(entry.data);
 		if (!record) return undefined;
-		const sessionId = isRecord(entry.data) && typeof entry.data.sessionId === "string" ? entry.data.sessionId : "";
-		return { key: `custody:${sessionId}:${record.id}`, seq: undefined };
+		const sessionId =
+			isRecord(entry.data) && typeof entry.data.sessionId === "string" ? entry.data.sessionId : undefined;
+		const held = custodyIsOpen(record)
+			? entry
+			: { ...entry, data: { ...record, ...(sessionId === undefined ? {} : { sessionId }) } };
+		return { key: `custody:${sessionId ?? ""}:${record.id}`, seq: undefined, held };
 	}
 	return undefined;
 }
@@ -52,9 +58,9 @@ export const lifecycleHistory: HistoryReducer<SessionEntry[]> = {
 		const held = slots.get(slot.key);
 		if (held === undefined) {
 			slots.set(slot.key, { index: entries.length, seq: slot.seq });
-			entries.push(entry);
+			entries.push(slot.held);
 		} else if (slot.seq === undefined || held.seq === undefined || slot.seq > held.seq) {
-			entries[held.index] = entry;
+			entries[held.index] = slot.held;
 			held.seq = slot.seq;
 		}
 		return entries;
