@@ -35,7 +35,7 @@ import {
 import { consumeTmuxFocusEvent, DISABLE_FOCUS_REPORTING, ENABLE_FOCUS_REPORTING } from "./tmux-focus.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 import { planViewportInsertScroll, type ViewportInsertScrollPlan } from "./viewport-insert-scroll.ts";
-import { insertedAboveViewport } from "./viewport-shift.ts";
+import { insertedAboveViewport, movedAboveViewport } from "./viewport-shift.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
@@ -2761,7 +2761,9 @@ export abstract class TuiBase extends Container {
 	 * The held frame of `setScrollbackReplayHold` (#2836): rows above the old viewport stay as the terminal
 	 * shows them (possibly stale), and the frame is rewritten from the old viewport top down, or from where the
 	 * old viewport's rows moved to when rows were inserted above it (senpi#3649), so rows already in the
-	 * scrollback are not written into it again. Rows the document grew by scroll naturally into scrollback in
+	 * scrollback are not written into it again. When the old viewport's rows may have moved up across its top
+	 * (senpi#3669), the rewrite starts that many rows higher, so no row that was on screen is overwritten without
+	 * reaching the scrollback. Rows the document grew by scroll naturally into scrollback in
 	 * their current form, so nothing is lost there and nothing is cleared, and a reader who scrolled up keeps
 	 * their place. Returns false when an image row is involved, so the caller replays as before.
 	 */
@@ -2773,6 +2775,7 @@ export abstract class TuiBase extends Container {
 		height: number,
 		prevViewportTop: number,
 		hardwareCursorRow: number,
+		firstChanged: number,
 	): boolean {
 		const shift = insertedAboveViewport(
 			this.previousLines,
@@ -2780,8 +2783,10 @@ export abstract class TuiBase extends Container {
 			prevViewportTop,
 			height,
 			newLines.length - this.previousLines.length,
+			firstChanged,
 		);
-		const start = Math.min(prevViewportTop + shift, Math.max(0, newLines.length - height));
+		const movedUp = shift > 0 ? 0 : movedAboveViewport(this.previousLines, newLines, prevViewportTop, height);
+		const start = Math.min(prevViewportTop + shift - movedUp, Math.max(0, newLines.length - height));
 		const rowCount = Math.max(height, newLines.length - start);
 		const rows = Array.from({ length: rowCount }, (_, index) => newLines[start + index] ?? "");
 		const previousVisible = this.getViewportRows(this.previousLines, prevViewportTop, height);
@@ -3188,7 +3193,14 @@ export abstract class TuiBase extends Container {
 		const insertScrollPlan =
 			this.overlayStack.length > 0
 				? undefined
-				: planViewportInsertScroll(this.previousLines, newLines, prevViewportTop, height, lineCountDelta);
+				: planViewportInsertScroll(
+						this.previousLines,
+						newLines,
+						prevViewportTop,
+						height,
+						lineCountDelta,
+						firstChanged,
+					);
 
 		// No changes - but still need to update hardware cursor position if it moved
 		if (firstChanged === -1) {
@@ -3293,6 +3305,7 @@ export abstract class TuiBase extends Container {
 							height,
 							prevViewportTop,
 							hardwareCursorRow,
+							firstChanged,
 						)
 					) {
 						// Held: rows above the old viewport stay stale until the catch-up replay.
@@ -3340,6 +3353,7 @@ export abstract class TuiBase extends Container {
 							height,
 							prevViewportTop,
 							hardwareCursorRow,
+							firstChanged,
 						)
 					) {
 						// Held: rows above the old viewport stay stale until the catch-up replay.
@@ -3383,6 +3397,25 @@ export abstract class TuiBase extends Container {
 				this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 				this.previousWidth = width;
 				this.previousHeight = height;
+				return;
+			}
+
+			// Held: a visible-row diff would overwrite rows that moved up across the viewport top (senpi#3669).
+			if (
+				this.#holdScrollbackReplay &&
+				!preserveMuxScrollback &&
+				movedAboveViewport(this.previousLines, newLines, prevViewportTop, height) > 0 &&
+				this.renderHeldRepaint(
+					newLines,
+					rawLines,
+					cursorPos,
+					width,
+					height,
+					prevViewportTop,
+					hardwareCursorRow,
+					firstChanged,
+				)
+			) {
 				return;
 			}
 
