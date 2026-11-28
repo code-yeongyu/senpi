@@ -107,6 +107,25 @@ describe("built bundle exports", () => {
 	});
 });
 
+describe("built bundle runtime manifest", () => {
+	// Embedder contract: `extensionModules` is exactly what the extension loader serves, so a launcher staging an
+	// extension's dependencies (oh-my-openagent's compiled binary) skips those and nothing else.
+	it("lists exactly the specifiers the compiled extension loader serves", async () => {
+		// Given: the built bundle's manifest and the compiled loader it was built from.
+		const codingAgentDir = join(repoRoot, "packages", "coding-agent");
+		const manifest = JSON.parse(readFileSync(join(codingAgentDir, "dist", "bundle", "runtime-manifest.json"), "utf8"));
+		const loader = pathToFileURL(join(codingAgentDir, "dist", "core", "extensions", "loader.js")).href;
+
+		// When
+		const { VIRTUAL_MODULES } = await import(loader);
+
+		// Then: the same set, including the senpi subpaths the loader spreads in.
+		assert.deepEqual([...manifest.extensionModules].sort(), Object.keys(VIRTUAL_MODULES).sort());
+		assert.ok(manifest.extensionModules.includes("@code-yeongyu/senpi"));
+		assert.ok(manifest.extensionModules.includes("@code-yeongyu/senpi/session-worker-data"));
+	});
+});
+
 describe("built bundle zod cores", () => {
 	it("ships no zod core older than 4.6.6 beyond the pinned Claude agent SDK copies", () => {
 		// Given: the built bundle. CI builds it before the script tests (release-graph-codemode, node-bundle-smoke);

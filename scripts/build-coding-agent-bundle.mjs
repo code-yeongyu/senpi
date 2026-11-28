@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { bundleRequiredInputs, exportEntryPoints, lazyEntryPoints } from "./bundle-entry-points.mjs";
 import { fileAttributePlugin } from "./bundle-file-attribute-plugin.mjs";
@@ -162,18 +162,34 @@ export function collectExternalPackages(metafiles) {
 }
 
 /**
+ * The module specifiers the extension loader serves to extensions as the host's own instances: the keys of its
+ * `VIRTUAL_MODULES` table, read from the compiled loader itself so the manifest cannot drift from it.
+ */
+export async function readExtensionModules(distDir = codingAgentDistDir) {
+	const loaderUrl = pathToFileURL(join(distDir, "core", "extensions", "loader.js")).href;
+	const { VIRTUAL_MODULES } = await import(loaderUrl);
+	return Object.keys(VIRTUAL_MODULES).sort();
+}
+
+/**
  * `runtime-manifest.json` names this exact build (a content hash of every emitted file) for the
  * CLI's runtime snapshot (`packages/coding-agent/src/runtime-snapshot/`), which keeps a running
- * session on its own build when a package manager rewrites the install (#2358).
+ * session on its own build when a package manager rewrites the install (#2358). `extensionModules`
+ * lists what the extension loader serves, so an embedder staging an extension's dependencies (oh-my-openagent's
+ * compiled binary) skips exactly those without reading the loader's source.
  */
-function writeRuntimeManifest(metafiles) {
+function writeRuntimeManifest(metafiles, extensionModules) {
 	const hash = createHash("sha256");
 	for (const file of readdirSync(bundleDir, { recursive: true }).map(String).sort()) {
 		const path = join(bundleDir, file);
 		if (!statSync(path).isFile()) continue;
 		hash.update(file.replaceAll("\\", "/")).update("\0").update(readFileSync(path));
 	}
-	const manifest = { buildId: hash.digest("hex").slice(0, 16), externals: collectExternalPackages(metafiles) };
+	const manifest = {
+		buildId: hash.digest("hex").slice(0, 16),
+		externals: collectExternalPackages(metafiles),
+		extensionModules,
+	};
 	writeFileSync(join(bundleDir, "runtime-manifest.json"), `${JSON.stringify(manifest)}\n`);
 }
 
@@ -274,7 +290,7 @@ async function buildBundle() {
 	assertBundleZodCores(bundleDir);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
-	writeRuntimeManifest(metafiles);
+	writeRuntimeManifest(metafiles, await readExtensionModules());
 
 	const files = new Set(metafiles.flatMap((metafile) => Object.keys(metafile.outputs))).size;
 	const mib = outputBytes(metafiles) / (1024 * 1024);

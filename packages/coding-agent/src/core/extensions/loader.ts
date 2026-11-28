@@ -144,8 +144,11 @@ function declaredProviders(extension: Extension, providers: unknown, registratio
 	);
 }
 
-/** Modules available to extensions via virtualModules (for compiled binaries) */
-const VIRTUAL_MODULES: Record<string, Record<string, unknown>> = {
+/**
+ * Modules available to extensions via virtualModules (for compiled binaries). The bundle build publishes its keys as
+ * `extensionModules` in `dist/bundle/runtime-manifest.json`, for embedders that stage an extension's dependencies.
+ */
+export const VIRTUAL_MODULES: Record<string, Record<string, unknown>> = {
 	typebox: _bundledTypebox,
 	"typebox/compile": _bundledTypeboxCompile,
 	"typebox/value": _bundledTypeboxValue,
