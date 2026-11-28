@@ -32,10 +32,7 @@ export type AdmitExternalMessageAnswer =
 	| { readonly ok: true; readonly data: RpcAdmitExternalMessageReply }
 	| { readonly ok: false; readonly refusal: ChainRefusal | { readonly message: string; readonly errorCode: string } };
 
-type AdmittingSession = Pick<
-	AgentSession,
-	"externalAdmission" | "sessionManager" | "settingsManager" | "heldPeerDeliveryCount"
->;
+type AdmittingSession = Pick<AgentSession, "externalAdmission" | "sessionManager" | "settingsManager">;
 
 const SENDER_NOT_ALLOWED = "sender_not_allowed";
 const HELD_DELIVERIES_FULL = "held_deliveries_full";
@@ -90,20 +87,6 @@ export function admitExternalMessage(
 	const id = ledgerId(command.deliveryId, origin);
 	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id))
 		return answer("already_admitted", admission.turnEpoch);
-	// Nothing is written past the cap, so the sender keeps the delivery; an id already admitted still answers so (senpi#7588).
-	const admitted = admission.list();
-	if (
-		session.heldPeerDeliveryCount >= MAX_HELD_PEER_DELIVERIES &&
-		!admitted.pending.includes(id) &&
-		!admitted.emitted.includes(id)
-	)
-		return {
-			ok: false,
-			refusal: {
-				message: `${HELD_DELIVERIES_FULL}: the session already holds ${MAX_HELD_PEER_DELIVERIES} peer deliveries while paused; resume it first`,
-				errorCode: HELD_DELIVERIES_FULL,
-			},
-		};
 	const expected = command.expectedTurnId;
 	if (expected !== undefined && !CANONICAL_TURN_ID.test(expected)) return answer("turn_conflict", admission.turnEpoch);
 	const displayText = command.displayText ?? (origin === undefined ? undefined : command.text);
@@ -123,6 +106,16 @@ export function admitExternalMessage(
 			turnMark: deliveryTurnMark(command, peer),
 		},
 	);
+	// Nothing was written past the cap, so the sender keeps the delivery (senpi#7588); the admission decides it for every
+	// entry point (senpi#7628), and the wire answers it as the refusal it has always been.
+	if (result.kind === "held_deliveries_full")
+		return {
+			ok: false,
+			refusal: {
+				message: `${HELD_DELIVERIES_FULL}: the session already holds ${MAX_HELD_PEER_DELIVERIES} peer deliveries while paused; resume it first`,
+				errorCode: HELD_DELIVERIES_FULL,
+			},
+		};
 	return {
 		ok: true,
 		data: {

@@ -96,6 +96,8 @@ export interface AdmitExternalMessageInput {
  *                      hold; `holds` names them): kept as a held notice, it starts once released (senpi#6490). Or
  *                      stopped by the engine-turn cap (`engine_turn_cap` names it): recorded without a turn, it is
  *                      answered by the turn that a person's message or Resume starts (senpi#7138)
+ * - `held_deliveries_full` the session already holds `MAX_HELD_PEER_DELIVERIES` (64) peer deliveries while paused:
+ *                      nothing was written and the delivery stays with its sender; send it again after a resume
  * - `already_admitted` this runtime already holds or already wrote this `delivery_id`
  */
 export type ExternalAdmissionKind =
@@ -105,6 +107,7 @@ export type ExternalAdmissionKind =
 	| "turn_conflict"
 	| "held_draft"
 	| "held"
+	| "held_deliveries_full"
 	| "already_admitted";
 
 export interface ExternalAdmissionResult {

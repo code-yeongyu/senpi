@@ -1670,6 +1670,7 @@ export class AgentSession {
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
 		heldBy: () => this._peerDeliveryHolds(),
 		cappedBy: () => this._peerDeliveryCap(),
+		heldPeerDeliveries: () => this.heldPeerDeliveryCount,
 		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
 		start: (message) =>
 			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
