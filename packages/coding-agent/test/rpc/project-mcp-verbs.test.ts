@@ -52,15 +52,14 @@ describe("project MCP verbs: classes and session", () => {
 
 	it("refuses both verbs for a session the host does not have", async () => {
 		const host = await startFolderHost();
-		const commands: WireRecord[] = [
-			{ type: "get_project_mcp_servers" },
-			{ type: "set_project_mcp_servers", patch: { alpha: SERVER }, ifEtag: null },
+		const commands: [WireRecord, string][] = [
+			[{ type: "get_project_mcp_servers" }, "unknown_session"],
+			[{ type: "set_project_mcp_servers", patch: { alpha: SERVER }, ifEtag: null }, "session_not_attached"],
 		];
-		for (const command of commands) {
-			expect(await host.send({ ...command, sessionId: "no-such-session" })).toMatchObject({
-				success: false,
-				error: "unknown_session",
-			});
+		for (const [command, error] of commands) {
+			// The read is on the gate's reviewed exempt list, so its handler answers for the missing session; the write is
+			// gated, and an unattached connection gets the gate's one refusal whether the session exists or not (senpi#6245).
+			expect(await host.send({ ...command, sessionId: "no-such-session" })).toMatchObject({ success: false, error });
 		}
 		expect(existsSync(join(host.cwd, MCP_PATH))).toBe(false);
 	});

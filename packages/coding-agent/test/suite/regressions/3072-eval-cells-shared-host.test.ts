@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
 import { opened } from "../rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
@@ -9,6 +9,7 @@ import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 const directories: string[] = [];
 afterEach(async () => {
+	vi.unstubAllEnvs();
 	await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 async function directory() {
@@ -52,6 +53,9 @@ it.each(commands)("delivers $type through the shared host while foreign-held", a
 it.each(commands)("classifies $type activity through the shared host's idle sweep", async (command) => {
 	const dir = await directory();
 	let now = 0;
+	// An unattached command reaches a session only under the dated migration opt-out (senpi#6245); that is the window
+	// in which its activity class still decides eviction, so this case runs there. Attached commands always refresh.
+	vi.stubEnv("SENPI_RPC_ALLOW_UNATTACHED", "1");
 	const delivered: string[] = [];
 	await using rig = createInProcessRig(dir, { now: () => now, idleEvictionMs: 1_000 }, async (value) => {
 		delivered.push(value.type);

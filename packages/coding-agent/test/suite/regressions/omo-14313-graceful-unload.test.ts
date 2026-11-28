@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
 import { type DelegatedHost, startHost } from "../rpc-delegated-host-support.ts";
-import { DEVICE, FrameLog, open, remotePeer } from "../rpc-delegated-permission-support.ts";
+import { DEVICE, FrameLog, open, operatorOn, remotePeer } from "../rpc-delegated-permission-support.ts";
 
 // oh-my-openagent#14313: `unload_session { graceful: true }` closes a busy session without interrupting it. New
 // deliveries are refused `session_closing` at once, queued ones are handed back unread, the running turn ends on its
@@ -58,7 +58,8 @@ async function busySession(extension: ExtensionFactory) {
 			);
 		return false;
 	}).catch(() => {});
-	const { sessionId } = await open(remote);
+	const opened = await open(remote);
+	const { sessionId } = opened;
 	const deliver = (deliveryId: string) =>
 		remote.send({ type: "admit_external_message", sessionId, deliveryId, text: deliveryId, deliverAs: "followUp" });
 	host.faux.setResponses([
@@ -66,7 +67,7 @@ async function busySession(extension: ExtensionFactory) {
 		fauxAssistantMessage("first turn done"),
 		fauxAssistantMessage("reopened turn done"),
 	]);
-	return { host, log, sessionId, deliver, local: await host.proven() };
+	return { host, log, sessionId, deliver, local: await operatorOn(host, opened) };
 }
 
 const id = (deliveryId: string) => `device:${DEVICE.deviceId}/${deliveryId}`;

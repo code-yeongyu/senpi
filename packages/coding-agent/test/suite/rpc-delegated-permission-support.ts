@@ -68,6 +68,24 @@ export async function open(
 	return { sessionId: data.sessionId, durableSessionId: data.state.sessionId };
 }
 
+/**
+ * A local operator connection attached to `session`, as `senpi host session` is before it acts: the host refuses a
+ * session command from a connection that holds no attachment to it (senpi#6245). A plain attach shares the session.
+ */
+export async function operatorOn(
+	host: DelegatedHost,
+	session: { readonly sessionId: string; readonly durableSessionId: string },
+): Promise<Peer> {
+	const local = await host.proven();
+	const attached = await local.send({
+		type: "attach_session",
+		sessionId: session.sessionId,
+		durableSessionId: session.durableSessionId,
+	});
+	if (attached.success !== true) throw new Error(`attach_session refused: ${JSON.stringify(attached)}`);
+	return local;
+}
+
 /** Every frame `peer` receives from now on, with a bounded wait for the next one matching a predicate. */
 export class FrameLog {
 	readonly frames: WireRecord[] = [];

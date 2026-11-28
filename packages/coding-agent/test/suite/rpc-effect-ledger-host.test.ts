@@ -163,6 +163,13 @@ describe("RPC effect ledger on a real host", () => {
 
 		// When: client B aborts it and client C reads the receipt afterwards.
 		const aborter = await host.connect();
+		// Client B holds the session too (senpi#6245: a session command comes from an attached client).
+		const durableSessionId = String(
+			(await owner.request({ type: "get_state", sessionId: opened.sessionId })).data?.sessionId,
+		);
+		expect(
+			await aborter.request({ type: "attach_session", sessionId: opened.sessionId, durableSessionId }),
+		).toMatchObject({ success: true });
 		const abortReceipt = await aborter.request({
 			type: "abort",
 			sessionId: opened.sessionId,

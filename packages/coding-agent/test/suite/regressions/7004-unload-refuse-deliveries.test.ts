@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
 import { type DelegatedHost, startHost } from "../rpc-delegated-host-support.ts";
-import { DEVICE, FrameLog, open, remotePeer } from "../rpc-delegated-permission-support.ts";
+import { DEVICE, FrameLog, open, operatorOn, remotePeer } from "../rpc-delegated-permission-support.ts";
 
 // senpi#7004 (oh-my-openagent#14234): a close must never drop a busy session's unread deliveries unless the caller
 // allows it. `unload_session { deliveries: "refuse" }` refuses a busy session that holds admitted deliveries not yet
@@ -30,10 +30,11 @@ async function remoteSession(extension: ExtensionFactory) {
 			);
 		return false;
 	}).catch(() => {});
-	const { sessionId } = await open(remote);
+	const opened = await open(remote);
+	const { sessionId } = opened;
 	const deliver = (deliveryId: string) =>
 		remote.send({ type: "admit_external_message", sessionId, deliveryId, text: "probe", deliverAs: "followUp" });
-	return { host, log, sessionId, deliver, local: await host.proven() };
+	return { host, log, sessionId, deliver, local: await operatorOn(host, opened) };
 }
 
 const id = (deliveryId: string) => `device:${DEVICE.deviceId}/${deliveryId}`;

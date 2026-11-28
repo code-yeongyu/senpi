@@ -206,6 +206,10 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 			answerWaiters.delete(id);
 			return answer;
 		},
+		/** The seeding driver lets go of `sessionId`, so the clients a test attaches are its only holders. */
+		async letGo(sessionId: string): Promise<WireRecord> {
+			return send({ type: "release_attachment", id: `driver-release-${++serial}`, sessionId });
+		},
 		release(sessionId: string, fields: { interrupt?: boolean } = {}): Promise<WireRecord> {
 			return send({ type: "release_session", id: `release-${++serial}`, sessionId, reason: "takeover", ...fields });
 		},

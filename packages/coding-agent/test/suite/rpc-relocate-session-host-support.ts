@@ -63,6 +63,8 @@ export async function relocationHost(options: RelocationHostOptions = {}) {
 	const opened = await host.open("relocating");
 	await options.beforeDesktop?.(host, opened.sessionPath);
 	await host.attach(opened.sessionPath, DESKTOP, OFFERS);
+	// The desktop (and any other window) hold the session; the seeding driver must not count as one (senpi#6245).
+	await host.letGo(opened.sessionId);
 	if (options.otherClient)
 		await host.attach(opened.sessionPath, options.otherClient.name, options.otherClient.capabilities);
 	const work = () =>

@@ -67,31 +67,41 @@ describe("RPC Unix-socket multi-connection host", () => {
 			});
 			const sessionId = openedSessionId(opened);
 
-			// Grace release still serves legacy callers, but records every unattached mutation (#3795).
-			const grace = waitForStderr(
-				child,
-				`senpi rpc host: prompt on ${sessionId} from a connection not attached to it (refused from the next release)`,
-			);
-			const settledA = a.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
+			// An unattached connection's session command is refused, and nothing of the session reaches it (senpi#6245).
 			await expect(
 				b.peer.request({
 					id: "foreign-prompt",
+					type: "prompt",
+					sessionId,
+					message: "refused-before-attach",
+				}),
+			).resolves.toMatchObject({ success: false, error: "session_not_attached" });
+			expect(
+				b.peer.messages
+					.filter((value) => value.sessionId === sessionId && !FOREIGN_VISIBLE.has(String(value.type)))
+					.filter((value) => value.type !== "response")
+					.map((value) => value.type),
+			).toEqual([]);
+
+			// Once it attaches, the same connection's prompt is delivered.
+			await expect(
+				b.peer.request({
+					id: "attach-b",
+					type: "attach_session",
+					sessionId,
+					durableSessionId: (opened.data as { state?: { sessionId?: string } }).state?.sessionId,
+				}),
+			).resolves.toMatchObject({ success: true });
+			const settledA = a.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
+			await expect(
+				b.peer.request({
+					id: "attached-prompt",
 					type: "prompt",
 					sessionId,
 					message: "unique-424242",
 				}),
 			).resolves.toMatchObject({ success: true, sessionId });
 			await settledA;
-			await grace;
-			// agent_settled is a broadcast lifecycle record (session-event-fanout.ts), so the foreign connection gets it
-			// too. Each connection's records are FIFO, so once b holds it, everything the turn sent b is already here:
-			// none of it may be session content, which only attached connections receive.
-			await b.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
-			expect(
-				b.peer.messages
-					.filter((value) => value.sessionId === sessionId && !FOREIGN_VISIBLE.has(String(value.type)))
-					.map((value) => value.type),
-			).toEqual([]);
 
 			const transcript = await b.peer.request({
 				id: "foreign-transcript",
