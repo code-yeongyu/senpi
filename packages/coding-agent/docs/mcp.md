@@ -249,8 +249,13 @@ local `tool_search` for the session.
 | Tier | When | Cost profile |
 |---|---|---|
 | direct | `exposure:"direct"`, `directTools:true`, or `auto` at/below `searchThreshold` | Every tool schema on every request |
-| search (Tier-B) | `exposure:"search"` or `auto` above the threshold | Full catalog registered, ~135 tokens resident (`tool_search` only); matches promote next turn; promotions survive resume/compaction |
+| search (Tier-B) | `exposure:"search"` or `auto` above the threshold | Full catalog registered; local deferral omits inactive schemas until their tools are loaded or called. Stub and native search modes can declare tools earlier. |
 | proxy (Tier-C) | `exposure:"proxy"` only — never `auto` | One `mcp_<server>` gateway tool (`search`/`describe`/`call` with JSON-string args); cheapest, but no provider-side argument validation |
+
+Searching only lists matches. To expose one result as a callable tool on the next model request,
+call `tool_search` again with `query` set to its exact registered name and `load: true`.
+Other matches stay deferred. A provider that can emit an undeclared tool call can still invoke
+a deferred tool directly by name.
 
 Skills can carry MCP servers too — see
 [Skill-carried MCP servers](#skill-carried-mcp-servers).

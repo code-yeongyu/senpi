@@ -10,7 +10,8 @@ export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 const MAX_RESULTS = 5;
 
 const ParamsSchema = Type.Object({
-	query: Type.String({ description: "Natural-language description of the capability you need." }),
+	query: Type.String({ description: "Capability to find, or the exact tool name when load is true." }),
+	load: Type.Optional(Type.Boolean({ description: "Load one exact catalog tool into the next model request." })),
 	source: Type.Optional(
 		Type.Union([Type.Literal("mcp"), Type.Literal("extension")], {
 			description: "Optional: restrict the search to MCP or extension tools.",
@@ -23,6 +24,7 @@ type Params = Static<typeof ParamsSchema>;
 export interface ToolSearchDetails {
 	readonly query: string;
 	readonly matched: readonly string[];
+	readonly loaded?: boolean;
 	/** Matching tools the session routes through eval only; listed, never activated (senpi#6886). */
 	readonly evalOnly?: readonly string[];
 }
@@ -48,8 +50,8 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 		workspaceEffect: "read",
 		label: "Tool search",
 		description:
-			"Search the catalog of deferred tools by capability. Returns at most 5 matching catalog tools with their parameter schemas and never changes your active tool set; call a returned catalog tool by name and it activates on that first call. Up to 5 matching eval-only tools are listed separately; call those inside an eval cell as tool.<name>(...).",
-		promptSnippet: "Search deferred tool catalogs by capability; call a returned tool by name to use it.",
+			"Find deferred tools by capability. Search lists up to 5 matches without activating them. To make one returned catalog tool callable, call tool_search again with its exact name as query and load: true, then call the loaded tool. Eval-only matches must be called inside an eval cell as tool.<name>(...).",
+		promptSnippet: "Find deferred tools; load one by exact name with tool_search before calling it.",
 		parameters: ParamsSchema,
 		prepareArguments: prepareToolSearchArguments,
 		executionMode: "parallel",
@@ -58,6 +60,21 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 				...(params.source === undefined ? {} : { source: params.source }),
 				...(params.group === undefined ? {} : { group: params.group }),
 			};
+			if (params.load === true) {
+				const name = params.query.trim();
+				const loaded = service.activateTool(name, options);
+				return {
+					content: [
+						{
+							type: "text",
+							text: loaded
+								? `Loaded ${name}. Call it by name now.`
+								: `Could not load "${name}". Search and use the exact name of a callable catalog match.`,
+						},
+					],
+					details: { matched: loaded ? [name] : [], query: params.query, loaded },
+				};
+			}
 			const matches = service.search(params.query, MAX_RESULTS, options);
 			const hiddenHints = service.hiddenToolHints(params.query);
 			// A tool the query names keeps its redirect hint, which already carries its exact eval call.
@@ -134,7 +151,7 @@ export function buildToolSearchResultText(input: ToolSearchResultInput): string 
 		return lines.join("\n");
 	}
 	const lines = [
-		`Found ${matches.length} tool(s) matching "${query}"${scopeText}. Nothing was activated; call one by name and it activates on that first call:`,
+		`Found ${matches.length} tool(s) matching "${query}"${scopeText}. Nothing was activated. Load one via tool_search with its exact name as query and load: true, then call one by name:`,
 		"",
 		...matches.map((match) => toolBullet(match, input.parametersOf)),
 		...evalOnlyLines,

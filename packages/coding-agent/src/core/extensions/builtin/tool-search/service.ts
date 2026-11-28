@@ -197,9 +197,16 @@ export class ToolSearchService {
 		return matches.map(({ name }) => name).filter((name) => active.has(name));
 	}
 
-	activateTool(name: string): boolean {
-		const doc = this.getCatalog().find((candidate) => candidate.name === name);
+	activateTool(name: string, { source, group }: Pick<Bm25SearchOptions, "source" | "group"> = {}): boolean {
+		const doc = this.getCatalog().find(
+			(candidate) =>
+				candidate.name === name &&
+				(source === undefined || candidate.source === source) &&
+				(group === undefined || candidate.group === group),
+		);
 		if (doc === undefined) return false;
+		const tool = this.#runtime.getAllTools().find((candidate) => candidate.name === name);
+		if (!tool || tool.evalOnly || tool.allowLazyActivation === false) return false;
 		this.#feeds.get(doc.source)?.hooks.activate([name]);
 		return this.#runtime.getActiveTools().includes(name);
 	}
