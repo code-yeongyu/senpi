@@ -43,6 +43,35 @@ describe("senpi#6849 a credential write while another process holds auth.json op
 		expect(JSON.parse(readFileSync(authJson, "utf8")).openai).toEqual({ type: "api_key", key: "sk-after" });
 		expect(write.mock.calls.length).toBeGreaterThanOrEqual(2);
 	});
+
+	it("reports contention to a synchronous writer without retrying or changing the file (#6860)", () => {
+		const authJson = join(dir, "auth.json");
+		writeFileSync(authJson, "{}");
+		const storage = AuthStorage.create(authJson);
+		const cause = Object.assign(heldOpen(), { syscall: "rename", dest: authJson });
+		const write = vi.spyOn(backendWriter, "writeAuthFile").mockImplementationOnce(() => {
+			throw cause;
+		});
+		expect(() => storage.set("example", { type: "api_key", key: "fixture" })).toThrow(
+			expect.objectContaining({ message: expect.stringMatching(/auth\.json.*in use/i), code: "EPERM", cause }),
+		);
+		expect(write).toHaveBeenCalledTimes(1);
+		expect(readFileSync(authJson, "utf8")).toBe("{}");
+		// The caller can retry after the reader releases its handle; the failed writer released its lock.
+		storage.set("example", { type: "api_key", key: "fixture" });
+		expect(readFileSync(authJson, "utf8")).toContain("fixture");
+	});
+
+	it("keeps the original diagnostic when staging the new credential file is denied", () => {
+		const authJson = join(dir, "auth.json");
+		writeFileSync(authJson, "{}");
+		const storage = AuthStorage.create(authJson);
+		const denied = Object.assign(new Error("staging directory is read-only"), { code: "EACCES", syscall: "open" });
+		vi.spyOn(backendWriter, "writeAuthFile").mockImplementationOnce(() => {
+			throw denied;
+		});
+		expect(() => storage.set("example", { type: "api_key", key: "fixture" })).toThrow(denied);
+	});
 	// #6849 review L5: the lock can be lost while the write waits; nothing may be written after that.
 	it("writes nothing once the lock is lost during the wait", async () => {
 		const authJson = join(dir, "auth.json");

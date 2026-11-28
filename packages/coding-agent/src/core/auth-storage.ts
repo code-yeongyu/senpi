@@ -318,7 +318,30 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
 			const { result, next } = fn(current);
 			if (next !== undefined) {
-				this.writeAuthFile(next);
+				try {
+					this.writeAuthFile(next);
+				} catch (error) {
+					// Sync callers cannot wait for an open handle. Do not mislabel a failure to stage the file.
+					if (
+						process.platform === "win32" &&
+						error instanceof Error &&
+						"syscall" in error &&
+						error.syscall === "rename" &&
+						"dest" in error &&
+						error.dest === this.authPath &&
+						"code" in error &&
+						(error.code === "EPERM" || error.code === "EACCES" || error.code === "EBUSY")
+					) {
+						throw Object.assign(
+							new Error(
+								"Could not replace auth.json: it may be in use. Retry after closing the file; if the error persists, check write permissions.",
+								{ cause: error },
+							),
+							{ code: error.code },
+						);
+					}
+					throw error;
+				}
 			}
 			return result;
 		} finally {
