@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ExtensionAPI } from "../../../src/core/extensions/index.ts";
 import { createHarness, getAssistantTexts, getUserTexts, type Harness } from "../harness.ts";
 
@@ -284,7 +284,7 @@ describe("#4036 input held at the start of the first prompt after a compaction",
 		{ retryBudget: "retries off", retry: { enabled: false }, failures: 1 },
 		{
 			retryBudget: "the retry budget exhausted",
-			retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 },
+			retry: { enabled: true, maxRetries: 1, baseDelayMs: 60_000 },
 			failures: 2,
 		},
 	])(
@@ -293,6 +293,15 @@ describe("#4036 input held at the start of the first prompt after a compaction",
 			// given
 			const setup = await setUp({ thresholdCompaction: true, retry });
 			const { harness } = setup;
+			// #4068: the retry delay runs on fake timers, advanced when the session schedules it, never on the clock.
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "auto_retry_start") void vi.advanceTimersByTimeAsync(event.delayMs);
+			});
+			onTestFinished(() => {
+				unsubscribe();
+				vi.useRealTimers();
+			});
 			const failure = retry.enabled ? "overloaded_error" : HARD_ERROR;
 			harness.setResponses([
 				...Array.from({ length: failures }, () =>
