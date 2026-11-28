@@ -58,6 +58,9 @@ const RECOVERY_SENTENCE: Record<NonNullable<ProviderStallDescriptionOptions["rec
 		"Every model in its fallback chain was tried as well: run /fallback to review the chain, or send the message again to continue from the partial reply.",
 };
 
+const OUT_OF_CREDIT_PATTERN =
+	/credit[- ]balance|insufficient[_ -]quota|purchase credits|credits[-_ ]required|credits are required|out of credits?\b/i;
+
 function transportSymptom(errorMessage: string, subject: string): string | undefined {
 	if (WEBSOCKET_CLOSED_PATTERN.test(errorMessage)) {
 		return `The connection to ${subject} dropped before the reply finished (${errorMessage}).`;
@@ -99,15 +102,24 @@ export function describeProviderFailureForUser(
 		const provider = message.slice(PROVIDER_NOT_CONFIGURED_PREFIX.length);
 		return `${provider} is not connected: no API key or sign-in is saved for it. Connect the provider, or choose another model.`;
 	}
-	if (options.usageLimit === "account") {
-		if (message.includes(ACCOUNT_LIMIT_NEXT_STEP_LEAD)) return message.replace(RETRY_AFTER_MARKER, "");
+	if (options.usageLimit) {
+		if (options.usageLimit === "account" && message.includes(ACCOUNT_LIMIT_NEXT_STEP_LEAD)) {
+			return message.replace(RETRY_AFTER_MARKER, "");
+		}
 		const provider = options.model?.split("/")[0];
-		const reset =
-			/\bresets?\s+([^"}\n]+)/i
-				.exec(message)?.[1]
-				?.trim()
-				.replace(/[.;]+$/, "") ?? options.resetsAt;
-		return `The ${provider ? `${provider} ` : ""}account usage limit has been reached${reset ? ` (resets ${reset})` : ""}. Switch to another provider, or configure another provider in retry.fallbackChains.`;
+		// An empty credit balance is not a usage limit: nothing resets it, the user has to add credit (senpi#5518).
+		if (OUT_OF_CREDIT_PATTERN.test(message)) {
+			const scope = options.usageLimit === "model" ? " for this model" : "";
+			return `The ${provider ? `${provider} ` : ""}account is out of credit${scope}. Add credit to it, or choose another configured provider.`;
+		}
+		if (options.usageLimit === "account") {
+			const reset =
+				/\bresets?\s+([^"}\n]+)/i
+					.exec(message)?.[1]
+					?.trim()
+					.replace(/[.;]+$/, "") ?? options.resetsAt;
+			return `The ${provider ? `${provider} ` : ""}account usage limit has been reached${reset ? ` (resets ${reset})` : ""}. Switch to another provider, or configure another provider in retry.fallbackChains.`;
+		}
 	}
 	const stall = describeProviderStallForUser(message, options);
 	if (stall !== undefined) return stall;
