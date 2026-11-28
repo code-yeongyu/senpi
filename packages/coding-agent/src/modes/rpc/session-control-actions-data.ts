@@ -10,7 +10,7 @@ import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 
 export async function availableModelsData(session: AgentSession): Promise<{ models: readonly object[] }> {
 	const registry = session.modelRegistry;
-	const models = await registry.modelRuntime.getAvailable();
+	const models = (await registry.modelRuntime.getAvailable()).map((model) => registry.projectModel(model));
 	return {
 		models: models.map((model) => {
 			// A models.json or extension definition can declare the priority pairing without putting it on

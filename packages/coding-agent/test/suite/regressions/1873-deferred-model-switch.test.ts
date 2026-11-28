@@ -144,6 +144,48 @@ describe("#1873 deferred model switch", () => {
 		expect(changes[0]).toMatchObject({ source: "held-switch", actor: "sdk" });
 	});
 
+	it("uses the current window when a held model switch applies", async () => {
+		const harness = await createDeferralHarness();
+		harnesses.push(harness);
+		const overlays = harness.session.resourceLoader.getExtensions().runtime.modelWindowOverlays;
+		const owner = {};
+		overlays.replace(owner, overlays.prepare("faux", { "372k": 400_000 }));
+		seedLiveContext(harness, 450_000);
+		const target = harness.session.modelRegistry.find("faux", "372k");
+		if (!target) throw new Error("Missing held target");
+		await harness.session.setModel(target);
+		expect(harness.session.pendingModelSwitch?.model.contextWindow).toBe(400_000);
+
+		overlays.replace(owner, overlays.prepare("faux", {}));
+		harness.setResponses([fauxAssistantMessage("answered on the target model")]);
+		await harness.session.prompt("continue");
+
+		expect(harness.session.model).toMatchObject({ id: "372k", contextWindow: 372_000 });
+		expect(harness.session.pendingModelSwitch).toBeUndefined();
+	});
+
+	it("does not apply a held target removed from the catalog", async () => {
+		const harness = await createDeferralHarness();
+		harnesses.push(harness);
+		seedLiveContext(harness, 321_000);
+		const active = harness.getModel("million");
+		const target = harness.getModel("372k");
+		if (!active || !target) throw new Error("Missing model fixtures");
+		await harness.session.setModel(target);
+		expect(harness.session.pendingModelSwitch?.model.id).toBe(target.id);
+		harness.session.modelRegistry.registerProvider(active.provider, {
+			api: active.api,
+			baseUrl: active.baseUrl,
+			apiKey: "faux-key",
+			models: [active],
+		});
+		expect(harness.session.modelRegistry.find(target.provider, target.id)).toBeUndefined();
+
+		await expect(harness.session.prompt("continue")).rejects.toThrow("is no longer available");
+		expect(harness.session.model?.id).toBe(active.id);
+		expect(harness.session.pendingModelSwitch).toBeUndefined();
+	});
+
 	it("compacts on the original model, sized for the target's window", async () => {
 		// given a harness that records which model each compaction ran on
 		const keepRecentTargets: Array<number | undefined> = [];
@@ -171,9 +213,12 @@ describe("#1873 deferred model switch", () => {
 		const pendingKeepRecent = harness.session.pendingModelSwitch
 			? pendingSwitchKeepRecentTokens(harness.session.pendingModelSwitch.projection)
 			: undefined;
+		const overlays = harness.session.resourceLoader.getExtensions().runtime.modelWindowOverlays;
+		overlays.replace({}, overlays.prepare("faux", { million: 100_000 }));
 		const requestedOn: string[] = [];
 		harness.setResponses([
 			(_context, _options, _state, model) => {
+				expect(model.contextWindow).toBe(1_000_000);
 				requestedOn.push(model.id);
 				return fauxAssistantMessage("compact summary");
 			},

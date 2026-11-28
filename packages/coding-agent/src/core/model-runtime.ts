@@ -674,6 +674,16 @@ export class ModelRuntime implements Models {
 	getProvider(providerId: string): Provider | undefined {
 		return this.models.getProvider(providerId);
 	}
+
+	/** Explicit model windows in models.json take precedence over session overlays. */
+	getConfiguredModelWindow(providerId: string, modelId: string): number | undefined {
+		const provider = this.config.getProvider(providerId);
+		return (
+			provider?.modelOverrides?.[modelId]?.contextWindow ??
+			provider?.models?.findLast((model) => model.id === modelId && model.contextWindow !== undefined)?.contextWindow
+		);
+	}
+
 	getModels(providerId?: string): readonly Model<Api>[] {
 		return this.models.getModels(providerId);
 	}

@@ -32,6 +32,7 @@ import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
 import type { CustomMessage } from "../messages.ts";
+import { ModelWindowOverlays } from "../model-window-overlays.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { redactForUpload, type UploadRedactionOptions } from "../share/upload-redaction.ts";
@@ -323,6 +324,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	};
 
 	const runtime: ExtensionRuntime = {
+		modelWindowOverlays: new ModelWindowOverlays(),
 		deviceMachine: undefined,
 		isLoopRemote: () => false,
 		sendMessage: notInitialized,
@@ -363,6 +365,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 			for (const unsubscribe of eventBusUnsubscribers) unsubscribe();
 			eventBusUnsubscribers.clear();
 			runtime.evalHandleHost = undefined;
+			runtime.modelWindowOverlays.clear();
 			runtimeFactories.delete(runtime);
 		},
 		trackEventBusSubscription: (unsubscribe) => {
@@ -908,6 +911,12 @@ function createExtensionAPI(
 		setSessionModel(model) {
 			runtime.assertActive();
 			return runtime.setSessionModel(model, { source: "extension", actor: extension.path });
+		},
+
+		setModelWindowOverrides(providerId, windows) {
+			assertActive();
+			const contribution = runtime.modelWindowOverlays.prepare(providerId, windows);
+			applyRuntimeChange(() => runtime.modelWindowOverlays.replace(extension, contribution));
 		},
 
 		setSessionThinkingLevel(level) {

@@ -5515,3 +5515,7 @@ This is the extension contract itself. The queue state lives in `AgentSession`.
 
 - `types.ts`: beside `hasPendingMessages` in `ExtensionContext` and `ExtensionContextActions`, and both `sendUserMessage` option types.
 - `runner.ts`: the context-action fields and the `hasPendingMessages` binding.
+
+## 2026-11-26 - Extension model window contributions
+
+`loader.ts` and `types.ts` expose `setModelWindowOverrides` and scope contributions to the extension generation. The runtime retires them on reload. This needs a host API because extensions cannot isolate shared registry reads or admit model switches themselves. Check extension API construction and generation cleanup when merging upstream.

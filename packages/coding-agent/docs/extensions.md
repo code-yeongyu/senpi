@@ -2732,6 +2732,38 @@ if (model) {
 }
 ```
 
+### pi.setModelWindowOverrides(providerId, windows)
+
+Replace this extension's session-local context-window map for a provider. `windows` maps model IDs to positive safe
+integers; `{}` removes this extension's contribution. When extensions overlap, the most recent registration wins.
+Explicit `contextWindow` values in `models.json` custom models and `modelOverrides` take precedence.
+
+The session registry's `find`, `getAll`, `getAvailable`, and typed chat-model reads reflect the map after provider
+refreshes, but an already-selected model is not switched by this call.
+An extension can resolve it again and use `pi.setSessionModel`; check the live `ctx.model` afterward because a
+down-switch may be deferred for compaction. The host removes an extension generation's contribution on unload or
+reload. On reload, Senpi reconciles an affected active model when safe; an existing user-requested pending switch is
+left intact, and a down-switch that needs compaction is held. Register from the extension factory to apply windows to
+startup and resumed selections; persist and restore the extension's own state separately. This API does not write
+`models.json`, and does not remove older entries there.
+Each session has its own registry view, even when an SDK caller supplies a shared `ModelRegistry`. The view delegates
+other registry behavior to the supplied registry; it is not the same object. The shared `modelRuntime` and raw
+providers returned by `getProvider` remain unmodified; use the session registry's model reads for effective windows.
+
+```typescript
+// Compute windows from the provider's reported catalog and your extension's saved state.
+pi.setModelWindowOverrides(providerId, windows);
+
+const active = ctx.model;
+const updated = active && ctx.modelRegistry.find(active.provider, active.id);
+if (updated && updated.contextWindow !== active.contextWindow) {
+  await pi.setSessionModel(updated);
+  if (ctx.model?.contextWindow !== updated.contextWindow) {
+    ctx.ui.notify("The model window has not been applied yet.", "warning");
+  }
+}
+```
+
 ### pi.getThinkingLevel() / pi.setThinkingLevel(level)
 
 Get the current thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
