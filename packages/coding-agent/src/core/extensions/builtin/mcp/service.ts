@@ -756,7 +756,9 @@ export class McpService {
 	 * publish first, then reconnect: the reconnect still applies the saved-sign-in rule the startup connect does not
 	 * (senpi#6538), so a manual reconnect reports needs_auth. That startup connect may itself meet a rotated grant and
 	 * re-key again; follow the connection that is current, up to a bound, and reconnect it only once it is settled and
-	 * current. Past the bound the reconnect throws, naming the way back, instead of acting on a moving target.
+	 * current. A re-key can also land during that reconnect and retire the connection it acts on (senpi#7650 review L1);
+	 * that outcome describes a retired connection, so follow the current one again. Past the bound the reconnect throws,
+	 * naming the way back, instead of acting on a moving target.
 	 */
 	async #reconnectRekeyed(rekeyed: McpConnectionEntry): Promise<void> {
 		let entry = rekeyed;
@@ -764,9 +766,26 @@ export class McpService {
 			await entry.startupCatalogClaim?.settled().catch(() => undefined);
 			await this.#attachQueue;
 			if (this.#disposed) return;
-			const current = this.#entryForName(entry.name);
-			if (current === undefined) return;
-			if (current === entry) break;
+			let next = this.#entryForName(entry.name);
+			if (next === undefined) throw noLongerConfigured(entry.name);
+			if (next === entry) {
+				let failure: unknown;
+				try {
+					await reconnectMcpNow(entry.connection);
+				} catch (error) {
+					failure = error;
+				}
+				await this.#attachQueue;
+				if (this.#disposed) return;
+				next = this.#entryForName(entry.name);
+				// senpi#7653: a server removed from the config while it reconnected has nothing left to reconnect; say so
+				// instead of resolving quietly or reporting the retired connection's state.
+				if (next === undefined) throw noLongerConfigured(entry.name);
+				if (next === entry) {
+					if (failure !== undefined) throw failure;
+					return;
+				}
+			}
 			// senpi#7648: past the bound, reconnecting would act on a connection whose startup has not settled (or that the
 			// next re-key retires) and could resolve quietly; say what happened and name the way back instead.
 			if (hop >= MAX_REKEY_HOPS) {
@@ -774,9 +793,8 @@ export class McpService {
 					`MCP server ${entry.name} kept re-keying its credentials during the reconnect (${hop} times in a row); run /mcp reconnect ${entry.name} again.`,
 				);
 			}
-			entry = current;
+			entry = next;
 		}
-		await reconnectMcpNow(entry.connection);
 	}
 
 	/**
@@ -1520,6 +1538,10 @@ const MCP_DEFERRED_DISPOSE_TIMEOUT_MS = 15_000;
 
 /** How many credential re-keys a manual reconnect follows before it reconnects the connection it holds. */
 const MAX_REKEY_HOPS = 3;
+
+function noLongerConfigured(name: string): Error {
+	return new Error(`MCP server ${name} is no longer configured; there is nothing to reconnect.`);
+}
 
 /** How long a release waits for pending attaches before it disposes anyway. */
 function resolveMcpDeferredDisposeTimeoutMs(): number {

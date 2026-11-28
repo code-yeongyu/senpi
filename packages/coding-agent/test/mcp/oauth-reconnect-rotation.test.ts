@@ -3,10 +3,13 @@
  * (needs_auth with /mcp auth-start guidance); it never resolves quietly or reports a bare Unauthorized, whichever
  * holder of the sign-in meets the rotation first.
  */
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runAuthComplete, runAuthStart } from "../../src/core/extensions/builtin/mcp/auth/commands-auth.ts";
 import { resolveServerAuth } from "../../src/core/extensions/builtin/mcp/auth/context.ts";
 import { McpTokenStore } from "../../src/core/extensions/builtin/mcp/auth/token-store.ts";
+import { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { bounded } from "./fixtures/gated-http-server.ts";
 import { capturingPi } from "./fixtures/register-call.ts";
@@ -115,7 +118,8 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 	// connection the reconnect acts on; that connection is disabled, its reconnect returns quietly, and the caller was
 	// told nothing. The reconnect must act on the connection that is current and surface its needs_auth.
 	// senpi#7648 (audit LOW 1, the up-front re-key): the grant is rotated before the reconnect starts, so only the
-	// up-front re-key of the stale connection can catch it; without that path this case resolves quietly.
+	// up-front re-key of the stale connection can catch it. Without that path the stale connection is the one the
+	// reconnect refreshes, getConnection hides it, and this case fails at its `expect(running).toBeDefined()` setup step.
 	it("surfaces auth-start guidance when the re-key retires the connection during the manual reconnect", async () => {
 		// Given: a connected server whose refresh token was rotated away, and every token-store lock held at a gate
 		const fixture = await idp();
@@ -244,7 +248,7 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 	// grant keeps rotating past that bound, the reconnect must say so instead of acting on a connection whose startup
 	// has not settled (or that has been retired) and resolving quietly.
 	it("reports a reconnect that keeps meeting credential re-keys instead of resolving quietly", async () => {
-		// Given: a connected server whose grant rotates again every time the token store is locked
+		// Given: a connected server, and a gate that hands every connection renew to the test while the churn lasts
 		const fixture = await idp();
 		const dir = await agentDir();
 		const harness = makeHarness(dir, fixture.mcpUrl);
@@ -259,40 +263,209 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 		});
 		await service.whenAttachSettled();
 		expect(service.getConnection("fix")?.state).toBe("connected");
-		await poisonRefreshToken(harness);
-		const signedIn = harness.store.read();
-		expect(signedIn).toBeDefined();
+		// The grant identity changes before the reconnect (a valid token), so the reconnect re-keys up front and follows
+		// the re-keyed connections.
+		await harness.store.update((current) => ({
+			...current,
+			expiresAt: Date.now() + 3_600_000,
+			refreshToken: "RT_CHURN_0",
+		}));
+		interface Renewing {
+			readonly connection: ServerConnection;
+			readonly release: () => void;
+		}
 		let churning = true;
-		let rotation = 0;
-		const withLock = McpTokenStore.prototype.withLock;
-		const churn = vi.spyOn(McpTokenStore.prototype, "withLock").mockImplementation(async function (
-			this: McpTokenStore,
-			fn,
+		const queued: Renewing[] = [];
+		const waiting: ((step: Renewing) => void)[] = [];
+		const nextRenew = (): Promise<Renewing> => {
+			const step = queued.shift();
+			return step === undefined ? new Promise((resolve) => waiting.push(resolve)) : Promise.resolve(step);
+		};
+		const renew = ServerConnection.prototype.renew;
+		const gate = vi.spyOn(ServerConnection.prototype, "renew").mockImplementation(async function (
+			this: ServerConnection,
 		) {
-			// While churning, every refresh finds a freshly rotated grant and another session's start re-keys the server,
-			// so each connection the reconnect follows is retired by the next re-key.
-			return withLock.call(this, async () => {
-				if (churning && signedIn !== undefined) {
-					rotation += 1;
-					this.writeUnlocked({ ...signedIn, refreshToken: `RT_CHURN_${rotation}` });
-					void service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
-						agentDir: dir,
-					});
-				}
-				return await fn();
-			});
+			if (churning) {
+				const released = Promise.withResolvers<void>();
+				const step = { connection: this, release: () => released.resolve() };
+				const take = waiting.shift();
+				if (take === undefined) queued.push(step);
+				else take(step);
+				await released.promise;
+			}
+			return renew.call(this);
 		});
-		cleanups.push(async () => churn.mockRestore());
+		cleanups.push(async () => gate.mockRestore());
 
-		// When: the manual reconnect runs while the re-keys keep landing
-		const outcome = await service.reconnectServer("fix").then(
+		// When: every time the manual reconnect renews a connection, the grant rotates to a new valid identity and another
+		// session's start re-keys the server, retiring that connection before its renew runs
+		let settled = false;
+		const outcome = service.reconnectServer("fix").then(
 			() => "resolved",
 			(error: unknown) => (error instanceof Error ? error.message : String(error)),
 		);
+		const done = outcome.then(() => {
+			settled = true;
+		});
+		let rotation = 0;
+		while (!settled) {
+			const step = await bounded(
+				Promise.race([nextRenew(), done.then(() => undefined)]),
+				"the next renew of the churn",
+			);
+			if (step === undefined) break;
+			rotation += 1;
+			const retired = new Promise<void>((resolve) => {
+				const unsubscribe = step.connection.onStateChange((event) => {
+					if (event.state !== "disabled") return;
+					unsubscribe();
+					resolve();
+				});
+			});
+			await harness.store.update((current) => ({ ...current, refreshToken: `RT_CHURN_${rotation}` }));
+			await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+				agentDir: dir,
+			});
+			await service.whenAttachSettled();
+			await bounded(retired, "the renewing connection to reach disabled");
+			step.release();
+		}
 		churning = false;
+		for (const step of queued.splice(0)) step.release();
 
 		// Then: it reports the churn and names the way back, instead of resolving quietly or acting on a moving target
 		expect(rotation).toBeGreaterThanOrEqual(3);
-		expect(outcome).toMatch(/kept re-keying[\s\S]*\/mcp reconnect fix/);
+		expect(await outcome).toMatch(/kept re-keying[\s\S]*\/mcp reconnect fix/);
+	});
+	// senpi#7650 review LOW 1: a manual reconnect that follows a re-keyed connection reconnects it once, and a re-key that
+	// lands during that final reconnect retires it too; that reconnect then returns quietly. It must follow the
+	// connection that is current again and surface its state.
+	it("surfaces auth-start guidance when a re-key lands during the reconnect of a re-keyed connection", async () => {
+		// Given: a connected server whose grant identity changes before the reconnect (a valid token, so the re-keyed
+		// connection connects), and a gate on the first renew of any connection other than the original
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await writeMcpConfig(dir, harness.deps.config);
+		const service = new McpService();
+		cleanups.push(() => service.dispose("quit"));
+		const session = { cwd: dir, isProjectTrusted: () => true };
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		const original = service.getConnection("fix");
+		expect(original?.state).toBe("connected");
+		await harness.store.update((current) => ({
+			...current,
+			expiresAt: Date.now() + 3_600_000,
+			refreshToken: "RT_SWAPPED",
+		}));
+		const released = Promise.withResolvers<void>();
+		const reached = Promise.withResolvers<ServerConnection>();
+		const renew = ServerConnection.prototype.renew;
+		const gate = vi.spyOn(ServerConnection.prototype, "renew").mockImplementation(async function (
+			this: ServerConnection,
+		) {
+			if (this !== original) {
+				reached.resolve(this);
+				await released.promise;
+			}
+			return renew.call(this);
+		});
+		cleanups.push(async () => gate.mockRestore());
+
+		// When: the reconnect re-keys up front and reconnects the re-keyed connection; during that reconnect the grant is
+		// rotated away and another session's start re-keys the server again, retiring the connection being reconnected
+		const outcome = service.reconnectServer("fix").then(
+			() => "resolved",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+		const reconnecting = await bounded(reached.promise, "the reconnect of the re-keyed connection");
+		gate.mockRestore();
+		const retired = new Promise<void>((resolve) => {
+			const unsubscribe = reconnecting.onStateChange((event) => {
+				if (event.state !== "disabled") return;
+				unsubscribe();
+				resolve();
+			});
+		});
+		await poisonRefreshToken(harness);
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		await bounded(retired, "the reconnecting connection to reach disabled");
+		released.resolve();
+
+		// Then: the reconnect names the way back instead of resolving quietly
+		expect(await outcome).toMatch(/\/mcp auth-start fix/);
+	});
+	// senpi#7653 (part 2): a manual reconnect that follows a re-keyed connection must not resolve quietly when the
+	// server is removed from the config while it reconnects; the caller has to learn that nothing is left to reconnect.
+	it("reports a server removed from the config while the manual reconnect runs", async () => {
+		// Given: a connected server whose grant identity changes before the reconnect, and a gate on the first renew of
+		// any connection other than the original
+		const fixture = await idp();
+		const dir = await agentDir();
+		const harness = makeHarness(dir, fixture.mcpUrl);
+		const redirect = await followAuthorize(await runAuthStart(harness.deps));
+		await runAuthComplete(harness.deps, redirect);
+		await writeMcpConfig(dir, harness.deps.config);
+		const service = new McpService();
+		cleanups.push(() => service.dispose("quit"));
+		const session = { cwd: dir, isProjectTrusted: () => true };
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		const original = service.getConnection("fix");
+		expect(original?.state).toBe("connected");
+		await harness.store.update((current) => ({
+			...current,
+			expiresAt: Date.now() + 3_600_000,
+			refreshToken: "RT_SWAPPED",
+		}));
+		const released = Promise.withResolvers<void>();
+		const reached = Promise.withResolvers<ServerConnection>();
+		const renew = ServerConnection.prototype.renew;
+		const gate = vi.spyOn(ServerConnection.prototype, "renew").mockImplementation(async function (
+			this: ServerConnection,
+		) {
+			if (this !== original) {
+				reached.resolve(this);
+				await released.promise;
+			}
+			return renew.call(this);
+		});
+		cleanups.push(async () => gate.mockRestore());
+
+		// When: while the re-keyed connection reconnects, the server is removed from the config and a session re-attaches
+		const outcome = service.reconnectServer("fix").then(
+			() => "resolved",
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+		const reconnecting = await bounded(reached.promise, "the reconnect of the re-keyed connection");
+		gate.mockRestore();
+		const retired = new Promise<void>((resolve) => {
+			const unsubscribe = reconnecting.onStateChange((event) => {
+				if (event.state !== "disabled") return;
+				unsubscribe();
+				resolve();
+			});
+		});
+		await writeFile(join(dir, "mcp.json"), `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`);
+		await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+			agentDir: dir,
+		});
+		await service.whenAttachSettled();
+		expect(service.getConnection("fix")).toBeUndefined();
+		await bounded(retired, "the reconnecting connection to reach disabled");
+		released.resolve();
+
+		// Then: the reconnect says the server is no longer configured instead of resolving quietly or naming a retired state
+		expect(await outcome).toMatch(/fix is no longer configured/);
 	});
 });
