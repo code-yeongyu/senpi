@@ -289,10 +289,15 @@ it("T6 X06 golden: with the flag off a compact_events peer receives the complete
 	const host = await statusHost();
 	try {
 		const plain = host.client("plain");
-		const routing = String(dataOf(await plain.request({ type: "open_session", cwd: host.cwd })).sessionId);
+		const opened = dataOf(await plain.request({ type: "open_session", cwd: host.cwd }));
+		const routing = String(opened.sessionId);
 		const compact = host.client("compact");
 		host.writer.setConnectionCapabilities("compact", [COMPACT_EVENTS]);
-		host.writer.attachConnectionToSession("compact", routing);
+		// The compact peer is an attached client of the session (senpi#6245), so its release reaches the flag-off answer.
+		const durableSessionId = String((opened.state as { sessionId?: unknown } | undefined)?.sessionId);
+		expect(await compact.request({ type: "attach_session", sessionId: routing, durableSessionId })).toMatchObject({
+			success: true,
+		});
 		expect(host.writer.recoveryEvents).toBeUndefined();
 		host.writer.enqueue(routing, oversized("call-4", "e".repeat(300_000)));
 		await host.writer.flush();

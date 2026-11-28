@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../harness.ts";
 import { type DelegatedHost, startHost } from "../rpc-delegated-host-support.ts";
-import { DEVICE, open, remotePeer } from "../rpc-delegated-permission-support.ts";
+import { DEVICE, open, operatorOn, remotePeer } from "../rpc-delegated-permission-support.ts";
 
 // senpi#7478 (omo#15013): an external message admitted to an idle session starts a turn, but the reply named the turn
 // BEFORE it: the start was not awaited, so the epoch was read before the started run raised it. An agent that steered or
@@ -185,8 +185,9 @@ describe("an external message that starts a turn is answered with that turn (sen
 		host = await startHost({ extensionFactories: [stopDuringAdmission(() => stopped.resolve())] });
 		host.faux.setResponses([fauxAssistantMessage("never run")]);
 		const remote = await remotePeer(host);
-		const { sessionId } = await open(remote);
-		const local = await host.proven();
+		const opened = await open(remote);
+		const { sessionId } = opened;
+		const local = await operatorOn(host, opened);
 
 		const answer = await remote.send({
 			type: "admit_external_message",
@@ -203,9 +204,10 @@ describe("an external message that starts a turn is answered with that turn (sen
 		expect(answer).toMatchObject({ data: { kind: "started" } });
 		const handedBack = { deliveries: [`device:${DEVICE.deviceId}/first`] };
 		expect(unloaded).toMatchObject({ success: true, data: { outcome: "unloaded", dropped: handedBack } });
-		// The session is gone after the first unload: a repeat is refused and hands nothing back a second time.
-		expect(replayed).toMatchObject({ data: { outcome: "refused" } });
-		expect((replayed.data as { dropped?: unknown }).dropped).toBeUndefined();
+		// The session is gone after the first unload: a repeat is refused and hands nothing back a second time. The
+		// unload also ended this connection's attachment, so the attachment gate is what refuses it (senpi#6245).
+		expect(replayed).toMatchObject({ success: false, errorCode: "session_not_attached" });
+		expect((replayed.data as { dropped?: unknown } | undefined)?.dropped).toBeUndefined();
 		expect(host.faux.getCallLog()).toHaveLength(0);
 	});
 

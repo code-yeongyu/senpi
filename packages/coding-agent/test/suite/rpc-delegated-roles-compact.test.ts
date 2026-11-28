@@ -26,7 +26,6 @@ let opener: Peer;
 function pinEnvironment(): void {
 	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
 		vi.stubEnv(name, undefined);
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", undefined);
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 }
 

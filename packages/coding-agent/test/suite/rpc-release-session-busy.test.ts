@@ -42,11 +42,14 @@ async function quietSession(label: string, handler: (turn: () => FakeTurn) => Ha
 	turn().start();
 	turn().finish();
 	await rig.drop("conn-a");
+	// senpi#6245: the client that drives the session and asks for its release is attached, like every real caller;
+	// a release is caller-aware, so its own attachment never counts against it.
+	await rig.open("conn-b", { cwd: dir, sessionPath: session.state.sessionFile, retain_on_disconnect: true });
 	return { rig, sessionId: session.sessionId, sessionPath: session.state.sessionFile, turn };
 }
 
 async function release(rig: Rig, sessionId: string, interrupt?: boolean): Promise<Record<string, unknown>> {
-	const response = await rig.router.handle({
+	const response = await rig.send("conn-b", {
 		type: "release_session",
 		id: `rel-${Math.random()}`,
 		sessionId,
@@ -90,7 +93,8 @@ describe("release_session refuses a session that is not quiet", () => {
 		expect(await release(rig, sessionId)).toMatchObject({
 			success: false,
 			error: "session_busy",
-			errorData: { attachments: 0, busy: ["bash", "request"] },
+			// The one attachment is the releasing client's own (senpi#6245: callers are attached).
+			errorData: { attachments: 1, busy: ["bash", "request"] },
 		});
 		expect(entryKinds(sessionPath)).toEqual(before);
 		expect(await rig.list()).toEqual([expect.objectContaining({ sessionId, status: "open" })]);
@@ -207,15 +211,16 @@ describe("release_session refuses a session that is not quiet", () => {
 		});
 		await using _rig = rig;
 
-		// When: the release and a prompt on another connection are dispatched in the same tick, release first.
-		const releaseReply = rig.router.handle({ type: "release_session", id: "r1", sessionId, reason: "takeover" });
+		// When: the release and a prompt are dispatched in the same tick, release first, by the attached client.
+		const releaseReply = rig.send("conn-b", { type: "release_session", id: "r1", sessionId, reason: "takeover" });
 		const promptReply = rig.send("conn-b", { type: "prompt", id: "p1", sessionId, message: "race" });
 
 		// Then: only one of them succeeds - the release - and nothing follows session_released.
 		expect(await releaseReply).toMatchObject({ success: true, data: { released: true } });
 		expect(await promptReply).toMatchObject({
 			success: false,
-			error: expect.stringMatching(/session_closing|unknown_session/),
+			// The release ended conn-b's attachment with the session, so the gate refuses it first (senpi#6245).
+			error: expect.stringMatching(/session_closing|unknown_session|session_not_attached/),
 		});
 		expect(handled).toEqual([]);
 		await rig.settle();

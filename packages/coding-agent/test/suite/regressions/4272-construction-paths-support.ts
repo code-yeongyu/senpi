@@ -92,7 +92,15 @@ export const CONSTRUCTION_PATHS: ReadonlyArray<readonly [string, (host: Construc
 			await host.turn(opened.sessionId, "a");
 			await reclaim(host, "a", opened);
 			expect(await host.reopenParked({ sessionPath: opened.sessionPath, retainOnDisconnect: true })).toBeUndefined();
-			await host.turn(await listed(host, "a", opened.sessionPath), "a");
+			const reopened = await listed(host, "a", opened.sessionPath);
+			// The client reattaches to the successor's handle before it drives it (senpi#6245), as a real one does.
+			const attached = await host.request("a", {
+				type: "attach_session",
+				sessionId: reopened,
+				durableSessionId: opened.durableSessionId,
+			});
+			expect(attached.success, JSON.stringify(attached)).toBe(true);
+			await host.turn(reopened, "a");
 		},
 	],
 	[

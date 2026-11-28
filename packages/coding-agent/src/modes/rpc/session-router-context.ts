@@ -1,4 +1,5 @@
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
+import { readUnattachedOptOut } from "./session-attachment-gate.ts";
 
 import { ConnectionRoles } from "./connection-roles.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
@@ -88,6 +89,8 @@ export class RouterContext {
 	readonly pendingCapabilities = new Map<string, string[]>();
 	/** Roles each connection declared through set_client_info (senpi#3811). */
 	readonly connectionRoles = new ConnectionRoles();
+	/** senpi#6245: read once at host start; true only under the dated migration opt-out. */
+	readonly allowUnattached = readUnattachedOptOut(process.env);
 
 	readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 

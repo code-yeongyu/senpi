@@ -7,7 +7,7 @@ import { messageTicket } from "../../../src/core/lifecycle-delivery.ts";
 import { abortAndSettle } from "../../../src/modes/rpc/session-release-interrupt.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 import { type DelegatedHost, startHost } from "../rpc-delegated-host-support.ts";
-import { DEVICE, FrameLog, open, remotePeer } from "../rpc-delegated-permission-support.ts";
+import { DEVICE, FrameLog, open, operatorOn, remotePeer } from "../rpc-delegated-permission-support.ts";
 
 // oh-my-openagent#14169: a delivery a remote device admitted is left queued, unwritten, by an interrupted run: one that
 // arrived while the run was busy waits in the follow-up queue, and one whose start the abort cut short is queued again
@@ -39,10 +39,11 @@ async function remoteSession(extension: ExtensionFactory) {
 			);
 		return false;
 	}).catch(() => {});
-	const { sessionId } = await open(remote);
+	const opened = await open(remote);
+	const { sessionId } = opened;
 	const deliver = (deliveryId: string) =>
 		remote.send({ type: "admit_external_message", sessionId, deliveryId, text: "probe", deliverAs: "followUp" });
-	return { host, log, sessionId, deliver, local: await host.proven() };
+	return { host, log, sessionId, deliver, local: await operatorOn(host, opened) };
 }
 
 describe("unload_session with an unwritten delivery left behind by an interrupted run", () => {

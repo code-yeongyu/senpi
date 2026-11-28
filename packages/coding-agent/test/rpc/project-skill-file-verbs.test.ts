@@ -59,14 +59,16 @@ describe("project skill file verbs: classes and session", () => {
 
 	it("refuses both verbs for a session the host does not have", async () => {
 		const host = await startFolderHost();
-		for (const command of [
-			{ type: "read_project_skill_file", skill: SKILL_NAME },
-			{ type: "write_project_skill_file", skill: SKILL_NAME, content: EDITED, ifEtag: null },
-		]) {
-			expect(await host.send({ ...command, sessionId: "no-such-session" })).toMatchObject({
-				success: false,
-				error: "unknown_session",
-			});
+		for (const [command, error] of [
+			[{ type: "read_project_skill_file", skill: SKILL_NAME }, "unknown_session"],
+			[
+				{ type: "write_project_skill_file", skill: SKILL_NAME, content: EDITED, ifEtag: null },
+				"session_not_attached",
+			],
+		] as const) {
+			// The read is on the gate's reviewed exempt list, so its handler answers for the missing session; the write is
+			// gated, and an unattached connection gets the gate's one refusal whether the session exists or not (senpi#6245).
+			expect(await host.send({ ...command, sessionId: "no-such-session" })).toMatchObject({ success: false, error });
 		}
 		expect(onDisk(host)).toBe(ORIGINAL);
 	});

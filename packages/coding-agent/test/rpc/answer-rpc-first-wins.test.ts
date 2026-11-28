@@ -60,6 +60,14 @@ describe("C5.b: the first RPC answer wins", () => {
 			const opened = await connections.client.request({ type: "open_session", cwd: host.cwd });
 			const sessionId = opened.data?.sessionId;
 			if (sessionId === undefined) throw new Error("open_session returned no sessionId");
+			// The other agent answers on its own attachment: an unattached connection's answer is refused before it can
+			// race (senpi#6245), and a plain attach_session shares the session without taking it from the client.
+			const shared = await connections.agent.request({
+				type: "attach_session",
+				sessionId,
+				durableSessionId: opened.data?.state?.sessionId,
+			});
+			expect(shared.success).toBe(true);
 			const asked = connections.client.wait(
 				(record) => record.type === "extension_ui_request" && record.method === "input",
 				WAIT_MS,

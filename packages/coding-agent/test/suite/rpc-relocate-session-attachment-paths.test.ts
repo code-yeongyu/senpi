@@ -117,6 +117,8 @@ describe("relocation on the attachment commands", () => {
 				);
 			});
 			await using _host = host;
+			// senpi#6245: the rig's driver holds the session; let go so only the desktop holds it when it reclaims.
+			await host.send({ type: "release_attachment", id: "driver-off", sessionId });
 			await host.attach(sessionPath, DESKTOP, OFFERS);
 
 			// When: the agent asks to move, and the desktop reclaims the session while it is asked.

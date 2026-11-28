@@ -8,7 +8,6 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 		const host = await startWorkerHost(undefined, {
 			socket: true,
 			sessionRuntime,
-			preload: 'process.env.SENPI_RPC_REQUIRE_ATTACH = "1";',
 		});
 		try {
 			const owner = await host.connect();
@@ -55,14 +54,18 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 				success: false,
 				errorCode: "session_not_attached",
 			});
-			expect(host.stderrText()).not.toContain("(refused from the next release)");
+			expect(host.stderrText()).not.toContain("(served: SENPI_RPC_ALLOW_UNATTACHED=1)");
 		} finally {
 			await host.dispose();
 		}
 	}, 60_000);
 
-	it("serves each unattached mutation in grace and logs exactly once per violation", async () => {
-		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
+	it("serves each unattached mutation with the dated opt-out and logs exactly once per violation", async () => {
+		const host = await startWorkerHost(undefined, {
+			socket: true,
+			sessionRuntime,
+			preload: 'process.env.SENPI_RPC_ALLOW_UNATTACHED = "1";',
+		});
 		try {
 			const owner = await host.connect();
 			const stranger = await host.connect();
@@ -72,7 +75,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 			for (const type of ["append_user_message", "abort"]) {
 				const logged = waitForStderr(
 					host.child,
-					`senpi rpc host: ${type} on ${sessionId} from a connection not attached to it (refused from the next release)`,
+					`senpi rpc host: ${type} on ${sessionId} from a connection not attached to it (served: SENPI_RPC_ALLOW_UNATTACHED=1)`,
 				);
 				expect(await stranger.request({ type, sessionId, content: "grace" })).toMatchObject({ success: true });
 				await logged;
@@ -81,10 +84,10 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 			const violations = host
 				.stderrText()
 				.split("\n")
-				.filter((line) => line.includes("(refused from the next release)"));
+				.filter((line) => line.includes("(served: SENPI_RPC_ALLOW_UNATTACHED=1)"));
 			expect(violations).toEqual([
-				`senpi rpc host: append_user_message on ${sessionId} from a connection not attached to it (refused from the next release)`,
-				`senpi rpc host: abort on ${sessionId} from a connection not attached to it (refused from the next release)`,
+				`senpi rpc host: append_user_message on ${sessionId} from a connection not attached to it (served: SENPI_RPC_ALLOW_UNATTACHED=1)`,
+				`senpi rpc host: abort on ${sessionId} from a connection not attached to it (served: SENPI_RPC_ALLOW_UNATTACHED=1)`,
 			]);
 		} finally {
 			await host.dispose();

@@ -62,6 +62,8 @@ describe("closing a session while a relocation call cannot end on its own (senpi
 			answer: () => {},
 		});
 		await using _host = host;
+		// senpi#6245: the rig's driver holds the session; let go so the desktop's close is the last one.
+		await host.send({ type: "release_attachment", id: "driver-off", sessionId });
 		host.faux.setResponses([
 			fauxAssistantMessage(
 				[fauxToolCall("relocate_session", { target: "Studio", reason: "heavy build" }), fauxToolCall("hold", {})],

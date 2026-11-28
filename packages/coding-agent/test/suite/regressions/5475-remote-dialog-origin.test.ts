@@ -17,6 +17,10 @@ async function prepared() {
 	const observer = rig.client("observer");
 	const opened = dataOf(await owner.request({ type: "open_session", cwd: rig.cwd, retain_on_disconnect: true }));
 	const sessionId = String(opened.sessionId);
+	// The relay forwarder drives the session on its own attachment (senpi#6245); a plain attach shares it with the owner.
+	const durableSessionId = String((opened.state as { sessionId?: unknown } | undefined)?.sessionId);
+	const shared = await remote.request({ type: "attach_session", sessionId, durableSessionId });
+	if (shared.success !== true) throw new Error(`attach_session refused: ${JSON.stringify(shared)}`);
 	const cancel = new AbortController();
 	const api = [...rig.extensionApis.values()][0];
 	if (!api) throw new Error("missing extension API");

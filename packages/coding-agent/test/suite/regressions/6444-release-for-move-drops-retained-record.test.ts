@@ -85,6 +85,8 @@ describe("a released session leaves no handover-parked entry (senpi#6444)", () =
 			name: "its last client closes it",
 			end: async (host, sessionId, sessionPath) => {
 				await host.attach(sessionPath, "closer");
+				// senpi#6245: the rig's driver holds the session; let go so the closer is its last client.
+				await host.send({ type: "release_attachment", id: "driver-off", sessionId });
 				return host.send({ type: "close_session", id: "close", sessionId }, "closer");
 			},
 			answered: true,
