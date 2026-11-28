@@ -25,6 +25,7 @@ function createRuntime(): AgentSessionRuntime {
 				getEditorPaddingX: () => 0,
 				getHideThinkingBlock: () => false,
 				getOutputPad: () => 1,
+				getShowMessageTimestamps: () => false,
 				getPackages: () => [],
 				getShowHardwareCursor: () => false,
 				getTuiMode: () => "regular",
