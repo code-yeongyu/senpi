@@ -130,6 +130,24 @@ describe("McpOAuthProvider + flows", () => {
 		expect(after - before).toBe(1);
 	});
 
+	it("reuses a short-lived access token instead of refreshing it on every call", async () => {
+		// A token that lives no longer than the refresh leeway was stale the moment it was saved, so every
+		// ensureFresh() went back to the token endpoint.
+		const fixture = await idp(["--expire-access", "300"]);
+		const agentDir = await makeAgentDir();
+		const { provider } = makeProvider(agentDir, fixture.mcpUrl, { clientId: "static-client" });
+		const begin = await beginAuthorization(provider);
+		await completeAuthorization(provider, await followAuthorize(begin.authorizationUrl as URL));
+		const before = (await fixture.getLog()).tokenHits;
+
+		const manager = new McpRefreshManager(provider);
+		const first = await manager.ensureFresh();
+		const second = await manager.ensureFresh();
+		expect(first?.access_token).toMatch(/^SENTINEL_AT_/);
+		expect(second?.access_token).toBe(first?.access_token);
+		expect((await fixture.getLog()).tokenHits - before).toBe(0);
+	});
+
 	it("drops credentials and reports needs_auth on invalid_grant", async () => {
 		const fixture = await idp();
 		const agentDir = await makeAgentDir();
