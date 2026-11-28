@@ -399,8 +399,8 @@ above.
 
 ## Resources and prompts
 
-MCP 2026-07-28 tool schemas use JSON Schema 2020-12 by default. Explicit
-2020-12 declarations are supported; other dialect declarations produce
+MCP 2026-07-28 tool schemas use JSON Schema 2020-12 by default. Senpi also
+supports explicitly declared draft-07 schemas. Other dialect declarations produce
 `MCP_SCHEMA_UNSUPPORTED_DIALECT`. Tool discovery, the disk cache, and MCP
 exposure retain the full schema, including `$defs`, `$ref` siblings, and
 `additionalProperties`. Boolean roots use an equivalent `allOf` container
