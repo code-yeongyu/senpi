@@ -11,7 +11,7 @@
 import { execFileSync } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -76,10 +76,39 @@ function embeddedTokens(path, tokens) {
 	return found;
 }
 
+// Catalog row keys carry a `chat:` type prefix (classifier/image rows share the
+// file); the bare model id lives in the row's `id` field. Only chat rows count:
+// a row is a chat row when its `type` is `chat`, or when its key carries the
+// `chat:` prefix (rows without a `type` field). (senpi#6310: keying on the bare
+// id filtered every row out, so `--strict` could never fail.)
+export function catalogClaudeIds(catalog) {
+	const rows = catalog["anthropic-messages"] ?? {};
+	return Object.entries(rows)
+		.filter(([key, row]) => row?.type === "chat" || key.startsWith("chat:"))
+		.map(([key, row]) => (typeof row?.id === "string" ? row.id : key.replace(/^chat:/u, "")))
+		.filter((id) => id.startsWith("claude-"));
+}
+
 function checkCatalog() {
-	const catalog = JSON.parse(readFileSync(join(repoRoot, "packages", "ai", "src", "providers", "data", "anthropic.json"), "utf8"));
-	const ids = Object.keys(catalog["anthropic-messages"] ?? {}).filter((id) => id.startsWith("claude-"));
-	const binary = bundledBinary();
+	// Test hooks (used by scripts/check-claude-code-model-support.test.mjs only):
+	// SENPI_CHECK_CATALOG_PATH points at a fixture catalog and
+	// SENPI_CHECK_BINARY_PATH at a fixture binary; both default to the real
+	// catalog / bundled Claude Code binary.
+	const catalogPath =
+		process.env.SENPI_CHECK_CATALOG_PATH ??
+		join(repoRoot, "packages", "ai", "src", "providers", "data", "anthropic.json");
+	const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+	const ids = catalogClaudeIds(catalog);
+	if (ids.length === 0) {
+		// A key-format change that yields no ids must fail loudly: with no ids
+		// the check below would print "knows all 0 catalog Claude ids" and
+		// pass, exactly the vacuous pass senpi#6310 fixed for the old filter.
+		console.error(
+			"check-claude-code-model-support: catalog yields 0 Claude ids; refusing to pass vacuously (check the catalog key format)",
+		);
+		return 1;
+	}
+	const binary = process.env.SENPI_CHECK_BINARY_PATH ?? bundledBinary();
 	if (!binary) {
 		console.error("check-claude-code-model-support: no bundled Claude Code binary; reinstall without --omit=optional");
 		return 1;
@@ -124,4 +153,10 @@ function checkSdkCurrency() {
 	return 1;
 }
 
-process.exitCode = args.has("--sdk-currency") ? checkSdkCurrency() : checkCatalog();
+// Only run the CLI when this file is the entry point, so tests can import
+// catalogClaudeIds without executing a check.
+const invokedAsMain =
+	process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+if (invokedAsMain) {
+	process.exitCode = args.has("--sdk-currency") ? checkSdkCurrency() : checkCatalog();
+}
