@@ -4,9 +4,13 @@ import {
 	deriveMcpRegistrationId,
 	emitActivationMarker,
 	parseActivationMarkers,
-	rehydrate,
+	restoreActivationMarkers,
 	TOOL_SEARCH_ACTIVATION_MARKER_V2,
 } from "../../src/core/extensions/builtin/tool-search/engine/marker.ts";
+
+// History replay is the parse of the markers restored against the current documents, as the service runs it.
+const rehydrate = (messages: readonly unknown[], docs: Parameters<typeof restoreActivationMarkers>[1]): string[] =>
+	restoreActivationMarkers(parseActivationMarkers(messages), docs);
 
 type TestDocument = {
 	name: string;

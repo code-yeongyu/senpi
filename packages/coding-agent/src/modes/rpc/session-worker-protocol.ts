@@ -70,6 +70,7 @@ export type SessionWriteGrant = Exclude<WorkerCreditAnswer, "stale">;
 export type WorkerCreditAnswer = keyof typeof WORKER_CREDIT_CODES;
 
 export interface WorkerSnapshot {
+	readonly hold?: import("./session-row-hold.ts").SessionRowHold;
 	state: RpcSessionState;
 	/** Canonicalized by the owning worker, never by the transport thread. */
 	sessionPath?: string;

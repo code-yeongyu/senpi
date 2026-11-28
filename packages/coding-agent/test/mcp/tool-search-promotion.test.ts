@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ToolSearchDocument } from "../../src/core/extensions/builtin/tool-search/engine/document.ts";
 import {
 	emitActivationMarker,
-	rehydrate,
+	parseActivationMarkers,
+	restoreActivationMarkers,
 	TOOL_SEARCH_ACTIVATION_MARKER_V2,
 } from "../../src/core/extensions/builtin/tool-search/engine/marker.ts";
 import toolSearchExtension, { getToolSearchService } from "../../src/core/extensions/builtin/tool-search/index.ts";
@@ -196,17 +197,19 @@ describe("shared tool_search: result text + legacy rehydration", () => {
 		expect(text).toContain("unchanged");
 	});
 
-	it("rehydrate restores ownership-matching v2 markers from older transcripts", () => {
+	it("history replay restores ownership-matching v2 markers from older transcripts", () => {
 		const marker = emitActivationMarker(
 			CATALOG.slice(0, 2).map((doc) => ({ name: doc.name, registrationId: doc.registrationId })),
 		);
 		const current = new Map(CATALOG.map((doc) => [doc.name, { ...doc, allowLazyActivation: true }] as const));
-		expect(rehydrate([{ content: marker }], current)).toEqual([
+		expect(restoreActivationMarkers(parseActivationMarkers([{ content: marker }]), current)).toEqual([
 			"mcp_docs_get-library-docs",
 			"mcp_docs_resolve-library-id",
 		]);
 		current.delete("mcp_docs_resolve-library-id");
-		expect(rehydrate([{ content: marker }], current)).toEqual(["mcp_docs_get-library-docs"]);
+		expect(restoreActivationMarkers(parseActivationMarkers([{ content: marker }]), current)).toEqual([
+			"mcp_docs_get-library-docs",
+		]);
 	});
 
 	it("a new-style transcript carries no marker, so rehydration restores nothing from it", async () => {
@@ -223,13 +226,16 @@ describe("shared tool_search: result text + legacy rehydration", () => {
 			.filter((entry) => entry.type === "message")
 			.map((entry) => entry.message);
 		const current = new Map(CATALOG.map((doc) => [doc.name, { ...doc, allowLazyActivation: true }] as const));
-		expect(rehydrate(messages, current)).toEqual([]);
+		expect(restoreActivationMarkers(parseActivationMarkers(messages), current)).toEqual([]);
 	});
 
 	it("legacy name-only markers remain compatible for MCP documents", () => {
 		const current = new Map(CATALOG.map((doc) => [doc.name, { ...doc, allowLazyActivation: true }] as const));
-		expect(rehydrate([{ content: "[tool_search:activated] mcp_docs_get-library-docs" }], current)).toEqual([
-			"mcp_docs_get-library-docs",
-		]);
+		expect(
+			restoreActivationMarkers(
+				parseActivationMarkers([{ content: "[tool_search:activated] mcp_docs_get-library-docs" }]),
+				current,
+			),
+		).toEqual(["mcp_docs_get-library-docs"]);
 	});
 });

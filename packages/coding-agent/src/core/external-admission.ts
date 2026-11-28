@@ -26,6 +26,7 @@ import {
 	type SessionControlRemoteOrigin,
 } from "./extensions/session-control-types.ts";
 import type { HoldKind } from "./engine-turn-hold.ts";
+import { heldNoticeDeliveryIds } from "./engine-turn-hold-notices.ts";
 import type { EngineTurnCap } from "./engine-turn-limit.ts";
 import type { CustomMessage } from "./messages.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
@@ -334,11 +335,16 @@ function deliveryMessage(input: AdmitExternalMessageInput, stamp: DeliveryStamp)
 	return message;
 }
 
-/** Every delivery id the transcript holds an entry for: what answers for the process-lifetime ledger after a restart. */
+/**
+ * Every delivery id the transcript holds an entry for: what answers for the process-lifetime ledger after a restart.
+ * A delivery held while paused lives only in its `session-notice` entry until a turn takes it (senpi#7588).
+ */
 export const writtenDeliveryIds: HistoryReducer<Set<string>> = {
 	initial: () => new Set(),
 	add: (ids, entry) => {
-		if (
+		if (entry.type === "custom" && entry.customType === "session-notice")
+			for (const id of heldNoticeDeliveryIds(entry.data)) ids.add(id);
+		else if (
 			entry.type === "custom_message" &&
 			entry.customType === SESSION_CONTROL_DELIVERY_TYPE &&
 			isSessionControlDeliveryDetails(entry.details)

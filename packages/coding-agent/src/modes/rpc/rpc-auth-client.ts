@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
+import { join } from "node:path";
 import { getAgentDir } from "../../config.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
@@ -162,13 +163,12 @@ async function authenticate(
 			throw new RpcEndpointAuthError("host_identity_unproven", path);
 		const record = await readRpcKeyRecord(root, auth.launch_id);
 		if (socket.destroyed) throw new Error(`RPC authentication timed out on ${path}`);
-		if (record === undefined) {
-			if (expectedLaunchId !== undefined) throw new RpcEndpointAuthError("host_identity_unproven", path);
-			process.stderr.write(
-				`senpi rpc client: no key record for launch ${auth.launch_id} under ${root}; continuing unauthenticated (refused from the next release; set SENPI_RPC_KEY_ROOT to the host's agent dir)\n`,
+		// A host that challenges proves itself only through its launch's key record; without one it stays unproven (omo#15197).
+		if (record === undefined)
+			throw new RpcEndpointAuthError(
+				"host_identity_unproven",
+				`${path}: no key record ${join(root, "rpc", "keys", auth.launch_id)}; set SENPI_RPC_KEY_ROOT to the host's agent dir`,
 			);
-			return response;
-		}
 		// readRpcKeyRecord validates this field at the file boundary.
 		if (typeof record.key !== "string") throw new RpcEndpointAuthError("unsafe_key_record", root);
 		const key = Buffer.from(record.key, "hex");

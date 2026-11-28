@@ -192,6 +192,7 @@ export interface RpcSessionRow {
 	activity: "running" | "idle";
 	/** senpi#7025: the auto-retry wait a running session sleeps through; absent when it is not waiting. */
 	waiting?: RetryWait;
+	hold?: import("./session-row-hold.ts").SessionRowHold;
 	/** The session's current model; absent while unknown (an opening session). */
 	model?: { provider: string; id: string };
 	/** `none`: a memory-only session (senpi#7567), never the user's conversation; a session list leaves it out. */

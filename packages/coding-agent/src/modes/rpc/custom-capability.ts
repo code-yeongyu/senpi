@@ -202,6 +202,7 @@ export const RETRY_FALLBACK_PROFILE_CAPABILITY = "retry_fallback_profile";
  * A caller sends a persona only to a host that names this.
  */
 export const SESSION_PERSONA_CAPABILITY = "session_persona";
+export const SESSION_RETIREMENT_CAPABILITY = "session_retirement";
 
 /**
  * HOST capability: this host honors `open_session.persistence: "none"` (senpi#7567), a session that lives in memory

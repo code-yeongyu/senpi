@@ -1,3 +1,146 @@
+## 2026-11-28 - Lifecycle bookkeeping leaves the resident mirror at a compaction (senpi#7596)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_trimMirrorAfterCompaction` no longer keeps lifecycle bookkeeping entries (`isLifecycleBookkeeping` in the new `core/lifecycle-bookkeeping.ts`: `session-lifecycle`, `work-custody`, `child-lifecycle`, `interrupted-run`) from before the kept window. `core/session-loaded-tail.ts` applies the same rule when a compacted file is reopened, and `core/lifecycle-history.ts` folds the journal to the records restoration reads. `LIFECYCLE_ENTRY_TYPES` moves from this file to `core/lifecycle-bookkeeping.ts`, which `core/lifecycle-edit-leaf.ts` now reads too, so the entry types are listed once.
+
+### Why
+
+- A long-lived session writes more bookkeeping than conversation: in four measured session files it was 42-59% of the bytes. The mirror trimmed only messages, so those entries stayed resident and on every branch walk for the life of the session, and compaction did not bound memory.
+
+### Why an extension could not handle it
+
+- The resident mirror and its trim are private to `SessionManager`. An extension reads entries only through it and cannot change what it keeps.
+
+### Expected merge conflict zones
+
+- LOW: the `retained` expression in `_trimMirrorAfterCompaction` and one import line.
+
+## 2026-11-28 - Generated default extension shims are presence markers (#7597)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` keeps an existing generated shim while it targets a regular builtin module of the same name, and resolves default-extension factories through `extensions/generated-default-shim.ts`: every generated shim that names a default's builtin loads this process's in-process factory, in whatever agent dir the loader is given and whichever installation the URL points to. A shim whose target is gone still takes the dead-target repair; a user-authored file of the same name is still loaded as the user's file.
+- `packages/coding-agent/src/core/generated-shim-banner.ts` recognizes the complete first-line sentence across brands and parses the single generated re-export.
+
+### Why
+
+- Distinct installations generate distinct absolute URLs for the same builtin. Replacing a live target on startup changed the shared file every time the other installation seeded it, and importing a kept foreign shim would run the other installation's builtin and its module graph.
+
+### Why an extension could not handle it
+
+- Resource seeding writes the shared file, and the loader resolves its factory, before extensions load.
+
+### Expected merge conflict zones
+
+- `DefaultResourceLoader.ensureGlobalDefaultExtensions`, `buildGlobalDefaultExtensionLoadOptions`, dead-target repair and generated shim recognition.
+
+## 2026-11-27 - Settings that name an executable need a trusted project (senpi#6362)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`:
+  - Project trust defaults to false.
+  - `SettingsManager.create` without a trust decision uses the decision the person saved for the folder.
+  - `fromStorage`, the constructor and the project loaders default to not trusted.
+  - `inMemory` keeps its caller-supplied project scope trusted.
+  - An untrusted project's executable-naming keys are reported as ignored.
+- `packages/coding-agent/src/core/project-executable-settings.ts`: new. It holds the one list of executable-naming keys, the saved-trust lookup, and the path of the trust file.
+
+### Why
+
+- Settings that name an executable or a command line were honoured from any project, trusted or not.
+
+### Why an extension could not handle it
+
+- The trust default and the layered merge live in the core settings manager, which every reader shares.
+
+### Expected merge conflict zones
+
+- MEDIUM: `settings-manager.ts` `create` / `fromStorage` and the constructor's `projectTrusted` default.
+
+## 2026-11-27 - Preserve each held peer delivery when a session resumes (senpi#7588)
+
+### What changed
+
+- `engine-turn-hold-notices.ts` keeps each admitted peer message as its own notice item, both when first recorded and when reconstructed from the session file. Ordinary wakes of a single source still coalesce. A log that already holds one delivery twice replays it as one item whose consumption settles both notices, and the held count counts distinct deliveries.
+- `external-admission.ts` `writtenDeliveryIds` also reads the delivery ids held `session-notice` entries carry, so a resend of a held id after a restart answers `already_admitted`.
+- `admit-external-message-command.ts` refuses a new delivery with `held_deliveries_full` once the session holds `MAX_HELD_PEER_DELIVERIES` (64) distinct peer deliveries, writing nothing.
+- `engine-turn-release.ts` folds each run of held peer deliveries from one sender under one origin mark into one message (`held-peer-batch.ts`), so an unattended resume opens one turn for them; `turn-origin.ts` gains `sameInputTurnMark`; `agent-session.ts` and `engine-turn-hold.ts` expose the distinct held peer delivery count.
+
+### Why
+
+- Three distinct peer messages held during an interrupted run produced three notice records, but the resumed provider received only the third message. The other two payloads had been replaced in memory before all three notice IDs were consumed.
+
+### Why an extension could not handle it
+
+- The engine reconstructs the ledger and assembles the resume input before the provider receives it; a sender sees only its own admission receipt.
+
+### Review follow-up (FIX_FIRST at 5b471fe471)
+
+- Keeping every held message exposed a duplicate the old merge hid: after a restart the ledger is empty and only `custom_message` entries answered for written ids, so a resend of a held id was held a second time. Keeping every message also made the count unbounded and gave an unattended resume one turn per delivery. A refusal keeps the delivery with its sender; dropping the oldest would lose a message silently, the defect this change fixes. One turn has one origin, so only deliveries sharing sender and origin mark share a turn.
+
+### Expected merge conflict zones
+
+- LOW: `EngineTurnHoldNotices.remember`/`forget`/`messages`, `writtenDeliveryIds`, the admit command's refusal list, and the `EngineTurnRelease` loop. No change to notice text or resume authorization.
+
+## 2026-11-27 - A session's own persona narrows its runtime (senpi#7570, oh-my-openagent#13057)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.persona` holds a session's own instructions and tool policy (`open_session.persona`); a session replace keeps it with the rest of the profile.
+- `packages/coding-agent/src/core/resource-loader.ts`: `ResourceLoaderOptions.appendSystemPromptText` appends literal text after the resolved `appendSystemPrompt` sources; unlike them it is never read as a file path.
+
+### Why
+
+- A task daemon session needs the instructions and tool limits a per-process child gets from `--append-system-prompt` / `--tools` / `--exclude-tools`; without them an agent's denied tool was callable in a daemon-hosted child (oh-my-openagent#13057). The prompt text comes from a client over the wire, so it must stay text even when it names an existing file.
+
+### Why an extension could not handle it
+
+- The tool set and the appended system prompt are fixed when the runtime is built from the launch profile, before any extension of the session loads.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionLaunchProfile` field list (one field after `retryFallback`); the append-prompt resolution in `DefaultResourceLoader.reload` (one `.concat`).
+
+## 2026-11-27 - time() records the last completed startup phase without PI_TIMING (senpi#7556)
+
+### What changed
+
+- `packages/coding-agent/src/core/timings.ts`: `time()` records the phase it closes as `lastTimedPhase()` (`TimedPhase`: `label`, `atMs` on the `performance.now()` clock; non-`main` namespaces are prefixed `<namespace>:`) whether or not `PI_TIMING=1`. Collection and printing of the timing table stay gated on `PI_TIMING`.
+
+### Why
+
+- The RPC startup stall notice (senpi#7556) names the last completed phase from these existing marks instead of keeping a second phase list in step with `main()`.
+
+### Why an extension could not handle it
+
+- The marks are internal to startup and run before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the top of `time()` and the declarations right after `timingNamespaces`.
+
+## 2026-11-27 - The Cursor exec bridge answers a tool_result replacement (senpi#7563)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `emitExecBridgeToolResult` returns the `tool_result` chain's answer (`AfterToolCallResult | undefined`) from `_emitAfterToolCallHooks` instead of discarding it. That answer also carries the image normalization `_emitAfterToolCallHooks` applies with no extension involved, so images in a Cursor exec frame's result are now resized under the model's input limits, as on the agent loop.
+- `packages/coding-agent/src/core/cursor-exec-bridge.ts`: `CursorExecBridgeOptions.emitToolResult` is typed to return that answer, and the bridge's `afterToolCall` hands it to the prepared host, whose after-hook merge (`finalizeBody`, the agent loop's `finalizeExecutedToolCall` merge) applies it to the frame's result.
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: `CursorExecBridgeSession.emitExecBridgeToolResult` returns the answer and the session adapter passes it through.
+
+### Why
+
+- An extension that replaced a result (the oh-my-openagent memory guard, when a second memory identity appears while a recursive listing or search runs, omo#12466) changed what the model saw on the agent loop but not on the Cursor exec path: the frame answered with the tool's own output.
+
+### Why an extension could not handle it
+
+- The extension already returns the replacement; the engine dropped it between the session's hook chain and the exec frame, which no extension can reach.
+
+### Expected merge conflict zones
+
+- LOW: `emitExecBridgeToolResult` in `agent-session.ts` (its return type and the `return` before `_emitAfterToolCallHooks`), and the `afterToolCall` of `executeTool` in `cursor-exec-bridge.ts`.
+
 ## 2026-11-26 - An internal builtin loads with the builtins that require it (senpi#1146)
 
 ### What changed

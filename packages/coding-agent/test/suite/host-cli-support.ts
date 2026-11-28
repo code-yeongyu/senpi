@@ -14,10 +14,10 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { Socket } from "node:net";
 import { join } from "node:path";
-import { probeHost } from "../../src/modes/rpc/host-probe.ts";
 import { stopHost } from "../../src/modes/rpc/host-stop.ts";
 import { reapProcessesUnder, waitForPidGone } from "../helpers/spawned-host-reaper.ts";
 import { waitForWindowsDaemonExit } from "../helpers/windows-daemon-exit.ts";
+import { probeSandboxHost } from "../helpers/rpc-sandbox-host.ts";
 
 const cliEntry = join(import.meta.dirname, "..", "..", "src", "cli.ts");
 const sandboxes: HostCliSandbox[] = [];
@@ -226,14 +226,18 @@ export async function startFixtureHost(
 	fixtureChildren.set(child, once(child, "close"));
 	if (child.pid === undefined) throw new Error("fixture host did not spawn");
 	child.unref();
-	await awaitAnswer(sandbox.socket);
+	await awaitAnswer(sandbox);
 	return child.pid;
 }
 
-async function awaitAnswer(socket: string, timeoutMs = 20_000): Promise<void> {
+async function awaitAnswer(
+	sandbox: { readonly agentDir: string; readonly socket: string },
+	timeoutMs = 20_000,
+): Promise<void> {
+	const socket = sandbox.socket;
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() <= deadline) {
-		if (await probeHost({ socket, timeoutMs: 1_000 })) return;
+		if (await probeSandboxHost(sandbox, { timeoutMs: 1_000 })) return;
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 	throw new Error(`no host answered on ${socket} within ${timeoutMs}ms`);

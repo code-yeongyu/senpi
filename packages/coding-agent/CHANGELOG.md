@@ -12,6 +12,41 @@
 
 ### Removed
 
+## [2026.11.28] - 2026-11-28
+
+### Breaking Changes
+
+### Added
+
+- `open_session.persona` (`appendSystemPrompt`, `tools`, `excludeTools`) gives a host session the instructions and tool policy `--append-system-prompt`, `--tools` and `--exclude-tools` give a process, narrowing the host's own flags only; hosts advertise it as `session_persona` ([#7570](https://github.com/code-yeongyu/senpi/pull/7570))
+- RPC hosts report why a session is paused, since when, and how many peer deliveries wait behind the hold ([#7583](https://github.com/code-yeongyu/senpi/issues/7583)).
+
+### Changed
+
+- A paused session holds at most 64 peer deliveries; further ones are refused with `held_deliveries_full` and stay with their sender. An unattended resume delivers consecutive held messages from one sender in one turn ([#7588](https://github.com/code-yeongyu/senpi/issues/7588)).
+
+### Fixed
+
+- Two simultaneous starts of one existing session (`--session`, `--continue`, `--resume`, `--rebind`, or `--session-id` naming an existing session) no longer both become writers: admission claims the session exclusively, and a rebind carries that claim to the new path, so exactly one start is admitted and the other is refused (exit 76) or offered take-over, as a later start is. `/resume` and the RPC host see a start that is still loading as a holder, and a crashed or frozen start does not pin the session. ([#7559](https://github.com/code-yeongyu/senpi/pull/7559))
+- A session move that runs longer than 30 seconds keeps openers out until it finishes: the move lock is judged by the mover's process identity, not its age ([#3979](https://github.com/code-yeongyu/senpi/issues/3979)).
+- On macOS, a find or grep started from the home directory (or `/`) no longer reads `~/Desktop`, `~/Documents`, `~/Downloads`, `~/Library`, `~/Movies`, `~/Music`, `~/Pictures`, `/Volumes`, `/Network` or `/System/Volumes` (also when the search starts under `/System/Volumes/Data`, the data volume's second path to the home folders), so it no longer raises macOS privacy prompts; start the search inside one of those folders to search it ([#7562](https://github.com/code-yeongyu/senpi/pull/7562), [oh-my-openagent#15240](https://github.com/code-yeongyu/oh-my-openagent/issues/15240))
+- A result an extension's `tool_result` handler replaced now reaches the model on the Cursor exec path too, and images in those results are resized under the model's input limits as on the agent loop ([#7563](https://github.com/code-yeongyu/senpi/pull/7563))
+- A shared RPC host no longer keeps every cumulative partial of an in-flight message for late peers; retention per streaming session is linear in the message instead of quadratic ([#7565](https://github.com/code-yeongyu/senpi/pull/7565))
+- A `--mode rpc` engine that has not finished startup within 10 s writes a stderr line naming its last completed startup phase every 10 s, so a client that sees no output can tell where startup stands ([#7566](https://github.com/code-yeongyu/senpi/pull/7566))
+- The RPC client refuses a host that challenges under a launch with no key record under the key root (`host_identity_unproven`, naming the record and `SENPI_RPC_KEY_ROOT`) instead of continuing unauthenticated ([#7568](https://github.com/code-yeongyu/senpi/pull/7568))
+- `senpi host status` reports `refusal` for a host that answered but could not be proven; handoff, handover, stop and drain answer such a host with a typed refusal ([#7568](https://github.com/code-yeongyu/senpi/pull/7568))
+- Multi-session hosts no longer restore retired sessions automatically. Hosts advertise `session_retirement`; `close_session` with `retire: true` or `retireSession()` retires a session, and an explicit `open_session` with `reopenRetired: true` reopens one ([#7581](https://github.com/code-yeongyu/senpi/pull/7581)).
+- A resumed session presents every held peer message to the model in admission order, including after restart, instead of presenting only the last one ([#7588](https://github.com/code-yeongyu/senpi/issues/7588)).
+- A resend of a held peer delivery after a restart is answered `already_admitted` instead of being held and shown twice ([#7588](https://github.com/code-yeongyu/senpi/issues/7588)).
+- Settings that name an executable or a command line (`shellPath`, `shellCommandPrefix`, `npmCommand`, `externalEditor`, CLI provider enable flags and executable paths) are honoured only from global settings or a trusted project. Project trust defaults to false, and an ignored project key is reported with its reason ([#7595](https://github.com/code-yeongyu/senpi/pull/7595))
+- Shared RPC sessions now ignore default extension shims generated under another product name, and a generated shim always loads this installation's own builtin. A user edit reloads one session at a time, and a reload that does not finish within 60 seconds no longer holds up the other sessions ([#7599](https://github.com/code-yeongyu/senpi/pull/7599)).
+- A compacted session no longer keeps every lifecycle bookkeeping record in memory. Records written before the compaction window stay in the session file, and lifecycle restoration folds them to the newest record per session and per custody id. On a 100 MB session whose turns each leave five such records, a branch read walks 5 entries where it walked 80,005, and the RPC host's live heap for that session falls from 179 MB to 97 MB ([#7596](https://github.com/code-yeongyu/senpi/issues/7596)).
+- Restoring promoted MCP and extension tools after an extension reload no longer rereads the whole session file: the session keeps the promotions it has seen, so a replay reads only entries appended since. A compaction ends that: the next replay after it rereads the file once, as before. A session with no searchable tools reads nothing. The first replay after a session opens checks every entry for promotions in one pass without yielding to the event loop, about 0.16 s on a 300 MiB session ([#7602](https://github.com/code-yeongyu/senpi/pull/7602))
+- Process start times read from `ps` (the terminal lease probe and orphan reaper on macOS, the RPC host's session-admission snapshot, every host identity probe) are rendered and read in UTC, so a process started in the repeated hour of a daylight-saving fall-back is one instant to every reader: a live lease owner is no longer taken for a recycled pid ([#7613](https://github.com/code-yeongyu/senpi/pull/7613), oh-my-openagent#12108).
+- A long-lived session no longer keeps the payload of every closed work-custody record in memory: the registry and the history fold keep only a closed record's identity, ticket admission no longer scans every record the session ever wrote, and admission answers and the session file are unchanged ([#7621](https://github.com/code-yeongyu/senpi/pull/7621))
+
+### Removed
+
 ## [2026.11.27] - 2026-11-27
 
 ### Breaking Changes

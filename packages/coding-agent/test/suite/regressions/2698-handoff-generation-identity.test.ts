@@ -12,7 +12,6 @@ import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/h
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { gcHostEndpoints } from "../../../src/modes/rpc/host-gc.ts";
 import { handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
 import {
 	endpointScratch,
@@ -23,6 +22,7 @@ import {
 	sweepEndpointScratches,
 	trackSupervisor,
 } from "../../helpers/rpc-host-endpoint-scratch.ts";
+import { probeSandboxHost } from "../../helpers/rpc-sandbox-host.ts";
 
 afterEach(sweepEndpointScratches, 180_000);
 
@@ -57,7 +57,7 @@ describe.skipIf(process.platform === "win32")("a handoff to a different engine b
 		if (result.action !== "handoff") throw new Error(`handoff refused: ${JSON.stringify(result)}`);
 		trackSupervisor(result.pid);
 
-		expect((await probeHost({ socket: qa.legacy }))?.engineVersion).toBe(OTHER_BUILD);
+		expect((await probeSandboxHost(qa, { socket: qa.legacy }))?.engineVersion).toBe(OTHER_BUILD);
 		expect(OTHER_BUILD).not.toBe(VERSION);
 		const record = await readJson(generationPaths(paths, result.instanceId).pidFile);
 		expect(record).toMatchObject({ pid: result.pid, engineVersion: OTHER_BUILD, engineOrdinal: [2099, 1, 1, 0, 0] });
@@ -107,7 +107,7 @@ describe.skipIf(process.platform === "win32")("a handoff to a different engine b
 		const qa = endpointScratch("2698-unknown");
 		const pid = await realHost(qa, qa.legacy);
 		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
-		const instanceId = (await probeHost({ socket: qa.legacy }))?.instanceId ?? "";
+		const instanceId = (await probeSandboxHost(qa, { socket: qa.legacy }))?.instanceId ?? "";
 		const pidFile = generationPaths(paths, instanceId).pidFile;
 		const { engineVersion: _version, engineOrdinal: _ordinal, ...withoutBuild } = (await readJson(pidFile)) ?? {};
 		await writeFile(pidFile, JSON.stringify(withoutBuild));

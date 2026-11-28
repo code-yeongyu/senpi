@@ -582,12 +582,6 @@
 		},
 		{
 			"file": "src/core/session-holders.ts",
-			"callee": "statSync",
-			"symbol": "activeMover",
-			"count": 1
-		},
-		{
-			"file": "src/core/session-holders.ts",
 			"callee": "unlinkSync",
 			"symbol": "unlinkIfPresentSync",
 			"count": 1

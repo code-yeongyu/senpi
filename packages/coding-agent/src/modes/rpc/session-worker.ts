@@ -139,6 +139,9 @@ class WorkerEventWriter extends SessionEventWriter {
 					record.type === "question_resolved" ||
 					record.type === "question_updated" ||
 					record.type === "auto_retry_start" ||
+					record.type === "session_paused" ||
+					record.type === "session_resumed" ||
+					record.type === "session_notice" ||
 					record.type === "auto_retry_end" ||
 					(record.type === "extension_ui_request" && "method" in record && record.method === "question"))
 					? workerSnapshot(entry)

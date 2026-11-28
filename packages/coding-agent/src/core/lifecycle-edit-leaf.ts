@@ -1,3 +1,4 @@
+import { LIFECYCLE_ENTRY_TYPES } from "./lifecycle-bookkeeping.ts";
 import type { SessionManager } from "./session-manager.ts";
 
 /** Lifecycle bookkeeping cannot invalidate a caller's optimistic transcript token. */
@@ -7,13 +8,7 @@ export function lifecycleEditLeaf(manager: SessionManager, expectedLeafId: strin
 	let leafId = currentLeafId;
 	while (leafId !== null && leafId !== expectedLeafId) {
 		const entry = manager.getEntry(leafId);
-		if (
-			entry?.type !== "custom" ||
-			(entry.customType !== "session-lifecycle" &&
-				entry.customType !== "work-custody" &&
-				entry.customType !== "child-lifecycle")
-		)
-			return currentLeafId;
+		if (entry?.type !== "custom" || !LIFECYCLE_ENTRY_TYPES.has(entry.customType)) return currentLeafId;
 		leafId = entry.parentId;
 	}
 	return leafId === expectedLeafId ? expectedLeafId : currentLeafId;

@@ -8,6 +8,7 @@ import { isSessionArchived } from "../../core/session-archived.ts";
 import { redactedRetryWait } from "../../core/retry-wait.ts";
 import { readSessionSettled, type SettledFields, settledFields } from "../../core/session-settled.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { sessionRowHold } from "./session-row-hold.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
 import type { RpcSessionEntry, RpcSessionRow } from "./session-registry-types.ts";
 import type { SessionStatusEntryView, SessionStatusRuntimeView } from "./session-status.ts";
@@ -19,10 +20,16 @@ function modelOf(model: { readonly provider: string; readonly id: string } | und
 
 type LiveSession = NonNullable<NonNullable<RpcSessionEntry["runtime"]>["session"]>;
 
+export function liveRowHold(session: LiveSession) {
+	return sessionRowHold(session.holds ?? [], () => session.externalAdmission.list().pending.length);
+}
+
 /** What a live in-process session contributes; `pendingQuestions` defaults to its RPC question bridge. */
 export function sessionRuntimeView(session: LiveSession, pendingQuestions?: number): SessionStatusRuntimeView {
 	const model = modelOf(session.model);
+	const hold = liveRowHold(session);
 	return {
+		...(hold && { hold }),
 		isStreaming: session.isStreaming === true,
 		isCompacting: session.isCompacting === true,
 		...(model !== undefined ? { model } : {}),
@@ -41,6 +48,7 @@ function runtimeView(entry: RpcSessionEntry): SessionStatusRuntimeView | undefin
 	if (state === undefined) return undefined;
 	const model = modelOf(state.model ?? undefined);
 	return {
+		...(entry.worker?.snapshot?.hold && { hold: entry.worker.snapshot.hold }),
 		isStreaming: state.isStreaming,
 		isCompacting: state.isCompacting,
 		...(model !== undefined ? { model } : {}),
@@ -93,7 +101,7 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
  * The wait is redacted: a listing reaches every connection that can list sessions, so it carries the typed kind
  * and its timing but never the provider's error text, which stays on `get_state` and on `session_status`.
  */
-export function sessionRowStatusFields(
+function activityFields(
 	entry: RpcSessionEntry,
 ): Pick<RpcSessionRow, "archived" | "settled" | "settledBy" | "activity" | "waiting" | "model" | "persistence"> {
 	const session = entry.runtime?.session;
@@ -110,6 +118,12 @@ export function sessionRowStatusFields(
 		...(model !== undefined ? { model } : {}),
 		...(entry.profile.persistence === "none" ? { persistence: "none" as const } : {}),
 	};
+}
+
+export function sessionRowStatusFields(entry: RpcSessionEntry) {
+	const session = entry.runtime?.session;
+	const hold = session ? liveRowHold(session) : entry.worker?.snapshot?.hold;
+	return { ...activityFields(entry), ...(hold && { hold }) };
 }
 
 export function registryStatusSource(registry: {

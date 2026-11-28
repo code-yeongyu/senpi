@@ -222,6 +222,7 @@ export const REVIEWED_FIELDS = {
 			"persistence",
 			"promptSurface",
 			"provider",
+			"reopenRetired",
 			"retain_on_disconnect",
 			"retry",
 			"retryFallback",
@@ -238,7 +239,8 @@ export const REVIEWED_FIELDS = {
 	},
 	fork: { fields: ["admissionId", "entryId", "id", "position", "sessionId", "type"] },
 	clone: { fields: ["admissionId", "id", "sessionId", "type"] },
-	close_session: { fields: ["admissionId", "id", "sessionId", "type"] },
+	// `retire` (senpi#7577) only narrows what may reopen the session the caller is already closing: class unchanged.
+	close_session: { fields: ["admissionId", "id", "retire", "sessionId", "type"] },
 	unload_session: {
 		// `deliveries` (senpi#7004) only chooses whether a busy session's unwritten deliveries refuse the unload: no path,
 		// credential or process, so the class stays `thread`. `graceful` and `waitMs` (oh-my-openagent#14313) only choose to

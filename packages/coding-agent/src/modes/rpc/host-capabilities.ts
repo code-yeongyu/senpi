@@ -41,6 +41,7 @@ import {
 	SESSION_PERSONA_CAPABILITY,
 	SESSION_PERSISTENCE_NONE_CAPABILITY,
 	SESSION_TOOLS_NONE_ENFORCED_CAPABILITY,
+	SESSION_RETIREMENT_CAPABILITY,
 	TELEMETRY_CONSENT_CAPABILITY,
 	SESSION_ENV_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
@@ -137,6 +138,7 @@ export function multiSessionHostCapabilities(options: {
 			SESSION_MODEL_SCOPE_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
+			"session_row_hold",
 			RESUME_SESSION_CAPABILITY,
 			ATTENDED_CAPABILITY,
 			// `get_state`/`get_entries` marked `observe` never attach, and history reads page backward too (senpi#4267).
@@ -214,6 +216,7 @@ export function multiSessionHostCapabilities(options: {
 			SESSION_PERSISTENCE_NONE_CAPABILITY,
 			// A no-tools session's `bash` is refused with `tools_disabled`, not only hidden from its model (senpi#7567).
 			SESSION_TOOLS_NONE_ENFORCED_CAPABILITY,
+			SESSION_RETIREMENT_CAPABILITY,
 			// Each session's telemetry is decided from the host's setting and its own callers' answers (senpi#7446).
 			TELEMETRY_CONSENT_CAPABILITY,
 			ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
