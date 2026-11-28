@@ -10248,7 +10248,7 @@ export class InteractiveMode {
 			info += `${theme.fg("dim", "Output:")} ${stats.tokens.output.toLocaleString()}\n`;
 			info += `${theme.fg("dim", "Total:")} ${stats.tokens.total.toLocaleString()}\n`;
 
-			if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
+			if (stats.cost > 0 || stats.costUnknown || cacheWaste.missedTokens > 0) {
 				info += `\n${theme.bold("Cost")}\n`;
 				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}${stats.costUnknown ? theme.fg("dim", " + unpriced turns") : ""}`;
 				// A single entry repeats the total, unless it names a model other than the selected one.

@@ -9,10 +9,17 @@ function footerData(subagentCost: number | undefined): ReadonlyFooterDataProvide
 	return { ...createFooterData(1), getSubagentCost: () => subagentCost };
 }
 
-function renderCost(parentCost: number, subagentCost: number | undefined): string {
+function renderCost(parentCost: number, subagentCost: number | undefined, costUnknown?: true): string {
 	const session = createFooterSession({
 		sessionName: "",
-		usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: parentCost } },
+		usage: {
+			input: 100,
+			output: 10,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: { total: parentCost },
+			...(costUnknown ? { costUnknown } : {}),
+		},
 	});
 	return new FooterComponent(session, footerData(subagentCost))
 		.render(160)
@@ -39,6 +46,11 @@ describe("FooterComponent subagent tree cost (#2471)", () => {
 		expect(withoutReport).toContain("$0.380");
 		expect(withoutReport).not.toContain("(+");
 		expect(zeroSpend).not.toContain("(+");
+	});
+
+	it("shows a zero lower bound rather than hiding a session of unpriced turns (#4075)", () => {
+		expect(renderCost(0, undefined, true)).toContain("$0.000+?");
+		expect(renderCost(0, undefined)).not.toContain("$0.000");
 	});
 });
 
