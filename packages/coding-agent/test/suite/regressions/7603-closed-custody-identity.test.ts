@@ -113,7 +113,7 @@ it("answers the same admission for every ticket of a journal whose closing recor
 	]);
 });
 
-it("keeps a closed record's identity, not its payload, in the fold and in the closing records it writes", () => {
+it("keeps a closed record's identity, not its payload, in the fold and the registry, and writes closing records as before", () => {
 	const manager = oldFormatSession();
 	expect(foldedCustody(manager, "custody-settled")).toEqual({
 		id: "custody-settled",
@@ -129,13 +129,19 @@ it("keeps a closed record's identity, not its payload, in the fold and in the cl
 
 	const { controller, written } = restore(manager);
 	controller.obligations.settleRun("current-run");
-	expect(written).toEqual([
-		{
-			id: "custody-consumed",
-			key: "delivery:consumed",
-			kind: "background",
-			state: "settled",
-			ticketId: "ticket-consumed",
-		},
-	]);
+	// The session file and its event stream are unchanged: the closing record carries what the consumed record held.
+	expect(written).toHaveLength(1);
+	expect(written[0]).toMatchObject({
+		id: "custody-consumed",
+		key: "delivery:consumed",
+		kind: "background",
+		state: "settled",
+		ticketId: "ticket-consumed",
+		payload,
+		runId: "current-run",
+		transcriptEntryId: "entry-consumed",
+	});
+	// Memory is what shrinks: the registry no longer holds the settled record, and its ticket still answers closed.
+	expect(controller.obligations.active.map((record) => record.id)).not.toContain("custody-consumed");
+	expect(controller.obligations.admission("ticket-consumed")).toBe("closed");
 });

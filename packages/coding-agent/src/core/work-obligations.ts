@@ -258,9 +258,9 @@ export class SessionWorkObligations implements WorkObligations {
 		if (ended.length > 0) this.store.changed();
 	}
 
-	private install(next: WorkCustodyRecord): void {
-		// A closing record carries no payload forward (senpi#7603): nothing reads it once the record is closed.
-		const record = custodyIsOpen(next) ? next : closedCustody(next);
+	private install(record: WorkCustodyRecord): void {
+		// The journal and the session's event stream get the record as written; only memory drops a closed record's
+		// payload (senpi#7603), so the session file a reader or a replay sees is unchanged.
 		try {
 			this.store.append(record);
 			this.unpersisted.delete(record.id);
@@ -268,7 +268,7 @@ export class SessionWorkObligations implements WorkObligations {
 			if (!(error instanceof Error)) throw error;
 			this.unpersisted.set(record.id, record);
 		}
-		this.keep(record);
+		this.keep(custodyIsOpen(record) ? record : closedCustody(record));
 	}
 
 	/** Open custody stays whole; of a closed record only its ticket stays, and one without a ticket leaves. */

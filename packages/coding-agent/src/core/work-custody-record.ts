@@ -67,9 +67,9 @@ export function readWorkCustody(value: unknown): WorkCustodyRecord | undefined {
 }
 
 /**
- * What a closed record keeps (senpi#7603). Closed states are terminal and nothing reads a closed record's payload,
- * items or run, so a closed record keeps only what identifies it and answers its ticket's admission, in memory and
- * in the journal. An older journal that wrote the payload into its closing records restores to the same record.
+ * What memory keeps of a closed record (senpi#7603). Closed states are terminal and nothing in the process reads a
+ * closed record's payload, items or run, so the registry and the history fold keep only what identifies it and answers
+ * its ticket's admission. The journal is not touched: closing records are written as before, and restore to this.
  */
 export function closedCustody(record: WorkCustodyRecord): WorkCustodyRecord {
 	const { id, key, kind, state, ticketId, noticeId } = record;
