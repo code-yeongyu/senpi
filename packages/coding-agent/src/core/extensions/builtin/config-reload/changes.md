@@ -1,5 +1,25 @@
 # config-reload Extension Changes
 
+## 2026-11-28 - Serialize watcher-triggered session reloads (#7597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/reload-queue.ts` (new) holds one reload queue shared across engine copies serving the same event loop. A session's slot is released when its reload settles or after `RELOAD_SLOT_TIMEOUT_MS` (60 s), whichever comes first; a reload past the bound keeps running on its own and is logged once as `reload_slot_released` (`log.ts`).
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` sends every session with a pending change through that queue, admitted by the same rules as before (idle, nothing pending, not compacting, no veto). A queued session rechecks admission when its turn comes, and a follow-up requested from a reload's own `session_start` is queued without waiting on that reload.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/generated-shim-filter.ts` filters generated re-exports using the same parser as resource seeding.
+
+### Why
+
+- One watched change could start a reload in every session at once. Cross-brand generated shims reached that path as user edits.
+
+### Why an extension could not handle it
+
+- This builtin owns the watcher's pending changes, admission decision and reload handoff.
+
+### Expected merge conflict zones
+
+- `flushPending`, `reload-queue.ts` and generated-shim filtering.
+
 ## 2026-11-10 - Rearm extension discovery without reloading for runtime directories (senpi#6344)
 
 ### What changed

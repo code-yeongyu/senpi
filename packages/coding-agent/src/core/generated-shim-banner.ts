@@ -18,14 +18,18 @@ export function hasGeneratedShimBanner(content: string): boolean {
 	return GENERATED_FIRST_LINE.test(content);
 }
 
-/** The single re-export written by the seed step. Additional user code makes this a normal extension. */
+/**
+ * The single `file:` re-export written by the seed step. Additional user code, or any other specifier, makes this a
+ * normal extension: the module loader resolves a relative specifier against the file itself, so judging it here
+ * against this process's working directory would classify the same file differently per session (senpi#7625).
+ */
 export function generatedShimTarget(content: string): string | undefined {
 	if (!hasGeneratedShimBanner(content)) return undefined;
 	const specifier = GENERATED_EXPORT.exec(content.slice(content.indexOf("\n") + 1))?.[1];
 	if (specifier === undefined) return undefined;
 	try {
 		const target: string = JSON.parse(specifier);
-		return target.startsWith("file:") ? fileURLToPath(target) : target;
+		return target.startsWith("file:") ? fileURLToPath(target) : undefined;
 	} catch {
 		return undefined;
 	}

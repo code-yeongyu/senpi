@@ -23,7 +23,7 @@ import { createHash, randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
-import { dirname, join } from "path";
+import { dirname, join, relative } from "path";
 import lockfile from "proper-lockfile";
 import { isDeepStrictEqual } from "util";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
@@ -814,6 +814,11 @@ export class SettingsManager {
 	private projectSettings: Settings;
 	private settings: Settings;
 	private projectTrusted: boolean;
+	/**
+	 * Set by `create()` without a trust decision: the project keys that name an executable follow the decision saved for
+	 * this folder on every read of the project file, not only the first (senpi#6362, #7635).
+	 */
+	private savedTrustFolder: { readonly cwd: string; readonly agentDir: string } | undefined;
 	/** CLI/SDK overrides (`applyOverrides`): never persisted, re-applied on every recompute. */
 	private runtimeOverrides: Settings = {};
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
@@ -861,11 +866,12 @@ export class SettingsManager {
 		const storage = new FileSettingsStorage(cwd, agentDir);
 		const manager = SettingsManager.fromStorage(storage, options);
 		// senpi#6362: settings that name an executable or a command line are honoured only from global settings or a
-		// trusted project. A reader that passes no trust decision gets the one the person saved for this folder.
+		// trusted project. A reader that passes no trust decision gets the one the person saved for this folder, each
+		// time the project file is read (senpi#7635).
 		if (options.projectTrusted === undefined) {
-			const named = executableSettingPathsIn(manager.getProjectSettings());
-			if (named.length > 0 && !savedProjectTrusted(cwd, agentDir))
-				manager.dropUntrustedProjectKeys(named, getSettingsPath(cwd, agentDir, "project"));
+			manager.savedTrustFolder = { cwd, agentDir };
+			if (manager.dropUntrustedProjectKeys())
+				manager.settings = deepMergeSettings(manager.globalSettings, manager.projectSettings);
 		}
 		return manager;
 	}
@@ -911,14 +917,26 @@ export class SettingsManager {
 		return manager;
 	}
 
-	/** Drops project keys an untrusted project may not set, and reports each as ignored (senpi#6362). */
-	private dropUntrustedProjectKeys(keys: readonly string[], path: string): void {
+	/**
+	 * Drops the project keys an untrusted project may not set and reports each as ignored (senpi#6362). Runs after every
+	 * read of the project file by a manager created without a trust decision (senpi#7635); true when it dropped any.
+	 */
+	private dropUntrustedProjectKeys(): boolean {
+		if (this.savedTrustFolder === undefined) return false;
+		const { cwd, agentDir } = this.savedTrustFolder;
+		const keys = executableSettingPathsIn(this.projectSettings);
+		if (keys.length === 0 || savedProjectTrusted(cwd, agentDir)) return false;
 		this.projectSettings = withoutSettingPaths(this.projectSettings, keys);
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		// Named as the project knows it: the notice reaches every surface that shows settings errors (senpi#7633).
+		const file = relative(cwd, getSettingsPath(cwd, agentDir, "project"));
 		for (const key of keys)
 			this.errors.push(
-				toSettingsError("project", new Error(`project setting ${key} ignored: the project is not trusted`), path),
+				toSettingsError(
+					"project",
+					new Error(`project setting ${key} in ${file} ignored: the project is not trusted`),
+				),
 			);
+		return true;
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
@@ -1328,6 +1346,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
+		this.dropUntrustedProjectKeys();
 		this.updateSettings(this.mergedSettings());
 	}
 
@@ -1353,6 +1372,7 @@ export class SettingsManager {
 		if (!projectLoad.error) {
 			this.projectSettings = projectLoad.settings;
 			this.projectSettingsLoadError = null;
+			this.dropUntrustedProjectKeys();
 		} else {
 			this.projectSettingsLoadError = projectLoad.error;
 			this.recordError("project", projectLoad.error);

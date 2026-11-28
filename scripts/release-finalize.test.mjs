@@ -83,6 +83,7 @@ case "$*" in
   "issue list"*) echo "$EXISTING_TITLE" ;;
   "issue create"*) echo https://github.com/o/r/issues/7 ;;
   "run view"*) echo "$PUBLISH_STATUS " ;;
+  "run list"*displayTitle*) echo "" ;;
   "run list"*) echo 0 ;;
   *) echo "unexpected gh $*" >&2; exit 2 ;;
 esac`,
@@ -173,7 +174,12 @@ esac`,
 		const run = finalize({ env: { DISPATCH_RESULT: "failure", PUBLISH_RUN_ID: "" } });
 		assert.equal(run.result.status, 1, run.output);
 		assert.ok(!run.calls.some((call) => call.includes("runs/22")), "no publish run to read");
-		assert.equal(run.did("run list").length, 1, run.calls.join("\n"));
+		// Two queries before deleting: no dispatch still in flight, and (senpi#7469) no publish-only run of the version
+		// succeeded, which matters exactly here, where the run id is unknown.
+		const lists = run.did("run list");
+		assert.equal(lists.length, 2, run.calls.join("\n"));
+		assert.ok(lists.some((call) => call.includes("--json status")), run.calls.join("\n"));
+		assert.ok(lists.some((call) => call.includes("displayTitle")), run.calls.join("\n"));
 		assert.deepEqual(run.did("release delete"), ["release delete v2026.11.16-1 --yes"]);
 	});
 });

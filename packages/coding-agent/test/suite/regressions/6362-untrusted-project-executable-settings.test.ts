@@ -1,5 +1,5 @@
 // senpi#6362: settings that name an executable or a command line are honoured only from global settings or from a project
-// the person trusted. Project trust defaults to false for every settings reader that does not pass a trust decision.
+// the person trusted. A settings manager created without a trust decision uses the decision the person saved for the folder.
 // Security contract: each family below must not run a project-named program from an untrusted project, and must still run
 // it from a trusted one.
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -8,11 +8,13 @@ import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAgentDir } from "../../../src/config.ts";
-import { EXECUTABLE_SETTING_PATHS } from "../../../src/core/project-executable-settings.ts";
+import { EXECUTABLE_SETTING_PATHS, executableSettingPathsIn } from "../../../src/core/project-executable-settings.ts";
 import { registerCursorCliOauthExtension } from "../../../src/core/extensions/builtin/cursor-cli-oauth/index.ts";
 import { loadCursorCliOauthProviderSettingsFromDisk } from "../../../src/core/extensions/builtin/cursor-cli-oauth/settings.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { DefaultPackageManager } from "../../../src/core/package-manager.ts";
+import { createAgentSession } from "../../../src/core/sdk.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { createLocalBashOperations } from "../../../src/core/tools/bash.ts";
 import { ProjectTrustStore } from "../../../src/core/trust-manager.ts";
@@ -66,9 +68,15 @@ describe("settings that name an executable (senpi#6362)", () => {
 			undefined,
 			undefined,
 		]);
-		const reasons = untrusted.drainErrors().map((error) => error.error.message);
+		const ignored = untrusted.drainErrors();
+		const reasons = ignored.map((error) => error.error.message);
 		for (const key of EXECUTABLE_SETTING_PATHS)
 			expect(reasons.some((reason) => reason.includes(key) && reason.includes("not trusted"))).toBe(true);
+		// senpi#7633: each notice names the file as the project knows it, never by its absolute path.
+		for (const error of ignored) {
+			expect(error.error.message).toContain(join(".senpi", "settings.json"));
+			expect([error.path, error.error.message].join("\n")).not.toContain(r.project);
+		}
 
 		await r.trust();
 		const trusted = SettingsManager.create(r.project, r.agentDir);
@@ -155,5 +163,85 @@ describe("settings that name an executable (senpi#6362)", () => {
 		});
 		await second;
 		expect(readFileSync(r.marker, "utf8")).toContain("models");
+	});
+});
+
+// senpi#7635: the rule holds on every read of the project file, not only the first one.
+describe("settings that name an executable, when the project file is read again (senpi#7635)", () => {
+	const everyKey = (program: string) => ({
+		shellPath: program,
+		shellCommandPrefix: "echo prefixed",
+		npmCommand: [program],
+		externalEditor: program,
+		cursorCliOauthProvider: { enabled: true, executablePath: program },
+	});
+
+	it("stay ignored after reload(), with a reason, and apply on the reload after the project is trusted", async () => {
+		const r = rig(everyKey);
+		const manager = SettingsManager.create(r.project, r.agentDir);
+		manager.drainErrors();
+		await manager.reload();
+		expect(executableSettingPathsIn(manager.getProjectSettings())).toEqual([]);
+		expect([manager.getShellPath(), manager.getShellCommandPrefix(), manager.getNpmCommand()]).toEqual([
+			undefined,
+			undefined,
+			undefined,
+		]);
+		const reasons = manager.drainErrors().map((error) => error.error.message);
+		for (const key of EXECUTABLE_SETTING_PATHS)
+			expect(reasons.some((reason) => reason.includes(key) && reason.includes("not trusted"))).toBe(true);
+
+		await r.trust();
+		await manager.reload();
+		expect(manager.getShellPath()).toBe(r.program);
+		expect(manager.getNpmCommand()).toEqual([r.program]);
+	});
+
+	it("a project write from that manager leaves them in the user's settings file", async () => {
+		const r = rig(everyKey);
+		const file = join(r.project, ".senpi", "settings.json");
+		const onDisk = JSON.parse(readFileSync(file, "utf8"));
+		const manager = SettingsManager.create(r.project, r.agentDir);
+		await manager.reload();
+		manager.setProjectPackages(["npm:@scope/pkg"]);
+		await manager.setProjectSetting("theme", "dark");
+		await manager.flush();
+		expect(executableSettingPathsIn(manager.getProjectSettings())).toEqual([]);
+		expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+			...onDisk,
+			packages: ["npm:@scope/pkg"],
+			theme: "dark",
+		});
+	});
+
+	it("stay ignored when setProjectTrusted(true) reads the project file again", () => {
+		const r = rig(everyKey);
+		const manager = SettingsManager.create(r.project, r.agentDir);
+		manager.setProjectTrusted(false);
+		manager.setProjectTrusted(true);
+		expect(executableSettingPathsIn(manager.getProjectSettings())).toEqual([]);
+		expect(manager.getShellPath()).toBeUndefined();
+	});
+
+	it("a session made without a settingsManager never runs the shell an untrusted project names, nor after a reload", async () => {
+		const r = rig(everyKey, getAgentDir());
+		const { session } = await createAgentSession({
+			cwd: r.project,
+			agentDir: r.agentDir,
+			sessionManager: SessionManager.inMemory(),
+		});
+		try {
+			await session.executeBash("true");
+			await session.reload();
+			await session.executeBash("true");
+			expect(existsSync(r.marker)).toBe(false);
+			// A cached settings reader of the same project still keeps the Cursor CLI lane off after the reload.
+			expect(loadCursorCliOauthProviderSettingsFromDisk(r.project)).toMatchObject({
+				enabled: false,
+				executablePath: undefined,
+			});
+		} finally {
+			session.dispose();
+		}
 	});
 });

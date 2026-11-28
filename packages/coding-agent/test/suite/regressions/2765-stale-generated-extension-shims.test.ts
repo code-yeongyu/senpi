@@ -132,6 +132,36 @@ describe("#2765 stale generated global-default extension shims", () => {
 		expect(readFileSync(join(extensionsDir, "files.js"), "utf-8")).toBe(bannerLater);
 	});
 
+	// senpi#7625: the seed step writes only file: URLs, so a shim whose specifier is anything else is the user's own
+	// re-export. Whether it is kept must not depend on the working directory the loader happens to run in.
+	it("#given a banner shim with a relative specifier #when resources load from two working directories #then it is kept both times", async () => {
+		withoutOnDiskBuiltins();
+		const shimPath = join(extensionsDir, "diff.js");
+		const relative = `${BANNER}export { default } from "./my-diff.js";\n`;
+		writeFileSync(join(extensionsDir, "my-diff.js"), "export default function () {}\n");
+		const besideTarget = join(tempDir, "cwd-with-my-diff");
+		const elsewhere = join(tempDir, "cwd-without-my-diff");
+		mkdirSync(besideTarget);
+		mkdirSync(elsewhere);
+		writeFileSync(join(besideTarget, "my-diff.js"), "export default function () {}\n");
+		const previous = process.cwd();
+		try {
+			for (const cwd of [besideTarget, elsewhere]) {
+				writeFileSync(shimPath, relative);
+				process.chdir(cwd);
+				const resourceLoader = loader();
+				await resourceLoader.reload();
+				expect({ cwd, kept: existsSync(shimPath) && readFileSync(shimPath, "utf-8") === relative }).toEqual({
+					cwd,
+					kept: true,
+				});
+				expect(resourceLoader.getExtensions().errors).toEqual([]);
+			}
+		} finally {
+			process.chdir(previous);
+		}
+	});
+
 	it("#given a user-authored file at a shim path #when resources load without on-disk builtins #then it is left byte-identical", async () => {
 		withoutOnDiskBuiltins();
 		const userPath = join(extensionsDir, "diff.js");

@@ -191,6 +191,11 @@ export interface SessionControlActions {
 	/** POSIX interactive sessions only; anything else answers `unsupported` and registers nothing. */
 	registerControlEndpoint(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration>;
 	admissionGate(): SessionAdmissionGate;
+	/**
+	 * Throws once a host started handing the session over, and throws an error whose `code` is `held_deliveries_full`
+	 * while the session holds `MAX_HELD_PEER_DELIVERIES` peer deliveries: either way nothing is written and the delivery
+	 * stays with the caller (senpi#7628).
+	 */
 	admitExternalMessage(input: AdmitExternalMessageInput): ExternalAdmissionResult;
 	listAdmittedDeliveries(): AdmittedDeliveries;
 	/** Writes the session header now, so the session id is durable before anything exposes it. */
@@ -215,8 +220,13 @@ export interface SessionControlDeliveryDetails {
 	readonly display_text?: string;
 	/** Engine-stamped: the remote device the admitting connection speaks for. */
 	readonly remote_origin?: SessionControlRemoteOrigin;
-	/** Engine-stamped: the thread-chain hop count the delivery was admitted at. */
+	/** Engine-stamped: the thread-chain hop count the delivery was admitted at; a folded turn's highest hop. */
 	readonly chain_count?: number;
+	/**
+	 * Engine-written on a turn that carried several held deliveries of one speaker: the ones after `delivery_id`, in
+	 * admission order. The entry settles all of them (senpi#7628).
+	 */
+	readonly folded_delivery_ids?: readonly string[];
 }
 
 /** The engine-stamped remote device a delivery's `details` names, when it names a well-formed one. */

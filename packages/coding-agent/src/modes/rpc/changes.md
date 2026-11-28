@@ -1,3 +1,104 @@
+## 2026-11-27 - A paused session reports its hold in listing and status rows (senpi#7583)
+
+### What changed
+
+- `list_sessions` and `session_status` carry `hold: { kind, key, since, queueDepth }` from the session or its worker snapshot. `queueDepth` counts distinct pending peer deliveries; replaying a delivery does not add one. A host advertises `session_row_hold`.
+
+### Why
+
+- After a host died during a tool call, its successor listed the reopened session as idle while its interrupted-run hold kept peer deliveries from running.
+
+### Why an extension could not handle it
+
+- The host builds the registry rows and maintains the worker snapshots from which it publishes status. An extension cannot add fields to either wire response.
+
+### Expected merge conflict zones
+
+- The host capability list and session row type are shared with other additive RPC changes.
+
+## 2026-11-27 - Host recovery respects session retirement (senpi#7577)
+
+### What changed
+
+- `close_session` with `retire: true` records retirement on the final close; a plain close does not. Handover, retained restart and ordinary opens skip retired sessions. Explicit `open_session.reopenRetired` can reopen one. `find_session` and resident `list_sessions` rows report it.
+
+### Why
+
+- A session its controller had retired could reappear after a host restart or handover without a caller requesting another turn.
+
+### Why an extension could not handle it
+
+- Successor hosts decide which transcripts to open before session extensions exist.
+
+### Expected merge conflict zones
+
+- The open and close command schemas, and host capability list.
+
+## 2026-11-27 - open_session.persona and the session_persona capability (senpi#7570, oh-my-openagent#13057)
+
+### What changed
+
+- `open_session.persona = { appendSystemPrompt?, tools?, excludeTools? }` is validated at the open boundary (`invalid_launch_profile` for a malformed one), held on the launch profile, recorded and replayed by a handover park, applied by the CLI and loopless runtime factories, and advertised as `session_persona`.
+- An attach naming another persona is refused (`session_path_in_use`, `persona_mismatch`) in both registries, before the worker registry's binding checks; a `claim_session` naming a persona never takes a session parked without one.
+- A persona session never runs on a hand: `select_hand` refuses it with `persona_not_supported_on_hand`, and a reopened file that recorded a hand gets the unreachable placeholder (a hand's runtime never receives the persona, and its nested calls would run excluded tools). A host restricting built-in tools by default refuses `persona.tools` with `persona_tools_unsupported`; padded tool names are refused.
+
+### Why
+
+- oh-my-openagent runs task children as daemon sessions; a child's agent tool policy and instructions must hold there exactly as on a per-child process, and a reused session (attach, claim, successor reopen) must never hand out a wider tool surface than the request asked for.
+
+### Why an extension could not handle it
+
+- The open profile, the attach and claim decisions and the park record are the host's own; no extension sees them before the session exists.
+
+### Expected merge conflict zones
+
+- LOW: `openProperties` in `method-classes-schema-host.ts`, the claim miss list in `session-router-park.ts`, the host capability list in `host-capabilities.ts`.
+
+## 2026-11-27 - A host that challenges under a launch with no key record is refused (senpi#7568)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-auth-client.ts`: when a host challenges under a launch with no key record under the key root, `start()` now rejects with `RpcEndpointAuthError` code `host_identity_unproven`. The message is `<endpoint>: no key record <keyRoot>/rpc/keys/<launch_id>; set SENPI_RPC_KEY_ROOT to the host's agent dir`. Nothing is sent after `get_protocol_info`, and nothing is written to stderr. Before, a dial with no expected launch id printed `continuing unauthenticated (refused from the next release ...)` and served the host without authenticating it.
+
+- `packages/coding-agent/src/modes/rpc/host-session-runner.ts`, `host-stop.ts`, `host-handoff.ts`: `runHostSessionRequest`, `stopHost` and `handoffHost` run under `withRpcKeyRoot(rpcKeyRoot({}, target agentDir))`, as `ensureHost` and `runHostRequest` already did. A direct caller of the runner is no longer refused by the host the runner itself ensured.
+- `host-identity-refusal.ts` (`probeOrIdentityRefusal`), `host-handover-request.ts`, `host-stop-drain.ts`: handoff, idle handover, stop and drain answer an identity-refused probe as `{ action: "refuse", reason: <code> }`, never by throwing.
+- `host-handoff-agent-dir.ts` (`localForeignAgentDirRefusal`): the `foreign_agent_dir` decision runs first, on local files alone. It can only add a refusal; with missing or ambiguous evidence the authenticated dial decides.
+- `host-status.ts`, `host-status-all.ts`: the status report gains `refusal: { code, detail } | null`. An identity-refused host is `reachable: true` with that refusal, and `status --all` judges it alive (`live_unresponsive`), never `dead`.
+- `host-gc.ts`, `host-status-all.ts`, `rpc-monitor-watch.ts`: `gcHostEndpoints`, `readAllHostStatus` and the monitor watch also run under the target agent dir's key root. A stale-engine stop refused for identity is kept as `stale_unproven_owner`, not `stale_sessions`.
+- `host-runner.ts`: `senpi host stop` and `senpi host handoff` prove the host in their own first read too, so an unproven host is answered `{ action: "refuse", reason: "host_identity_unproven" }` (exit 3), never `host_error`.
+
+### Why
+
+- A host that sends a challenge claims a launch, and the only proof of that launch is its key record. Continuing without the record trusts an unproven host with every later command. The omo thread client returns the same refusal for the same case (oh-my-openagent#15197).
+
+### Why an extension could not handle it
+
+- The handshake runs inside `RpcClient.start()` before any extension or caller sees the connection. Nothing outside the client can refuse it.
+
+### Expected merge conflict zones
+
+- LOW: the `record === undefined` branch of `authenticate()` in `rpc-auth-client.ts`, plus one `node:path` import.
+- LOW: the entry functions of `host-session-runner.ts`, `host-stop.ts` and `host-handoff.ts`, now thin `withRpcKeyRoot` wrappers.
+- MEDIUM: the first probe in `handoffHostLocked` and `idleHandoverOutcome`, and the `HostStatusReport` interface (one field).
+
+## 2026-11-27 - The legacy replay store keeps one cumulative partial per in-flight message (senpi#4239, senpi#7565)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/legacy-replay-store.ts`: a remembered compact `*_delta` `message_update` also carries its `demoteToDeltaOnly` line. When a newer record of the same message that carries the cumulative `message` arrives, that line replaces it, so the store holds every delta in order but only the newest cumulative `message`/`partial`; records without a message (tool events) never supersede it. While a frozen attach cursor is open, the store rewrites a copy of the session's array, never the array the cursor froze.
+
+### Why
+
+- With the compact-updates flag off (the default), no session owns an acceptance lane, so every session's in-flight message went through this store. It kept every serialized cumulative update until `message_end`: one streamed message retained the sum of all its partials, quadratic in the stream length, per session on the shared host. Six sessions streaming a 63 KiB message in 1,000 deltas retained 371 MB of heap; with this change they retain 3 MB.
+
+### Why an extension could not handle it
+
+- The store is the RPC host's private replay state for late peers; no extension hook sees or owns it.
+
+### Expected merge conflict zones
+
+- LOW: `LegacyReplayStore.remember` (the push branch) and the `SnapshotRecord` type in `legacy-replay-store.ts`.
+
 ## 2026-11-26 - A supervisor whose host child is gone gives up the public socket, and signals only a child it can prove (oh-my-openagent#14725, senpi#7525)
 
 ### What changed

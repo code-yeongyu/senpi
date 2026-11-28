@@ -1,4 +1,5 @@
 import { resetsEngineTurnHistory } from "../../../engine-turn-limit.ts";
+import type { HistoryReducer } from "../../../session-history-reduce.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import { TTSR_INJECTION_CUSTOM_TYPE } from "./types.ts";
 
@@ -17,15 +18,21 @@ function nudgedRules(entry: SessionEntry): readonly unknown[] {
 }
 
 /**
- * Whether this rule already sent its one corrective follow-up since the last user-directed input.
- * Read from the session, so rebuilding the extension cannot re-arm it (senpi#2967).
+ * The rules that already sent their one corrective follow-up since the last user-directed input. Read from the
+ * session, so rebuilding the extension cannot re-arm them (senpi#2967), and folded, so a rebuild does not reread the
+ * whole history (senpi#7607).
  */
-export function ruleAlreadyCorrected(entries: readonly SessionEntry[], rule: string): boolean {
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry.type === "message" && entry.message.role === "user") return false;
-		if (entry.type === "custom_message" && resetsEngineTurnHistory(entry.customType, entry.details)) return false;
-		if (nudgedRules(entry).includes(rule)) return true;
-	}
-	return false;
-}
+export const correctedRules: HistoryReducer<Set<unknown>> = {
+	initial: () => new Set(),
+	add: (rules, entry) => {
+		if (
+			(entry.type === "message" && entry.message.role === "user") ||
+			(entry.type === "custom_message" && resetsEngineTurnHistory(entry.customType, entry.details))
+		) {
+			rules.clear();
+			return rules;
+		}
+		for (const rule of nudgedRules(entry)) rules.add(rule);
+		return rules;
+	},
+};

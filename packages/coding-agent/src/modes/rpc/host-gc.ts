@@ -91,6 +91,8 @@ export interface HostGcOptions {
 	readonly _test?: {
 		/** Runs inside an endpoint's ensure lock, before any evidence is read. */
 		readonly afterLockAcquired?: (socket: string) => Promise<void>;
+		/** Runs once the judge found the host stale, before the stop proves it again and signals it. */
+		readonly beforeStaleStop?: (socket: string) => Promise<void>;
 	};
 }
 
@@ -153,7 +155,13 @@ export async function gcEndpoint(
 			return { removed: false, reason: evidence.inUse };
 		}
 		if (evidence.inUse !== undefined)
-			return await stopIfStale(socket, dir, evidence.inUse, options.staleEngine ?? {});
+			return await stopIfStale(
+				socket,
+				dir,
+				evidence.inUse,
+				options.staleEngine ?? {},
+				options._test?.beforeStaleStop,
+			);
 		const skipped = await removeEndpoint(socket, dir);
 		return { removed: true, reason: evidence.silence, skipped };
 	} finally {
@@ -175,6 +183,7 @@ async function stopIfStale(
 	dir: string,
 	inUse: EndpointInUse,
 	options: StaleEngineOptions,
+	beforeStop?: (socket: string) => Promise<void>,
 ): Promise<
 	| { readonly removed: false; readonly reason: HostGcKeptReason }
 	| { readonly removed: false; readonly stopped: true; readonly pid: number }
@@ -183,6 +192,7 @@ async function stopIfStale(
 	const verdict = await judgeStaleEngine(socket, agentDir, options.client ?? engineBuildIdentity(), options);
 	// A host that is no candidate at all (most run this very engine) keeps the evidence reason it always had.
 	if (!verdict.stale) return { removed: false, reason: NOT_A_CANDIDATE.has(verdict.reason) ? inUse : verdict.reason };
+	await beforeStop?.(socket);
 	const result = await stopHost({ socket, agentDir, timeoutMs: STALE_STOP_TIMEOUT_MS, requireAnswer: true });
 	if (result.action === "refuse") {
 		// Only a host with work open is kept for its sessions; one whose owner or identity cannot be proven is kept as unproven.
