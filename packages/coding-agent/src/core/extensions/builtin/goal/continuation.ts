@@ -42,6 +42,8 @@ export type GoalContinuationInput = {
 	readonly continuationPending: boolean;
 	/** The last turn was rejected (or silently starved) by context size and recovery did not shrink it. */
 	readonly lastTurnStuckOnContextOverflow: boolean;
+	/** A child, monitor, or background session can still deliver a wake. */
+	readonly liveWakeSources?: boolean;
 	/**
 	 * The wake re-checks a provider that refused for a usage or rate limit, either on the armed provider retry or as
 	 * the first wake of a session opened in the middle of that wait. Waiting out a limit is not a stall, so it spends
@@ -57,6 +59,7 @@ export type GoalContinuationVerdict =
 			reason:
 				| "not-eligible"
 				| "single-flight"
+				| "live-wait"
 				| "cap"
 				| "stale"
 				| "repetition"
@@ -118,12 +121,14 @@ export function evaluateGoalContinuation(input: GoalContinuationInput): GoalCont
 	}
 	if (!isEligibleForGoalContinuation(input)) return { kind: "deny", reason: "not-eligible" };
 	if (input.continuationPending) return { kind: "deny", reason: "single-flight" };
+	// Exhausted backstop probes park on a live channel without stopping the goal (#5325).
+	const liveWait = input.path === "monitorDelayed" && input.liveWakeSources === true;
 	if (hasRepeatedNormalizedOutputHash(input.recentNormalizedOutputHashes))
-		return { kind: "deny", reason: "repetition" };
+		return { kind: "deny", reason: liveWait ? "live-wait" : "repetition" };
 	const limitWait = (input.path === "providerRecovery" || input.path === "sessionStart") && input.limitWait === true;
 	if (!limitWait && isNoProgressBudgetExhausted(input)) return { kind: "deny", reason: "no-progress" };
 	if (!limitWait && input.consecutiveContinuations >= GOAL_CONTINUATION_CAP) {
-		return { kind: "deny", reason: "cap" };
+		return { kind: "deny", reason: liveWait ? "live-wait" : "cap" };
 	}
 	if (
 		(input.path === "immediate" || input.path === "userGrace") &&

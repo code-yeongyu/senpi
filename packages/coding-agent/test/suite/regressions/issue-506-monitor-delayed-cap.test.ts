@@ -55,7 +55,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 
 	// senpi#3007: additive stop entries must not suppress the existing shared-cap guard event.
 	it.each(["available", "missing", "throws-after-append"] as const)(
-		"persists a delayed delivery and blocks the next one at the shared cap (%s entry writer)",
+		"persists a delayed delivery, parks at the cap, and blocks after the channel drains (%s entry writer)",
 		async (entryWriter) => {
 			vi.useFakeTimers();
 			const notices: string[] = [];
@@ -106,8 +106,25 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 				goal: countedGoal,
 				messages: [assistantStopWithText("still waiting")],
 			});
+			// #5325: exhausted probes stop while the live channel keeps the goal active.
+			expect(await monitor.fireNow()).toEqual({ fired: true, kind: "monitor" });
+			expect(harness.sent).toHaveLength(1);
+			expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active", consecutiveContinuations: 8 });
+			expect(events.emitted.filter((event) => event.channel === "goal_continuation_guard_tripped")).toEqual([]);
+			expect(entries.filter((entry) => entry.customType === "goal-continuation-stopped")).toEqual([]);
+			expect(monitor.scheduledContinuation()).toBeUndefined();
+
 			const guardTripped = waitForEventCount(events, "goal_continuation_guard_tripped", 1);
-			await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
+			events.emit("terminal_monitor_state", { activeCount: 0 });
+			await events.flush();
+			// A drain armed from a park must still respect unresolved direct input.
+			expect(monitor.scheduledContinuation()).toBe("monitor");
+			monitor.holdDirectInput("pending-input");
+			expect(await monitor.fireNow()).toEqual({ fired: false, reason: "held" });
+			await vi.advanceTimersByTimeAsync(1_000);
+			expect((await readGoal(goalStoreRef(ctx)))?.status).toBe("active");
+			monitor.resolveDirectInput("pending-input", false);
+			await vi.advanceTimersByTimeAsync(0);
 			await guardTripped;
 
 			expect(harness.sent).toHaveLength(1);
