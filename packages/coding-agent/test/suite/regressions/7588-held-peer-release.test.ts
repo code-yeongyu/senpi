@@ -1,7 +1,10 @@
 import { expect, it } from "vitest";
 import { EngineTurnHold } from "../../../src/core/engine-turn-hold.ts";
 import { EngineTurnRelease } from "../../../src/core/engine-turn-release.ts";
-import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/session-control-types.ts";
+import {
+	SESSION_CONTROL_DELIVERY_TYPE,
+	type SessionControlDeliveryDetails,
+} from "../../../src/core/extensions/session-control-types.ts";
 import type { CustomMessage } from "../../../src/core/messages.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 
@@ -19,7 +22,7 @@ const entry = (customType: string, data: unknown): SessionEntry => ({
 	timestamp: at,
 });
 
-const delivery = (n: number): CustomMessage => ({
+const delivery = (n: number, speaker: Partial<SessionControlDeliveryDetails> = {}): CustomMessage => ({
 	role: "custom",
 	customType: SESSION_CONTROL_DELIVERY_TYPE,
 	content: `payload-${n}`,
@@ -29,11 +32,12 @@ const delivery = (n: number): CustomMessage => ({
 		source: "session_control",
 		deliverAs: "followUp",
 		sender: { kind: "agent", session_id: "sender" },
+		...speaker,
 	},
 	timestamp: 0,
 });
 
-const held = (n: number, noticeId: string) =>
+const held = (n: number, noticeId: string, speaker: Partial<SessionControlDeliveryDetails> = {}) =>
 	entry("session-notice", {
 		noticeId,
 		producer: SESSION_CONTROL_DELIVERY_TYPE,
@@ -42,7 +46,7 @@ const held = (n: number, noticeId: string) =>
 		heldCount: 1,
 		text: "held",
 		action: "resume_session",
-		message: delivery(n),
+		message: delivery(n, speaker),
 	});
 
 function replay(entries: SessionEntry[]) {
@@ -93,5 +97,17 @@ it("replays a held peer delivery written twice as one item and consumes both not
 it("opens one turn for every held delivery of one speaker on an unattended resume, in admission order", async () => {
 	const { hold } = replay([held(1, "notice-1"), held(2, "notice-2"), held(3, "notice-3")]);
 	expect(await release(hold)).toEqual([["payload-1", "payload-2", "payload-3"]]);
+	expect(hold.noticeCount).toBe(0);
+});
+
+it("keeps a delivery from another sender or another device in its own turn: one turn carries one origin", async () => {
+	const { hold } = replay([
+		held(1, "notice-1"),
+		held(2, "notice-2"),
+		held(3, "notice-3", { sender: { kind: "agent", session_id: "another-sender" } }),
+		held(4, "notice-4", { remote_origin: { deviceId: "device-x" } }),
+		held(5, "notice-5"),
+	]);
+	expect(await release(hold)).toEqual([["payload-1", "payload-2"], ["payload-3"], ["payload-4"], ["payload-5"]]);
 	expect(hold.noticeCount).toBe(0);
 });
