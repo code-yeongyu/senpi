@@ -1,6 +1,5 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { Api, Context, Model, SimpleStreamOptions, ThinkingBudgets, ThinkingLevel } from "@earendil-works/pi-ai";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import {
@@ -14,6 +13,7 @@ import { sdkModelId } from "./context-window.ts";
 import { presetAppendDeprecationGuidance } from "./guidance.ts";
 import { claudeCodeQueryEnvironment } from "./query-environment.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
+import { extractSkillsAppend } from "./skill-locations.ts";
 import type { EffortLevel, Options, SettingSource, ThinkingConfig } from "./sdk-boundary.ts";
 import {
 	type AnthropicSubscriptionProviderSettings,
@@ -154,56 +154,6 @@ function extractAgentsAppend(cwd: string): string | undefined {
 	}
 }
 
-function claudeSkillsPath(path: string, cwd: string): string {
-	const targets = [
-		[join(getAgentDir(), "skills"), "~/.claude/skills"],
-		[join(cwd, CONFIG_DIR_NAME, "skills"), ".claude/skills"],
-	] as const;
-	for (const [root, claudeRoot] of targets) {
-		const inside = relative(root, path);
-		if (inside !== "" && (/^\.\.(?:[\\/]|$)/.test(inside) || isAbsolute(inside))) continue;
-		const candidate = inside === "" ? claudeRoot : `${claudeRoot}/${inside.split(sep).join("/")}`;
-		return resolvesToSameFile(candidate, path, cwd, homedir()) ? candidate : path;
-	}
-	return path;
-}
-
-function expandDisplayPath(candidate: string, cwd: string, home: string): string {
-	if (candidate === "~") return home;
-	if (candidate.startsWith("~/")) return join(home, candidate.slice(2));
-	return isAbsolute(candidate) ? candidate : resolve(cwd, candidate);
-}
-
-function resolvesToSameFile(candidate: string, path: string, cwd: string, home: string): boolean {
-	try {
-		return realpathSync(expandDisplayPath(candidate, cwd, home)) === realpathSync(expandDisplayPath(path, cwd, home));
-	} catch {
-		return false;
-	}
-}
-
-// The catalog names each skill root once in `<skill_roots>` and locates skills by `rN/` alias, so the roots carry the
-// paths; a catalog without that table carries absolute `<location>` paths instead.
-function rewriteSkillsLocations(skillsBlock: string, cwd: string): string {
-	const withRoots = skillsBlock.replace(/<skill_roots>[\s\S]*?<\/skill_roots>/, (table) =>
-		table.replace(/<(r\d+)>([^<]+)<\/\1>/g, (_match, alias: string, root: string) => {
-			return `<${alias}>${claudeSkillsPath(root, cwd)}</${alias}>`;
-		}),
-	);
-	return withRoots.replace(/<location>([^<]+)<\/location>/g, (_match, location: string) => {
-		return `<location>${claudeSkillsPath(location, cwd)}</location>`;
-	});
-}
-
-function extractSkillsAppend(systemPrompt: string | undefined, cwd: string): string | undefined {
-	if (!systemPrompt) return undefined;
-	const marker = "The following skills provide specialized instructions for specific tasks.";
-	const start = systemPrompt.indexOf(marker);
-	const end = start === -1 ? -1 : systemPrompt.indexOf("</available_skills>", start);
-	if (end === -1) return undefined;
-	return rewriteSkillsLocations(systemPrompt.slice(start, end + "</available_skills>".length).trim(), cwd);
-}
-
 /**
  * This lane rebuilds the prompt from the `claude_code` preset plus `append`, so any
  * region of senpi's composed prompt without an extractor here never reaches the model.
@@ -268,7 +218,7 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 		mode === "preset-append"
 			? [
 					extractAgentsAppend(cwd),
-					extractSkillsAppend(input.context.systemPrompt, cwd),
+					extractSkillsAppend(input.context.systemPrompt, cwd, input.sessionId),
 					extractProjectRulesAppend(input.context.systemPrompt),
 				].filter((part): part is string => part !== undefined)
 			: [];

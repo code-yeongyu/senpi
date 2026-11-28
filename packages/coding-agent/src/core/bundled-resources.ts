@@ -7,13 +7,13 @@ import {
 	getDocsPath,
 	getExamplesPath,
 	getExportTemplateDir,
+	getImagegenSkillDir,
 	getInstallPackageDir,
 	getInteractiveAssetsDir,
 	getPackageDir,
 	getThemesDir,
 	isBunBinary,
 } from "../config.ts";
-import { imagegenSkillPath } from "./extensions/builtin/imagegen/skill-path.ts";
 
 const moduleRequire = createRequire(import.meta.url);
 const runningFromSource = fileURLToPath(import.meta.url).includes(`${sep}src${sep}core${sep}`);
@@ -57,7 +57,7 @@ export function getBundledResourceRoots(): readonly string[] {
 		getInteractiveAssetsDir(),
 		getDocsPath(),
 		getExamplesPath(),
-		dirname(imagegenSkillPath()),
+		getImagegenSkillDir(),
 	];
 	if (!isBunBinary && !runningFromSource) {
 		roots.push(getPackageDir(), getInstallPackageDir(), findNodePackageDir(dirname(fileURLToPath(import.meta.url))));

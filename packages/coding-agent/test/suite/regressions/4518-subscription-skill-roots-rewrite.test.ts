@@ -45,6 +45,7 @@ function appendFor(systemPrompt: string, cwd: string): string {
 	const options = buildAnthropicSubscriptionQueryOptions({
 		model,
 		cwd,
+		sessionId: "root-table-fixture",
 		context: { messages: [], systemPrompt },
 		providerSettings: { systemPromptMode: "preset-append" },
 	});
@@ -65,7 +66,7 @@ describe("regression senpi#4518: the subscription lane rewrites skill roots to C
 	];
 
 	it.each(cases)(
-		"$shape: every root is carried, and one with no same-file Claude copy keeps its path",
+		"$shape: every root is carried, and one with no same-file Claude copy becomes opaque",
 		({ count }) => {
 			const cwd = mkdtempSync(join(tmpdir(), "senpi-4518-"));
 			temporaryDirectories.push(cwd);
@@ -87,9 +88,9 @@ describe("regression senpi#4518: the subscription lane rewrites skill roots to C
 			const append = appendFor(`before${catalog}\nafter`, cwd);
 
 			expect(roots(append)).toEqual([
-				`r0=${globalRoot}`,
-				`r1=${globalRoot}/team`,
-				`r2=${projectRoot}`,
+				expect.stringMatching(/^r0=skill:\/\/[a-f0-9]{64}$/),
+				expect.stringMatching(/^r1=skill:\/\/[a-f0-9]{64}$/),
+				expect.stringMatching(/^r2=skill:\/\/[a-f0-9]{64}$/),
 				"r3=/opt/plugin/skills",
 				`r4=${globalRoot}-extra`,
 			]);
@@ -124,7 +125,7 @@ after`,
 		}
 	});
 
-	it("legacy XML catalog with absolute locations: a location keeps its real path when no same-file Claude copy exists", () => {
+	it("legacy XML catalog with absolute locations uses opaque locations without a same-file Claude copy", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "senpi-4518-"));
 		temporaryDirectories.push(cwd);
 		const globalRoot = join(getAgentDir(), "skills");
@@ -141,8 +142,8 @@ after`,
 		const locations = [...appendFor(catalog, cwd).matchAll(/<location>([^<]+)<\/location>/g)].map((m) => m[1]);
 
 		expect(locations).toEqual([
-			`${globalRoot}/a/SKILL.md`,
-			`${projectRoot}/b/SKILL.md`,
+			expect.stringMatching(/^skill:\/\/[a-f0-9]{64}\/a\/SKILL\.md$/),
+			expect.stringMatching(/^skill:\/\/[a-f0-9]{64}\/b\/SKILL\.md$/),
 			"/opt/plugin/skills/c/SKILL.md",
 		]);
 	});

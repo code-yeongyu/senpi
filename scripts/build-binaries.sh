@@ -169,6 +169,10 @@ for platform in "${PLATFORMS[@]}"; do
     cp dist/modes/interactive/theme/*.json "$OUTPUT_DIR/$platform/theme/"
     mkdir -p "$OUTPUT_DIR/$platform/assets"
     cp dist/modes/interactive/assets/* "$OUTPUT_DIR/$platform/assets/"
+    # The imagegen skill must be a real file beside the binary: a compiled binary's embedded
+    # `type: "file"` import resolves to a Bun locator no other process can open (senpi#3799).
+    mkdir -p "$OUTPUT_DIR/$platform/skill"
+    cp dist/core/extensions/builtin/imagegen/skill/* "$OUTPUT_DIR/$platform/skill/"
     cp -r dist/core/export-html "$OUTPUT_DIR/$platform/"
     cp -r docs "$OUTPUT_DIR/$platform/"
     cp -r examples "$OUTPUT_DIR/$platform/"
