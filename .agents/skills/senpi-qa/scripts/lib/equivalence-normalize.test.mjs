@@ -35,6 +35,64 @@ test("an id seen under an id key gets the same token where it is embedded in oth
 	assert.deepEqual(out, [{ id: "<id:1>" }, { turnKey: "1:<id:1>" }, { id: "<id:2>" }, { text: "the reader" }]);
 });
 
+test("a random hex id with no digit is replaced where it is a whole token in a structured value, and prose keeps its words", () => {
+	const normalize = createNormalizer();
+	const out = normalize([
+		{ leafId: "bfcdbaee" },
+		{ turnKey: "1:bfcdbaee" },
+		{ ref: "entry/bfcdbaee" },
+		{ text: "the facade of bfcdbaee" },
+		{ label: "bfcdbaeef" },
+	]);
+	assert.deepEqual(out, [
+		{ leafId: "<id:1>" },
+		{ turnKey: "1:<id:1>" },
+		{ ref: "entry/<id:1>" },
+		{ text: "the facade of bfcdbaee" },
+		{ label: "bfcdbaeef" },
+	]);
+});
+
+// The goldens keep fixed fixture ids literal where they are embedded (EQ E01/E04/E06): a digitless keyed value that is
+// not a random hex id is a fixture name, not a generated id.
+test("a digitless keyed fixture name stays literal where it is embedded", () => {
+	const normalize = createNormalizer();
+	const out = normalize([
+		{ id: "call_a" },
+		{ tool_call_id: "call_a" },
+		{ hookRunId: "call_a:PreToolUse:0" },
+		{ id: "call_lazy" },
+		{ tool_call_id: "call_lazy" },
+		{ id: "mock-model" },
+		{ name: "mock-model" },
+		{ id: "facade" },
+		{ ref: "entry/facade" },
+		{ id: "bfcdbaeef" },
+		{ ref: "entry/bfcdbaeef" },
+	]);
+	assert.deepEqual(out, [
+		{ id: "<id:1>" },
+		{ tool_call_id: "call_a" },
+		{ hookRunId: "call_a:PreToolUse:0" },
+		{ id: "<id:2>" },
+		{ tool_call_id: "call_lazy" },
+		{ id: "<id:3>" },
+		{ name: "mock-model" },
+		{ id: "<id:4>" },
+		{ ref: "entry/facade" },
+		{ id: "<id:5>" },
+		{ ref: "entry/bfcdbaeef" },
+	]);
+});
+
+// The main red at 0a3cd2a687 (E12): an entry whose random leaf id had no digit stayed raw in the turn key,
+// '$.O6[0].events[64].entry.data.turnKey: golden="2:<id:13>" actual="2:dafdddbc"'.
+test("the digitless leaf id from the E12 main red is replaced inside its turn key", () => {
+	const normalize = createNormalizer();
+	const out = normalize([{ leafId: "dafdddbc" }, { entry: { data: { turnKey: "2:dafdddbc" } } }]);
+	assert.deepEqual(out, [{ leafId: "<id:1>" }, { entry: { data: { turnKey: "2:<id:1>" } } }]);
+});
+
 test("a value under an id key that is not a bare uuid is one id, owner ids with a pid prefix included", () => {
 	const normalize = createNormalizer();
 	const out = normalize([{ ownerId: `47635:${U1}` }, { ownerId: `55542:${U1}` }, { sessionId: U1 }]);
