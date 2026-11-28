@@ -24,6 +24,12 @@ describe("host session command", () => {
 			["model", "rpc-1", "anthropic/mock"],
 			{ action: "model", ref: "rpc-1", model: { provider: "anthropic", id: "mock" } },
 		],
+		// senpi#7139: model ids may contain "/" (split on the first slash only).
+		[["model", "ref", "p/a/b"], { action: "model", ref: "ref", model: { provider: "p", id: "a/b" } }],
+		[
+			["model", "rpc-2", "opencodex/anthropic/claude-opus-5-5"],
+			{ action: "model", ref: "rpc-2", model: { provider: "opencodex", id: "anthropic/claude-opus-5-5" } },
+		],
 		[["prompt", "rpc-1", "hello"], { action: "prompt", ref: "rpc-1", text: "hello" }],
 		[["steer", "rpc-1", "hello"], { action: "steer", ref: "rpc-1", text: "hello" }],
 		[["abort", "rpc-1"], { action: "abort", ref: "rpc-1" }],
@@ -52,7 +58,6 @@ describe("host session command", () => {
 			["bogus"],
 			["open"],
 			["open", "--cwd", ".", "--model", "foo"],
-			["model", "ref", "p/a/b"],
 			["read", "ref", "--tail", "0"],
 			["read", "ref", "--tail", "1.2"],
 			["wait", "ref", "--until", "later"],
