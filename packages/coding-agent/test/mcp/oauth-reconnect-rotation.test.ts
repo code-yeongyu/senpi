@@ -248,7 +248,7 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 	// grant keeps rotating past that bound, the reconnect must say so instead of acting on a connection whose startup
 	// has not settled (or that has been retired) and resolving quietly.
 	it("reports a reconnect that keeps meeting credential re-keys instead of resolving quietly", async () => {
-		// Given: a connected server whose grant rotates again every time the token store is locked
+		// Given: a connected server, and a gate that hands every connection renew to the test while the churn lasts
 		const fixture = await idp();
 		const dir = await agentDir();
 		const harness = makeHarness(dir, fixture.mcpUrl);
@@ -263,41 +263,79 @@ describe("manual reconnect after a grant rotation (senpi#6538)", () => {
 		});
 		await service.whenAttachSettled();
 		expect(service.getConnection("fix")?.state).toBe("connected");
-		await poisonRefreshToken(harness);
-		const signedIn = harness.store.read();
-		expect(signedIn).toBeDefined();
+		// The grant identity changes before the reconnect (a valid token), so the reconnect re-keys up front and follows
+		// the re-keyed connections.
+		await harness.store.update((current) => ({
+			...current,
+			expiresAt: Date.now() + 3_600_000,
+			refreshToken: "RT_CHURN_0",
+		}));
+		interface Renewing {
+			readonly connection: ServerConnection;
+			readonly release: () => void;
+		}
 		let churning = true;
-		let rotation = 0;
-		const withLock = McpTokenStore.prototype.withLock;
-		const churn = vi.spyOn(McpTokenStore.prototype, "withLock").mockImplementation(async function (
-			this: McpTokenStore,
-			fn,
+		const queued: Renewing[] = [];
+		const waiting: ((step: Renewing) => void)[] = [];
+		const nextRenew = (): Promise<Renewing> => {
+			const step = queued.shift();
+			return step === undefined ? new Promise((resolve) => waiting.push(resolve)) : Promise.resolve(step);
+		};
+		const renew = ServerConnection.prototype.renew;
+		const gate = vi.spyOn(ServerConnection.prototype, "renew").mockImplementation(async function (
+			this: ServerConnection,
 		) {
-			// While churning, every refresh finds a freshly rotated grant and another session's start re-keys the server,
-			// so each connection the reconnect follows is retired by the next re-key.
-			return withLock.call(this, async () => {
-				if (churning && signedIn !== undefined) {
-					rotation += 1;
-					this.writeUnlocked({ ...signedIn, refreshToken: `RT_CHURN_${rotation}` });
-					void service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
-						agentDir: dir,
-					});
-				}
-				return await fn();
-			});
+			if (churning) {
+				const released = Promise.withResolvers<void>();
+				const step = { connection: this, release: () => released.resolve() };
+				const take = waiting.shift();
+				if (take === undefined) queued.push(step);
+				else take(step);
+				await released.promise;
+			}
+			return renew.call(this);
 		});
-		cleanups.push(async () => churn.mockRestore());
+		cleanups.push(async () => gate.mockRestore());
 
-		// When: the manual reconnect runs while the re-keys keep landing
-		const outcome = await service.reconnectServer("fix").then(
+		// When: every time the manual reconnect renews a connection, the grant rotates to a new valid identity and another
+		// session's start re-keys the server, retiring that connection before its renew runs
+		let settled = false;
+		const outcome = service.reconnectServer("fix").then(
 			() => "resolved",
 			(error: unknown) => (error instanceof Error ? error.message : String(error)),
 		);
+		const done = outcome.then(() => {
+			settled = true;
+		});
+		let rotation = 0;
+		while (!settled) {
+			const step = await bounded(
+				Promise.race([nextRenew(), done.then(() => undefined)]),
+				"the next renew of the churn",
+			);
+			if (step === undefined) break;
+			rotation += 1;
+			const retired = new Promise<void>((resolve) => {
+				const unsubscribe = step.connection.onStateChange((event) => {
+					if (event.state !== "disabled") return;
+					unsubscribe();
+					resolve();
+				});
+			});
+			await harness.store.update((current) => ({ ...current, refreshToken: `RT_CHURN_${rotation}` }));
+			await service.attachSession({ type: "session_start", reason: "startup" }, session, capturingPi(), {
+				agentDir: dir,
+			});
+			await service.whenAttachSettled();
+			await bounded(retired, "the renewing connection to reach disabled");
+			step.release();
+		}
 		churning = false;
+		for (const step of queued.splice(0)) step.release();
 
 		// Then: it reports the churn and names the way back, instead of resolving quietly or acting on a moving target
 		expect(rotation).toBeGreaterThanOrEqual(3);
-		expect(outcome).toMatch(/kept re-keying[\s\S]*\/mcp reconnect fix/);
+		expect(await outcome).toMatch(/kept re-keying[\s\S]*\/mcp reconnect fix/);
 	});
 	// senpi#7650 review LOW 1: a manual reconnect that follows a re-keyed connection reconnects it once, and a re-key that
 	// lands during that final reconnect retires it too; that reconnect then returns quietly. It must follow the
