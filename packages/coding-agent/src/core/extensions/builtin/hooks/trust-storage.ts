@@ -47,13 +47,18 @@ export class FileHookStateStorage implements HookStateStorage {
 
 	read(scope: HookTrustStorageScope): HookTrustState {
 		const path = statePathForScope(scope, this.globalStatePath, this.projectStatePath);
-		const snapshot = parseHookTrustStateJson(existsSync(path) ? readFileSync(path, "utf-8") : undefined);
+		const stateExists = existsSync(path);
+		const snapshot = parseHookTrustStateJson(stateExists ? readFileSync(path, "utf-8") : undefined);
 		if (snapshot !== undefined) {
 			return snapshot;
 		}
-		// No state directory means no writer and nothing to revalidate. Locking would create it, leaving an
-		// empty config folder in every project a session merely reads.
-		if (!existsSync(dirname(path))) {
+		// No state file means nothing to revalidate: writers publish atomically by
+		// rename, so a concurrent publish is picked up by the next read. Locking
+		// here only created and removed the lock directory on every read of a
+		// session with no trusted hooks (senpi#5096). Likewise, no state directory
+		// means no writer; locking would create it, leaving an empty config folder
+		// in every project a session merely reads.
+		if (!stateExists || !existsSync(dirname(path))) {
 			return emptyHookTrustState();
 		}
 
