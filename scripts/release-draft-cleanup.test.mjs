@@ -246,6 +246,23 @@ describe("release-draft-cleanup.sh: another run published the version (senpi#746
 		);
 	});
 
+	// senpi#7469 (2026.11.28-1): Build Binaries dispatched the publish run but its find step gave up before the run showed
+	// up in the API, so the run id is unknown here; that run had already published every package and npm still lagged.
+	it("keeps the draft when the publish run id is unknown and a publish-only run of the version already succeeded", () => {
+		const outcome = cleanup(NPM_E404, {
+			PUBLISH_RUN_ID: "",
+			PUBLISH_JOB_RESULT: "failure",
+			FAKE_RUN_LIST: "0",
+			FAKE_PUBLISHED_ROWS: rows(run(46103796424, "Release 2026.10.24-1 publish-only")),
+		});
+		assertKept(outcome);
+		assert.match(outcome.output, /publish-npm\.yml run\(s\) 46103796424 published 2026\.10\.24-1/);
+	});
+
+	it("deletes the draft when the publish run id is unknown, nothing is in flight and no publish run of the version succeeded", () => {
+		assertDeleted(cleanup(NPM_E404, { PUBLISH_RUN_ID: "", PUBLISH_JOB_RESULT: "failure", FAKE_RUN_LIST: "0", FAKE_PUBLISHED_ROWS: rows() }));
+	});
+
 	it("keeps the draft when the runs that could have published the version cannot be listed", () => {
 		assertKept(
 			cleanup(NPM_E404, { PUBLISH_RUN_ID: "45679166975", PUBLISH_JOB_RESULT: "success", PUBLISH_RELEASE_RESULT: "failure", FAKE_PUBLISHED_EXIT: "1" }),

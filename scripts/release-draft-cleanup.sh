@@ -129,11 +129,11 @@ else
 	echo "No publish-npm.yml dispatch run is in flight."
 fi
 
-# senpi#7469: when this release had a dispatched publish run that failed, another publish run of the same version may
-# have published it (a duplicate run that met the registry's lag, as in 2026.11.25). The draft is orphaned only if no
-# publish-npm.yml run of the version succeeded; never delete one another run published. Only a successful dispatched
-# "publish-only" run that is not a "dry-run" publishes (run-name); the stamp run and dry runs carry the version too.
-if [[ -n "${PUBLISH_RUN_ID}" ]]; then
+# senpi#7469: another publish run of the same version may have published it while npm still lags: a duplicate run that
+# met the registry's lag (2026.11.25), or the run this Build Binaries run dispatched but could not find in time, so the
+# run id is unknown here (2026.11.28-1). The draft is orphaned only if no publish-npm.yml run of the version succeeded;
+# never delete one another run published. Only a successful dispatched "publish-only" run that is not a "dry-run"
+# publishes (run-name); the stamp run and dry runs carry the version too. This holds whether or not the run id is known.
 published_cmd="gh run list --workflow publish-npm.yml --event workflow_dispatch --limit 30"
 if ! published_runs="$("${GH_BIN}" run list --workflow publish-npm.yml --event workflow_dispatch --limit 30 \
 	--json databaseId,displayTitle,conclusion,event \
@@ -142,7 +142,6 @@ if ! published_runs="$("${GH_BIN}" run list --workflow publish-npm.yml --event w
 fi
 if [[ -n "${published_runs}" ]]; then
 	keep_for_publish_run "publish-npm.yml run(s) ${published_runs} published ${version} (the registry may lag)" "${published_cmd}"
-fi
 fi
 
 echo "npm does not have ${spec}; deleting the draft GitHub Release ${RELEASE_TAG}."
