@@ -3,7 +3,7 @@
 // data URIs only after a magic-byte/SVG-root check, so a renamed secret is
 // refused, and the page stays within the size caps. Pure byte/string work.
 
-import { readFile, stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { findLocalImages, IMAGE_MIME_TYPES } from "./image-references.ts";
 
 const MIB = 1024 * 1024;
@@ -97,6 +97,33 @@ const isImageBytes = (bytes: Uint8Array) => {
 	return hasSvgRoot(new TextDecoder().decode(bytes.subarray(0, 4096)));
 };
 
+const READ_CHUNK_BYTES = 256 * 1024;
+
+/**
+ * Reads an image from its own descriptor, at most MAX_IMAGE_BYTES + 1 bytes (senpi#2840): the size
+ * check and the read share one open file, so an image that grows after the check cannot make the
+ * read unbounded — past the cap the read stops and the image is refused.
+ */
+async function readImageWithinLimit(path: string): Promise<Uint8Array> {
+	const handle = await open(path, "r");
+	const chunks: Buffer[] = [];
+	let total = 0;
+	try {
+		while (total <= MAX_IMAGE_BYTES) {
+			const want = Math.min(READ_CHUNK_BYTES, MAX_IMAGE_BYTES + 1 - total);
+			const chunk = Buffer.alloc(want);
+			const { bytesRead } = await handle.read(chunk, 0, want, null);
+			if (bytesRead === 0) break;
+			chunks.push(bytesRead === want ? chunk : chunk.subarray(0, bytesRead));
+			total += bytesRead;
+		}
+	} finally {
+		await handle.close();
+	}
+	if (total > MAX_IMAGE_BYTES) throw new HtmlRenderImageTooLargeError(path, total);
+	return Buffer.concat(chunks, total);
+}
+
 /**
  * Replaces every local image the page loads with a data URI. A loaded path that cannot be read as an
  * image stays as written and is returned in `missing`; the caller decides what that means.
@@ -104,31 +131,20 @@ const isImageBytes = (bytes: Uint8Array) => {
 export async function inlineLocalImages(html: string): Promise<{ html: string; missing: string[] }> {
 	const references = findLocalImages(html);
 	const uniquePaths = [...new Set(references.map((reference) => reference.path))];
-	const files = await Promise.all(
-		uniquePaths.map(async (path) => {
-			try {
-				const info = await stat(filePathFor(path));
-				return { path, size: info.isFile() ? Number(info.size) : undefined };
-			} catch {
-				return { path, size: undefined };
-			}
-		}),
-	);
-	const oversized = files.find((file) => file.size !== undefined && file.size > MAX_IMAGE_BYTES);
-	if (oversized?.size !== undefined) {
-		throw new HtmlRenderImageTooLargeError(oversized.path, oversized.size);
-	}
 	const images = new Map<string, Uint8Array>();
 	let readBytes = 0;
-	for (const file of files.filter((entry) => entry.size !== undefined)) {
-		const bytes = new Uint8Array(await readFile(filePathFor(file.path)));
-		if (!isImageBytes(bytes)) continue;
-		if (bytes.byteLength > MAX_IMAGE_BYTES) {
-			throw new HtmlRenderImageTooLargeError(file.path, bytes.byteLength);
+	for (const path of uniquePaths) {
+		let bytes: Uint8Array;
+		try {
+			bytes = await readImageWithinLimit(filePathFor(path));
+		} catch (error) {
+			if (error instanceof HtmlRenderImageTooLargeError) throw error;
+			continue;
 		}
+		if (!isImageBytes(bytes)) continue;
 		readBytes += Math.ceil(bytes.byteLength / 3) * 4;
 		if (readBytes > MAX_PAGE_BYTES) throw new HtmlRenderPageTooLargeError(readBytes);
-		images.set(file.path, bytes);
+		images.set(path, bytes);
 	}
 	const parts: string[] = [];
 	let cursor = 0;
@@ -146,6 +162,6 @@ export async function inlineLocalImages(html: string): Promise<{ html: string; m
 	if (Buffer.byteLength(inlined) > MAX_PAGE_BYTES) {
 		throw new HtmlRenderPageTooLargeError(Buffer.byteLength(inlined));
 	}
-	const missing = files.filter((file) => !images.has(file.path)).map((file) => file.path);
+	const missing = uniquePaths.filter((path) => !images.has(path));
 	return { html: inlined, missing };
 }

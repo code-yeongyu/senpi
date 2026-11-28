@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Static, Type } from "typebox";
@@ -96,6 +97,23 @@ const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
 type ShowHtmlPageResult = Awaited<ReturnType<ToolDefinition<typeof Params, ShowHtmlPageDetails>["execute"]>>;
 
 /**
+ * Writes the prepared page under a name no concurrent call shares (senpi#2840): a random suffix plus
+ * flag "wx", so two same-title pages written in the same millisecond land in two files instead of
+ * the later write replacing the earlier one. An EEXIST collision retries with fresh entropy.
+ */
+async function writePageExclusively(dir: string, safeName: string, prepared: string): Promise<string> {
+	for (let attempt = 0; ; attempt++) {
+		const path = join(dir, `${safeName}-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}.html`);
+		try {
+			await writeFile(path, prepared, { encoding: "utf8", flag: "wx" });
+			return path;
+		} catch (error) {
+			if ((error as { code?: string }).code !== "EEXIST" || attempt >= 8) throw error;
+		}
+	}
+}
+
+/**
  * The standalone file producer, shared by CLI and desktop host attachments. `shownInline` says whether
  * the host shows the page to the reader; the result states which happened, because the model trusts
  * it in later turns too (senpi#6273). A host attachment serves its own renderer (the OmO desktop shows
@@ -123,8 +141,7 @@ export async function writeHtmlPage(
 			.replace(/\s+/g, " ")
 			.trim()
 			.slice(0, 60) || "page";
-	const path = join(dir, `${safeName}-${Date.now().toString(36)}.html`);
-	await writeFile(path, prepared, "utf8");
+	const path = await writePageExclusively(dir, safeName, prepared);
 	const imagesInlined = inlined.html.length <= MAX_HANDED_PAGE_CHARACTERS;
 	const resultText = handedPageText({
 		path,
