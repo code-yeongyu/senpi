@@ -172,6 +172,32 @@ it("keeps the cached sources within a byte budget, dropping the oldest first", (
 	expect(opened).toEqual([files[0]]);
 });
 
+it("retains a recently read skill when the byte budget forces eviction (#4444)", () => {
+	const now = Date.UTC(2026, 9, 27, 12);
+	const read = createSkillSourceCache({ maxEntryBytes: 1024, maxTotalBytes: 250 }, () => now);
+	const files = ["a", "b", "c"].map((name) => skill(root, name, "d".repeat(60)));
+	const access = (index: number) => {
+		const file = files[index];
+		read(file, { ...statSync(file), mtimeMs: now - AN_HOUR_MS, ctimeMs: now - AN_HOUR_MS } as Stats);
+	};
+	for (const index of [0, 1, 0, 2]) access(index);
+	calls.length = 0;
+	access(0);
+	access(1);
+	expect(calls.filter((call) => call.name === "openSync").map((call) => call.path)).toEqual([files[1]]);
+});
+
+it("does not reuse a source when stat reports no change time (#4444)", () => {
+	const now = Date.UTC(2026, 9, 27, 12);
+	const file = skill(root, "zero-ctime", "first");
+	const stamp = { ...statSync(file), mtimeMs: now - AN_HOUR_MS, ctimeMs: 0 } as Stats;
+	const read = createSkillSourceCache(undefined, () => now);
+	expect(read(file, stamp)).toContain("description: first");
+	writeFileSync(file, "---\nname: zero-ctime\ndescription: later\n---\nbody\n");
+	expect(statSync(file).size).toBe(stamp.size);
+	expect(read(file, stamp)).toContain("description: later");
+});
+
 it("looks up the nearest package.json once per directory, not once per skill", () => {
 	const skillsRoot = join(root, "a", "b", "c", "skills");
 	const paths = Array.from({ length: 100 }, (_, index) => skill(skillsRoot, `skill-${index}`));
