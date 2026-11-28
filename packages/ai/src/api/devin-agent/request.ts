@@ -13,6 +13,7 @@
 
 import { create } from "@bufbuild/protobuf";
 import type { Message, Model, Tool, TranscriptContext } from "../../types.ts";
+import { normalizeToolParametersForBedrock } from "../../utils/tool-schema-compat.ts";
 import { getCurrentSystemPrompt, getCurrentTools } from "../../utils/transcript.ts";
 import { deterministicUuid } from "../cursor-agent/deterministic-id.ts";
 import {
@@ -116,7 +117,9 @@ function toolDefinition(tool: Tool) {
 	return create(ChatToolDefinitionSchema, {
 		name: tool.name,
 		description: tool.description,
-		jsonSchemaString: JSON.stringify(tool.parameters ?? {}),
+		// Cascade's Anthropic-family backend rejects any root anyOf/oneOf/allOf with `invalid_argument`,
+		// the same class Bedrock Converse refuses (senpi#3119, #1947); nested combinators are accepted.
+		jsonSchemaString: JSON.stringify(normalizeToolParametersForBedrock({ ...tool.parameters })),
 		strict: false,
 	});
 }
