@@ -42,7 +42,7 @@ import { processFileArguments } from "./cli/file-processor.ts";
 import { resolveHelpExtensionFlags } from "./cli/help-extension-flags.ts";
 import { helpFlagsScope, isPlainHelpRequest, resolveHelpProjectTrust } from "./cli/help-fast-path.ts";
 import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
-import { buildInitialMessage } from "./cli/initial-message.ts";
+import { buildInitialMessage, hasPrintInput, type InitialMessageResult } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
 import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
@@ -74,6 +74,7 @@ import {
 } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
+	type CreateAgentSessionServicesOptions,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
 } from "./core/agent-session-services.ts";
@@ -98,6 +99,7 @@ import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, presetTrustsProject, resolveProjectTrusted } from "./core/project-trust.ts";
+import type { ResourceLoader } from "./core/resource-loader.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -947,6 +949,7 @@ export function createCliRuntimeFactory(
 		extensionFactories?: InlineExtension[];
 		startupSettingsManager?: SettingsManager;
 		startupLoadingIndicator?: ReturnType<typeof createStartupLoadingIndicator>;
+		beforeInitialModelRuntime?: CreateAgentSessionServicesOptions["beforeModelRuntime"];
 		/**
 		 * One model runtime for every session this factory creates. A shared host's
 		 * sessions all live in one agent dir, so they would each build an identical
@@ -1051,7 +1054,8 @@ export function createCliRuntimeFactory(
 			settingsManager: runtimeSettingsManager,
 			...(local.modelRuntime === undefined ? {} : { modelRuntime: local.modelRuntime }),
 			mcpRegistry,
-			modelRuntimeSignal: AbortSignal.timeout(15_000),
+			modelRuntimeSignal: () => AbortSignal.timeout(15_000),
+			beforeModelRuntime: isInitialRuntime ? local.beforeInitialModelRuntime : undefined,
 			extensionFlagValues: sessionExtensionFlagValues(parsed.unknownFlags, launchProfile),
 			resourceLoaderReloadOptions: shouldResolveProjectTrust
 				? {
@@ -1625,9 +1629,66 @@ export async function main(args: string[], options?: MainOptions) {
 		startupLoadingIndicator.setPhase("extensions & models");
 	}
 
+	const resolveLaunchExtensionFlags = async (resourceLoader: ResourceLoader, settingsManager: SettingsManager) => {
+		const loadedExtensions = resourceLoader.getExtensions().extensions;
+		const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
+		// Before extensions load, a bare option can consume the next positional as a string value.
+		const booleanExtensionFlags = new Set<string>();
+		for (const name of parsed.unknownFlags.keys()) {
+			// applyExtensionFlagValues uses the first declaration when extensions share a name.
+			if (extensionFlags.find((flag) => flag.name === name)?.type === "boolean") {
+				booleanExtensionFlags.add(name);
+				parsed.unknownFlags.set(name, true);
+			}
+		}
+		if (booleanExtensionFlags.size > 0) {
+			parsed.messages = parseArgs(args, { booleanExtensionFlags }).messages;
+		}
+		if (parsed.help) {
+			await printThenExit(() => printHelp(extensionFlags), 0);
+		}
+		time("extensionFlags");
+		// Every full launch refreshes what `--help` reads.
+		writeHelpFlagsCache({
+			scope: helpFlagsScope(parsed, cwd, agentDir, settingsManager.isProjectTrusted()),
+			flags: extensionFlags,
+			extensionPaths: loadedExtensions.map((extension) => extension.resolvedPath),
+		});
+		time("helpFlagsCache");
+	};
+	const prepareLaunchInput = async (settingsManager: SettingsManager): Promise<InitialMessageResult> => {
+		// RPC owns stdin for JSON-RPC, not piped prompts.
+		const stdinContent =
+			appMode === "rpc" ? undefined : await readPipedStdin(pipedStdinOptions(parsed, process.stderr));
+		if (stdinContent !== undefined && appMode === "interactive") {
+			appMode = "print";
+		}
+		time("readPipedStdin");
+		const input = await prepareInitialMessage(parsed, settingsManager.getImageAutoResize(), stdinContent);
+		time("prepareInitialMessage");
+		return input;
+	};
+	let preparedPrintInput: InitialMessageResult | undefined;
+	const beforeInitialModelRuntime: CreateAgentSessionServicesOptions["beforeModelRuntime"] =
+		(appMode === "print" || appMode === "json") && !parsed.help && !parsed.printPromptSizes
+			? async (resourceLoader, settingsManager) => {
+					await resolveLaunchExtensionFlags(resourceLoader, settingsManager);
+					const input = await prepareLaunchInput(settingsManager);
+					// Reject empty print input before resolving a model or admitting the session (senpi#3521).
+					if (!hasPrintInput(input, parsed.messages)) {
+						console.error(
+							chalk.red(
+								"Error: print mode needs a prompt. Pass it as an argument, pipe it on stdin, or attach a file with @path.",
+							),
+						);
+						process.exit(1);
+					}
+					preparedPrintInput = input;
+				}
+			: undefined;
 	const createRuntime = createCliRuntimeFactory(
 		{ parsed, cwd, agentDir, appMode, toolRuntime },
-		{ extensionFactories, startupSettingsManager, startupLoadingIndicator },
+		{ extensionFactories, startupSettingsManager, startupLoadingIndicator, beforeInitialModelRuntime },
 	);
 	time("createRuntime");
 	const runtime = await createAgentSessionRuntime(createRuntime, {
@@ -1657,52 +1718,15 @@ export async function main(args: string[], options?: MainOptions) {
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 
-	const loadedExtensions = resourceLoader.getExtensions().extensions;
-	const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
-	// Before extensions load, a bare option can consume the next positional as a string value.
-	const booleanExtensionFlags = new Set<string>();
-	for (const name of parsed.unknownFlags.keys()) {
-		// applyExtensionFlagValues uses the first declaration when extensions share a name.
-		if (extensionFlags.find((flag) => flag.name === name)?.type === "boolean") {
-			booleanExtensionFlags.add(name);
-			parsed.unknownFlags.set(name, true);
-		}
+	if (preparedPrintInput === undefined) {
+		await resolveLaunchExtensionFlags(resourceLoader, settingsManager);
 	}
-	if (booleanExtensionFlags.size > 0) {
-		parsed.messages = parseArgs(args, { booleanExtensionFlags }).messages;
-	}
-	if (parsed.help) {
-		await printThenExit(() => printHelp(extensionFlags), 0);
-	}
-	time("extensionFlags");
-	// Every full launch refreshes what `--help` reads, so the fast path stays warm without a help
-	// run of its own.
-	writeHelpFlagsCache({
-		scope: helpFlagsScope(parsed, cwd, agentDir, settingsManager.isProjectTrusted()),
-		flags: extensionFlags,
-		extensionPaths: loadedExtensions.map((extension) => extension.resolvedPath),
-	});
-	time("helpFlagsCache");
-
-	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
-	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
-		stdinContent = await readPipedStdin(pipedStdinOptions(parsed, process.stderr));
-		if (stdinContent !== undefined && appMode === "interactive") {
-			appMode = "print";
-		}
-	}
-	time("readPipedStdin");
+	const { initialMessage, initialImages, initialTitlePrompt } =
+		preparedPrintInput ?? (await prepareLaunchInput(settingsManager));
 	// An RPC process always has a parent that watches its exit; every other mode dies unobserved.
 	recordProcessLifetime(agentDir, appMode, { supervised: appMode === "rpc" });
 	time("recordProcessLifetime");
 
-	const { initialMessage, initialImages, initialTitlePrompt } = await prepareInitialMessage(
-		parsed,
-		settingsManager.getImageAutoResize(),
-		stdinContent,
-	);
-	time("prepareInitialMessage");
 	if (parsed.grokNeo && appMode === "interactive") {
 		applyGrokNeoThemeFallback(settingsManager);
 	}

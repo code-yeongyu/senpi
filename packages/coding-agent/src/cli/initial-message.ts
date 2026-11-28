@@ -46,3 +46,12 @@ export function buildInitialMessage({
 		initialTitlePrompt: titlePrompt,
 	};
 }
+
+/** True when a print run has something to send: a prompt, piped stdin, @file content or images, or a later message. */
+export function hasPrintInput(initial: InitialMessageResult, laterMessages: readonly string[]): boolean {
+	return (
+		Boolean(initial.initialMessage) ||
+		(initial.initialImages?.length ?? 0) > 0 ||
+		laterMessages.some((message) => message.length > 0)
+	);
+}

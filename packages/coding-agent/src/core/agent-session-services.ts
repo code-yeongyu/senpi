@@ -48,10 +48,12 @@ export interface CreateAgentSessionServicesOptions {
 	settingsManager?: SettingsManager;
 	modelRuntime?: ModelRuntime;
 	mcpRegistry?: HostMcpRegistry;
-	modelRuntimeSignal?: AbortSignal;
+	modelRuntimeSignal?: AbortSignal | (() => AbortSignal);
 	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
 	resourceLoaderReloadOptions?: ResourceLoaderReloadOptions;
+	/** When set, finish loading resources and applying typed flags before starting the model runtime. */
+	beforeModelRuntime?: (resourceLoader: ResourceLoader, settingsManager: SettingsManager) => Promise<void>;
 }
 
 /**
@@ -176,7 +178,7 @@ export async function createAgentSessionServices(
 	// A shared runtime's providers register into its own store: read that one, as a session that
 	// builds its runtime does (senpi#3434).
 	const authStorage = options.modelRuntime?.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
-	const runtimePromise =
+	const createModelRuntime = () =>
 		options.modelRuntime !== undefined
 			? Promise.resolve(options.modelRuntime)
 			: ModelRuntime.create({
@@ -184,7 +186,10 @@ export async function createAgentSessionServices(
 					authPath: join(agentDir, "auth.json"),
 					agentDir,
 					modelsPath: join(agentDir, "models.json"),
-					signal: options.modelRuntimeSignal,
+					signal:
+						typeof options.modelRuntimeSignal === "function"
+							? options.modelRuntimeSignal()
+							: options.modelRuntimeSignal,
 				});
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const resourceLoader = new DefaultResourceLoader({
@@ -194,10 +199,21 @@ export async function createAgentSessionServices(
 		settingsManager,
 		mcpRegistry: options.mcpRegistry,
 	});
-	const { primary: modelRuntime } = await joinStartupBranches(
-		runtimePromise,
-		resourceLoader.reload(options.resourceLoaderReloadOptions),
-	);
+	const loadResources = async () => {
+		await resourceLoader.reload(options.resourceLoaderReloadOptions);
+		if (options.beforeModelRuntime) {
+			const diagnostics = applyExtensionFlagValues(resourceLoader, options.extensionFlagValues);
+			await options.beforeModelRuntime(resourceLoader, settingsManager);
+			return diagnostics;
+		}
+	};
+	// Only launches that need input validation serialize the two startup branches.
+	const start = async () => {
+		if (!options.beforeModelRuntime) return joinStartupBranches(createModelRuntime(), loadResources());
+		const secondary = await loadResources();
+		return { primary: await createModelRuntime(), secondary };
+	};
+	const { primary: modelRuntime, secondary: flagDiagnostics } = await start();
 	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
 	modelRuntime.setSettingsManager(settingsManager);
 
@@ -255,7 +271,7 @@ export async function createAgentSessionServices(
 		}
 	}
 	extensionsResult.runtime.pendingVirtualModelRegistrations = [];
-	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
+	diagnostics.push(...(flagDiagnostics ?? applyExtensionFlagValues(resourceLoader, options.extensionFlagValues)));
 
 	return {
 		cwd,
