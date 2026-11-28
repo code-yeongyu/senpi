@@ -22,6 +22,7 @@ import {
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	HOST_TOOLS_CAPABILITY,
+	INLINE_HTML_CAPABILITY,
 	PEER_AGENT_ROLE_CAPABILITY,
 	SAME_ACCOUNT_DELEGATION_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
@@ -206,6 +207,8 @@ export function multiSessionHostCapabilities(options: {
 			BROWSER_ENGINE_CAPABILITY,
 			// Every session attaches its host tools through the SDK, so an app may serve them (senpi#5045).
 			HOST_TOOLS_CAPABILITY,
+			// show_html_page reports an inline display only to a session whose client declared inline_html (senpi#6346).
+			INLINE_HTML_CAPABILITY,
 			// Each session's caller env lives on its own launch profile; the host process never holds it (senpi#4381).
 			SESSION_ENV_CAPABILITY,
 			// Each session's fallback chain is its own in-memory settings override, never the host's file.

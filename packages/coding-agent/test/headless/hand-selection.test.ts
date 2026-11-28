@@ -173,6 +173,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: undefined, subscribe: () => () => {} },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: {
 				getEntries: () => [],
 				appendCustomEntry: () => "unused",
@@ -244,6 +245,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent,
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: {
 				getEntries: () => entries,
 				appendCustomEntry: () => "unused",
@@ -300,6 +302,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: own as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: { getEntries: () => [], appendCustomEntry: () => "e" },
 		};
 		selection.restore("s1", session);
@@ -333,6 +336,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: oldHost as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: manager,
 		};
 		selection.restore("s1", before);
@@ -343,6 +347,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: newHost as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: manager,
 		};
 		selection.restore("s1", after);
@@ -394,6 +399,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 				agent,
 				isStreaming: false,
 				promptSurface: "terminal" as const,
+				rendersHtmlInline: false,
 				sessionManager: {
 					getEntries: () => entries,
 					appendCustomEntry: () => "e",
@@ -414,6 +420,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: undefined as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: {
 				getEntries: () => entries,
 				appendCustomEntry: () => "e",
@@ -460,6 +467,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: undefined as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: {
 				getEntries: () => entries,
 				appendCustomEntry: () => "e",
@@ -504,6 +512,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: undefined as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: {
 				getEntries: () => [] as SessionEntry[],
 				appendCustomEntry: () => "e",
@@ -537,6 +546,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: own as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: true,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: {
 				getEntries: () => entries,
 				appendCustomEntry: () => "e",
@@ -563,6 +573,7 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 			agent: { toolHost: own as ToolHost | undefined, subscribe: () => () => {} },
 			isStreaming: false,
 			promptSurface: "terminal" as const,
+			rendersHtmlInline: false,
 			sessionManager: {
 				getEntries: () => [] as SessionEntry[],
 				appendCustomEntry: (_type: string, data?: unknown) => {

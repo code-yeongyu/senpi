@@ -149,6 +149,7 @@ export function createLooplessRuntimeFactory(
 		runtime.extensionRunner.bindSessionlessFacts({
 			isModelIssuedToolCall: brainCalls.isModelIssuedToolCall,
 			promptSurfaceOf: brainCalls.promptSurfaceOf,
+			inlineHtmlOf: brainCalls.inlineHtmlOf,
 			getAllTools: () =>
 				toolInfosOf(
 					registry.definitions,

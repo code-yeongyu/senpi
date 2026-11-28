@@ -2,7 +2,6 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
-import { resolvePromptSurface } from "../../core/dynamic-prompt/build.ts";
 import { defineTool, type ExtensionToolContext, type ToolDefinition } from "../../core/extensions/types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import {
@@ -84,14 +83,12 @@ const clampHeight = (height: number | undefined) =>
 	height === undefined ? undefined : Math.min(2000, Math.max(80, Math.round(height)));
 
 /**
- * Whether this session's host shows the page. The OmO desktop opens every session it renders with
- * `open_session.promptSurface: "app"` and publishes a completed call from its details; every other
- * surface (terminal, chat bridge, or none named) only gets the file. The result states which happened,
- * because the model trusts it in later turns too (senpi#6273). On a hand (brain/hand split) `ctx.promptSurface` is the
- * brain session's, sent with the call (senpi#6921); a runtime that knows none falls back to the environment.
+ * Whether this session's client shows the page: its UI declared `inline_html` (the OmO desktop publishes a completed
+ * call from its details). The prompt surface only says how replies are formatted, so it never implies this (senpi#6346);
+ * every other client only gets the file. The result states which happened, because the model trusts it in later turns
+ * too (senpi#6273). On a hand (brain/hand split) `ctx.inlineHtml` is the brain session's, sent with the call.
  */
-const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
-	(ctx.promptSurface ?? resolvePromptSurface(process.env)) === "app";
+const hostRendersPage = (ctx: ExtensionToolContext): boolean => ctx.inlineHtml === true;
 
 type ShowHtmlPageResult = Awaited<ReturnType<ToolDefinition<typeof Params, ShowHtmlPageDetails>["execute"]>>;
 
@@ -99,7 +96,7 @@ type ShowHtmlPageResult = Awaited<ReturnType<ToolDefinition<typeof Params, ShowH
  * The standalone file producer, shared by CLI and desktop host attachments. `shownInline` says whether
  * the host shows the page to the reader; the result states which happened, because the model trusts
  * it in later turns too (senpi#6273). A host attachment serves its own renderer (the OmO desktop shows
- * the page inline), so it defaults to true; the standalone tool passes what its session's surface does.
+ * the page inline), so it defaults to true; the standalone tool passes whether its session's client does.
  * The page is handed with its images inlined when it fits MAX_HANDED_PAGE_CHARACTERS; the session's
  * budget across pages is applied by handHtmlPage, which sees the session.
  */

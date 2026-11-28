@@ -2,21 +2,19 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fauxAssistantMessage, fauxToolCall, type ToolResultMessage } from "@earendil-works/pi-ai";
-import htmlRenderExtension from "../../../src/extensions/html-render/index.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createShowHtmlPageTool } from "../../../src/extensions/html-render/tool.ts";
 import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
-import { createHarness } from "../harness.ts";
 
 // senpi#6273: show_html_page said "Open it in the desktop" even where the desktop had already shown the page
 // inline, so the model reported a failure and, trusting that result in later turns, refused to call the tool.
-// The result now states what happened on this host: shown inline (OmO desktop, prompt surface `app`) or only
-// written to a file.
+// The result now states what happened: shown inline (a client that declared `inline_html`, the OmO desktop) or only
+// written to a file. senpi#6346 moved that decision from the prompt surface to the client capability; the RPC path
+// is covered in 6346-show-html-page-inline-capability.test.ts.
 
 type Surface = "terminal" | "app" | "chat";
 
-const ctxFor = (cwd: string, surface: Surface | undefined): ExtensionToolContext =>
+const ctxFor = (cwd: string, surface: Surface | undefined, inlineHtml?: boolean): ExtensionToolContext =>
 	({
 		cwd,
 		hasUI: false,
@@ -25,15 +23,20 @@ const ctxFor = (cwd: string, surface: Surface | undefined): ExtensionToolContext
 		executeTool: () => Promise.reject(new Error("not used")),
 		sessionManager: { getEntries: () => [], getSessionId: () => randomUUID() },
 		...(surface === undefined ? {} : { promptSurface: surface }),
+		...(inlineHtml === undefined ? {} : { inlineHtml }),
 	}) as unknown as ExtensionToolContext;
 
-async function show(cwd: string, surface: Surface | undefined): Promise<{ text: string; path: string }> {
+async function show(
+	cwd: string,
+	surface: Surface | undefined,
+	inlineHtml?: boolean,
+): Promise<{ text: string; path: string }> {
 	const result = await createShowHtmlPageTool(new Map()).execute(
 		"call-6273",
 		{ html: "<p>chart</p>", title: "Chart" },
 		undefined,
 		undefined,
-		ctxFor(cwd, surface),
+		ctxFor(cwd, surface, inlineHtml),
 	);
 	const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
 	return { text, path: result.details.path };
@@ -41,58 +44,31 @@ async function show(cwd: string, surface: Surface | undefined): Promise<{ text: 
 
 describe("senpi#6273: show_html_page reports what the host did with the page", () => {
 	let tempDir: string;
-	let savedSurface: string | undefined;
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-6273-"));
-		savedSurface = process.env.SENPI_PROMPT_SURFACE;
-		delete process.env.SENPI_PROMPT_SURFACE;
+		vi.stubEnv("SENPI_PROMPT_SURFACE", undefined);
 	});
 	afterEach(() => {
-		if (savedSurface === undefined) delete process.env.SENPI_PROMPT_SURFACE;
-		else process.env.SENPI_PROMPT_SURFACE = savedSurface;
+		vi.unstubAllEnvs();
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
 	it("in the desktop thread says the page was shown inline, names the saved file, and asks nothing of the model", async () => {
-		const { text, path } = await show(tempDir, "app");
+		const { text, path } = await show(tempDir, "app", true);
 		expect(text).toMatch(/shown to the reader inline/i);
 		expect(text).toContain(path);
 		expect(text).not.toMatch(/open it in the desktop/i);
 		expect(text).not.toMatch(/not displayed/i);
 	});
 
-	it("in a real session, reads the session's own prompt surface through ctx.promptSurface", async () => {
-		const harness = await createHarness({ extensionFactories: [htmlRenderExtension] });
-		try {
-			harness.session.setPromptSurface("app");
-			harness.setResponses([
-				fauxAssistantMessage(fauxToolCall("show_html_page", { html: "<p>chart</p>", title: "Chart" }), {
-					stopReason: "toolUse",
-				}),
-				fauxAssistantMessage("done"),
-			]);
-
-			await harness.session.prompt("Show the chart.");
-
-			const result = harness.session.messages.find(
-				(message): message is ToolResultMessage => message.role === "toolResult",
-			);
-			expect(result?.content.map((block) => (block.type === "text" ? block.text : "")).join("")).toMatch(
-				/shown to the reader inline/i,
-			);
-		} finally {
-			harness.cleanup();
-		}
-	});
-
-	it("reads the surface from SENPI_PROMPT_SURFACE when the session names none", async () => {
-		process.env.SENPI_PROMPT_SURFACE = "app";
+	it("does not read SENPI_PROMPT_SURFACE=app as an inline display", async () => {
+		vi.stubEnv("SENPI_PROMPT_SURFACE", "app");
 		const { text } = await show(tempDir, undefined);
-		expect(text).toMatch(/shown to the reader inline/i);
+		expect(text).toMatch(/not displayed/i);
 	});
 
 	it.each(["terminal", "chat", undefined] as const)(
-		"on a host that does not render pages (surface %s) says the page was written and not displayed",
+		"on a host whose client does not render pages (surface %s) says the page was written and not displayed",
 		async (surface) => {
 			const { text, path } = await show(tempDir, surface);
 			expect(text).toContain(`Wrote the page to ${path}.`);
