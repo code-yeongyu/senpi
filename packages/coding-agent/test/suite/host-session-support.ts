@@ -22,6 +22,12 @@ const models: (FakeModelServer | HeldAnthropicModel)[] = [];
 const closeWires: (() => Promise<void>)[] = [];
 // Captured once: a rig after a cleanup that never reached restoreAllMocks would otherwise capture its own spy (#4890).
 const ensureHost = hostEnsure.ensureHost;
+/** Routes every ensureHost through the real one with the test supervisor launch; the caller's own `_test` hooks stay. */
+export function installEnsureHostSpy(): void {
+	vi.spyOn(hostEnsure, "ensureHost").mockImplementation((options) =>
+		ensureHost({ ...options, _test: { ...options._test, launch: supervisorLaunch, readinessTimeoutMs: 30_000 } }),
+	);
+}
 export function scratch(): string {
 	const dir = mkdtempSync(join(tmpdir(), "hs-unit-"));
 	dirs.push(dir);
@@ -46,9 +52,7 @@ export async function rig(held = false, hostEnv: Readonly<Record<string, string>
 	const fake = held ? await HeldAnthropicModel.start() : await startFakeModelServer();
 	models.push(fake);
 	writeRpcModelsJson(qa.agentDir, fake.origin, ["mock-claude-rpc-2"]);
-	vi.spyOn(hostEnsure, "ensureHost").mockImplementation((options) =>
-		ensureHost({ ...options, _test: { launch: supervisorLaunch, readinessTimeoutMs: 30_000 } }),
-	);
+	installEnsureHostSpy();
 	const target = { socket: qa.socket, agentDir: qa.agentDir };
 	const spec = {
 		...DEFAULT_HOST_LAUNCH_SPEC,
