@@ -7,7 +7,37 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { terminateProcessTrees } from "../../../../senpi-codemode/src/kernels/js/process-tree-host.ts";
+import {
+	SUPERVISOR_EXIT_DEADLINE_MS,
+	STDERR_DRAIN_MS,
+	settleWithin,
+	earlyExitError,
+	stopSupervisor,
+} from "./1370-supervisor-cleanup-support.ts";
+function reasonOf(cause: unknown): string {
+	if (!(cause instanceof Error)) return String(cause);
+	return cause.cause instanceof Error ? cause.cause.message : cause.message;
+}
+
+/**
+ * Settles with `work`, or fails by name with the supervisor output so far: `${failure} within <ms> ms`
+ * when the deadline passes, `${failure} (<reason>)` when the work itself rejects.
+ */
+async function withinDeadline<T>(ms: number, failure: string, output: () => string, work: Promise<T>): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			work.catch((cause: unknown) => {
+				throw new Error(`${failure} (${reasonOf(cause)}):\n${output()}`, { cause });
+			}),
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error(`${failure} within ${ms} ms:\n${output()}`)), ms);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
 import {
 	createInternalSocketPath,
 	HOST_CHILD_LISTEN_MS,
@@ -38,109 +68,9 @@ vi.mock("node:child_process", async (importOriginal) => {
 const SUPERVISOR_START_ALLOWANCE_MS = 30_000;
 const READINESS_DEADLINE_MS = SUPERVISOR_START_ALLOWANCE_MS + HOST_CHILD_LISTEN_MS;
 const ENDPOINT_DEADLINE_MS = 15_000;
-// Each cleanup signal (tree stop, then SIGTERM, then SIGKILL to the supervisor itself) gets this long to end it.
-const SUPERVISOR_EXIT_DEADLINE_MS = 5_000;
-// The stderr pipe can stay open after the supervisor exits (its host child inherits it), so its drain is bounded.
-const STDERR_DRAIN_MS = 2_000;
+
 const DIRECT_ROUTE_CEILING_MS =
 	READINESS_DEADLINE_MS + 2 * ENDPOINT_DEADLINE_MS + 3 * SUPERVISOR_EXIT_DEADLINE_MS + STDERR_DRAIN_MS + 5_000;
-
-function reasonOf(cause: unknown): string {
-	if (!(cause instanceof Error)) return String(cause);
-	return cause.cause instanceof Error ? cause.cause.message : cause.message;
-}
-
-/**
- * Settles with `work`, or fails by name with the supervisor output so far: `${failure} within <ms> ms`
- * when the deadline passes, `${failure} (<reason>)` when the work itself rejects.
- */
-async function withinDeadline<T>(ms: number, failure: string, output: () => string, work: Promise<T>): Promise<T> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	try {
-		return await Promise.race([
-			work.catch((cause: unknown) => {
-				throw new Error(`${failure} (${reasonOf(cause)}):\n${output()}`, { cause });
-			}),
-			new Promise<never>((_resolve, reject) => {
-				timer = setTimeout(() => reject(new Error(`${failure} within ${ms} ms:\n${output()}`)), ms);
-			}),
-		]);
-	} finally {
-		clearTimeout(timer);
-	}
-}
-
-/** Signals a process group this test created; a group that is already gone is not an error. */
-function signalGroup(group: number, signal: NodeJS.Signals): void {
-	try {
-		process.kill(-group, signal);
-	} catch (cause) {
-		if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) throw cause;
-	}
-}
-
-/** How a bounded wait ended: in time, still pending at its deadline, or rejected (with why). */
-type WaitOutcome =
-	| { readonly kind: "settled" }
-	| { readonly kind: "late" }
-	| { readonly kind: "failed"; readonly cause: unknown };
-
-/** How `work` ended within `ms`. Never throws, so a rejection cannot replace the caller's own named error. */
-async function settleWithin(ms: number, work: Promise<unknown>): Promise<WaitOutcome> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	try {
-		return await Promise.race([
-			work.then(
-				(): WaitOutcome => ({ kind: "settled" }),
-				(cause: unknown): WaitOutcome => ({ kind: "failed", cause }),
-			),
-			new Promise<WaitOutcome>((resolveLate) => {
-				timer = setTimeout(() => resolveLate({ kind: "late" }), ms);
-			}),
-		]);
-	} finally {
-		clearTimeout(timer);
-	}
-}
-
-/**
- * The named early-exit error. 'exit' can arrive before the stderr pipe drains, so it quotes the output once the
- * pipe closed (bounded); a drain that failed instead (readline forwarding an input error) becomes its cause.
- */
-async function earlyExitError(
-	code: number | null,
-	signal: NodeJS.Signals | null,
-	stderrClosed: Promise<unknown>,
-	output: () => string,
-): Promise<Error> {
-	const drain = await settleWithin(STDERR_DRAIN_MS, stderrClosed);
-	const message = `supervisor exited (code ${code}, signal ${signal}) before readiness:\n${output()}`;
-	return drain.kind === "failed" ? new Error(message, { cause: drain.cause }) : new Error(message);
-}
-
-/**
- * Stops the supervisor tree, then makes sure it is gone. The tree stop signals nothing when it cannot read
- * the process table, so the supervisor's own process group is signalled after it: SIGTERM first, whose
- * shutdown also stops its host child, then SIGKILL. A supervisor that outlives both fails by name; one whose
- * spawn failed ('exit' rejected) has nothing left to stop.
- */
-async function stopSupervisor(supervisor: childProcess.ChildProcess, exited: Promise<unknown>, output: () => string) {
-	if (supervisor.pid !== undefined) {
-		await terminateProcessTrees([supervisor.pid], { ownerPid: process.pid, graceMs: 1000 });
-	}
-	if ((await settleWithin(SUPERVISOR_EXIT_DEADLINE_MS, exited)).kind !== "late") return;
-	const group = supervisor.pid;
-	for (const signal of ["SIGTERM", "SIGKILL"] as const) {
-		// The supervisor's own process group (it was spawned detached): the wrapper, the re-executed CLI and the host child.
-		if (process.platform === "win32") supervisor.kill(signal);
-		else if (group !== undefined && group > 0) signalGroup(group, signal);
-		if ((await settleWithin(SUPERVISOR_EXIT_DEADLINE_MS, exited)).kind !== "late") return;
-	}
-	throw new Error(
-		`supervisor did not exit within ${3 * SUPERVISOR_EXIT_DEADLINE_MS} ms of cleanup (tree stop, SIGTERM, SIGKILL):\n${output()}`,
-	);
-}
-
 // Regression coverage for https://github.com/code-yeongyu/senpi/issues/1370
 describe("createInternalSocketPath", () => {
 	const created: string[] = [];
