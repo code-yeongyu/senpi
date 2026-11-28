@@ -1,4 +1,5 @@
 import { lstatSync, readlinkSync } from "node:fs";
+import { lstat, readlink } from "node:fs/promises";
 import { isAbsolute, join, resolve as nodeResolvePath, parse, sep } from "node:path";
 
 /** Symlink hops allowed while resolving one path; realpath(3) reports ELOOP past this. */
@@ -28,7 +29,10 @@ interface OpenFreeResolution {
  * containment decision would approve one directory while the I/O reached another, so neither the
  * input nor a link target is normalized before traversal.
  */
-function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
+/** One filesystem request of the walk: lstat a component, or read a link the hop budget still allows. */
+type WalkRequest = { readonly op: "lstat" | "readlink"; readonly path: string };
+
+function* walkWithoutOpen(inputPath: string): Generator<WalkRequest, OpenFreeResolution, boolean | string> {
 	const absolutePath = isAbsolute(inputPath) ? inputPath : nodeResolvePath(inputPath);
 	const { root } = parse(absolutePath);
 	const pending = splitParts(absolutePath.slice(root.length));
@@ -46,13 +50,14 @@ function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
 		const candidate = join(root, ...resolved, part);
 		let link: string;
 		try {
-			if (!lstatSync(candidate).isSymbolicLink()) {
+			if (!(yield { op: "lstat", path: candidate })) {
 				resolved.push(part);
 				continue;
 			}
+			// The budget is spent before the link is read, so the hop past it costs no further I/O.
 			hops += 1;
 			if (hops > MAX_SYMLINK_HOPS) return { path: join(candidate, ...pending), errorCode: "ELOOP" };
-			link = readlinkSync(candidate);
+			link = String(yield { op: "readlink", path: candidate });
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException)?.code ?? "UNKNOWN";
 			return { path: join(candidate, ...pending), errorCode: code };
@@ -65,6 +70,20 @@ function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
 		}
 	}
 	return { path: join(root, ...resolved) };
+}
+
+function resolveWithoutOpen(inputPath: string): OpenFreeResolution {
+	const walk = walkWithoutOpen(inputPath);
+	let step = walk.next();
+	while (!step.done) {
+		const { op, path } = step.value;
+		try {
+			step = walk.next(op === "lstat" ? lstatSync(path).isSymbolicLink() : readlinkSync(path));
+		} catch (error) {
+			step = walk.throw(error);
+		}
+	}
+	return step.value;
 }
 
 /**
@@ -92,7 +111,25 @@ export function realpathWithoutOpen(inputPath: string): string {
  * an unresolved path can name a different file than the one the I/O will reach.
  */
 export function realpathWithoutOpenStrict(inputPath: string): string {
-	const resolution = resolveWithoutOpen(inputPath);
+	return strictResolution(inputPath, resolveWithoutOpen(inputPath));
+}
+
+/** The strict fallback for async callers: even a stalled share must not block the event loop. */
+export async function realpathWithoutOpenStrictAsync(inputPath: string): Promise<string> {
+	const walk = walkWithoutOpen(inputPath);
+	let step = walk.next();
+	while (!step.done) {
+		const { op, path } = step.value;
+		try {
+			step = walk.next(op === "lstat" ? (await lstat(path)).isSymbolicLink() : await readlink(path));
+		} catch (error) {
+			step = walk.throw(error);
+		}
+	}
+	return strictResolution(inputPath, step.value);
+}
+
+function strictResolution(inputPath: string, resolution: OpenFreeResolution): string {
 	if (resolution.errorCode !== undefined && !MISSING_PATH_CODES.has(resolution.errorCode)) {
 		throw Object.assign(new Error(`${resolution.errorCode}: cannot resolve path '${inputPath}' without opening it`), {
 			code: resolution.errorCode,

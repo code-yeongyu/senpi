@@ -19,6 +19,54 @@ const BARE_WORD = /[^\s"'`;|&<>()]+/g;
 const EMBEDDED_PATH =
 	/(?<=^|[\s"'`=(),;|&<>:[{])(?:-[A-Za-z]+|@)?((?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE)(?=$|[\\/"'])|[A-Za-z]:[\\/]|\/)([^\s;|&<>()`,{}]*)/g;
 
+/**
+ * A network URL (`https://host/a/b`, `ssh://host/x`) names no local path, but its `//authority/path` tail reads as an
+ * anchored path after the `:`, which Windows resolves to the UNC share `\\\\host\\a\\b` and probes synchronously for
+ * minutes (senpi#3404). A scheme of two or more letters keeps a drive (`C://`) out; `file:` URLs do name local paths.
+ */
+const NETWORK_URL_START = /(?![Ff][Ii][Ll][Ee]:)[A-Za-z][A-Za-z0-9+.-]+:\/\//y;
+const SCHEME_CHAR = /[A-Za-z0-9+.-]/;
+/** A local operand that may follow a comma inside or after a URL token (`{url,/path}`, `url,~/path`). */
+const LOCAL_ANCHOR = /(?:\/|~|\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE|[A-Za-z]:[\\/])/y;
+const UNQUOTED_URL_END = /[\s;|&<>()"'`}]/;
+
+/**
+ * The command with every network URL token blanked, classified token by token rather than by one pattern over the
+ * whole text: a quoted URL runs to its closing quote (its query may hold `&`, `;` or `=`), an unquoted one to
+ * whitespace or an unquoted shell metacharacter. Either ends at a comma that starts a local path, so a brace or
+ * comma alternative next to the URL is still extracted as a local operand.
+ */
+function withoutNetworkUrls(command: string): string {
+	let out = "";
+	let quote: string | undefined;
+	for (let i = 0; i < command.length;) {
+		const char = command[i] as string;
+		NETWORK_URL_START.lastIndex = i;
+		if ((i === 0 || !SCHEME_CHAR.test(command[i - 1] as string)) && NETWORK_URL_START.test(command)) {
+			let end = i;
+			while (end < command.length) {
+				const next = command[end] as string;
+				if (/\s/.test(next) || next === "`") break;
+				if (quote !== undefined ? next === quote : UNQUOTED_URL_END.test(next)) break;
+				if (next === ",") {
+					LOCAL_ANCHOR.lastIndex = end + 1;
+					if (LOCAL_ANCHOR.test(command)) break;
+				}
+				end++;
+			}
+			out += " ".repeat(end - i);
+			i = end;
+			continue;
+		}
+		if (quote !== undefined) {
+			if (char === quote) quote = undefined;
+		} else if (char === '"' || char === "'") quote = char;
+		out += char;
+		i++;
+	}
+	return out;
+}
+
 function withPlatformSeparators(path: string): string {
 	return sep === "/" ? path.replaceAll("\\", "/") : path.replaceAll("/", "\\");
 }
@@ -86,9 +134,10 @@ function cdTarget(segment: string, cwd: string): string | undefined {
  * A path the command assembles at run time is not seen.
  */
 export function commandPaths(command: string, cwd: string): string[] {
-	const paths = new Set(embeddedPaths(command));
+	const text = withoutNetworkUrls(command);
+	const paths = new Set(embeddedPaths(text));
 	let current = cwd;
-	for (const segment of segments(command)) {
+	for (const segment of segments(text)) {
 		const moved = cdTarget(segment, current);
 		if (moved !== undefined) {
 			current = moved;

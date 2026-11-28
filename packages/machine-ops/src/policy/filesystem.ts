@@ -3,7 +3,7 @@ import { basename, dirname, resolve } from "node:path";
 import { MachineOpError } from "../errors.ts";
 import { automountTriggerPath, realpathUnderAutomount } from "../files/automount-trigger.ts";
 import { isMissingPathError, RESOLUTION_TIMED_OUT, withResolutionDeadline } from "../files/bounded-realpath.ts";
-import { realpathWithoutOpenStrict } from "../files/realpath-without-open.ts";
+import { realpathWithoutOpenStrictAsync } from "../files/realpath-without-open.ts";
 
 /** What a built-in file operation is about to do with a path. */
 export type FilesystemOperation = "read" | "enumerate" | "write";
@@ -79,7 +79,7 @@ export async function canonicalizeFilesystemPath(filePath: string): Promise<stri
 	if ((await automountTriggerPath(absolutePath)) !== undefined) return canonicalizeUnderAutomount(absolutePath);
 	const canonicalPath = await withResolutionDeadline(canonicalizeByOpening(absolutePath));
 	if (canonicalPath !== RESOLUTION_TIMED_OUT) return canonicalPath;
-	return realpathWithoutOpenStrict(absolutePath);
+	return realpathWithoutOpenStrictAsync(absolutePath);
 }
 
 async function canonicalizeUnderAutomount(absolutePath: string): Promise<string> {
