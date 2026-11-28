@@ -288,7 +288,7 @@ describe("#4036 input held at the start of the first prompt after a compaction",
 			failures: 2,
 		},
 	])(
-		"#given an accepted compaction #when the first response fails with $retryBudget #then the run does not continue and the steer waits for the next prompt, as without a compaction",
+		"#given an accepted compaction #when the first response fails with $retryBudget #then the queued steer starts a new turn (#6868)",
 		async ({ retry, failures }) => {
 			// given
 			const setup = await setUp({ thresholdCompaction: true, retry });
@@ -298,22 +298,17 @@ describe("#4036 input held at the start of the first prompt after a compaction",
 				...Array.from({ length: failures }, () =>
 					fauxAssistantMessage("", { stopReason: "error", errorMessage: failure }),
 				),
-				fauxAssistantMessage("steer handled on the next prompt"),
+				fauxAssistantMessage("steer handled in its own turn"),
 				fauxAssistantMessage("unexpected extra turn"),
 			]);
 			const callsBefore = harness.faux.state.callCount;
 
 			// when
 			await runFirstPromptWithSteer(setup);
-			const callsForTheFailedPrompt = harness.faux.state.callCount - callsBefore;
-			const deliveredBeforeTheNextPrompt = deliveries(harness, STEER);
-			const queuedBeforeTheNextPrompt = [...harness.session.getSteeringMessages()];
-			await runTurn(harness, "the next prompt");
 
 			// then
-			expect(callsForTheFailedPrompt).toBe(failures);
-			expect(deliveredBeforeTheNextPrompt).toBe(0);
-			expect(queuedBeforeTheNextPrompt).toEqual([STEER]);
+			expect(harness.faux.state.callCount - callsBefore).toBe(failures + 1);
+			expect(getAssistantTexts(harness)).toContain("steer handled in its own turn");
 			expect(deliveries(harness, STEER)).toBe(1);
 			expect(harness.session.getSteeringMessages()).toEqual([]);
 		},

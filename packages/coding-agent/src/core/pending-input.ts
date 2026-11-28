@@ -58,7 +58,9 @@ type LifecycleEvent = Exclude<PendingInputEvent, { readonly type: "submit" | "ed
 function reduceLifecycle(current: PendingInput, event: LifecycleEvent): PendingInputDecision {
 	switch (event.type) {
 		case "reject_before_dispatch":
-			return current.phase === "queued" ? persist(fail(current, "not_delivered", event.reason)) : unchanged(current);
+			return current.phase === "queued"
+				? persist(fail(current, "not_delivered", event.reason, event.code))
+				: unchanged(current);
 		case "reserve": {
 			if (current.phase !== "queued" || !tokenFitsInput(current, event.token)) return unchanged(current);
 			const next: PendingInput = {
@@ -162,13 +164,23 @@ function deliver(input: PendingInput, deliveredBy: PendingInput["deliveredBy"]):
 	return settled({ ...input, phase: "delivered", ...(deliveredBy === undefined ? {} : { deliveredBy }) });
 }
 
-function fail(input: PendingInput, delivery: PendingInputFailure["delivery"], reason: string): PendingInput {
+function fail(
+	input: PendingInput,
+	delivery: PendingInputFailure["delivery"],
+	reason: string,
+	code?: PendingInputFailure["code"],
+): PendingInput {
 	const { attempt, ...rest } = input;
 	const failedAttempt = attempt ?? input.failure?.attempt;
 	return {
 		...rest,
 		phase: "failed",
-		failure: { delivery, reason, ...(failedAttempt === undefined ? {} : { attempt: failedAttempt }) },
+		failure: {
+			delivery,
+			reason,
+			...(code === undefined ? {} : { code }),
+			...(failedAttempt === undefined ? {} : { attempt: failedAttempt }),
+		},
 	};
 }
 
