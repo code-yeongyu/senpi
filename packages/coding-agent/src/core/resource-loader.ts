@@ -641,6 +641,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			.filter((selection) => selection.kind === "user")
 			.map((selection) => selection.selectedRoot);
 		this.ignoredSkillFiles = this.noSkills ? [] : [...(resolvedPaths.ignoredSkills ?? [])];
+		this.ignoredSkillProvenance = resolvedPaths.ignoredSkillProvenance;
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -1177,6 +1178,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	private userSkillRoots: string[] = [];
 	private ignoredSkillFiles: string[] = [];
+	private ignoredSkillProvenance?: ReadonlyMap<string, SkillProvenance>;
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
@@ -1211,7 +1213,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}));
 		this.skillDiagnostics = [
 			...resolvedSkills.diagnostics,
-			...ignoredSkillDiagnostics(this.ignoredSkillFiles, this.skills),
+			...ignoredSkillDiagnostics(this.ignoredSkillFiles, this.skills, this.ignoredSkillProvenance),
 			...warnIfLargeSkillCatalog(this.skills),
 		];
 	}

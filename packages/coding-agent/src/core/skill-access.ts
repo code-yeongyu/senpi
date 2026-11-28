@@ -7,6 +7,7 @@ import {
 	lstatSync,
 	openSync,
 	readFileSync,
+	readSync,
 	realpathSync,
 	statSync,
 } from "node:fs";
@@ -150,8 +151,10 @@ export function readSkillFileCheckedSync(
 	path: string,
 	provenance?: SkillProvenance,
 	allowed?: SkillAllowedSet,
+	prefixBytes?: number,
 ): string {
-	if (provenance === undefined || provenance.kind === "user") return readFileSync(path, "utf8");
+	if (prefixBytes === undefined && (provenance === undefined || provenance.kind === "user"))
+		return readFileSync(path, "utf8");
 	const canonical = authorizeSkillPath(path, provenance, allowed);
 	// Pin the authorized file's identity without following links, then require the opened descriptor to be
 	// that same file. Windows has no O_NOFOLLOW, and a post-open stat follows a swapped-in link to the same
@@ -175,7 +178,9 @@ export function readSkillFileCheckedSync(
 		) {
 			throw new BlockedSkillLinkError(path, canonical);
 		}
-		return readFileSync(descriptor, "utf8");
+		if (prefixBytes === undefined) return readFileSync(descriptor, "utf8");
+		const prefix = Buffer.alloc(Math.min(opened.size, prefixBytes));
+		return prefix.toString("utf8", 0, readSync(descriptor, prefix, 0, prefix.length, 0));
 	} finally {
 		closeSync(descriptor);
 	}

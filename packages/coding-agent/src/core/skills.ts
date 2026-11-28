@@ -16,7 +16,7 @@ import {
 	type SkillProvenance,
 	skillProjectRoot,
 } from "./skill-access.ts";
-import { addIgnoreRules, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
+import { addIgnoreRules, shouldSkipSkillWalkDirectoryName, SKILL_FRONTMATTER_PREFIX_BYTES } from "./skill-discovery.ts";
 import { readUserSkillSource } from "./skill-source-cache.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
@@ -532,16 +532,32 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 }
 
 /**
- * Warnings for skill folders an ignore file hid from discovery (senpi#5060). A folder whose name a loaded
- * skill already carries is skipped: another root supplied that skill, so nothing is missing.
+ * Warn unless another root demonstrably supplied the ignored skill. Unknown identity must not hide a warning.
  */
 export function ignoredSkillDiagnostics(
 	ignoredSkillFiles: readonly string[],
 	loadedSkills: readonly Skill[],
+	provenanceByPath?: ReadonlyMap<string, SkillProvenance>,
 ): ResourceDiagnostic[] {
 	const loadedNames = new Set(loadedSkills.map((skill) => skill.name));
 	return ignoredSkillFiles
-		.filter((skillFile) => !loadedNames.has(basename(dirname(skillFile))))
+		.filter((skillFile) => {
+			const provenance = provenanceByPath?.get(skillFile);
+			if (!provenance || !loadedNames.size) return true;
+			try {
+				// An ignored user skill is not an explicit grant to inspect a target outside its discovery root.
+				const scope: SkillProvenance =
+					provenance.kind === "user"
+						? { kind: "project-selected", selectedRoot: provenance.selectedRoot }
+						: provenance;
+				const prefix = readSkillFileCheckedSync(skillFile, scope, undefined, SKILL_FRONTMATTER_PREFIX_BYTES);
+				if (!/^---\r?$\n[\s\S]*?^---\r?$/m.test(prefix)) return true;
+				const { name } = parseFrontmatter<SkillFrontmatter>(prefix).frontmatter;
+				return !loadedNames.has(typeof name === "string" && name ? name : basename(dirname(skillFile)));
+			} catch {
+				return true;
+			}
+		})
 		.map((skillFile) => ({
 			type: "warning",
 			category: "skill-ignored",
