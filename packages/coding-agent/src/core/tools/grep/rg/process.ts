@@ -78,6 +78,11 @@ export function createRgRunner({
 			const onAbort = () => {
 				stop();
 			};
+			const onOutputError = (error: Error) => {
+				if (failure) return;
+				failure = new GrepEngineError("ENGINE_UNAVAILABLE", `Failed to read ripgrep output: ${error.message}`);
+				stop();
+			};
 			const timer = setTimeout(
 				() => {
 					timedOut = true;
@@ -86,7 +91,11 @@ export function createRgRunner({
 				Math.max(0, deadline - now()),
 			);
 			signal?.addEventListener("abort", onAbort, { once: true });
+			child.stdout.on("error", onOutputError);
+			child.stderr.on("error", onOutputError);
 			const lines = onEvent ? createInterface({ input: child.stdout }) : undefined;
+			// readline forwards input errors onto its own Interface, even when stdout has a listener.
+			lines?.on("error", onOutputError);
 			lines?.on("line", (line) => {
 				if (failure) return;
 				try {
