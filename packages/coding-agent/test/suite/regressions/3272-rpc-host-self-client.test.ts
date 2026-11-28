@@ -2,7 +2,6 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
@@ -15,7 +14,14 @@ import {
 	JsonlPeer,
 	openedSessionId,
 } from "../../helpers/rpc-generation-support.ts";
-import { captureStderr, caseBudget, waitForFixtureExit, waitForFixtureFile } from "../../helpers/fixture-ready.ts";
+import {
+	captureStderr,
+	caseBudget,
+	outputTail,
+	REPORT_MARGIN_MS,
+	waitForFixtureExit,
+	waitForFixtureFile,
+} from "../../helpers/fixture-ready.ts";
 import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { RpcOwnerProcesses } from "../../helpers/rpc-owner-processes.ts";
@@ -25,7 +31,14 @@ const rpcClientModule = join(import.meta.dirname, "../../../src/modes/rpc/rpc-cl
 const roots: GenerationScratch[] = [];
 const processes = new RpcOwnerProcesses();
 const peers: JsonlPeer[] = [];
-const CASE_TIMEOUT_MS = 60_000;
+/**
+ * Each case starts two real processes before it can observe anything: the owner (an ensure caller) and the host
+ * generation it spawns. Measured with every wait open (senpi#3392): the owner-exit case took 32.1-54.3 s on a shared
+ * 14-core box at load 33-62, and 25.5-32.9 s on 4 cores at about 7x oversubscription; the idle case at most 31.8 s.
+ * 60 s left its waits 55 s, under the 54.3 s seen. A case gets 45 s per process it starts (the per-host share
+ * measured for the 7020 restart cases, senpi#7081) plus the reporting margin of its waits.
+ */
+const CASE_TIMEOUT_MS = 2 * 45_000 + REPORT_MARGIN_MS;
 const ownerOutput = new WeakMap<ChildProcess, () => string>();
 const budget = caseBudget();
 
@@ -73,21 +86,10 @@ async function caller(qa: GenerationScratch, ownership: "caller" | "none", exten
 		env: { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
 		stdio: ["ignore", "ignore", "pipe", "ipc"],
 	});
-	ownerOutput.set(child, captureStderr(child));
+	const output = captureStderr(child);
+	ownerOutput.set(child, output);
 	processes.owner(child);
-	const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error("caller readiness timeout")), 30_000);
-		child.on("message", (message, handle) => {
-			if (typeof message !== "object" || message === null || !("type" in message)) return;
-			if (message.type === "supervisor" && "pid" in message && typeof message.pid === "number") {
-				if (!(handle instanceof Socket)) return reject(new Error("missing transferred exit pipe"));
-				processes.supervisor(message.pid, handle);
-				return;
-			}
-			clearTimeout(timer);
-			resolve({ ...message });
-		});
-	});
+	const ready = await processes.callerReport(child, { timeoutMs: budget(CASE_TIMEOUT_MS), output });
 	expect(ready, JSON.stringify(ready)).toMatchObject({ type: "ready" });
 	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
 	const registration = await readHostRegistration(paths);
@@ -122,10 +124,22 @@ async function seedSelfClient(qa: GenerationScratch, ready: string, owner: Child
 		output: fixtureOutput(qa, owner),
 		gone: once(owner, "exit"),
 	});
-	openedSessionId(
-		await outside.request({ id: "open", type: "open_session", cwd: qa.cwd, retain_on_disconnect: true }),
-	);
-	await written;
+	// Awaited together: an open that fails must not leave the file wait to reject unobserved once the owner exits.
+	const [opened] = await Promise.all([
+		outside
+			.request(
+				{ id: "open", type: "open_session", cwd: qa.cwd, retain_on_disconnect: true },
+				budget(CASE_TIMEOUT_MS),
+			)
+			.catch((error: unknown) => {
+				// The host's stamps say how far the open got: no session_start, or a self-client stalled mid-way.
+				throw new Error(`open_session: ${String(error)}\n${outputTail(fixtureOutput(qa, owner)())}`, {
+					cause: error,
+				});
+			}),
+		written,
+	]);
+	openedSessionId(opened);
 	outside.destroy();
 }
 

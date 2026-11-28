@@ -1,9 +1,10 @@
 /** Exit observation and exact-PID cleanup for the real owner-lifetime scenarios. */
 import { type ChildProcess, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import type { Socket } from "node:net";
+import { Socket } from "node:net";
 import { expect } from "vitest";
 import { STOP_WAIT_BUDGET_MS } from "../../src/modes/rpc/host-ensure-stop.ts";
+import { type FixtureWait, waitForFixtureMessage } from "./fixture-ready.ts";
 import { processExitEvent } from "./process-exit-event.ts";
 import { processAlive, waitForPidGone } from "./spawned-host-reaper.ts";
 
@@ -48,6 +49,27 @@ export class RpcOwnerProcesses {
 		});
 	}
 
+	/**
+	 * Waits for an `rpc-owner-caller.ts` fixture's ready or failure report, tracking each supervisor it reports first.
+	 * A Bun caller cannot transfer the supervisor's exit pipe, so only a Node caller must send one.
+	 */
+	callerReport(child: ChildProcess, wait: FixtureWait, requirePipe = true): Promise<Record<string, unknown>> {
+		return waitForFixtureMessage(
+			child,
+			(message, handle) => {
+				if (typeof message !== "object" || message === null || !("type" in message)) return undefined;
+				if (message.type === "supervisor" && "pid" in message && typeof message.pid === "number") {
+					if (!(handle instanceof Socket) && requirePipe) throw new Error("missing transferred exit pipe");
+					this.supervisor(message.pid, handle instanceof Socket ? handle : undefined);
+					return undefined;
+				}
+				return { ...message };
+			},
+			wait,
+			"caller",
+		);
+	}
+
 	successor(child: ChildProcess, pipe: Socket): void {
 		if (child.pid === undefined) throw new Error("missing successor pid");
 		const pid = child.pid;
@@ -71,7 +93,7 @@ export class RpcOwnerProcesses {
 			this.owners.map((owner) =>
 				owner.exitCode !== null || owner.signalCode !== null
 					? Promise.resolve()
-					: once(owner, "exit", { signal: AbortSignal.timeout(EXIT_BOUND_MS) }),
+					: once(owner, "exit", { signal: AbortSignal.timeout(exitBoundMs) }),
 			),
 		);
 		await Promise.all([...this.supervisors.values()].map((supervisor) => supervisor.wait(exitBoundMs)));

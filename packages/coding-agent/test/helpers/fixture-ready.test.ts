@@ -10,6 +10,7 @@ import {
 	REPORT_MARGIN_MS,
 	waitForFixtureExit,
 	waitForFixtureFile,
+	waitForFixtureMessage,
 } from "./fixture-ready.ts";
 
 const roots: string[] = [];
@@ -25,6 +26,11 @@ function scratch(): string {
 	const root = mkdtempSync(join(tmpdir(), "senpi-fixture-ready-"));
 	roots.push(root);
 	return root;
+}
+
+/** Resolves at the fixture's first stderr write, so a short bound below measures the wait, not a slow spawn. */
+async function wrote(child: ChildProcess): Promise<void> {
+	if (child.stderr) await once(child.stderr, "data");
 }
 
 function fixture(script: string): { child: ChildProcess; output: () => string; gone: Promise<unknown> } {
@@ -70,7 +76,8 @@ describe("waitForFixtureFile", () => {
 
 	it("still fails at its bound, with the output, when a live fixture never writes", async () => {
 		const ready = join(scratch(), "ready");
-		const { output, gone } = fixture(`process.stderr.write("still booting\\n"); setInterval(() => {}, 1000);`);
+		const { child, output, gone } = fixture(`process.stderr.write("still booting\\n"); setInterval(() => {}, 1000);`);
+		await wrote(child);
 		await expect(waitForFixtureFile(ready, { timeoutMs: 500, output, gone })).rejects.toThrow(
 			/was not written within 500ms[\s\S]*still booting/,
 		);
@@ -92,10 +99,66 @@ describe("waitForFixtureExit", () => {
 
 	it("fails at its bound with the fixture's output when it never exits", async () => {
 		const { child, output } = fixture(`process.stderr.write("holding\\n"); setInterval(() => {}, 1000);`);
+		await wrote(child);
 		await expect(waitForFixtureExit(child, { timeoutMs: 500, output }, "owner")).rejects.toThrow(
 			/owner did not exit within 500ms[\s\S]*holding/,
 		);
 	}, 20_000);
+});
+
+describe("waitForFixtureMessage", () => {
+	function reporter(script: string): { child: ChildProcess; output: () => string } {
+		const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+		children.push(child);
+		return { child, output: captureStderr(child) };
+	}
+	const readyType = (message: unknown): string | undefined =>
+		typeof message === "object" && message !== null && "type" in message && message.type !== "noise"
+			? String(message.type)
+			: undefined;
+
+	it("settles on the first message it accepts, skipping the ones it does not", async () => {
+		const { child, output } = reporter(`process.send({ type: "noise" }); process.send({ type: "ready" });`);
+		await expect(
+			waitForFixtureMessage(child, readyType, { timeoutMs: budget(20_000), output }, "caller"),
+		).resolves.toBe("ready");
+	});
+
+	it("still delivers a report the fixture sent right before it exited", async () => {
+		// rpc-owner-caller.ts reports a failure, disconnects and exits; the exit must not win over that report.
+		const { child, output } = reporter(
+			`process.send({ type: "failure" }, () => { process.exitCode = 1; process.disconnect(); });`,
+		);
+		await expect(
+			waitForFixtureMessage(child, readyType, { timeoutMs: budget(20_000), output }, "caller"),
+		).resolves.toBe("failure");
+	});
+
+	it("fails as soon as a fixture exits without reporting, with its status and output", async () => {
+		const { child, output } = reporter(`process.stderr.write("boot refused\\n"); process.exit(3);`);
+		// The bound outlives this case: only the exit can settle the wait in time.
+		await expect(waitForFixtureMessage(child, readyType, { timeoutMs: 600_000, output }, "caller")).rejects.toThrow(
+			/caller exited \(code 3, signal null\) before it reported[\s\S]*boot refused/,
+		);
+	});
+
+	it("fails with the error `accept` throws", async () => {
+		const { child, output } = reporter(`process.send({ type: "ready" }); setInterval(() => {}, 1000);`);
+		const refuse = (): never => {
+			throw new Error("missing transferred exit pipe");
+		};
+		await expect(
+			waitForFixtureMessage(child, refuse, { timeoutMs: budget(20_000), output }, "caller"),
+		).rejects.toThrow("missing transferred exit pipe");
+	});
+
+	it("fails at its bound, with the output, when a live fixture never reports", async () => {
+		const { child, output } = reporter(`process.stderr.write("still booting\\n"); setInterval(() => {}, 1000);`);
+		await wrote(child);
+		await expect(waitForFixtureMessage(child, readyType, { timeoutMs: 500, output }, "caller")).rejects.toThrow(
+			/caller did not report within 500ms[\s\S]*still booting/,
+		);
+	});
 });
 
 describe("caseBudget", () => {
