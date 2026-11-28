@@ -51,7 +51,7 @@ export interface OpenAIResponsesCompat {
 	supportsAllowedTools?: boolean;
 }
 
-function isNativeOpenAIEndpoint(baseUrl: string | undefined): boolean {
+export function isNativeOpenAIEndpoint(baseUrl: string | undefined): boolean {
 	try {
 		const { hostname } = new URL(baseUrl || "https://api.openai.com/v1");
 		return hostname === "api.openai.com" || hostname.endsWith(".api.openai.com");

@@ -22,6 +22,7 @@ import {
 	getContextProvenance,
 } from "../context-provenance.ts";
 import { calculateCost, supportsConfigurationUpdate } from "../models.ts";
+import { isNativeOpenAIEndpoint } from "../openai-responses-compat.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -348,7 +349,8 @@ export function convertResponsesMessages<TApi extends Api>(
 		if (itemId === CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL) {
 			return `${normalizedCallId}|${CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL}`;
 		}
-		if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
+		const isResponsesWireProvider = model.api === "openai-responses" || allowedToolCallProviders.has(model.provider);
+		if (!isResponsesWireProvider) return normalizeIdPart(id);
 		const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
 		let normalizedItemId = isForeignToolCall ? buildForeignResponsesItemId(itemId) : normalizeIdPart(itemId);
 		// OpenAI Responses API requires item id to start with "fc"
@@ -497,7 +499,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
 					const reasoningItem = parseReasoningSignature(block.thinkingSignature);
-					if (reasoningItem) {
+					if (isSameModel && reasoningItem) {
 						output.push(reasoningItem);
 					} else if (block.thinkingSignature && block.thinking.trim() !== "") {
 						// A signed thinking block whose signature is not a real reasoning
@@ -542,13 +544,10 @@ export function convertResponsesMessages<TApi extends Api>(
 					// An active grammar declaration wins over sentinel recovery below: its
 					// named input property is richer than the persisted freeform fallback.
 
-					// For different-model messages, set id to undefined to avoid pairing validation.
-					// OpenAI tracks which item IDs were paired with rs_xxx reasoning items.
-					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					// Also drop ids that do not match the replayed item type: function_call ids must be fc_*
-					// and custom_tool_call ids must be ctc_*. Foreign tool call ids are normalized to fc_*, and
-					// a call can switch between the two types when grammar tool support differs. Freeform
-					// calls replay without an item id and without the local <call_id>|custom sentinel.
+					// Do not replay a same-provider, different-model item ID after its reasoning
+					// item has been dropped: the original ID may be paired with that reasoning.
+					// Drop IDs incompatible with the replayed item type as well. Freeform calls
+					// do not replay the local <call_id>|custom sentinel as an item ID.
 					const itemIdPrefix = customInputProperty === undefined ? "fc_" : "ctc_";
 					if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) {
 						itemId = undefined;
@@ -580,9 +579,18 @@ export function convertResponsesMessages<TApi extends Api>(
 								: {}),
 						} satisfies ResponseCustomToolCallItem);
 					} else {
+						let replayItemId = itemId;
+						if (
+							replayItemId === undefined &&
+							model.api === "openai-responses" &&
+							(!isDifferentModel || !isNativeOpenAIEndpoint(model.baseUrl))
+						) {
+							replayItemId = `fc_${shortHash(callId)}`;
+							if (isDifferentModel && replayItemId === itemIdRaw) replayItemId += "_replay";
+						}
 						output.push({
 							type: "function_call",
-							...(itemId?.startsWith("fc_") ? { id: itemId } : {}),
+							...(replayItemId === undefined ? {} : { id: replayItemId }),
 							call_id: callId,
 							name: toolCall.name,
 							arguments: JSON.stringify(toolCall.arguments),
