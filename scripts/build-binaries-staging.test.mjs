@@ -35,8 +35,11 @@ it("stages a usable release closure before adding the archive package manifest",
 		file("node_modules/payload/index.js", "module.exports = 'loaded payload';");
 		mkdirSync(join(root, "scripts"));
 		cpSync(resolve("scripts/copy-codemode-sidecar.mjs"), join(root, "scripts/copy-codemode-sidecar.mjs"));
-		file("packages/coding-agent/src/core/extensions/loader.ts",
-			readFileSync(resolve("packages/coding-agent/src/core/extensions/loader.ts"), "utf8"));
+		// The copier's real inputs from the checkout: the loader's table and the table it spreads in (senpi#7657).
+		for (const input of ["loader.ts", "senpi-subpath-modules.ts"]) {
+			const path = `packages/coding-agent/src/core/extensions/${input}`;
+			file(path, readFileSync(resolve(path), "utf8"));
+		}
 		const driver = readFileSync(resolve("scripts/build-binaries.sh"), "utf8");
 		const start = driver.indexOf("# Copy shared files");
 		const end = driver.indexOf("# Create archives");
