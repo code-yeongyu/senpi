@@ -1,4 +1,6 @@
 name: Build Binaries
+# senpi#7469: a dispatched recovery run runs on main, so its title carries the tag for publish-npm.yml's publisher guard.
+run-name: Build Binaries ${{ github.event.inputs.tag || github.ref_name }}
 
 on:
   push:
