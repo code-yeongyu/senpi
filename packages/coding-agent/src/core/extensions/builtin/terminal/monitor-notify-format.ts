@@ -36,12 +36,6 @@ export function monitorShareChars(events: readonly MonitorEvent[], notice: strin
 	return group + (notice.length > 0 ? notice.length + 1 : 0);
 }
 
-function clip(text: string, maxChars: number): string {
-	if (text.length <= maxChars) return text;
-	if (maxChars <= 3) return text.slice(0, maxChars);
-	return `${text.slice(0, maxChars - 3)}...`;
-}
-
 function formatEvents(events: readonly MonitorEvent[]): string {
 	const groups = new Map<string, { description: string; bodies: string[] }>();
 	for (const event of events) {
@@ -53,17 +47,22 @@ function formatEvents(events: readonly MonitorEvent[]): string {
 }
 
 /**
- * One wake message. The notifier fills a wake by whole monitors within `maxChars`, so the clip is a
- * last-resort guard that a correctly sized wake never reaches.
+ * A single summary or overflow notice can exceed a whole wake. Preserve that text in the
+ * session message details and keep any pause instruction visible within the same budget.
  */
 export function buildWakeMessage(
 	events: readonly MonitorEvent[],
 	notices: readonly string[],
 	pauseNotice: string,
 	maxChars: number,
-): string {
-	const suffix = [...notices, pauseNotice].filter(Boolean).join("\n");
-	const fixedChars = SYSTEM_REMINDER_OPEN.length + SYSTEM_REMINDER_CLOSE.length + (suffix ? suffix.length + 1 : 0);
-	const body = clip(formatEvents(events), Math.max(0, maxChars - fixedChars));
-	return `${SYSTEM_REMINDER_OPEN}${body}${body && suffix ? "\n" : ""}${suffix}${SYSTEM_REMINDER_CLOSE}`;
+): { content: string; fullWakeText?: string } {
+	const fullWakeText = [formatEvents(events), ...notices].filter(Boolean).join("\n");
+	const pause = pauseNotice && fullWakeText ? `\n${pauseNotice}` : pauseNotice;
+	const available = maxChars - SYSTEM_REMINDER_OPEN.length - SYSTEM_REMINDER_CLOSE.length - pause.length;
+	if (fullWakeText.length <= available) {
+		return { content: `${SYSTEM_REMINDER_OPEN}${fullWakeText}${pause}${SYSTEM_REMINDER_CLOSE}` };
+	}
+	const marker = "\n[Shortened; full text in session message details.fullWakeText.]";
+	const prefix = fullWakeText.slice(0, Math.max(0, available - marker.length));
+	return { content: `${SYSTEM_REMINDER_OPEN}${prefix}${marker}${pause}${SYSTEM_REMINDER_CLOSE}`, fullWakeText };
 }

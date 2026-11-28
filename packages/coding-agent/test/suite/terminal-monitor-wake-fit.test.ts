@@ -25,22 +25,27 @@ class CountingScheduler implements MonitorNotificationScheduler {
 }
 
 function notifier(options: {
+	maxChars?: number;
 	paced?: Record<string, number>;
 	wakeBudget?: number;
 	spill?: (id: string, lines: readonly string[]) => MonitorSpillResult | undefined;
 }) {
 	const scheduler = new CountingScheduler();
 	const sent: string[] = [];
+	const details: unknown[] = [];
 	const paused: string[] = [];
 	const instance = new MonitorNotifier({
-		sendMessage: (message) => sent.push(message.content),
+		sendMessage: (message) => {
+			sent.push(message.content);
+			details.push(message.details);
+		},
 		getContext: () => ({ mode: "tui", model: { id: "mock", api: "openai-completions" } }) as never,
 		getMode: () => "wake",
 		getSettings: () => ({
 			coalesceWindowMs: 2000,
 			rateLimitMs: 5000,
 			maxLinesPerInjection: 50,
-			maxCharsPerInjection: MAX_CHARS,
+			maxCharsPerInjection: options.maxChars ?? MAX_CHARS,
 			wakeBudget: options.wakeBudget ?? 5,
 			wakesPerHour: 12,
 		}),
@@ -52,7 +57,7 @@ function notifier(options: {
 		...(options.spill === undefined ? {} : { spillOverflow: options.spill }),
 		scheduler,
 	});
-	return { instance, scheduler, sent, paused };
+	return { instance, scheduler, sent, details, paused };
 }
 
 /** A line of about 70 characters that is still unique and easy to find in a wake. */
@@ -65,6 +70,34 @@ function delivered(sent: readonly string[], tag: string): string[] {
 }
 
 describe("one wake never exceeds its size and never clips a line", () => {
+	// senpi#3955: the first pending item cannot be deferred to a smaller wake.
+	it("keeps both complete rotated paths when the notice alone exceeds the cap", () => {
+		const path = `/state/${"deep/".repeat(80)}watch.log`;
+		const { instance, scheduler, sent, details } = notifier({
+			maxChars: 512,
+			wakeBudget: 1,
+			spill: () => ({ path, rotated: true }),
+		});
+		instance.notifyEvent(line("bash_long", "long", "spilled"));
+		scheduler.inner.advanceBy(60_000);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.length).toBeLessThanOrEqual(512);
+		expect(sent[0]).toContain("details.fullWakeText");
+		expect(sent[0]).toContain("Monitor paused");
+		expect(details[0]).toMatchObject({ fullWakeText: `[1 more lines in ${path}; earlier ones in ${path}.1]` });
+	});
+
+	it("keeps a complete oversized summary in the indicated session message details", () => {
+		const summary = "z".repeat(3000);
+		const { instance, scheduler, sent, details } = notifier({ maxChars: 1024 });
+		instance.notifyEvent({ type: "summary", id: "bash_done", description: "done", summary });
+		scheduler.inner.advanceBy(60_000);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.length).toBeLessThanOrEqual(1024);
+		expect(sent[0]).toContain("details.fullWakeText");
+		expect(details[0]).toMatchObject({ fullWakeText: `Monitor event(done): ${summary}` });
+	});
+
 	it("delivers or explicitly counts every line of two unpaced monitors that share a wake, within the size cap", () => {
 		const { instance, scheduler, sent } = notifier({});
 		for (let index = 0; index < 40; index += 1) {

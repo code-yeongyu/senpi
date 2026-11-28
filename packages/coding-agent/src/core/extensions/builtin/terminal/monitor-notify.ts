@@ -218,13 +218,16 @@ export class MonitorNotifier {
 		);
 		const reachesBudget = !deliversSummary && this.#consecutiveWakes + 1 >= settings.wakeBudget;
 		const notices = [...wake].map(([id, share]) => (share.whole ? this.#overflow.notice(id) : ""));
-		const content = buildWakeMessage(
+		const { content, fullWakeText } = buildWakeMessage(
 			selected,
 			notices,
 			reachesBudget ? WAKE_BUDGET_PAUSE_NOTICE : "",
 			settings.maxCharsPerInjection,
 		);
-		const details = { monitors: monitorDetails(selected, injectedIds, this.#overflow) };
+		const details = {
+			monitors: monitorDetails(selected, injectedIds, this.#overflow),
+			...(fullWakeText === undefined ? {} : { fullWakeText }),
+		};
 		delivery.send(content, reachesBudget ? { forceWake: true, details } : { details });
 		this.#lastWakeAt = now;
 		for (const [id, share] of wake) {
