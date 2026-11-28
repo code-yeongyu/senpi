@@ -643,6 +643,9 @@ export function resolveGoogleFunctionCallingMode(
  * Map Gemini FinishReason to our StopReason.
  */
 export function mapStopReason(reason: FinishReason): StopReason {
+	// The Gemini API returns MALFORMED_RESPONSE for a generation that produced nothing usable, but the SDK's
+	// FinishReason enum does not list it (googleapis/python-genai#2937). Like its siblings it is an error stop.
+	if ((reason as string) === "MALFORMED_RESPONSE") return "error";
 	switch (reason) {
 		case FinishReason.STOP:
 			return "stop";

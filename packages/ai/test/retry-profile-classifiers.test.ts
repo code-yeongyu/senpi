@@ -112,6 +112,8 @@ describe("classifySenpiAssistantFailure", () => {
 		["nvidia nim ResourceExhausted", nvidiaNIMResourceExhaustedMessage, true],
 		["bun fetch socket drop", bunFetchSocketClosedMessage, true],
 		["openai responses early EOF", openAIResponsesEarlyEofMessage, true],
+		["gemini MALFORMED_RESPONSE finish", "Provider stopped with: MALFORMED_RESPONSE", true],
+		["gemini MALFORMED_FUNCTION_CALL finish", "Provider stopped with: MALFORMED_FUNCTION_CALL", false],
 		["wrapped DNS lookup failure", wrappedDnsLookupError, true],
 		["anthropic orphan server-tool 400", anthropicOrphanServerToolMessage, true],
 		["gateway streaming-index replay rejection", gatewayStreamingIndexReplayRejectionMessage, true],
