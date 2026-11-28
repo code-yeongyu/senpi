@@ -6,7 +6,7 @@ import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { bundleRequiredInputs, lazyEntryPoints } from "./bundle-entry-points.mjs";
+import { bundleRequiredInputs, exportEntryPoints, lazyEntryPoints } from "./bundle-entry-points.mjs";
 import { fileAttributePlugin } from "./bundle-file-attribute-plugin.mjs";
 import { assertRedactionRegistryCopies } from "./bundle-redaction-registry-guard.mjs";
 import { assertBundleZodCores } from "./bundle-zod-core-guard.mjs";
@@ -55,13 +55,13 @@ const allowedExternalPackages = new Set([
 
 // Only standalone Bun isolates register these modules. esbuild follows the worker's
 // literal import even behind isBunBinary; keep that unreachable graph out of Node.
+// The `./bun-runtime` export's own entry is the module itself and keeps its real contents.
 const bunRuntimeModulesPlugin = {
 	name: "omit-bun-runtime-modules",
 	setup(build) {
-		build.onResolve({ filter: /[/\\\\]bun[/\\\\]runtime-modules\.(ts|js)$/ }, (args) => ({
-			namespace: "bun-runtime-modules",
-			path: args.path,
-		}));
+		build.onResolve({ filter: /[/\\\\]bun[/\\\\]runtime-modules\.(ts|js)$/ }, (args) =>
+			args.kind === "entry-point" ? undefined : { namespace: "bun-runtime-modules", path: args.path },
+		);
 		build.onLoad({ filter: /.*/, namespace: "bun-runtime-modules" }, () => ({
 			contents: "export {};",
 			loader: "js",
@@ -207,12 +207,8 @@ async function buildBundle() {
 	const mainResult = await build({
 		...commonBuildOptions(),
 		entryNames: "[name]",
-		entryPoints: {
-			cli: join(codingAgentDistDir, "cli.js"),
-			client: join(codingAgentDistDir, "client", "index.js"),
-			index: join(codingAgentDistDir, "index.js"),
-			"rpc-entry": join(codingAgentDistDir, "rpc-entry.js"),
-		},
+		// Every `exports` subpath beside the CLI, so each subpath shares the CLI's module instances.
+		entryPoints: { cli: join(codingAgentDistDir, "cli.js"), ...exportEntryPoints({ codingAgentDistDir }) },
 		outdir: bundleDir,
 		chunkNames: "chunks/[name]-[hash]",
 		splitting: true,
