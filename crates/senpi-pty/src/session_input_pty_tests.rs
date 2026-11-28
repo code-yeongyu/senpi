@@ -93,6 +93,7 @@ fn write_returns_while_the_child_stops_reading_and_delivers_everything_later() {
     result.unwrap();
     assert_eq!(exit.exit_code, Some(0));
     let text = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
-    let count = text.split_whitespace().last().unwrap_or_default().to_string();
+    // The count follows the unterminated "GATED" marker: BSD wc pads it with spaces, GNU wc does not.
+    let count = text.rsplit("GATED").next().unwrap_or_default().trim().to_string();
     assert_eq!(count, PAYLOAD_BYTES.to_string(), "child output: {text:?}");
 }

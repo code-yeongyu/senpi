@@ -43,7 +43,8 @@ pub struct PtySessionOptions {
     pub command: String,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
-    pub env: Vec<(String, String)>,
+    /// `None` removes an inherited variable from the child (senpi#2908).
+    pub env: Vec<(String, Option<String>)>,
     pub cols: u16,
     pub rows: u16,
     pub timeout: Option<Duration>,
@@ -73,7 +74,12 @@ impl PtySessionOptions {
     }
 
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.env.push((key.into(), value.into()));
+        self.env.push((key.into(), Some(value.into())));
+        self
+    }
+
+    pub fn env_remove(mut self, key: impl Into<String>) -> Self {
+        self.env.push((key.into(), None));
         self
     }
 
@@ -132,7 +138,10 @@ impl PtySession {
             command.cwd(cwd);
         }
         for (key, value) in &opts.env {
-            command.env(key, value);
+            match value {
+                Some(value) => command.env(key, value),
+                None => command.env_remove(key),
+            }
         }
 
         let reader = pair

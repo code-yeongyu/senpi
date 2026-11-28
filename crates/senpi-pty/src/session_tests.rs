@@ -424,3 +424,32 @@ fn concurrent_session_spawns_never_leak_bytes_into_another_session() {
         leaked.first()
     );
 }
+
+// senpi#2908: an `undefined` override from JS deletes the variable from the child, as the pipe fallback does.
+#[cfg(unix)]
+#[test]
+fn pty_session_removes_an_inherited_variable() {
+    assert!(
+        std::env::var_os("HOME").is_some(),
+        "the test process must inherit HOME"
+    );
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&output);
+    let mut session = PtySession::start(
+        crate::NativePtySessionOptions {
+            command: "sh".into(),
+            args: Some(vec!["-c".into(), "printf '%s' \"${HOME-unset}\"".into()]),
+            cwd: None,
+            env: Some(std::collections::HashMap::from([("HOME".to_string(), None)])),
+            cols: 80,
+            rows: 24,
+            timeout_ms: None,
+        }
+        .into_session_options(),
+        move |chunk| seen.lock().unwrap().extend_from_slice(chunk),
+    )
+    .unwrap();
+
+    session.wait().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.lock().unwrap()).as_ref(), "unset");
+}
