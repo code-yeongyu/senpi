@@ -52,8 +52,8 @@ function makeSkill(
 	return { baseDir, filePath, name, ...(options.scope ? { sourceInfo: { scope: options.scope } } : {}) };
 }
 
-function declaredFrom(skills: SkillLike[]) {
-	return parseSkillMcpDeclarations(skills).servers;
+async function declaredFrom(skills: SkillLike[]) {
+	return (await parseSkillMcpDeclarations(skills)).servers;
 }
 
 function fixtureServerRaw(tools: number): Record<string, unknown> {
@@ -62,7 +62,7 @@ function fixtureServerRaw(tools: number): Record<string, unknown> {
 }
 
 describe("skills-carry-MCP declarations", () => {
-	it("parses frontmatter-only skills and lets a sidecar win over frontmatter", () => {
+	it("parses frontmatter-only skills and lets a sidecar win over frontmatter", async () => {
 		const root = mcpRoot("skills-parse");
 		const fmOnly = makeSkill(root, "fm-only", {
 			frontmatterMcp: `  fmsrv:\n    type: stdio\n    command: node\n    args: ["x"]`,
@@ -71,17 +71,17 @@ describe("skills-carry-MCP declarations", () => {
 			frontmatterMcp: `  losersrv:\n    command: node`,
 			sidecar: { winsrv: { args: ["y"], command: "node", type: "stdio" } },
 		});
-		const decls = parseSkillMcpDeclarations([fmOnly, both]);
+		const decls = await parseSkillMcpDeclarations([fmOnly, both]);
 		expect([...decls.servers.keys()].sort()).toEqual(["fmsrv", "winsrv"]);
 		expect(decls.servers.get("winsrv")?.sourcePath.endsWith("mcp.json")).toBe(true);
 		expect(decls.warnings).toEqual([]);
 	});
 
-	it("union-merges includeTools when two skills declare the same server", () => {
+	it("union-merges includeTools when two skills declare the same server", async () => {
 		const root = mcpRoot("skills-union");
 		const a = makeSkill(root, "skill-a", { sidecar: { shared: { command: "node", includeTools: ["tool_1"] } } });
 		const b = makeSkill(root, "skill-b", { sidecar: { shared: { command: "node", includeTools: ["tool_2*"] } } });
-		const decls = parseSkillMcpDeclarations([a, b]);
+		const decls = await parseSkillMcpDeclarations([a, b]);
 		const registered = [
 			{ name: "mcp_shared_tool_1", server: "shared", toolName: "tool_1" },
 			{ name: "mcp_shared_tool_2", server: "shared", toolName: "tool_2" },
@@ -103,7 +103,7 @@ describe("skills-carry-MCP live registration", () => {
 		const skill = makeSkill(root, "carrier", {
 			sidecar: { fx2: { ...fixtureServerRaw(3), includeTools: ["tool_1", "tool_3"] } },
 		});
-		const decls = parseSkillMcpDeclarations([skill]);
+		const decls = await parseSkillMcpDeclarations([skill]);
 		const warnings = await getMcpService().attachSkillMcpServers(decls.servers);
 		expect(warnings).toEqual([]);
 		await awaitMcpToolRegistration("fx2");
@@ -128,7 +128,7 @@ describe("skills-carry-MCP live registration", () => {
 		await awaitMcpToolRegistration("fx");
 
 		const skill = makeSkill(root, "clasher", { sidecar: { fx: { command: "node", args: ["evil"] } } });
-		const warnings = await getMcpService().attachSkillMcpServers(parseSkillMcpDeclarations([skill]).servers);
+		const warnings = await getMcpService().attachSkillMcpServers((await parseSkillMcpDeclarations([skill])).servers);
 		expect(warnings).toHaveLength(1);
 		expect(warnings[0]).toContain("system config wins");
 		// The system server's tool stays intact and active (direct mode).
@@ -150,7 +150,7 @@ describe("skill-declared variable expansion", () => {
 		const user = makeSkill(root, "user-skill", { scope: "user", sidecar: { fxu: serverWithTools } });
 		const project = makeSkill(root, "project-skill", { scope: "project", sidecar: { fxp: serverWithTools } });
 
-		const warnings = await getMcpService().attachSkillMcpServers(declaredFrom([user, project]));
+		const warnings = await getMcpService().attachSkillMcpServers(await declaredFrom([user, project]));
 		expect(warnings).toEqual([]);
 		await awaitMcpToolRegistration(["fxu", "fxp"]);
 		expect(pi.registeredTools).toEqual(expect.arrayContaining(["mcp_fxu_tool_3", "mcp_fxp_tool_3"]));
@@ -180,13 +180,13 @@ describe("skill-declared variable expansion", () => {
 			sidecar: { fxc: { ...fixtureServerRaw(1), env: { AWS_SECRET_ACCESS_KEY: SECRET_EXPR } } },
 		});
 
-		const warnings = await getMcpService().attachSkillMcpServers(declaredFrom([skill]));
+		const warnings = await getMcpService().attachSkillMcpServers(await declaredFrom([skill]));
 		expect(warnings).toHaveLength(1);
 		expect(warnings[0]).toContain("'cloned-skill'");
 		expect(warnings[0]).toContain("SENPI_2345_SECRET");
 		expect(warnings[0]).toContain("trust the project");
 		expect(warnings[0]).toContain("mcp.json");
-		expect(await getMcpService().attachSkillMcpServers(declaredFrom([skill]))).toEqual([]);
+		expect(await getMcpService().attachSkillMcpServers(await declaredFrom([skill]))).toEqual([]);
 
 		const { server } = resolveSkillMcpServer("fxc", { command: "node", env: { K: SECRET_EXPR } }, "p", {
 			skillName: "cloned-skill",
@@ -224,7 +224,7 @@ describe("skill-declared variable expansion", () => {
 			sidecar: { fxr: { bearerTokenEnv: "SENPI_2345_TOKEN", url: fixture.url } },
 		});
 
-		const warnings = await getMcpService().attachSkillMcpServers(declaredFrom([skill]));
+		const warnings = await getMcpService().attachSkillMcpServers(await declaredFrom([skill]));
 		await awaitMcpToolRegistration("fxr");
 		const authHeaders = readFileSync(authLog, "utf8")
 			.split("\n")

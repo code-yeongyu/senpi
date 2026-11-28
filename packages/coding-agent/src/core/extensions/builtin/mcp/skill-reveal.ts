@@ -15,7 +15,7 @@ interface McpSkillRevealState {
 
 export interface McpSkillReveal {
 	/** The skills this scope's turn lists; its declarations are returned so the caller attaches their servers. */
-	startTurn(scope: object, skills: readonly SkillLike[]): SkillMcpDeclarations;
+	startTurn(scope: object, skills: readonly SkillLike[]): Promise<SkillMcpDeclarations>;
 	/** The skills this scope's turn listed, to recognize a read of a skill's own file. */
 	skills(scope: object): Iterable<[string, SkillLike]>;
 	/** Reveal one skill for this scope: a skill it never listed, or already revealed, reveals nothing again. */
@@ -44,10 +44,11 @@ export function createMcpSkillReveal(options: {
 		return created;
 	};
 	return {
-		startTurn(scope, skills) {
+		async startTurn(scope, skills) {
 			const state = stateOf(scope);
+			const declarations = await parseSkillMcpDeclarations(skills);
 			state.skills = new Map(skills.map((skill) => [skill.name, skill]));
-			state.declarations = parseSkillMcpDeclarations(skills);
+			state.declarations = declarations;
 			return state.declarations;
 		},
 		skills(scope) {

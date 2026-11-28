@@ -163,7 +163,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				}
 				const skills = preview ? [] : ((event.systemPromptOptions.skills ?? []) as readonly SkillLike[]);
 				if (skills.length > 0) {
-					const skillDecls = skillReveal.startTurn(contextKey(ctx), skills);
+					const skillDecls = await skillReveal.startTurn(contextKey(ctx), skills);
 					const warnings = [
 						...skillDecls.warnings,
 						...(skillDecls.servers.size > 0 ? await service.attachSkillMcpServers(skillDecls.servers, pi) : []),

@@ -115,8 +115,8 @@ it("rechecks a sidecar link rather than reusing a user declaration cache entry",
 	const projectSkill = (await load()).getSkills().skills.find((skill) => skill.name === "carrier");
 	if (!projectSkill) throw new Error("fixture skill missing");
 	const userSkill = { ...projectSkill, provenance: { kind: "user" as const, selectedRoot: skillDir } };
-	expect(parseSkillMcpDeclarations([userSkill]).servers.has("escaped")).toBe(true);
-	const project = parseSkillMcpDeclarations([projectSkill]);
+	expect((await parseSkillMcpDeclarations([userSkill])).servers.has("escaped")).toBe(true);
+	const project = await parseSkillMcpDeclarations([projectSkill]);
 	expect(project.servers.size).toBe(0);
 	expect(project.warnings).toHaveLength(1);
 });

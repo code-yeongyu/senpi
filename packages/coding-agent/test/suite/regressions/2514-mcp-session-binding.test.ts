@@ -740,7 +740,10 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 
 		// When: the untrusted session's skills declare a project-scoped and a user-scoped server.
 		const skills = [skillDeclaring("cloned", "project", "fxp"), skillDeclaring("own", "user", "fxu")];
-		const warnings = await getMcpService().attachSkillMcpServers(parseSkillMcpDeclarations(skills).servers, alphaPi);
+		const warnings = await getMcpService().attachSkillMcpServers(
+			(await parseSkillMcpDeclarations(skills)).servers,
+			alphaPi,
+		);
 
 		// Then: the project skill stays literal under the declaring session's trust, the user skill expands from that
 		// session's env, and the servers' credentials resolve in its agent dir, never the trusted peer's.
@@ -925,7 +928,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		);
 		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
 		const skills = [skillDeclaring("own", "user", "fxs")];
-		await service.attachSkillMcpServers(parseSkillMcpDeclarations(skills).servers, alphaPi);
+		await service.attachSkillMcpServers((await parseSkillMcpDeclarations(skills)).servers, alphaPi);
 
 		// When: its token changes, and the connection reconnects and notices.
 		env.SENPI_2597_TOKEN = "two";
@@ -998,7 +1001,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 			const writer = openSync(cachePath, constants.O_RDWR);
 
 			// When: the session loads a skill declaring a server, and quits while that skill attach is in flight.
-			const skills = parseSkillMcpDeclarations([skillDeclaring("own", "user", "fxs")]).servers;
+			const skills = (await parseSkillMcpDeclarations([skillDeclaring("own", "user", "fxs")])).servers;
 			const skillAttach = service.attachSkillMcpServers(skills, alphaPi);
 			await service.releaseSession(alphaPi, "quit");
 			writeSync(writer, "{}");

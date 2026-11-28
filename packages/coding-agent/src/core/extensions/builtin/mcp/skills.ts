@@ -13,13 +13,13 @@
 // registration (service.attachSkillMcpServers). There is no reliable unload
 // signal, so revealed tools stay active for the session.
 
-import { existsSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { parseFrontmatter } from "../../../../utils/frontmatter.ts";
 import {
-	authorizeSkillPath,
+	authorizeSkillPathAsync,
 	BlockedSkillLinkError,
-	readSkillFileCheckedSync,
+	readSkillFileChecked,
 	type SkillAllowedSet,
 	type SkillProvenance,
 } from "../../../skill-access.ts";
@@ -58,11 +58,11 @@ export interface SkillMcpDeclarations {
 	warnings: string[];
 }
 
-export function parseSkillMcpDeclarations(skills: readonly SkillLike[]): SkillMcpDeclarations {
+export async function parseSkillMcpDeclarations(skills: readonly SkillLike[]): Promise<SkillMcpDeclarations> {
 	const servers = new Map<string, SkillServerDecl>();
 	const warnings: string[] = [];
 	for (const skill of skills) {
-		const { declared, sourcePath, warning } = readSkillServers(skill);
+		const { declared, sourcePath, warning } = await readSkillServers(skill);
 		if (warning !== undefined) warnings.push(warning);
 		for (const [name, raw] of Object.entries(declared)) {
 			const globs = normalizeGlobs(raw.includeTools);
@@ -97,10 +97,10 @@ type SkillServers = {
 /** Parsed declarations per skill file, reused while the sidecar and the skill file are unchanged on disk. */
 const skillServersCache = new Map<string, { readonly key: string; readonly servers: SkillServers }>();
 
-function fileStamp(path: string): string {
+async function fileStamp(path: string): Promise<string> {
 	try {
-		const stat = statSync(path);
-		return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
+		const info = await stat(path);
+		return `${info.mtimeMs}:${info.ctimeMs}:${info.size}:${info.ino}`;
 	} catch {
 		return "missing";
 	}
@@ -110,30 +110,33 @@ function fileStamp(path: string): string {
  * Called for every skill on every turn (before_agent_start), so re-reading and re-parsing each
  * SKILL.md stalled each turn; the stat key keeps edits on disk visible on the next turn.
  */
-function readSkillServers(skill: SkillLike): SkillServers {
+async function readSkillServers(skill: SkillLike): Promise<SkillServers> {
 	const sidecarPath = join(skill.baseDir, "mcp.json");
-	const key = `${fileStamp(sidecarPath)}|${fileStamp(skill.filePath)}|${JSON.stringify(skill.provenance)}|${skill.allowedSet?.digest ?? ""}`;
+	const [sidecar, skillFile] = await Promise.all([fileStamp(sidecarPath), fileStamp(skill.filePath)]);
+	const key = `${sidecar}|${skillFile}|${JSON.stringify(skill.provenance)}|${skill.allowedSet?.digest ?? ""}`;
 	const cached = skillServersCache.get(skill.filePath);
 	if (cached?.key === key) {
 		try {
-			authorizeSkillPath(cached.servers.sourcePath, skill.provenance, skill.allowedSet);
+			await authorizeSkillPathAsync(cached.servers.sourcePath, skill.provenance, skill.allowedSet);
 			return cached.servers;
 		} catch {
 			// Authorization is not cached: re-reading below produces the retained warning.
 		}
 	}
-	const servers = readSkillServersFromDisk(skill);
+	const servers = await readSkillServersFromDisk(skill, sidecar !== "missing");
 	skillServersCache.set(skill.filePath, { key, servers });
 	return servers;
 }
 
-function readSkillServersFromDisk(skill: SkillLike): SkillServers {
+async function readSkillServersFromDisk(skill: SkillLike, hasSidecar: boolean): Promise<SkillServers> {
 	const sidecarPath = join(skill.baseDir, "mcp.json");
 	const project =
 		skill.provenance === undefined ? skill.sourceInfo?.scope === "project" : skill.provenance.kind !== "user";
-	if (existsSync(sidecarPath)) {
+	if (hasSidecar) {
 		try {
-			const parsed: unknown = JSON.parse(readSkillFileCheckedSync(sidecarPath, skill.provenance, skill.allowedSet));
+			const parsed: unknown = JSON.parse(
+				await readSkillFileChecked(sidecarPath, skill.provenance, skill.allowedSet),
+			);
 			return { declared: unwrapServerMap(parsed), sourcePath: sidecarPath };
 		} catch (error) {
 			if (error instanceof BlockedSkillLinkError)
@@ -149,7 +152,7 @@ function readSkillServersFromDisk(skill: SkillLike): SkillServers {
 	}
 	try {
 		const { frontmatter } = parseFrontmatter<{ mcp?: unknown }>(
-			readSkillFileCheckedSync(skill.filePath, skill.provenance, skill.allowedSet),
+			await readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet),
 		);
 		if (frontmatter.mcp === undefined) return { declared: {}, sourcePath: skill.filePath };
 		return { declared: unwrapServerMap(frontmatter.mcp), sourcePath: skill.filePath };
