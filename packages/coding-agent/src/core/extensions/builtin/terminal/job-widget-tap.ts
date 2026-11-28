@@ -12,6 +12,7 @@
 import { onJobWidgetSessionChange, registerJobWidgetSource } from "../job-widgets/session-host.ts";
 import { TextTap } from "../job-widgets/text-tap.ts";
 import type { JobWidgetSourceHandle } from "../job-widgets/registry.ts";
+import type { JobWidgetOutcome } from "../job-widgets/view-types.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
 
 const OUTPUT_SOURCE_ID = "out";
@@ -79,6 +80,16 @@ function detach(offer: Offer): void {
 	tapped.handle.dispose();
 }
 
+/** Exit code 0 is a success, a kill, timeout or signal is `killed`, any other exit code `failed`. */
+function outcomeOf(runtime: TerminalRuntimeSession): JobWidgetOutcome | undefined {
+	const exit = runtime.exitResult;
+	if (!exit) return undefined;
+	if (exit.timedOut || exit.cancelled) return "killed";
+	if (exit.exitCode === 0) return "success";
+	if (exit.exitCode !== null) return "failed";
+	return exit.signal ? "killed" : undefined;
+}
+
 export function tapBackgroundSession(
 	sessionId: string | undefined,
 	id: string,
@@ -105,7 +116,7 @@ export function tapBackgroundSession(
 	runtime.session.onExit(() => {
 		offer.exited = true;
 		offer.tapped?.tap.close();
-		offer.tapped?.handle.settle();
+		offer.tapped?.handle.settle(outcomeOf(runtime));
 	});
 	attach(offer);
 }

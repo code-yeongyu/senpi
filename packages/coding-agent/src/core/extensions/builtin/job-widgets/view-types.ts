@@ -16,6 +16,9 @@ export const JOB_WIDGET_TONES: readonly JobWidgetTone[] = [
 	"neutral",
 ];
 
+/** How a finished bash session ended: exit code 0, another exit code, or a kill, signal or timeout. */
+export type JobWidgetOutcome = "success" | "failed" | "killed";
+
 /** Where a job's widget is: `skipped` carries no view. */
 export type JobWidgetEntryState = "pending" | "live" | "done" | "skipped" | "fallback";
 
@@ -120,6 +123,10 @@ export interface JobWidgetEntry {
 	/** Absent for skipped. */
 	view?: JobWidgetView;
 	updatedAtMs: number;
+	/** When the job started, for elapsed-time display. */
+	startedAtMs?: number;
+	/** How a finished bash session ended; set on its `done` and `skipped` entries. */
+	outcome?: JobWidgetOutcome;
 }
 
 /** Payload of the `job_widget_state` extension event. */
