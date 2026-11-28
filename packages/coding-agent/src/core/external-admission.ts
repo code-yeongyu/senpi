@@ -24,7 +24,7 @@ import {
 	type SessionControlDeliveryDetails,
 	type SessionControlRemoteOrigin,
 } from "./extensions/session-control-types.ts";
-import { deliveryIdOf } from "./delivery-ids.ts";
+import { deliveryIdOf, deliveryIdsOf } from "./delivery-ids.ts";
 import type { HoldKind } from "./engine-turn-hold.ts";
 import { MAX_HELD_PEER_DELIVERIES } from "./engine-turn-hold-notices.ts";
 import type { EngineTurnCap } from "./engine-turn-limit.ts";
@@ -243,11 +243,13 @@ export class ExternalAdmission {
 	/** A message's transcript entry was written: the file takes writes; a delivery's own entry makes it emitted. */
 	observePersisted(message: AgentMessage): void {
 		this.fileTakesWrites = true;
-		const id = deliveryIdOf(message);
-		if (id === undefined || this.emitted.has(id)) return;
-		this.pending.delete(id);
-		this.emitted.add(id);
-		for (const listener of this.emittedListeners) listener(id);
+		// A folded turn's one entry carries a run of held deliveries: it settles each of them (senpi#7628).
+		for (const id of deliveryIdsOf(message)) {
+			if (this.emitted.has(id)) continue;
+			this.pending.delete(id);
+			this.emitted.add(id);
+			for (const listener of this.emittedListeners) listener(id);
+		}
 	}
 
 	/**
@@ -256,10 +258,11 @@ export class ExternalAdmission {
 	 */
 	observeRefused(message: AgentMessage, error: string): void {
 		this.fileTakesWrites = false;
-		const id = deliveryIdOf(message);
-		if (id === undefined || this.emitted.has(id)) return;
-		this.pending.delete(id);
-		this.failed.set(id, error);
+		for (const id of deliveryIdsOf(message)) {
+			if (this.emitted.has(id)) continue;
+			this.pending.delete(id);
+			this.failed.set(id, error);
+		}
 	}
 
 	/** Whether admission answered this delivery held with the engine-turn cap, so its start must open no run (senpi#7138). */

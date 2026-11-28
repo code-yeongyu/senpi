@@ -3838,8 +3838,11 @@ registrant opens no socket and writes no registry directory.
     its entry and it is not admissible again yet (see `failed` below).
 
   The delivery becomes a `custom` transcript entry, `customType: "session_control_delivery"`, whose `details`
-  carry the `delivery_id`. `listAdmittedDeliveries()` reports `pending` (held by the runtime) and `emitted`
-  (entry written) for the life of the process. When the session file refuses a delivery's entry (`EACCES`,
+  carry the `delivery_id`. A resume that releases several held deliveries of one sender as one turn writes one
+  entry for them: `details.delivery_id` names the first, `details.folded_delivery_ids` the others in admission
+  order, and `details.chain_count` is the highest hop among them. `listAdmittedDeliveries()` reports `pending`
+  (held by the runtime) and `emitted` (entry written, for every delivery the entry carries) for the life of the
+  process. When the session file refuses a delivery's entry (`EACCES`,
   `ENOSPC`), the delivery is settled as `failed: [{ delivery_id, error }]` (listed only while non-empty): it is no
   longer held, so it blocks no later delivery and no release, and it stays with its sender. It becomes admissible
   again once the run that refused it has settled and the file's last write succeeded: the redelivery then starts or

@@ -13,6 +13,18 @@ export function deliveryIdOf(message: AgentMessage): string | undefined {
 }
 
 /**
+ * Every delivery a message's entry settles: its own, then the ones a folded turn carries after it (senpi#7628). The
+ * message may come back from durable custody on disk, so only a list of string ids counts as folded.
+ */
+export function deliveryIdsOf(message: AgentMessage): readonly string[] {
+	if (message.role !== "custom" || message.customType !== SESSION_CONTROL_DELIVERY_TYPE) return [];
+	if (!isSessionControlDeliveryDetails(message.details)) return [];
+	const folded: unknown = message.details.folded_delivery_ids;
+	const others = Array.isArray(folded) ? folded.filter((id): id is string => typeof id === "string") : [];
+	return [message.details.delivery_id, ...others];
+}
+
+/**
  * Every delivery id the transcript holds an entry for: what answers for the process-lifetime ledger after a restart.
  * A delivery held while paused lives only in its `session-notice` entry until a turn takes it (senpi#7588).
  */

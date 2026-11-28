@@ -207,8 +207,13 @@ export interface SessionControlDeliveryDetails {
 	readonly display_text?: string;
 	/** Engine-stamped: the remote device the admitting connection speaks for. */
 	readonly remote_origin?: SessionControlRemoteOrigin;
-	/** Engine-stamped: the thread-chain hop count the delivery was admitted at. */
+	/** Engine-stamped: the thread-chain hop count the delivery was admitted at; a folded turn's highest hop. */
 	readonly chain_count?: number;
+	/**
+	 * Engine-written on a turn that carried several held deliveries of one speaker: the ones after `delivery_id`, in
+	 * admission order. The entry settles all of them (senpi#7628).
+	 */
+	readonly folded_delivery_ids?: readonly string[];
 }
 
 /** The engine-stamped remote device a delivery's `details` names, when it names a well-formed one. */
