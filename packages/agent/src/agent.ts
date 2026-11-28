@@ -24,7 +24,7 @@ import {
 	type InternalLoopConfig,
 	internalLoopSink,
 } from "./internal-events.ts";
-import { isLocalFailure, localFailurePort } from "./local-failure.ts";
+import { isLocalFailure, localFailurePort, markLocalFailure } from "./local-failure.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AfterToolCallContext,
@@ -164,6 +164,8 @@ export interface AgentOptions {
 	transport?: Transport;
 	timeoutMs?: number;
 	streamStartTimeoutMs?: number;
+	/** Maximum time to await each raw subscriber; defaults to 60 seconds. */
+	listenerTimeoutMs?: number;
 	streamKeepAliveTimeoutMs?: number;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
@@ -292,11 +294,16 @@ class PendingMessageQueue {
 	}
 }
 
+type AgentListener = (event: AgentEvent, signal: AbortSignal) => Promise<void> | void;
+
 type ActiveRun = {
 	promise: Promise<void>;
 	resolve: () => void;
 	abortController: AbortController;
 	suppressQueuedMessageDrain: boolean;
+	listenerWaits: Set<() => void>;
+	retiredListeners: Set<AgentListener>;
+	listenerFailure?: Error;
 };
 
 /**
@@ -308,7 +315,9 @@ type ActiveRun = {
 export class Agent {
 	readonly #internalChannel: InternalAgentChannel | undefined;
 	private _state: MutableAgentState;
-	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
+	private readonly listeners = new Set<AgentListener>();
+	private readonly listenerIds = new WeakMap<AgentListener, number>();
+	private nextListenerId = 0;
 	private readonly steeringQueue: PendingMessageQueue;
 	private readonly followUpQueue: PendingMessageQueue;
 	/** The last run ended in a provider error with follow-ups queued: the next run takes them at its first turn. */
@@ -349,6 +358,7 @@ export class Agent {
 	public timeoutMs?: number;
 	/** Optional bound on the wait for the first provider stream event. */
 	public streamStartTimeoutMs?: number;
+	public readonly listenerTimeoutMs: number;
 	/** Optional bound on how long keep-alives alone may hold a provider request without content. */
 	public streamKeepAliveTimeoutMs?: number;
 	/** Optional cap for provider-requested retry delays. */
@@ -405,6 +415,10 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.timeoutMs = runtimeOptions.timeoutMs;
 		this.streamStartTimeoutMs = runtimeOptions.streamStartTimeoutMs;
+		this.listenerTimeoutMs = runtimeOptions.listenerTimeoutMs ?? 60_000;
+		if (!Number.isFinite(this.listenerTimeoutMs) || this.listenerTimeoutMs <= 0) {
+			throw new RangeError("listenerTimeoutMs must be positive and finite");
+		}
 		this.streamKeepAliveTimeoutMs = runtimeOptions.streamKeepAliveTimeoutMs;
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
@@ -423,14 +437,15 @@ export class Agent {
 	/**
 	 * Subscribe to agent lifecycle events.
 	 *
-	 * Listener promises are awaited in subscription order and are included in
-	 * the current run's settlement. Listeners also receive the active abort
-	 * signal for the current run.
+	 * Listener promises are awaited in subscription order, within listenerTimeoutMs,
+	 * and are included in settlement. Abort releases outstanding waits; listeners
+	 * receive the run's abort signal and must stop their own asynchronous work.
 	 *
 	 * `agent_end` is the final emitted event for a run, but the agent does not
 	 * become idle until all awaited listeners for that event have settled.
 	 */
 	subscribe(listener: (event: AgentEvent, signal: AbortSignal) => Promise<void> | void): () => void {
+		if (!this.listenerIds.has(listener)) this.listenerIds.set(listener, ++this.nextListenerId);
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
 	}
@@ -519,6 +534,18 @@ export class Agent {
 	/** Abort the current run, if one is active. */
 	abort(reason?: unknown): void {
 		this.activeRun?.abortController.abort(reason);
+	}
+
+	/** Release observer waits owned by the current run without retiring their subscriptions. */
+	releaseHeldListeners(): number {
+		const waiting = [...(this.activeRun?.listenerWaits ?? [])];
+		for (const release of waiting) release();
+		return waiting.length;
+	}
+
+	/** An independent settlement guard must allow each ordered subscriber its own budget. */
+	get listenerSettlementTimeoutMs(): number {
+		return this.listenerTimeoutMs * Math.max(1, this.listeners.size);
 	}
 
 	/**
@@ -893,7 +920,15 @@ export class Agent {
 		const promise = new Promise<void>((resolve) => {
 			resolvePromise = resolve;
 		});
-		this.activeRun = { promise, resolve: resolvePromise, abortController, suppressQueuedMessageDrain: false };
+		const run: ActiveRun = {
+			promise,
+			resolve: resolvePromise,
+			abortController,
+			suppressQueuedMessageDrain: false,
+			listenerWaits: new Set(),
+			retiredListeners: new Set(),
+		};
+		this.activeRun = run;
 
 		this._state.isStreaming = true;
 		this._state.streamingMessage = undefined;
@@ -922,7 +957,7 @@ export class Agent {
 				this.followUpQueue.hasItems() &&
 				this.lastAssistantStopReason() === "error";
 		} catch (error) {
-			await this.handleRunFailure(error, abortController.signal.aborted);
+			await this.handleRunFailure(error, abortController.signal.aborted && error !== run.listenerFailure);
 		} finally {
 			this.finishRun();
 		}
@@ -1050,14 +1085,52 @@ export class Agent {
 				break;
 		}
 
-		const signal = this.activeRun?.abortController.signal;
-		if (!signal) {
+		const run = this.activeRun;
+		if (!run) {
 			throw new Error("Agent listener invoked outside active run");
 		}
 		const internal = dispatchInternalAgent(this.#internalChannel, { event });
 		if (internal) await internal;
 		for (const listener of this.listeners) {
-			await listener(event, signal);
+			await this.awaitListener(listener, event, run);
+		}
+	}
+
+	private async awaitListener(listener: AgentListener, event: AgentEvent, run: ActiveRun): Promise<void> {
+		if (run.retiredListeners.has(listener)) return;
+		const signal = run.abortController.signal;
+		const result = listener(event, signal);
+		if (result === undefined) return;
+		const interrupted = Promise.withResolvers<"abort" | "timeout">();
+		const release = () => {
+			if (!run.listenerWaits.delete(release)) return;
+			run.retiredListeners.add(listener);
+			interrupted.resolve("abort");
+		};
+		run.listenerWaits.add(release);
+		signal.addEventListener("abort", release, { once: true });
+		const timer = setTimeout(() => interrupted.resolve("timeout"), this.listenerTimeoutMs);
+		if (signal.aborted) release();
+		try {
+			const outcome = await Promise.race([result.then(() => "done" as const), interrupted.promise]);
+			if (outcome !== "timeout") return;
+			run.retiredListeners.add(listener);
+			const name = listener.name || `subscriber #${this.listenerIds.get(listener)}`;
+			const error = markLocalFailure(
+				new Error(`Agent subscriber ${name} timed out during ${event.type} after ${this.listenerTimeoutMs}ms`),
+			);
+			console.warn("Agent subscriber timeout", {
+				listener: name,
+				event: event.type,
+				timeoutMs: this.listenerTimeoutMs,
+			});
+			run.listenerFailure = error;
+			run.abortController.abort(error);
+			throw error;
+		} finally {
+			clearTimeout(timer);
+			signal.removeEventListener("abort", release);
+			run.listenerWaits.delete(release);
 		}
 	}
 

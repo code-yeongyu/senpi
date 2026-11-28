@@ -155,7 +155,7 @@ export function describeProviderFailure(
 
 /**
  * The failure of a turn whose last assistant message ended with `stopReason: "error"`.
- * Absent on success and on abort.
+ * Absent on success, on abort, and on a local failure (`failureSource: "local"`), which no provider produced.
  */
 export function providerFailureOf(
 	messages: readonly AgentMessage[],
@@ -163,6 +163,7 @@ export function providerFailureOf(
 ): ProviderFailure | undefined {
 	const last = messages.findLast((message) => message.role === "assistant");
 	if (last === undefined || last.role !== "assistant" || last.stopReason !== "error") return undefined;
+	if (last.failureSource === "local") return undefined;
 	const diagnostic = sanitizeProviderDiagnostic(last.providerDiagnostic);
 	const described: ProviderFailure =
 		last.errorCause?.type === "sign_in_required"
