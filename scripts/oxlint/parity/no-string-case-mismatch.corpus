@@ -18,10 +18,22 @@ export const e2 = s.toUpperCase() === ("abc");
 export const f1 = s.toLowerCase() === "ǅ";
 export const f2 = s.toUpperCase() === "1-2";
 export const f3 = s.toLowerCase() === "ß";
-switch (s.toLowerCase()) { case "Abc": break; case "abc": break; case `XY`: break; }
+switch (s.toLowerCase()) {
+case "Abc": break;
+case "abc": break;
+case `XY`: break;
+}
 switch ((s.toLowerCase())) { case "Abc": break; }
 switch (s.toUpperCase()) { case ("abc"): break; }
 switch (s) { case "Abc": break; }
 export const g1 = s.toUpperCase() /* ( */ === "abc";
 switch (s.toLowerCase()) { case /* ( */ "Abc": break; }
 switch /* ( */ (s.toLowerCase()) { case "Abc": break; }
+export const escapedUpper = s.toLowerCase() === "\u0041";
+export const escapedLower = s.toUpperCase() === "\u0061";
+export const templateTab = s.toUpperCase() === `a\tb`;
+export const literalTab = s.toUpperCase() === "a\tb";
+export const hexThenLetter = s.toUpperCase() === "\x61b";
+export const braceThenLetter = s.toUpperCase() === `\u{61}b`;
+export const afterUnicode = s.toUpperCase() === "\u0061b";
+export const afterTab = s.toUpperCase() === "\tb";

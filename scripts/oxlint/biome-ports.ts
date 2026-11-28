@@ -1,6 +1,6 @@
 // Biome recommended rules that oxlint 1.89.0 has no rule for, ported so replacing Biome loses no check:
 // suspicious/noImplicitAnyLet and correctness/noStringCaseMismatch. Each is checked against Biome 2.5.14
-// on one probe corpus (scripts/oxlint-biome-ports.test.mjs holds the verdicts).
+// on one probe corpus (scripts/oxlint/parity/biome-verdicts.json holds the verdicts).
 type AstNode = { readonly type: string; readonly start?: number; readonly end?: number; readonly [key: string]: unknown };
 type Token = { readonly type: string; readonly value: string };
 type SourceCode = {
@@ -23,12 +23,15 @@ const child = (node: AstNode, key: string): AstNode | undefined => {
 const nodes = (value: unknown): readonly AstNode[] => (Array.isArray(value) ? value.filter(isNode) : []);
 
 // The constant text of a string literal or of a template literal with no expressions.
-const constantText = (node: AstNode | undefined): string | undefined => {
-	if (node?.type === "Literal") return typeof node["value"] === "string" ? node["value"] : undefined;
+const constantText = (node: AstNode | undefined, raw = false): string | undefined => {
+	if (node?.type === "Literal") {
+		if (typeof node["value"] !== "string") return undefined;
+		return raw && typeof node["raw"] === "string" ? node["raw"].slice(1, -1) : node["value"];
+	}
 	if (node?.type !== "TemplateLiteral" || nodes(node["expressions"]).length > 0) return undefined;
 	const value = nodes(node["quasis"])[0]?.["value"];
-	const cooked = typeof value === "object" && value !== null ? Reflect.get(value, "cooked") : undefined;
-	return typeof cooked === "string" ? cooked : undefined;
+	const text = typeof value === "object" && value !== null ? Reflect.get(value, raw ? "raw" : "cooked") : undefined;
+	return typeof text === "string" ? text : undefined;
 };
 
 // `s.toUpperCase()`, `s?.toUpperCase()` and `s["toUpperCase"]()` change case; anything else does not.
@@ -45,7 +48,9 @@ const caseOf = (node: AstNode | undefined): Case | undefined => {
 // without case belong to neither, as in Biome.
 const mismatches = (text: string | undefined, expected: Case): boolean =>
 	text !== undefined &&
-	[...text].some((char) => {
+	// Match Biome 2.5.14's CharCaseIterator, including its extra consumed character after
+	// a four-digit Unicode escape or a simple escape. Hex and braced Unicode end at the escape.
+	[...text.replace(/\\(?:x.{0,2}|u(?:\{[^}]*\}|.{0,5})|..?)/gsu, "")].some((char) => {
 		const upper = char.toUpperCase();
 		const lower = char.toLowerCase();
 		return expected === "upper" ? char === lower && char !== upper : char === upper && char !== lower;
@@ -112,7 +117,7 @@ const noStringCaseMismatch = {
 				[right, left],
 			] as const) {
 				const expected = caseOf(call);
-				if (expected !== undefined && mismatches(constantText(other), expected))
+				if (expected !== undefined && mismatches(constantText(other, true), expected))
 					context.report({ node, message: caseMessage(expected) });
 			}
 		},
@@ -125,7 +130,8 @@ const noStringCaseMismatch = {
 			for (const switchCase of nodes(node["cases"])) {
 				const test = child(switchCase, "test");
 				if (test === undefined || wrappedTimes(context, test, 1)) continue;
-				if (mismatches(constantText(test), expected)) context.report({ node: test, message: caseMessage(expected) });
+				if (mismatches(constantText(test, true), expected))
+					context.report({ node: test, message: caseMessage(expected) });
 			}
 		},
 	}),
