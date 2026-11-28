@@ -1,4 +1,5 @@
 import type { EngineTurnHold } from "./engine-turn-hold.ts";
+import { batchHeldReleases } from "./held-peer-batch.ts";
 import type { CustomMessage } from "./messages.ts";
 
 /** Never uses the native follow-up queue: its `all` mode may combine unrelated sources. */
@@ -15,7 +16,7 @@ export class EngineTurnRelease {
 		const sources = hold.releaseAll("resume_session");
 		const generation = hold.generation;
 		const run = async () => {
-			for (const { source, noticeIds, message } of hold.messages()) {
+			for (const { source, noticeIds, message } of batchHeldReleases(hold.messages())) {
 				if (hold.generation !== generation) return;
 				// sendCustomMessage resolves only after the run's agent_end handlers settle.
 				const delivered = await sendThroughAgentEnd(message, () => hold.consume(source, noticeIds));

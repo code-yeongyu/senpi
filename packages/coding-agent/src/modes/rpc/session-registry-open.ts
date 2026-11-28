@@ -158,7 +158,7 @@ export async function openRegistrySession(
 						newSessionOptions,
 						host.options.createSlicer?.(),
 					)
-			: options?.speculative
+			: options?.speculative || storedProfile.persistence === "none"
 				? SessionManager.inMemory(storedProfile.cwd, newSessionOptions)
 				: SessionManager.create(storedProfile.cwd, undefined, newSessionOptions);
 		timer.mark("session_manager");
@@ -180,7 +180,8 @@ export async function openRegistrySession(
 		entry.sessionPath ??= manager.getSessionFile();
 		// The accepted baseline precedes the open, so router admission and its reply come after it (R3.C1.1).
 		// Gated like a worker incarnation's lane: with the flag off no session owns one (RULING-112).
-		if (host.options.workerIsolate !== true && structuredLaneEnabled()) {
+		// A memory-only session keeps no recovery generations on disk (senpi#7567).
+		if (host.options.workerIsolate !== true && structuredLaneEnabled() && storedProfile.persistence !== "none") {
 			entry.acceptance = new SessionAcceptanceLane(undefined, undefined, host.options.agentDir);
 			await entry.acceptance.generations.bind(durableSessionId);
 			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });

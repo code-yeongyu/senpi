@@ -8,7 +8,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/index.ts";
 import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/types.ts";
-import { deliveryIdOf } from "../../../src/core/external-admission.ts";
+import { deliveryIdOf } from "../../../src/core/delivery-ids.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 interface Scene {
@@ -145,7 +145,7 @@ describe("omo#14428 a delivery taken by a run that overlaps a compaction", () =>
 		},
 	);
 
-	it("is written when a follow-up parked by an error-ended run is taken by its continuation under a compaction", async () => {
+	it("is written when a follow-up queued behind a provider error starts under a compaction (#6868)", async () => {
 		const scene = newScene();
 		const target = await compactableSession(scene);
 		const admission = target.session.externalAdmission;

@@ -1,6 +1,7 @@
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { refusesApprovals, replacementLaunchProfile } from "../../core/opener-approvals.ts";
 import { clientNamedPreset, withClientPreset } from "../../core/permission-mode.ts";
+import { attachPersonaMismatch } from "../../core/session-persona.ts";
 import { outsideCommand } from "./command-authority.ts";
 import type { SessionPathReservations as DaemonPathReservations } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
@@ -220,6 +221,15 @@ export class WorkerSessionRegistry {
 		// A host-default preset folded into a preset-less attach is not a client choice (see session-registry-attach.ts).
 		const permissionPreset = clientNamedPreset(requested);
 		const entry = this.entries.get(owner);
+		// A different persona is refused with its reason first, whatever state the worker is in (omo#13057).
+		const personaMismatch =
+			entry === undefined ? undefined : attachPersonaMismatch(requested.persona, entry.profile.persona);
+		if (personaMismatch !== undefined)
+			throw new RpcSessionRegistryError(
+				"session_path_in_use",
+				"the session runs under another persona",
+				personaMismatch,
+			);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");
 		// The worker's live permission system cannot be told from here that nobody answers it: refused before anything moves.

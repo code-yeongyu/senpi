@@ -1,8 +1,9 @@
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_PREFIX } from "../../../src/config.ts";
+import { globalDefaultExtensionFactories } from "../../../src/core/extensions/builtin/index.ts";
 import { GENERATED_SHIM_BANNER } from "../../../src/core/generated-shim-banner.ts";
 import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
 
@@ -31,6 +32,7 @@ describe.skipIf(runningAsRoot)("#6287 seeding default extensions into a read-onl
 	});
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		chmodSync(extensionsDir, 0o755);
 		for (const [key, value] of Object.entries(saved)) {
 			if (value === undefined) delete process.env[key];
@@ -64,7 +66,10 @@ describe.skipIf(runningAsRoot)("#6287 seeding default extensions into a read-onl
 		expect(resourceLoader.getExtensions().errors).toEqual([]);
 	});
 
-	it("#given a generated shim whose target is another live engine install and a read-only extensions dir #when resources load #then that install's module is what loads", async () => {
+	// senpi#7597 changed this contract: a generated shim only marks the default as installed. Importing another
+	// installation's builtin pulled that installation's whole module graph into every reload (the reload storm), so the
+	// shim now runs this engine's own builtin and the other installation's module is never imported.
+	it("#given a generated shim whose target is another live engine install and a read-only extensions dir #when resources load #then this engine's builtin runs and that install's module is never imported", async () => {
 		const otherInstall = join(tempDir, "other-install", "dist", "core", "extensions", "builtin", "diff.js");
 		mkdirSync(join(otherInstall, ".."), { recursive: true });
 		const ranMarker = join(tempDir, "other-install-ran");
@@ -76,13 +81,15 @@ describe.skipIf(runningAsRoot)("#6287 seeding default extensions into a read-onl
 		writeFileSync(join(extensionsDir, "diff.js"), stale);
 		chmodSync(join(extensionsDir, "diff.js"), 0o444);
 		chmodSync(extensionsDir, 0o555);
+		const inProcess = vi.spyOn(globalDefaultExtensionFactories, "diff");
 
 		const resourceLoader = loader();
 		await resourceLoader.reload();
 
 		expect(resourceLoader.getExtensions().errors).toEqual([]);
 		expect(seededDefaultsLoaded(resourceLoader)).toEqual([join(extensionsDir, "diff.js")]);
-		expect(readFileSync(ranMarker, "utf-8")).toBe("ran");
+		expect(inProcess).toHaveBeenCalled();
+		expect(existsSync(ranMarker)).toBe(false);
 		expect(readFileSync(join(extensionsDir, "diff.js"), "utf-8")).toBe(stale);
 	});
 

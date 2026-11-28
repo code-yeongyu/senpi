@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { hasGeneratedShimBanner } from "../../../generated-shim-banner.ts";
+import { generatedShimTarget } from "../../../generated-shim-banner.ts";
 
 function isInsideExtensionsDirectory(path: string, agentDir: string): boolean {
 	return resolve(dirname(path)) === resolve(agentDir, "extensions");
@@ -8,7 +8,7 @@ function isInsideExtensionsDirectory(path: string, agentDir: string): boolean {
 
 function isGeneratedShim(path: string): boolean {
 	try {
-		return hasGeneratedShimBanner(readFileSync(path, "utf-8"));
+		return generatedShimTarget(readFileSync(path, "utf-8")) !== undefined;
 	} catch {
 		return false;
 	}

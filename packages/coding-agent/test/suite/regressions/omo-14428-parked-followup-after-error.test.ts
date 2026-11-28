@@ -3,13 +3,13 @@
  * provider error, and every later run (a started delivery, a goal continuation, the user's own prompt) settled
  * without taking it, so the session went idle again and again with the delivery still pending in its ledger.
  * A parked queue rejoins the next run: that run's own turn boundary takes it, in order, and writes it even when
- * that run fails too. A rate-limited provider is waited out, so queued follow-ups drain with no new input. A
- * delivery is pending in the ledger exactly while a queue holds it.
+ * that run fails too. Since senpi#6868, a user abort (rather than a provider error) parks that queue;
+ * transient rate limits without a usage hold still back off and drain without new input.
  */
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SESSION_CONTROL_DELIVERY_TYPE } from "../../../src/core/extensions/types.ts";
-import { deliveryIdOf } from "../../../src/core/external-admission.ts";
+import { deliveryIdOf } from "../../../src/core/delivery-ids.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 const harnesses: Harness[] = [];
@@ -65,8 +65,16 @@ async function failingTurn(
 	return { release: () => gate.resolve(), settled };
 }
 
-describe("omo#14428 parked follow-ups after an error-ended run", () => {
-	it("a follow-up parked by an error-ended run is taken by the next started delivery's run, in order", async () => {
+async function parkAfterAbort(target: Harness, turn: Awaited<ReturnType<typeof failingTurn>>): Promise<void> {
+	const abort = target.session.abort();
+	turn.release();
+	await abort;
+	await turn.settled;
+	await target.session.waitForIdle();
+}
+
+describe("omo#14428 follow-ups after a stopped or failed run", () => {
+	it("follow-ups parked by a user abort are taken by the next started delivery's run, in order", async () => {
 		const target = await createHarness({ persistSession: true });
 		harnesses.push(target);
 		target.setResponses([]);
@@ -75,9 +83,7 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 		const turn = await failingTurn(target, "work");
 		expect(admission.admit({ delivery_id: "f-1", text: "first queued", deliverAs: "followUp" }).kind).toBe("queued");
 		expect(admission.admit({ delivery_id: "f-2", text: "second queued", deliverAs: "followUp" }).kind).toBe("queued");
-		turn.release();
-		await turn.settled;
-		await target.session.waitForIdle();
+		await parkAfterAbort(target, turn);
 		expect(admission.list().pending).toEqual(["f-1", "f-2"]);
 
 		target.appendResponses([
@@ -96,7 +102,7 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 		expect(admission.list()).toEqual({ pending: [], emitted: ["d-3", "f-1", "f-2"] });
 	});
 
-	it("a follow-up parked by an error-ended run is taken by the user's next prompt's run", async () => {
+	it("a follow-up parked by a user abort is taken by the user's next prompt's run", async () => {
 		const target = await createHarness({ persistSession: true });
 		harnesses.push(target);
 		target.setResponses([]);
@@ -104,9 +110,7 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 
 		const turn = await failingTurn(target, "work");
 		expect(admission.admit({ delivery_id: "f-1", text: "queued", deliverAs: "followUp" }).kind).toBe("queued");
-		turn.release();
-		await turn.settled;
-		await target.session.waitForIdle();
+		await parkAfterAbort(target, turn);
 
 		target.appendResponses([fauxAssistantMessage("ack prompt"), fauxAssistantMessage("ack f-1")]);
 		await target.session.prompt("typed into the terminal");
@@ -116,7 +120,7 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 		expect(admission.list()).toEqual({ pending: [], emitted: ["f-1"] });
 	});
 
-	it("a parked follow-up is written by the next run's first turn even when that run's request fails too", async () => {
+	it("a parked follow-up is written by the next run's first turn even when that run's request fails", async () => {
 		const target = await createHarness({ persistSession: true });
 		harnesses.push(target);
 		target.setResponses([]);
@@ -124,9 +128,7 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 
 		const turn = await failingTurn(target, "work");
 		expect(admission.admit({ delivery_id: "f-1", text: "parked", deliverAs: "followUp" }).kind).toBe("queued");
-		turn.release();
-		await turn.settled;
-		await target.session.waitForIdle();
+		await parkAfterAbort(target, turn);
 
 		target.appendResponses([failure(REJECTED)]);
 		const idle = nextEvent(target, "agent_idle");
@@ -143,7 +145,7 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 
 	// The incident's session had agent_before_settle handlers (goal continuation, stop hooks), which take the post-run
 	// queue decision away from the agent core on every agent_end.
-	it("with an agent_before_settle handler, a parked follow-up is still written by the next run's first turn when that run fails too", async () => {
+	it("with an agent_before_settle handler, a parked follow-up is still written by the next run's first turn when that run fails", async () => {
 		const target = await createHarness({
 			persistSession: true,
 			extensionFactories: [
@@ -158,9 +160,7 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 
 		const turn = await failingTurn(target, "work");
 		expect(admission.admit({ delivery_id: "f-1", text: "parked", deliverAs: "followUp" }).kind).toBe("queued");
-		turn.release();
-		await turn.settled;
-		await target.session.waitForIdle();
+		await parkAfterAbort(target, turn);
 
 		target.appendResponses([failure(REJECTED)]);
 		const idle = nextEvent(target, "agent_idle");
@@ -357,9 +357,7 @@ describe("omo#14428 parked follow-ups after an error-ended run", () => {
 		target.session.takeQueuedDeliveries();
 		expect(admission.list().pending).toEqual([]);
 		expect(target.session.agent.peekQueuedMessages({ all: true }).map(deliveryIdOf)).toEqual([undefined]);
-		turn.release();
-		await turn.settled;
-		await target.session.waitForIdle();
+		await parkAfterAbort(target, turn);
 
 		// The sender was told the delivery left the session, so it redelivers it: the transcript holds it once.
 		target.appendResponses([

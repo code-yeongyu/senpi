@@ -42,6 +42,7 @@ import {
 	identityPayload,
 	refusal,
 } from "./host-outcome.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal } from "./host-identity-refusal.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
@@ -250,13 +251,22 @@ function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOut
  * so it is gated on the host's own count and refuses with those counts rather than a bare "busy".
  * A DRAIN ends no work - the host stops accepting and leaves when it is empty - so it is never gated.
  */
+function identityRefusal(
+	target: HostTarget,
+	refused: { readonly refused: string; readonly detail: string },
+): HostOutcome {
+	return refusal("refuse", undefined, { reason: refused.refused, socket: target.socket, detail: refused.detail });
+}
+
 async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): Promise<HostOutcome> {
 	const { target, drain, force, instanceId, waitMs } = request;
 	if (request.expectedGeneration !== undefined) {
 		const stale = await staleStopGeneration(target.socket, target.agentDir, request.expectedGeneration);
 		if (stale !== undefined) return refusal("refuse", undefined, { reason: stale.reason, socket: target.socket });
 	}
-	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
+	// The runner's own reads prove the host first: one that cannot be proven is a typed refusal, never a host_error.
+	const host = await probeOrIdentityRefusal(() => probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS));
+	if (isIdentityRefusal(host)) return identityRefusal(target, host);
 	// `null` when the host did not answer its count: unknown, never an empty host (senpi#7132).
 	const sessions = (await readSessionCounts(target.socket, true)) ?? null;
 	const occupancy = sessions === null ? undefined : sessions.foreign_attached + sessions.foreign_retained;
@@ -295,7 +305,8 @@ async function handoffOutcome(
 	mcpPresenterEnforcement?: boolean,
 ): Promise<HostOutcome> {
 	const { target, spec } = request;
-	const before = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
+	const before = await probeOrIdentityRefusal(() => probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS));
+	if (isIdentityRefusal(before)) return identityRefusal(target, before);
 	const result = await handoffHost({
 		socket: target.socket,
 		presenterBootstrap,

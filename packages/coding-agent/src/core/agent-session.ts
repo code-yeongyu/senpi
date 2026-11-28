@@ -22,6 +22,7 @@ import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
 import { runExecuteToolOnHost } from "./execute-tool-on-host.ts";
 import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 import type {
+	AfterToolCallResult,
 	Agent,
 	AgentContinuationOptions,
 	AgentEvent,
@@ -193,7 +194,10 @@ import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
 	ENGINE_TURN_START_ENTRY_TYPE,
+	type EngineTurnCap,
 	type EngineTurnStartRecord,
+	type EngineTurnStop,
+	engineTurnCapOf,
 	engineTurnHistory,
 	engineTurnLimitNotice,
 	engineTurnStop,
@@ -305,7 +309,8 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH, SESSION_CONTROL_DELIVERY_TYPE } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
-import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admission.ts";
+import { deliveryIdOf } from "./delivery-ids.ts";
+import { ExternalAdmission, type InputHold } from "./external-admission.ts";
 import { holdsKeepingPeerDelivery } from "./peer-delivery-hold.ts";
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
@@ -505,7 +510,7 @@ import {
 	STALL_WARNING_MS,
 	watchForStall,
 } from "./stall-warning.ts";
-import { stopResumeDirective } from "./stop-resume-directive.ts";
+import { type ResumeCause, stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
 	type ClampedThinkingSelection,
@@ -1250,13 +1255,15 @@ export interface ResumeSessionRequest {
 
 export interface ResumeSessionAnswer {
 	readonly resumed: boolean;
-	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped";
+	readonly reason?: "stale" | "not_paused" | "resume_through_parent" | "stopped" | "engine_turn_cap";
 	readonly parentSessionId?: string;
 	readonly pauseSeq: number;
 	readonly turnStarted: boolean;
 	readonly deliveredNotices: number;
 	readonly deliveredHeldInputs: number;
 	readonly replayed?: boolean;
+	/** The engine-turn cap this Resume continued, or (`reason: "engine_turn_cap"`) would not release without a turn (senpi#7138). */
+	readonly engineTurnCap?: EngineTurnCap;
 }
 
 /**
@@ -1662,6 +1669,8 @@ export class AgentSession {
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
 		heldBy: () => this._peerDeliveryHolds(),
+		cappedBy: () => this._peerDeliveryCap(),
+		heldPeerDeliveries: () => this.heldPeerDeliveryCount,
 		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
 		start: (message) =>
 			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
@@ -2140,6 +2149,16 @@ export class AgentSession {
 			now: this._fallbackNow,
 		});
 		this._extensionRunnerRef = config.extensionRunnerRef;
+		// Read at admission, so a reloaded runner hears it; before any turn takes the delivery (oh-my-openagent#15221).
+		this.externalAdmission.onAdmitted((admitted) => {
+			void this._extensionRunner
+				.emit({ type: "external_message_admitted", ...admitted })
+				.catch((error: unknown) =>
+					this._sessionLogger.warn("external_message_admitted_emit_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					}),
+				);
+		});
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._defaultToolNames = config.defaultToolNames ? new Set(config.defaultToolNames) : undefined;
 		this._usesDefaultTools = config.usesDefaultTools ?? false;
@@ -4119,7 +4138,10 @@ export class AgentSession {
 		if (lastAssistant?.role !== "assistant") {
 			return false;
 		}
-		if (lastAssistant.stopReason === "aborted" || lastAssistant.stopReason === "error") {
+		if (
+			lastAssistant.stopReason === "aborted" ||
+			(lastAssistant.stopReason === "error" && this._isLocalFailure(lastAssistant))
+		) {
 			return false;
 		}
 		if (this._getRequiredAutoCompactionReason(lastAssistant)) {
@@ -4421,6 +4443,8 @@ export class AgentSession {
 		let retryableFailureAwaitingDrain: AssistantMessage | undefined;
 		let allowsPostCompactionUsageExemptContinuation = false;
 		let releasedExemptionAllowsQueuedContinuation = false;
+		let endedInProviderError = false;
+		const abortGeneration = this._userAbortGeneration;
 		const userAbortSuppressedQueuedContinuation =
 			event.type === "agent_end" && this._suppressQueuedContinuationAfterUserAbort;
 		if (userAbortSuppressedQueuedContinuation) {
@@ -4433,6 +4457,7 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			endedInProviderError = msg.stopReason === "error" && !this._isLocalFailure(msg);
 			if (msg.stopReason !== "error") this._queuedDrainBackoffAttempt = 0;
 			if (msg.stopReason === "error") {
 				const resetAt = limitResetAt(msg, this._fallbackWallNow());
@@ -4555,9 +4580,8 @@ export class AgentSession {
 				retryOwnedDeferredQueue &&
 				retryOutcome === "not-handled" &&
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
-			// A provider that is only rate limited or overloaded answers again later: the input queued behind this run
-			// waits that out instead of parking until unrelated input arrives (omo#14428). A provider timeout keeps its
-			// own policy: input stays parked until that provider proves responsive.
+			// A transient rate limit or overload can back off further for peer deliveries (omo#14428).
+			// A provider timeout does not use that extra wait after the retry owner has settled (#6868).
 			if (
 				!userAbortSuppressedQueuedContinuation &&
 				retryOutcome === "not-handled" &&
@@ -4610,10 +4634,15 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					// A failed first response consumes the exemption but must not continue the run: input queued behind it
-					// waits for the next prompt, exactly as after a failed response without a compaction (#4036).
+					// A completed exempt response continues with the input parked behind it (#4036). After a provider error
+					// that input starts its own turn (#6868), decided while the exemption still holds: once it is released
+					// below, the threshold it covered reads as a required compaction again. An abort or a local failure
+					// never continues.
 					allowsPostCompactionUsageExemptContinuation =
-						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
+						this._postCompactionUsageExemptAssistants.has(msg) &&
+						(msg.stopReason === "error"
+							? endedInProviderError && this._agentEndAllowsQueuedContinuation(event.messages)
+							: msg.stopReason !== "aborted");
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
 					}
@@ -4638,7 +4667,7 @@ export class AgentSession {
 			// The exemption covers only the first response after a compaction. A run that ends on that response
 			// without consuming it (a blocked or exhausted retry, a user abort) has still spent it: the input parked
 			// while that run started rejoins the ordinary queues, whose rules then decide when it runs, exactly as
-			// for input queued in a run without a compaction (#4036).
+			// for input queued in a run without a compaction (#4036, #6868). A user abort leaves it waiting.
 			if (this._releaseSpentPostCompactionExemption(msg)) {
 				releasedExemptionAllowsQueuedContinuation =
 					!userAbortSuppressedQueuedContinuation && this._agentEndAllowsQueuedContinuation(event.messages);
@@ -4649,9 +4678,33 @@ export class AgentSession {
 			this._flushPendingBashMessages();
 			// Before the continuation decision, so input sent while the title is pending still continues this run.
 			await this._settleSessionTitle();
+			const userAborted = userAbortSuppressedQueuedContinuation || abortGeneration !== this._userAbortGeneration;
+			if (userAborted) this._suppressQueuedContinuationAfterUserAbort = false;
+			if (
+				endedInProviderError &&
+				!launchedContinuation &&
+				!userAborted &&
+				this.agent.hasQueuedMessages()
+			) {
+				const hold = await this._queuedInputUsageHold();
+				if (hold) {
+					await this._rejectQueuedInputsForUsageHold(hold);
+					retryContinuationBlocked = true;
+				} else if (
+					!retryContinuationBlocked &&
+					retryableFailureAwaitingDrain &&
+					this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
+				) {
+					// Keep omo#14428's backoff for peer deliveries when the provider is not under a #3131 hold.
+					const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
+					launchedContinuation = drain === "continued";
+					retryContinuationBlocked ||= drain === "cancelled";
+				}
+			}
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
+				!userAborted &&
 				(allowsQueuedContinuation ||
 					allowsPostCompactionUsageExemptContinuation ||
 					releasedExemptionAllowsQueuedContinuation ||
@@ -4664,26 +4717,12 @@ export class AgentSession {
 				this._scheduleContinuationAfterCurrentEvent();
 				launchedContinuation = true;
 			}
-			// Only a queue holding another session's delivery waits the provider out: that sender has no one to prompt again.
-			// A queue of a person's own input alone waits for their next prompt (#4036); in a queue that holds both, the
-			// drained run takes the person's input too, in queue order.
-			if (
-				!launchedContinuation &&
-				!retryContinuationBlocked &&
-				retryableFailureAwaitingDrain &&
-				this.agent.peekQueuedMessages({ all: true }).some((queued) => deliveryIdOf(queued) !== undefined)
-			) {
-				const drain = await this._drainQueueAfterProviderBackoff(retryableFailureAwaitingDrain);
-				launchedContinuation = drain === "continued";
-				// A cancelled wait settles the run, as a retry cancelled during its backoff does.
-				retryContinuationBlocked ||= drain === "cancelled";
-			}
 			// agent_before_settle (D-15): handlers may append entries or ask for one more request before
 			// the run settles. A user abort or a blocked retry settles without it.
 			if (
 				!launchedContinuation &&
 				!retryContinuationBlocked &&
-				!userAbortSuppressedQueuedContinuation &&
+				!userAborted &&
 				this._extensionRunner.hasHandlers("agent_before_settle") &&
 				(await this._runBeforeSettleBoundary(this.agent.hasQueuedMessages()))
 			) {
@@ -5751,15 +5790,18 @@ export class AgentSession {
 		this._execBridgeToolCalls.delete(toolCallId);
 	}
 
-	/** Cursor exec already ran the tool; still emit tool_result so plan-touch trackers see .omo/plans writes. */
+	/**
+	 * Run the tool_result chain for a call Cursor exec already ran, and answer its override as `afterToolCall` does for
+	 * a model-issued call: the bridge merges it into the frame's result, so a replacement reaches the model (omo#12466).
+	 */
 	async emitExecBridgeToolResult(
 		toolName: string,
 		toolCallId: string,
 		args: unknown,
 		result: AgentToolResult<unknown>,
 		isError: boolean,
-	): Promise<void> {
-		await this._emitAfterToolCallHooks(
+	): Promise<AfterToolCallResult | undefined> {
+		return await this._emitAfterToolCallHooks(
 			{
 				type: "toolCall",
 				id: toolCallId,
@@ -6500,70 +6542,8 @@ export class AgentSession {
 		if (!this.isStreaming) {
 			try {
 				await this._maybeRestoreFallbackPrimary();
-				const model = this.model;
-				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
-				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
-				// A pooled provider is out only when no account can serve: one account's billing or limit is that
-				// account's, and the pool's own block already routes around it (senpi#5590).
-				const pool =
-					model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
-						? await this._pooledAccountHealth(model.provider, model.id)
-						: undefined;
-				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
-				// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
-				if (
-					model?.provider === "anthropic-subscription" &&
-					!this._pendingModelSwitch &&
-					this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
-					attributionOf(options) === "user"
-				)
-					claudeRecheckProvider = model.provider;
-				// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
-				// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
-				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
-				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
-					if (attributionOf(options) === "user") await refreshSubscriptionUsage(model.provider);
-					this._retryFallback.releaseAccountHoldShownServable(
-						model.provider,
-						await this._usageOfSelectableAccounts(model.provider),
-					);
-				}
-				if (
-					model &&
-					!this._pendingModelSwitch &&
-					claudeRecheckProvider !== model.provider &&
-					this._retryFallback.isProviderSpent(model.provider) &&
-					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
-				) {
-					this._retryFallback.resetTurn();
-					this._fallbackTurnFailures = [];
-					const errorMessage = this._retryFallback.accountError(model.provider);
-					// Routing around a remembered failure did not observe another provider failure.
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
-						throw new AccountUsageLimitError(
-							model.provider,
-							errorMessage,
-							this._retryFallback.accountResetAt(model.provider),
-							this._retryFallback.widenedFamiliesOf(model.provider),
-							pool?.accountsOut,
-						);
-					}
-				}
-				// A family held by a weekly limit that named no family binds automated turns the same way, so a loop
-				// moves to another family or stops instead of hammering the held one (senpi#5596, senpi#3131).
-				const heldFamily =
-					this.model && !this._pendingModelSwitch && attributionOf(options) !== "user"
-						? this._retryFallback.heldFamily(this.model)
-						: undefined;
-				if (this.model && heldFamily) {
-					this._retryFallback.resetTurn();
-					this._fallbackTurnFailures = [];
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage: heldFamily.errorMessage }, false))) {
-						throw new AccountUsageLimitError(this.model.provider, heldFamily.errorMessage, undefined, [
-							heldFamily.family,
-						]);
-					}
-				}
+				const guarded = this._guardAccountHolds(attributionOf(options));
+				claudeRecheckProvider = guarded instanceof Promise ? await guarded : guarded;
 			} catch (error) {
 				releaseStart(false);
 				throw error;
@@ -7838,10 +7818,10 @@ export class AgentSession {
 	}
 
 	/** A removed itemized message is never written: every send waiting on it settles now (senpi#4106). */
-	private _settleRemovedCarriers(removed: readonly AgentMessage[]): void {
+	private _settleRemovedCarriers(removed: readonly AgentMessage[], failure?: AccountUsageLimitError): void {
 		for (const message of removed) {
 			const watcher = this._takePersistWatcher(message);
-			watcher?.failed(new QueuedDeliveryCleared(watcher.itemIds));
+			watcher?.failed(failure ?? new QueuedDeliveryCleared(watcher.itemIds));
 		}
 	}
 
@@ -7942,7 +7922,11 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("finished-without-start");
 			return;
 		}
+		// senpi#7138: a delivery admission answered held with the engine-turn cap starts no turn of its own, whatever
+		// changed since; it neither waits for session work nor parks behind a compaction, and is recorded as refused.
+		const admittedCapped = options?.triggerTurn === true && this.externalAdmission.answeredCapped(appMessage);
 		const waitForExistingSessionWork =
+			!admittedCapped &&
 			options?.triggerTurn === true &&
 			options.deliverAs !== "nextTurn" &&
 			!this.isStreaming &&
@@ -7978,6 +7962,7 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (
+				!admittedCapped &&
 				options?.triggerTurn === true &&
 				((pendingCompactionAdmission !== undefined && pendingCompactionAdmission.outcome !== "completed") ||
 					(activeCompactionGeneration !== undefined &&
@@ -7993,7 +7978,7 @@ export class AgentSession {
 				}
 			} else if (
 				options?.triggerTurn &&
-				this._stopEngineTurn(message.customType, releasedWake !== undefined || releasedByPeer)
+				(this._stopEngineTurn(message.customType, releasedWake !== undefined || releasedByPeer) || admittedCapped)
 			) {
 				if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
@@ -8090,6 +8075,17 @@ export class AgentSession {
 					});
 				});
 		}
+	}
+
+	/**
+	 * The cap a peer delivery's turn would meet now (senpi#7138), counted as `_stopEngineTurn` will count it: a delivery
+	 * that releases an unattended hold is the released turn, outside the resume window.
+	 */
+	private _peerDeliveryCap(): EngineTurnCap | undefined {
+		const stop = this._engineTurnStopNow(
+			this._engineTurnHold.holdsSource(engineWakeSource(SESSION_CONTROL_DELIVERY_TYPE)),
+		);
+		return stop === null ? undefined : engineTurnCapOf(stop);
 	}
 
 	/** The holds a peer delivery cannot release (senpi#6490); `externalAdmission` answers `held` with them. */
@@ -8205,7 +8201,9 @@ export class AgentSession {
 		const holds = this._engineTurnHold.holds;
 		const idle = { pauseSeq, turnStarted: false, deliveredNotices: 0, deliveredHeldInputs: 0 };
 		const answered = (answer: ResumeSessionAnswer) => ({ answer, settled: Promise.resolve() });
-		if (holds.length === 0 && !this._engineTurnHold.awaitingInput)
+		// Nothing held: the engine-turn cap may still pause automatic turns, and Resume continues those too (senpi#7138).
+		const cap = holds.length === 0 && !this._engineTurnHold.awaitingInput ? this.engineTurnCap : undefined;
+		if (holds.length === 0 && !this._engineTurnHold.awaitingInput && cap === undefined)
 			return answered({ resumed: false, reason: "not_paused", ...idle });
 		const inherited = this._runHolds.inheritedOwner();
 		if (inherited !== undefined && holds.every((hold) => hold.kind === "inherited_hold"))
@@ -8219,6 +8217,10 @@ export class AgentSession {
 			return answered({ resumed: false, reason: "stopped", ...idle });
 		if (request.expectedSeq !== undefined && !this._engineTurnHold.isCurrentPauseSeq(request.expectedSeq))
 			return answered({ resumed: false, reason: "stale", ...idle });
+		// Only a turn a person asked for lifts the cap, so a release that starts no turn, or a resume a peer asks for
+		// (`unlessStopped`), names the cap instead.
+		if (cap !== undefined && (request.mode === "release" || request.unlessStopped === true))
+			return answered({ resumed: false, reason: "engine_turn_cap", engineTurnCap: cap, ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
 			// A person's resume attends the session like their input does, so an unattended hold it frees stays freed.
@@ -8237,6 +8239,13 @@ export class AgentSession {
 			});
 		const deliveredNotices = this._engineTurnHold.noticeCount;
 		const deliveredHeldInputs = this._heldInputs.pending().length;
+		if (cap !== undefined) {
+			const { turnStarted, settled } = await this._resumeAfterStop(onQueued, "engine_turn_cap");
+			return {
+				answer: { resumed: true, pauseSeq, turnStarted, deliveredNotices, deliveredHeldInputs, engineTurnCap: cap },
+				settled,
+			};
+		}
 		// Payload-free notices (including goals) revalidate through their producer after release.
 		// An interruption must not add a directive-only turn when that work has already completed.
 		const resumeHeldTurn =
@@ -8284,8 +8293,10 @@ export class AgentSession {
 	 * once its send settled without one) and returns its settlement, which finishes the release only if the shared
 	 * resume settlement delivered the turn.
 	 */
-	private async _resumeAfterStop(onQueued?: () => void): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
-		const resumeCause = this._resumeCause();
+	private async _resumeAfterStop(
+		onQueued?: () => void,
+		resumeCause: ResumeCause = this._resumeCause(),
+	): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
 		const sources = this._engineTurnHold.releaseAll("resume_session");
 		const { turnId, delivered } = await this._startResumeTurn(onQueued, resumeCause);
 		const settled = (async () => {
@@ -8313,7 +8324,7 @@ export class AgentSession {
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
 	private async _startResumeTurn(
 		onQueued?: () => void,
-		resumeCause: "stop" | "interrupted" = "stop",
+		resumeCause: ResumeCause = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
 		const settlement = Promise.withResolvers<void>();
 		this._resumeSettlement = settlement.promise;
@@ -8364,7 +8375,7 @@ export class AgentSession {
 		continues: ReadonlySet<string>,
 		heldInputs: HeldInput[],
 		onQueued?: () => void,
-		resumeCause: "stop" | "interrupted" = "stop",
+		resumeCause: ResumeCause = "stop",
 	): ReturnType<typeof startRunResumeTurn> {
 		return startRunResumeTurn({
 			resumeCause,
@@ -8653,6 +8664,14 @@ export class AgentSession {
 		return this._engineTurnHold.isHeld();
 	}
 
+	/** The engine-turn cap that pauses automatic turns now, if any (senpi#7138); a person's message or Resume lifts it. */
+	get engineTurnCap(): EngineTurnCap | undefined {
+		// A run in progress, even the last one the cap allows, is not stopped: the cap stops only the turn after it.
+		if (this._isAgentRunActive || this._promptStartPending) return undefined;
+		const stop = this._engineTurnStopNow(false);
+		return stop === null ? undefined : engineTurnCapOf(stop);
+	}
+
 	private _createLifecycleBinding(): LifecycleSessionBinding {
 		return new LifecycleSessionBinding(this, {
 			append: (type, data) => {
@@ -8720,6 +8739,11 @@ export class AgentSession {
 
 	get pausedNoticeCount(): number {
 		return this._engineTurnHold.noticeCount;
+	}
+
+	/** Distinct peer deliveries held while paused (senpi#7588): `admit_external_message` refuses past the cap. */
+	get heldPeerDeliveryCount(): number {
+		return this._engineTurnHold.peerDeliveryCount;
 	}
 
 	get holds() {
@@ -8832,31 +8856,18 @@ export class AgentSession {
 		// The turn a Resume or a peer's message just released is the turn it was answered with (`started`): the resume
 		// window, which counts every engine turn since the last real input, the reopened lane's own history included,
 		// bounds the automatic turns after it, never that turn itself (senpi#7020).
-		const resumeWindow = this._engineResumeWindow && !released;
-		const stop = engineTurnStop(
-			this.sessionManager.reduceHistory(engineTurnHistory),
-			Date.now(),
-			{
-				...this.settingsManager.getEngineTurnSettings(),
-				maxPerResumeWindow: resumeWindow ? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow : 0,
-			},
-			this._engineTurnStarts,
-		);
+		const stop = this._engineTurnStopNow(released);
 		if (stop === null) return false;
 		const details = { customType, ...stop, at: Date.now() };
 		if (!this._engineTurnPauseRecorded && !enginePauseSinceLastTurn(this.sessionManager.getBranch())) {
 			this._engineTurnPauseRecorded = true;
+			const cap = engineTurnCapOf(stop);
 			try {
 				this._emitEntryAppended(
 					this.sessionManager.appendCustomEntry(ENGINE_PAUSED_ENTRY_TYPE, {
-						reason:
-							stop.reason === "resume-window"
-								? "cap-per-resume-window"
-								: stop.reason === "per-user-input"
-									? "cap-per-message"
-									: "cap-per-minute",
+						reason: cap.reason,
 						customType,
-						count: stop.reason !== "tool-free-rate" ? stop.sinceUserInput : stop.toolFreeInWindow,
+						count: cap.count,
 						at: details.at,
 					}),
 				);
@@ -8881,6 +8892,18 @@ export class AgentSession {
 			this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
 		}
 		return true;
+	}
+
+	/** The engine-wide bound one more engine turn would meet now; a `released` turn is outside the resume window. */
+	private _engineTurnStopNow(released: boolean): EngineTurnStop | null {
+		const settings = this.settingsManager.getEngineTurnSettings();
+		const resumeWindow = this._engineResumeWindow && !released;
+		return engineTurnStop(
+			this.sessionManager.reduceHistory(engineTurnHistory),
+			Date.now(),
+			{ ...settings, maxPerResumeWindow: resumeWindow ? settings.maxPerResumeWindow : 0 },
+			this._engineTurnStarts,
+		);
 	}
 
 	/** Environment context a new turn must carry: set when cwd or date differs from the latest one visible (senpi#2093). */
@@ -9247,6 +9270,10 @@ export class AgentSession {
 	 * session; its sender redelivers it (oh-my-openagent#14169).
 	 */
 	takeQueuedDeliveries(): void {
+		this._takeQueuedDeliveries();
+	}
+
+	private _takeQueuedDeliveries(failure?: AccountUsageLimitError): void {
 		const removed = this.agent.peekQueuedMessages({ all: true }).filter((queued) => deliveryIdOf(queued) !== undefined);
 		for (const message of removed) this.agent.removeQueuedMessage(message);
 		const tickets = removed.flatMap((message) => {
@@ -9254,9 +9281,140 @@ export class AgentSession {
 			return ticket === undefined ? [] : [ticket];
 		});
 		this._releaseQueuedDeliveries(tickets, "cleared");
-		this._settleRemovedCarriers(removed);
+		// A hold refusal settles the sender with the typed error and drops the admission, so a redelivery is admitted again.
+		this._settleRemovedCarriers(removed, failure);
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
+	}
+
+	/**
+	 * The #3131 hold that binds an automatic turn for the queued input, after the guard released what usage shows
+	 * servable and walked the fallback chain; `undefined` when a route can serve it (the guard may have switched to it).
+	 */
+	private async _queuedInputUsageHold(): Promise<AccountUsageLimitError | undefined> {
+		try {
+			await this._maybeRestoreFallbackPrimary();
+			await this._guardAccountHolds("agent");
+			return undefined;
+		} catch (error) {
+			if (error instanceof AccountUsageLimitError) return error;
+			throw error;
+		}
+	}
+
+	/**
+	 * Under a #3131 hold, input a sender waits on (an RPC input with a client id, a peer delivery) fails with the typed
+	 * hold error instead of staying parked on an idle session. A person's TUI input stays queued and visible: they see
+	 * the error and decide. Inputs snapshotted once, so input arriving during the refusal is not refused with them.
+	 */
+	private async _rejectQueuedInputsForUsageHold(error: AccountUsageLimitError): Promise<void> {
+		const waited = this.getQueuedInputs().filter((input) => input.clientMessageId !== undefined);
+		try {
+			await this._pendingInputs.rejectBeforeDispatch(
+				waited.flatMap((input) => (input.clientMessageId === undefined ? [] : [input.clientMessageId])),
+				{ type: "reject_before_dispatch", reason: error.message, code: error.code },
+				() => {
+					for (const input of waited) this._changeQueuedInput(input.queuedId, undefined, undefined);
+				},
+			);
+		} catch (journalError) {
+			// The inputs stay queued, as before this refusal; the run still settles.
+			this._sessionLogger.warn("pending_input_hold_refusal_unrecorded", {
+				error: journalError instanceof Error ? journalError.message : String(journalError),
+			});
+		}
+		this._takeQueuedDeliveries(error);
+		this._emit({ type: "continuation_error", errorMessage: error.message });
+	}
+
+	/**
+	 * The account-hold guard at a turn boundary (senpi#3131), run after the fallback primary was restored: releases holds
+	 * a pooled account or newer usage shows servable, routes a spent provider or held family to its fallback, and
+	 * throws `AccountUsageLimitError` when no route can serve. Answers the provider whose hold defers to the Claude pool
+	 * (senpi#6727). Synchronous when nothing is held, so a prompt's admission keeps its ordering against queue flushes.
+	 */
+	private _guardAccountHolds(attribution: InputAttribution): string | undefined | Promise<string | undefined> {
+		const model = this.model;
+		const held =
+			!this._pendingModelSwitch &&
+			((model !== undefined && this._retryFallback.isProviderSpent(model.provider)) ||
+				(model !== undefined && attribution !== "user" && this._retryFallback.heldFamily(model) !== undefined));
+		if (held) return this._guardHeldAccount(attribution);
+		return model?.provider === "anthropic-subscription" &&
+			!this._pendingModelSwitch &&
+			this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+			attribution === "user"
+			? model.provider
+			: undefined;
+	}
+
+	private async _guardHeldAccount(attribution: InputAttribution): Promise<string | undefined> {
+		let claudeRecheckProvider: string | undefined;
+		const model = this.model;
+		// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
+		// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+		// A pooled provider is out only when no account can serve: one account's billing or limit is that
+		// account's, and the pool's own block already routes around it (senpi#5590).
+		const pool =
+			model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
+				? await this._pooledAccountHealth(model.provider, model.id)
+				: undefined;
+		if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
+		// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
+		if (
+			model?.provider === "anthropic-subscription" &&
+			!this._pendingModelSwitch &&
+			this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+			attribution === "user"
+		)
+			claudeRecheckProvider = model.provider;
+		// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
+		// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
+		// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
+		if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+			if (attribution === "user") await refreshSubscriptionUsage(model.provider);
+			this._retryFallback.releaseAccountHoldShownServable(
+				model.provider,
+				await this._usageOfSelectableAccounts(model.provider),
+			);
+		}
+		if (
+			model &&
+			!this._pendingModelSwitch &&
+			claudeRecheckProvider !== model.provider &&
+			this._retryFallback.isProviderSpent(model.provider) &&
+			!(attribution === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
+		) {
+			this._retryFallback.resetTurn();
+			this._fallbackTurnFailures = [];
+			const errorMessage = this._retryFallback.accountError(model.provider);
+			// Routing around a remembered failure did not observe another provider failure.
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
+				throw new AccountUsageLimitError(
+					model.provider,
+					errorMessage,
+					this._retryFallback.accountResetAt(model.provider),
+					this._retryFallback.widenedFamiliesOf(model.provider),
+					pool?.accountsOut,
+				);
+			}
+		}
+		// A family held by a weekly limit that named no family binds automated turns the same way, so a loop
+		// moves to another family or stops instead of hammering the held one (senpi#5596, senpi#3131).
+		const heldFamily =
+			this.model && !this._pendingModelSwitch && attribution !== "user"
+				? this._retryFallback.heldFamily(this.model)
+				: undefined;
+		if (this.model && heldFamily) {
+			this._retryFallback.resetTurn();
+			this._fallbackTurnFailures = [];
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage: heldFamily.errorMessage }, false))) {
+				throw new AccountUsageLimitError(this.model.provider, heldFamily.errorMessage, undefined, [
+					heldFamily.family,
+				]);
+			}
+		}
+		return claudeRecheckProvider;
 	}
 
 	/**

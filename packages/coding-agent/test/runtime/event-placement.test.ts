@@ -41,6 +41,7 @@ describe("every extension event has a placement (RT11)", () => {
 				"before_provider_request",
 				"context",
 				"context_with_system",
+				"external_message_admitted",
 				"held_wakes_released",
 				"input_disposition",
 				"message_start",

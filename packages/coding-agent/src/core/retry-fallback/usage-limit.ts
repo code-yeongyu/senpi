@@ -14,6 +14,8 @@ import { isBillingErrorMessage } from "./billing.ts";
 export type UsageLimitScope = "model" | "account";
 
 export class AccountUsageLimitError extends Error {
+	readonly code = "account_usage_limit";
+
 	/**
 	 * `families`: a no-family weekly limit confirmed on these families before it held the provider (senpi#5596).
 	 * `accountsOut`: a pooled provider's accounts, each with why it cannot serve (senpi#5590).

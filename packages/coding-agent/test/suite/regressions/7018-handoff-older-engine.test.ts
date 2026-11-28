@@ -12,7 +12,6 @@ import {
 	engineBuildIdentityFrom,
 } from "../../../src/core/engine-build-identity.ts";
 import { handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import { signalGeneration } from "../../../src/modes/rpc/host-stop.ts";
 import {
 	generationEnv,
@@ -30,6 +29,7 @@ import {
 	type HandoverRig,
 	startHandoverRig,
 } from "../../helpers/rpc-idle-handover-support.ts";
+import { probeSandboxHost } from "../../helpers/rpc-sandbox-host.ts";
 
 const OLDER: EngineBuildIdentity = engineBuildIdentityFrom({ version: "2000.1.1" });
 const NEWER: EngineBuildIdentity = engineBuildIdentityFrom({ version: "2999.1.1" });
@@ -62,7 +62,7 @@ async function rig(label: string): Promise<HandoverRig> {
 
 /** The host still serves the same generation, and the session opened on it still answers. */
 async function expectServing(host: HandoverRig, caller: JsonlPeer, sessionId: string): Promise<void> {
-	const after = await probeHost({ socket: host.qa.socket });
+	const after = await probeSandboxHost(host.qa);
 	expect(after?.instanceId).toBe(host.instanceId);
 	expect(after?.generation).toBe(host.generation);
 	expect(processAlive(host.firstPid)).toBe(true);
@@ -136,7 +136,7 @@ describe.skipIf(process.platform === "win32")("a handoff onto a newer engine", (
 
 		expect(result).toMatchObject({ action: "handoff" });
 		if (result.action === "handoff") pids.push(result.pid);
-		expect((await probeHost({ socket: host.qa.socket }))?.instanceId).not.toBe(host.instanceId);
+		expect((await probeSandboxHost(host.qa))?.instanceId).not.toBe(host.instanceId);
 	});
 
 	it("hands over to an idle-handover requester that allows the downgrade", async () => {

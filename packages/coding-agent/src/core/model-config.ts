@@ -492,17 +492,21 @@ export class ModelConfig {
 	private readonly disabledProviders: ReadonlySet<string>;
 	private readonly error: string | undefined;
 	private readonly warnings: readonly string[];
+	/** The models.json text this config was read from; undefined when there was no file to read. */
+	private readonly source: string | undefined;
 
 	private constructor(
 		providers: ReadonlyMap<string, ModelsJsonProvider>,
 		disabledProviders: ReadonlySet<string> = new Set(),
 		error?: string,
 		warnings: readonly string[] = [],
+		source?: string,
 	) {
 		this.providers = providers;
 		this.disabledProviders = disabledProviders;
 		this.error = error;
 		this.warnings = warnings;
+		this.source = source;
 	}
 
 	private static parse(content: string, path: string): ModelConfig {
@@ -514,6 +518,8 @@ export class ModelConfig {
 				new Map(),
 				new Set(),
 				`Failed to parse models.json: ${error instanceof Error ? error.message : error}\n\nFile: ${path}`,
+				[],
+				content,
 			);
 		}
 
@@ -558,7 +564,13 @@ export class ModelConfig {
 					.Errors(validationInput)
 					.map((error) => `  - ${formatValidationPath(error)}: ${error.message}`)
 					.join("\n") || "Unknown schema error";
-			return new ModelConfig(new Map(), new Set(), `Invalid models.json schema:\n${errors}\n\nFile: ${path}`);
+			return new ModelConfig(
+				new Map(),
+				new Set(),
+				`Invalid models.json schema:\n${errors}\n\nFile: ${path}`,
+				[],
+				content,
+			);
 		}
 
 		const config = parsed as ModelsJson;
@@ -575,7 +587,7 @@ export class ModelConfig {
 			providers.set(canonical, deepFreeze(retained));
 		}
 		const disabled = new Set((config.disabledProviders ?? []).map((id) => normalizeProviderId(id)));
-		return new ModelConfig(providers, disabled, undefined, fixedAddressBaseUrlNotices(providers));
+		return new ModelConfig(providers, disabled, undefined, fixedAddressBaseUrlNotices(providers), content);
 	}
 
 	/** The error models.json `content` would load with, or undefined when it is valid (senpi#2196). */
@@ -588,10 +600,16 @@ export class ModelConfig {
 		if (config.error !== undefined) return config;
 		const migration = migrateModelsJsonProviderIds(path, content);
 		if (migration.kind !== "failed") return config;
-		return new ModelConfig(config.providers, config.disabledProviders, undefined, [
-			...config.warnings,
-			`models.json uses renamed provider ids (${migration.renamed.join(", ")}) and could not be updated automatically: ${migration.reason}. They still work, but update the file to the new ids.`,
-		]);
+		return new ModelConfig(
+			config.providers,
+			config.disabledProviders,
+			undefined,
+			[
+				...config.warnings,
+				`models.json uses renamed provider ids (${migration.renamed.join(", ")}) and could not be updated automatically: ${migration.reason}. They still work, but update the file to the new ids.`,
+			],
+			config.source,
+		);
 	}
 
 	static async load(modelsJsonPath: string | undefined): Promise<ModelConfig> {
@@ -642,7 +660,12 @@ export class ModelConfig {
 	keepingDisabledProvidersOf(previous: ModelConfig): ModelConfig {
 		const disabled = new Set(previous.disabledProviders);
 		for (const [providerId, provider] of previous.providers) if (provider.disabled === true) disabled.add(providerId);
-		return new ModelConfig(this.providers, disabled, this.error, this.warnings);
+		return new ModelConfig(this.providers, disabled, this.error, this.warnings, this.source);
+	}
+
+	/** Whether both configs were read from the same models.json text, so reloading composes nothing new (senpi#7645). */
+	readsSameFileAs(other: ModelConfig): boolean {
+		return this.source === other.source;
 	}
 
 	getError(): string | undefined {

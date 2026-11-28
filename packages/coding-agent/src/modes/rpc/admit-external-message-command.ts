@@ -11,7 +11,8 @@
  * runs first, and an id the transcript already holds is answered `already_admitted` after a restart too.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
-import { writtenDeliveryIds } from "../../core/external-admission.ts";
+import { writtenDeliveryIds } from "../../core/delivery-ids.ts";
+import { MAX_HELD_PEER_DELIVERIES } from "../../core/engine-turn-hold-notices.ts";
 import type { ConnectionOrigin, InputTurnMark } from "../../core/turn-origin.ts";
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
 import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
@@ -34,6 +35,7 @@ export type AdmitExternalMessageAnswer =
 type AdmittingSession = Pick<AgentSession, "externalAdmission" | "sessionManager" | "settingsManager">;
 
 const SENDER_NOT_ALLOWED = "sender_not_allowed";
+const HELD_DELIVERIES_FULL = "held_deliveries_full";
 const DELEGATED_ORIGIN_UNKNOWN = "delegated_origin_unknown";
 const CANONICAL_TURN_ID = /^(0|[1-9]\d{0,15})$/;
 
@@ -104,6 +106,23 @@ export function admitExternalMessage(
 			turnMark: deliveryTurnMark(command, peer),
 		},
 	);
-	if (result.holds === undefined) return answer(result.kind, result.turn_epoch);
-	return { ok: true, data: { kind: result.kind, turnId: String(result.turn_epoch), holds: [...result.holds] } };
+	// Nothing was written past the cap, so the sender keeps the delivery (senpi#7588); the admission decides it for every
+	// entry point (senpi#7628), and the wire answers it as the refusal it has always been.
+	if (result.kind === "held_deliveries_full")
+		return {
+			ok: false,
+			refusal: {
+				message: `${HELD_DELIVERIES_FULL}: the session already holds ${MAX_HELD_PEER_DELIVERIES} peer deliveries while paused; resume it first`,
+				errorCode: HELD_DELIVERIES_FULL,
+			},
+		};
+	return {
+		ok: true,
+		data: {
+			kind: result.kind,
+			turnId: String(result.turn_epoch),
+			...(result.holds === undefined ? {} : { holds: [...result.holds] }),
+			...(result.engine_turn_cap === undefined ? {} : { engineTurnCap: result.engine_turn_cap }),
+		},
+	};
 }
