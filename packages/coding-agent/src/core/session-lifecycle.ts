@@ -14,6 +14,7 @@ import type {
 	LifecycleWaits,
 	SessionLifecycle,
 } from "./session-lifecycle-types.ts";
+import type { SessionEntry } from "./session-manager.ts";
 import type { TurnDeadlineKind } from "./turn-deadline.ts";
 import type { WorkCustodyRecord } from "./work-custody-record.ts";
 import { SessionWorkObligations } from "./work-obligations.ts";
@@ -27,6 +28,8 @@ export interface LifecycleRuntimeFacts {
 }
 
 export interface SessionLifecycleOptions extends LifecyclePersistence {
+	/** The restoration history; read by the constructor only, never kept (senpi#7603). */
+	readonly entries: readonly SessionEntry[];
 	readRuntime(): LifecycleRuntimeFacts;
 	appendChild(report: ChildLifecycleReport): void;
 	appendCustody(record: WorkCustodyRecord): void;
@@ -37,7 +40,7 @@ export class SessionLifecycleController {
 	readonly ledger: LifecycleLedger;
 	readonly obligations: SessionWorkObligations;
 	readonly children: LifecycleChildren;
-	private readonly options: SessionLifecycleOptions;
+	private readonly options: Omit<SessionLifecycleOptions, "entries">;
 	private idleBoundaryPassed = false;
 	private pendingHuman = false;
 	/** A host restart continues the engine-started run it cut short (senpi#7020); cleared when that run starts. */
@@ -56,15 +59,19 @@ export class SessionLifecycleController {
 	/** A run that ended before this process keeps exactly the stop its record carries; none is derived for it. */
 	private readonly restoredRunId: string | undefined;
 
-	constructor(options: SessionLifecycleOptions) {
+	// `entries` is destructured away so no closure below keeps the restoration history alive.
+	constructor({ entries, ...options }: SessionLifecycleOptions) {
 		this.options = options;
-		this.ledger = new LifecycleLedger({
-			...options,
-			append: (record) => {
-				this.obligations.flush();
-				options.append(record);
+		this.ledger = new LifecycleLedger(
+			{
+				...options,
+				append: (record) => {
+					this.obligations.flush();
+					options.append(record);
+				},
 			},
-		});
+			entries,
+		);
 		this.restoredRunId = this.ledger.runId;
 		if (this.ledger.lastTurnEnd)
 			this.liveness = {
@@ -78,21 +85,26 @@ export class SessionLifecycleController {
 				openWork: { kind: "none" },
 				expectations: [],
 			};
-		this.obligations = new SessionWorkObligations({
-			entries: options.entries,
-			append: (record) => options.appendCustody(record),
-			changed: () => this.recompute(),
-		});
-		this.children = new LifecycleChildren({
-			entries: options.entries,
-			append: (report) => options.appendChild(report),
-			changed: () => {
-				this.ownTask = this.children.reports.find(
-					(report) => report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId,
-				);
-				this.recompute();
+		this.obligations = new SessionWorkObligations(
+			{
+				append: (record) => options.appendCustody(record),
+				changed: () => this.recompute(),
 			},
-		});
+			entries,
+		);
+		this.children = new LifecycleChildren(
+			{
+				append: (report) => options.appendChild(report),
+				changed: () => {
+					this.ownTask = this.children.reports.find(
+						(report) =>
+							report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId,
+					);
+					this.recompute();
+				},
+			},
+			entries,
+		);
 		for (const report of this.children.reports) {
 			if (report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId)
 				this.ownTask = report;
