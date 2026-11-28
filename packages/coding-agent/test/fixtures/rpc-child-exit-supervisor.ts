@@ -1,5 +1,6 @@
 /** Real supervisor with a SIGTERM-resistant socket child and event-controlled exit observation. */
 import childProcess from "node:child_process";
+import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { mock } from "node:test";
@@ -19,10 +20,23 @@ function exitWhenLeaseEnds(fd: number): void {
 	lease.resume();
 	lease.unref();
 }
-if (mode === "host" || mode === "host-term" || mode === "host-drain" || mode === "host-drain-descendant") {
+if (
+	mode === "host" ||
+	mode === "host-term" ||
+	mode === "host-drain" ||
+	mode === "host-drain-descendant" ||
+	mode === "host-drain-early-close"
+) {
 	exitWhenLeaseEnds(HOST_LEASE_FD);
+	// senpi#7606: a dying process closes its descriptors before it is a zombie, so the supervisor can read the lifetime
+	// EOF while the child still runs. This host makes that order certain: the drain closes the lifetime slot (fd 3)
+	// only, and the host exits once its supervisor has judged it still running (SIGUSR2, sent below).
+	if (mode === "host-drain-early-close") {
+		process.on("SIGUSR1", () => fs.closeSync(3));
+		process.on("SIGUSR2", () => process.exit(0));
+	}
 	// A drained host with nothing to park leaves through its own clean exit, as the real host's idle path does.
-	if (mode !== "host" && mode !== "host-term") process.on("SIGUSR1", () => process.exit(0));
+	else if (mode !== "host" && mode !== "host-term") process.on("SIGUSR1", () => process.exit(0));
 	// A descendant that keeps the lifetime slot open past the host: EOF on it can never come. It holds the lease too.
 	if (mode === "host-drain-descendant") {
 		childProcess.spawn(
@@ -152,6 +166,17 @@ if (mode === "host" || mode === "host-term" || mode === "host-drain" || mode ===
 			return kill(pid, signal);
 		});
 	}
+	if (mode === "early-close-gate-exit") {
+		// senpi#7606: the host may exit only after the lifetime-EOF check judged it still running.
+		const writeSync = fs.writeSync;
+		mock.method(fs, "writeSync", (...args: unknown[]): unknown => {
+			const written: unknown = Reflect.apply(writeSync, fs, args);
+			const [fd, text] = args;
+			if (fd === 2 && typeof text === "string" && text.includes("closed its lifetime pipe but is still running"))
+				if (child?.pid !== undefined) process.kill(child.pid, "SIGUSR2");
+			return written;
+		});
+	}
 	syncBuiltinESMExports();
 	process.on("message", (message: unknown) => {
 		if (typeof message !== "object" || message === null || !("type" in message)) throw new Error("bad control");
@@ -173,9 +198,11 @@ if (mode === "host" || mode === "host-term" || mode === "host-drain" || mode ===
 			? "host-term"
 			: mode === "descendant-gate-exit"
 				? "host-drain-descendant"
-				: mode === "drain-gate-exit" || mode === "wrapped-gate-exit"
-					? "host-drain"
-					: "host";
+				: mode === "early-close-gate-exit"
+					? "host-drain-early-close"
+					: mode === "drain-gate-exit" || mode === "wrapped-gate-exit"
+						? "host-drain"
+						: "host";
 	// The real launch chain: the built CLI entry, relaunched isolated because it carries a runtime option.
 	const realCli = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
 	const launchCommand =
