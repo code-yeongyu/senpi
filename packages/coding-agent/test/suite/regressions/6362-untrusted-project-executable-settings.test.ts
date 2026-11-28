@@ -1,5 +1,5 @@
 // senpi#6362: settings that name an executable or a command line are honoured only from global settings or from a project
-// the person trusted. Project trust defaults to false for every settings reader that does not pass a trust decision.
+// the person trusted. A settings manager created without a trust decision uses the decision the person saved for the folder.
 // Security contract: each family below must not run a project-named program from an untrusted project, and must still run
 // it from a trusted one.
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -68,9 +68,15 @@ describe("settings that name an executable (senpi#6362)", () => {
 			undefined,
 			undefined,
 		]);
-		const reasons = untrusted.drainErrors().map((error) => error.error.message);
+		const ignored = untrusted.drainErrors();
+		const reasons = ignored.map((error) => error.error.message);
 		for (const key of EXECUTABLE_SETTING_PATHS)
 			expect(reasons.some((reason) => reason.includes(key) && reason.includes("not trusted"))).toBe(true);
+		// senpi#7633: each notice names the file as the project knows it, never by its absolute path.
+		for (const error of ignored) {
+			expect(error.error.message).toContain(join(".senpi", "settings.json"));
+			expect([error.path, error.error.message].join("\n")).not.toContain(r.project);
+		}
 
 		await r.trust();
 		const trusted = SettingsManager.create(r.project, r.agentDir);
