@@ -141,7 +141,7 @@ The `anthropic-subscription` provider routes LLM calls through the official [Cla
 - Settings (`anthropicSubscriptionProvider`):
   - `systemPromptMode` — controls how the system prompt is delivered. **`full`** (default) sends senpi's composed system prompt verbatim; the lane no longer rebuilds from the SDK `claude_code` preset, so all prompt regions (project rules, response-language instructions, etc.) reach the model. **`preset-append`** is the previous behaviour (deprecated, kept for one release; emits a one-time warning). **`override`** loads the system prompt from a file (`systemPromptFile`). The legacy `appendSystemPrompt` key still works: `false` → `preset-append`, `true`/unset → `full`; setting both keys makes `systemPromptMode` win and warns.
   - In `full` and `override` modes, `settingSources` defaults to `[]` on every lane because senpi's prompt already carries project context — loading the SDK's own CLAUDE.md would double-inject it. The CLI always prepends its own `"You are a Claude agent, built on Anthropic's Claude Agent SDK."` block, which senpi cannot suppress; `full` means the prompt is delivered intact, not that it is the only system-prompt text.
-  - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `compactionOwner` (`senpi` default | `sdk` hands compaction to Claude Code's native auto-compact), `systemPromptFile`, `enabled` (default `false`; gates the ambient lane only).
+  - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `accountStrategy` (`cache-affine` default | `fill-first` | `round-robin`), `weeklyResetTieBreak` (default `false`), `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `compactionOwner` (`senpi` default | `sdk` hands compaction to Claude Code's native auto-compact), `systemPromptFile`, `enabled` (default `false`; gates the ambient lane only).
 - **Environment overrides** (precedence: `env > project settings > global settings > default`; no new CLI flags):
 
   | Variable | Purpose |
@@ -513,13 +513,23 @@ The Claude subscription lane owns its account selection separately. Set its stra
 ```json
 {
   "anthropicSubscriptionProvider": {
-    "accountStrategy": "round-robin"
+    "accountStrategy": "round-robin",
+    "weeklyResetTieBreak": true
   }
 }
 ```
 
 Project settings override global settings. The same three values and default apply.
 Claude also retains a usable resident session's account to preserve its prompt cache.
+`weeklyResetTieBreak` is opt-in and independent of `accountStrategy`. After any of the
+three strategies and the 95% headroom preference, it may swap only the first two usable
+accounts for a new session when no stored account order is configured, all live usage
+windows are within five whole percentage points, both readings are at most 15 minutes old,
+and the second account's weekly window resets within 24 hours and earlier than the first
+account's. A missing or expired window counts as 0%; when an account reports several weekly
+windows, the highest usage wins, then the earliest reset. No account with a live window at
+95% or above is promoted. Pins, resident sessions, non-empty stored account order, stale or
+missing weekly data, and every other position keep their existing order.
 
 All three strategies prefer accounts whose reported subscription windows are below 95% usage.
 Missing usage data and windows whose reset time has passed do not cause a skip. If every usable

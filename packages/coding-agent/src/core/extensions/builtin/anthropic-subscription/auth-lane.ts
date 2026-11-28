@@ -340,6 +340,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 						: { pinSource: pool.pinSource }),
 				accountFallback: input.providerSettings.accountFallback,
 				accountStrategy: input.providerSettings.accountStrategy,
+				weeklyResetTieBreak: input.providerSettings.weeklyResetTieBreak,
 				...(pool.accountOrder === undefined ? {} : { accountOrder: pool.accountOrder }),
 				...(input.preferredAccount === undefined ? {} : { preferredAccount: input.preferredAccount }),
 				now: activeBoundary.now(),

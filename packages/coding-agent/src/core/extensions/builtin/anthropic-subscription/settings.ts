@@ -38,6 +38,8 @@ export interface AnthropicSubscriptionProviderSettings {
 	/** Allow automatic switching to another managed account after failure. Defaults to true. */
 	readonly accountFallback?: boolean;
 	readonly accountStrategy?: AccountStrategy;
+	/** Break new-session weekly-usage ties toward capacity that resets within 24 hours. Defaults to false. */
+	readonly weeklyResetTieBreak?: boolean;
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
 	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
 }
@@ -132,6 +134,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 	const pinnedAccount = parseNonEmptyString(value.pinnedAccount);
 	const accountFallback = typeof value.accountFallback === "boolean" ? value.accountFallback : undefined;
 	const accountStrategy = parseAccountStrategy(value.accountStrategy, "anthropicSubscriptionProvider.accountStrategy");
+	const weeklyResetTieBreak = typeof value.weeklyResetTieBreak === "boolean" ? value.weeklyResetTieBreak : undefined;
 	const tokenInjection = parseTokenInjection(value.tokenInjection);
 	const compactionOwner = parseCompactionOwner(value.compactionOwner);
 	return {
@@ -145,6 +148,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
 		...(accountFallback !== undefined ? { accountFallback } : {}),
 		...(accountStrategy !== undefined ? { accountStrategy } : {}),
+		...(weeklyResetTieBreak !== undefined ? { weeklyResetTieBreak } : {}),
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
 		...(compactionOwner !== undefined ? { compactionOwner } : {}),
 	};
