@@ -2,7 +2,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { expect, it } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { startHost } from "../suite/rpc-delegated-host-support.ts";
-import { ExternalAdmission } from "../../src/core/external-admission.ts";
+import { ExternalAdmission, type ExternalAdmissionPort } from "../../src/core/external-admission.ts";
 
 it("a direct queued admission's replay reports its current index rather than the tail", () => {
 	const admission = new ExternalAdmission({
@@ -16,6 +16,30 @@ it("a direct queued admission's replay reports its current index rather than the
 	expect(send("a")).toMatchObject({ kind: "queued", queue_position: 1 });
 	expect(send("b")).toMatchObject({ kind: "queued", queue_position: 2 });
 	expect(send("a")).toMatchObject({ kind: "already_admitted", queue_position: 1 });
+});
+
+// senpi#7590 on top of senpi#7588: a held delivery leaves `pending` once its notice is written, yet stays first in line.
+it("a held delivery keeps its place once its notice is written, so the next one is told the place behind it", () => {
+	const held: string[] = [];
+	const started: Parameters<ExternalAdmissionPort["start"]>[0][] = [];
+	const admission = new ExternalAdmission({
+		isBusy: () => false,
+		heldBy: () => ["session_hold"],
+		cappedBy: () => undefined,
+		enqueue: () => {},
+		start: async (message) => {
+			started.push(message);
+		},
+		heldDeliveries: () => held,
+		projectedHold: (depth) => ({ kind: "session_hold", key: "session_hold", queueDepth: depth }),
+	});
+	const send = (delivery_id: string) => admission.admit({ delivery_id, text: delivery_id, deliverAs: "followUp" });
+	expect(send("a")).toMatchObject({ kind: "held", queue_position: 1, hold: { queueDepth: 1 } });
+	// The session writes a's notice: "a" is now held rather than pending.
+	held.push("a");
+	admission.observePersisted(started[0]);
+	expect(send("b")).toMatchObject({ kind: "held", queue_position: 2, hold: { queueDepth: 2 } });
+	expect(send("a")).toMatchObject({ kind: "already_admitted", queue_position: 1, hold: { queueDepth: 2 } });
 });
 
 it("answers a pending id's own position, including on replay, without exposing private hold fields", async () => {

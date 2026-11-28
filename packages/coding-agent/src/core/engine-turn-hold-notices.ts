@@ -78,6 +78,12 @@ export class EngineTurnHoldNotices {
 		return this.wakes[SESSION_CONTROL_DELIVERY_TYPE]?.items.size ?? 0;
 	}
 
+	/** The held peer deliveries' ids, oldest first: the order a resume takes them in (senpi#7588). */
+	get peerDeliveryIds(): string[] {
+		const items = this.wakes[SESSION_CONTROL_DELIVERY_TYPE]?.items;
+		return items ? [...items.values()].flatMap((message) => peerMessageDeliveryId(message) ?? []) : [];
+	}
+
 	get noticeCount(): number {
 		return Object.values(this.sources).reduce((sum, count) => sum + count, 0);
 	}

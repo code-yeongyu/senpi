@@ -36,6 +36,8 @@ export type SessionControlDeliveryMessage = CustomMessage<SessionControlDelivery
 
 export interface ExternalAdmissionPort {
 	readonly projectedHold?: (depth: number) => ExternalAdmissionResult["hold"];
+	/** The held peer deliveries' ids still waiting for a resume, oldest first (senpi#7588); none when omitted. */
+	readonly heldDeliveries?: () => readonly string[];
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
 	readonly isBusy: () => boolean;
 	/** The holds a delivery cannot release, so a start is kept as a held notice instead (senpi#6490); empty when none. */
@@ -227,19 +229,17 @@ export class ExternalAdmission {
 		return { kind: "queued", turn_epoch, ...this.position(id) };
 	}
 
-	/** Snapshot only the selected id and count, never other senders' identities. */
+	/**
+	 * Snapshot only the selected id and count, never other senders' identities. The line is the held deliveries a resume
+	 * takes, oldest first, then the pending ones: a held delivery leaves `pending` once its notice is written, yet keeps
+	 * its place, and while a session holds deliveries every new admission is held, so a pending one is newer than them.
+	 */
 	position(id: string): { queue_position: number | null; hold?: ExternalAdmissionResult["hold"] } {
 		this.releaseRestored();
-		let queue_position: number | null = null;
-		let index = 0;
-		for (const key of this.pending.keys()) {
-			index++;
-			if (key === id) {
-				queue_position = index;
-				break;
-			}
-		}
-		const hold = queue_position === null ? undefined : this.port.projectedHold?.(this.pending.size);
+		const line = [...new Set([...(this.port.heldDeliveries?.() ?? []), ...this.pending.keys()])];
+		const index = line.indexOf(id);
+		const queue_position = index === -1 ? null : index + 1;
+		const hold = queue_position === null ? undefined : this.port.projectedHold?.(line.length);
 		return { queue_position, ...(hold && { hold }) };
 	}
 

@@ -85,11 +85,22 @@ export function admitExternalMessage(
 		return { ok: false, refusal: { message: admission.closed, errorCode: RPC_ERROR_SESSION_CLOSING } };
 	const answer = (kind: RpcAdmitExternalMessageReply["kind"], epoch: number): AdmitExternalMessageAnswer => ({
 		ok: true,
-		data: { kind, turnId: String(epoch), ...(kind === "already_admitted" && { queuePosition: null }) },
+		data: { kind, turnId: String(epoch) },
 	});
 	const id = ledgerId(command.deliveryId, origin);
-	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id))
-		return answer("already_admitted", admission.turnEpoch);
+	// A resend of a written id, a held notice's included (senpi#7588), still answers its own place while it waits (senpi#7590).
+	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id)) {
+		const { queue_position, hold } = admission.position(id);
+		return {
+			ok: true,
+			data: {
+				kind: "already_admitted",
+				turnId: String(admission.turnEpoch),
+				queuePosition: queue_position,
+				...(hold && { hold }),
+			},
+		};
+	}
 	// Nothing is written past the cap, so the sender keeps the delivery; an id already admitted still answers so (senpi#7588).
 	const admitted = admission.list();
 	if (
