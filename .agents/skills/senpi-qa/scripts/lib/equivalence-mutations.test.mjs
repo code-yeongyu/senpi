@@ -24,9 +24,10 @@ const PATCH_DIR = join(here, "..", "..", "scenarios", "fused-equivalence", "muta
 const REPO = join(here, "..", "..", "..", "..", "..");
 const CONTEXT = { caseIds: cases.map((c) => c.id), patchDir: PATCH_DIR, tuiCaseIds: TUI_CASE_IDS };
 
-/** Plan §6.4 "Mutation evidence (P0-05d)": the N14 rows plus the E25 and E30 rows. */
+/** Plan §6.4 "Mutation evidence (P0-05d)": the N14 rows plus the E25 and E30 rows, and VER-E19-RAW's one-byte row. */
 const PLAN_ROWS = [
 	"dropped prompt segment",
+	"one-byte change in a fixed prompt sentence",
 	"swapped model",
 	"dropped declaration",
 	"dropped custom header",

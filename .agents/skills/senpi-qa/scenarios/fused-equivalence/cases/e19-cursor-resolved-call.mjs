@@ -7,8 +7,11 @@
 // decoded client frames and the request headers) instead of the fake model server. Every client frame is decoded in
 // full with the generated schema (the shared wire log keeps only a 240-character prefix): the runRequest is what senpi
 // sends to Cursor, so its whole message is O1. Its content-addressed blob ids hash the prompt (sandbox path, date), so
-// the normalizer maps them one-to-one by key like every other id. The client's run-level heartbeat frames are
-// keep-alives on a timer, not behavior, so they are left out of O1.
+// the normalizer maps them one-to-one by key like every other id. VER-E19-RAW: before the exec, the backend fetches
+// every named blob over the KV channel; O1's `blobs` holds each blob's raw-hash verdict (sha256 of the served bytes
+// against the raw id) and the root prompt blobs' content (lib/equivalence-cursor-blobs.mjs). The KV replies carry the
+// raw bytes, so they are observed only through `blobs`. The client's run-level heartbeat frames are keep-alives on a
+// timer, not behavior, so they are left out of O1.
 import { randomUUID } from "node:crypto";
 import { fromBinary, toJson } from "@bufbuild/protobuf";
 import { writeFileSync } from "node:fs";
@@ -21,9 +24,11 @@ import {
 import { startRunServer } from "../../../scripts/scenarios/cursor-exec-lifecycle/run-server.mjs";
 import { playReadLifecycle } from "../../../scripts/scenarios/cursor-exec-lifecycle/scenarios.mjs";
 import { loadCursorWire, RUN_PATH } from "../../../scripts/scenarios/cursor-exec-lifecycle/wire.mjs";
+import { fetchRunRequestBlobs } from "../../../scripts/lib/equivalence-cursor-blobs.mjs";
 import { WITHOUT_O8 } from "./support/observables.mjs";
 
-const TIMER_FRAMES = new Set(["clientHeartbeat"]);
+/** Frames left out of O1's frame list: timer keep-alives, and the KV replies `blobs` observes. */
+const UNLISTED_FRAMES = new Set(["clientHeartbeat", "kvClientMessage"]);
 
 export default {
 	id: "E19",
@@ -47,6 +52,7 @@ export default {
 		run.extraRoots.push({ prefix: origin, token: "<cursor-server>" }, { prefix: token, token: "<cursor-token>" });
 		seedCursorProvider(run.box, { baseUrl: origin, token });
 		writeFileSync(join(run.box.agentDir, "settings.json"), "{}\n");
+		let blobs;
 		run.args = run.args.map((arg, index, all) =>
 			all[index - 1] === "--provider" ? QA_PROVIDER : all[index - 1] === "--model" ? QA_MODEL : arg,
 		);
@@ -56,17 +62,23 @@ export default {
 				url: RUN_PATH,
 				headers: cursor.headersReceipt ?? {},
 				body: {
-					frames: cursor.log.entries.filter((e) => !TIMER_FRAMES.has(e.case)).map(({ tMs, i, ...frame }) => frame),
+					frames: cursor.log.entries.filter((e) => !UNLISTED_FRAMES.has(e.case)).map(({ tMs, i, ...frame }) => frame),
+					blobs,
 				},
 			},
 		];
 		await run.open();
-		const play = playReadLifecycle(cursor, wire, {
-			id: 101,
-			path: join(run.box.cwd, "cursor-target.txt"),
-			toolCallId: "call-cursor-read",
-			finalText: "E19-CURSOR-DONE",
-		}).catch((error) => error);
+		const play = fetchRunRequestBlobs(cursor, wire)
+			.then((observed) => {
+				blobs = observed;
+				return playReadLifecycle(cursor, wire, {
+					id: 101,
+					path: join(run.box.cwd, "cursor-target.txt"),
+					toolCallId: "call-cursor-read",
+					finalText: "E19-CURSOR-DONE",
+				});
+			})
+			.catch((error) => error);
 		await run.prompt("read the cursor target");
 		const outcome = await play;
 		if (outcome instanceof Error) throw outcome;
