@@ -25,6 +25,7 @@ import { readDecisionPresetOverride, registerPermissionPresetReader } from "./pr
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
+import { assertPermissionSettingsLoaded } from "./settings-load-guard.ts";
 import { appendApproved } from "./storage.ts";
 import {
 	CorrectedError,
@@ -251,6 +252,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			);
 		}
 
+		assertPermissionSettingsLoaded(settingsManager);
 		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset, agentDir);
 		staticRuleset = loadedSettings.staticRuleset;
 		activePreset = loadedSettings.preset;
