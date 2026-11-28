@@ -1165,6 +1165,7 @@ describe("goal continuation while a monitor is active", () => {
 						lastTurnStuckOnContextOverflow: false,
 						recentNormalizedOutputHashes: [],
 						toollessContinuationStreak: 0,
+						liveChannelToollessStreak: 0,
 						continuationPending: false,
 					},
 					content: () => "Continue",
