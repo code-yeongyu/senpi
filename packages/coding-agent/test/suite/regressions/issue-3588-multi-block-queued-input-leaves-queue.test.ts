@@ -75,6 +75,37 @@ async function startWaitingRun() {
 const EMPTY: QueueView = { steering: [], followUp: [], pending: 0, queuedInputs: 0 };
 
 describe("senpi#3588 multi-block queued input leaves the queue when it starts", () => {
+	it("removes the delivered image-only steer by identity when native delivery order differs (#4064)", async () => {
+		const { session, run, release } = await startWaitingRun();
+		const remaining: string[][] = [];
+		session.subscribe((event) => {
+			if (
+				event.type === "message_start" &&
+				event.message.role === "user" &&
+				Array.isArray(event.message.content) &&
+				event.message.content.some((part) => part.type === "image")
+			) {
+				remaining.push(session.getQueuedInputs().map((record) => record.queuedId));
+			}
+		});
+		try {
+			for (const data of ["YQ==", "Yg=="]) {
+				await session.steer("", [{ type: "image", data, mimeType: "image/png" }]);
+			}
+			const firstId = session.getQueuedInputs()[0]?.queuedId;
+			const firstMessage = session.agent.peekQueuedMessages({ all: true })[0];
+			if (!firstId || !firstMessage) throw new Error("first image was not queued");
+			expect(session.agent.removeQueuedMessage(firstMessage)).toBe(true);
+			session.agent.steer(firstMessage);
+			release();
+			await run;
+			expect(remaining).toEqual([[firstId], []]);
+		} finally {
+			release();
+			await run;
+		}
+	});
+
 	it("an extension steer (the async ask-user answer shape) is delivered with its blocks and dequeued", async () => {
 		const { session, run, release, view, atDelivery, delivered } = await startWaitingRun();
 		await session.sendUserMessage(
