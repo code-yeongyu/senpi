@@ -2,6 +2,7 @@ import type { AgentToolResult } from "@code-yeongyu/senpi";
 import type { EvalDetachedCellSnapshot, EvalDetachedCellState } from "./detached-cell-manager.ts";
 import { resultForDetachedState } from "./detached-eval-result.ts";
 import { EvalKernelResetRefusedError } from "./eval-kernel-reset-refused-error.ts";
+import type { QueuedWait } from "./queued-wait.ts";
 import type { EvalKernel, EvalToolDetails, EvalToolInput } from "./types.ts";
 
 export interface DetachedCellResultSource {
@@ -14,6 +15,7 @@ export interface DetachedCellResultSource {
 	kernel: EvalKernel | undefined;
 	stateRetained: boolean | undefined;
 	interruptNote?: string | undefined;
+	waitingFor?: QueuedWait | undefined;
 	liveResult: (() => AgentToolResult<EvalToolDetails>) | undefined;
 	terminalResult: AgentToolResult<EvalToolDetails> | undefined;
 	hardLimited?: boolean;
@@ -26,13 +28,15 @@ export function snapshotDetachedCell(cell: DetachedCellResultSource, nowMs: numb
 	const durationMs = cell.runStartedAtMs === undefined ? 0 : Math.max(0, nowMs - cell.runStartedAtMs);
 	const state = cell.detached && (cell.state === "queued" || cell.state === "running") ? "detached" : cell.state;
 	const queuedBehind = queuedBehindCell(cell);
-	const result = resultForDetachedState(currentDetachedResult(cell), state, durationMs, queuedBehind);
+	const waitingFor = queuedBehind?.length === 0 ? cell.waitingFor : undefined;
+	const result = resultForDetachedState(currentDetachedResult(cell), state, durationMs, queuedBehind, waitingFor);
 	return {
 		cellId: cell.cellId,
 		language: cell.input.language,
 		startedAtMs: cell.startedAtMs,
 		state,
 		...(queuedBehind === undefined ? {} : { queuedBehind }),
+		...(waitingFor === undefined ? {} : { waitingFor }),
 		outputTail: detachedOutputTail(result),
 		result,
 		stateRetained: cell.stateRetained,

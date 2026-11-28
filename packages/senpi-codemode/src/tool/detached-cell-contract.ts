@@ -1,6 +1,7 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import type { WakeSourceState } from "../extension/wake-source-state.ts";
 import type { EvalImageContent } from "./image-resize.ts";
+import type { QueuedWait } from "./queued-wait.ts";
 import type { EvalLanguage, EvalToolDetails } from "./types.ts";
 
 export type EvalDetachedCellState = "queued" | "running" | "detached" | "completed" | "failed" | "cancelled";
@@ -11,6 +12,8 @@ export interface EvalDetachedCellSnapshot {
 	readonly startedAtMs: number;
 	readonly state: EvalDetachedCellState;
 	readonly queuedBehind?: readonly string[];
+	/** Set when the cell is queued with nothing ahead of it and waits on something other than its kernel. */
+	readonly waitingFor?: QueuedWait;
 	readonly outputTail: string;
 	readonly result: AgentToolResult<EvalToolDetails>;
 	readonly stateRetained: boolean | undefined;

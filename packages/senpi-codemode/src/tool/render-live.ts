@@ -12,6 +12,7 @@ import {
 	spinner,
 	style,
 } from "./render-blocks.ts";
+import { queuedWaitPhrase } from "./queued-wait.ts";
 import { formatThroughputBadge } from "./render-status.ts";
 import { cellOutputSection, cellStatusSection } from "./render-tail.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
@@ -178,7 +179,7 @@ export function cellHeader(cell: EvalCellResult, environment: RenderEnvironment,
 	if (cell.queuedBehind !== undefined && cell.queuedBehind.length > 0)
 		segments.push(`queued behind ${cell.queuedBehind.map(sanitizeTerminalLabel).join(", ")}`);
 	else if (cell.queuedBehind !== undefined && cell.status === "queued")
-		segments.push(`waiting for the ${cell.language} kernel to be ready`);
+		segments.push(queuedWaitPhrase(cell.language, cell.waitingFor));
 	const throughputBadge = badges.throughput === undefined ? undefined : formatThroughputBadge(badges.throughput);
 	if (throughputBadge !== undefined) segments.push(throughputBadge);
 	if (runtimeBadge !== "") segments.push(runtimeBadge.trimStart());

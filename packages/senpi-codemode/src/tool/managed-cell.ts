@@ -1,6 +1,7 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { type CellDeadlineExpiry, CellDeadlines } from "./cell-deadlines.ts";
 import type { EvalDetachedCellSnapshot, EvalDetachedCellState } from "./detached-cell-contract.ts";
+import type { QueuedWait } from "./queued-wait.ts";
 import type { EvalKernel, EvalToolDetails, EvalToolInput } from "./types.ts";
 
 export type LiveResultProvider = () => AgentToolResult<EvalToolDetails>;
@@ -18,6 +19,7 @@ export type ManagedCell = {
 	kernel: EvalKernel | undefined;
 	stateRetained: boolean | undefined;
 	interruptNote: string | undefined;
+	waitingFor: QueuedWait | undefined;
 	/** Holds the completion notification until the interrupt has reported whether kernel state survived. */
 	interruptOutcome: PromiseWithResolvers<void> | undefined;
 	liveResult: LiveResultProvider | undefined;
@@ -68,6 +70,7 @@ export function createManagedCell(init: ManagedCellInit): ManagedCell {
 		kernel: undefined,
 		stateRetained: undefined,
 		interruptNote: undefined,
+		waitingFor: undefined,
 		interruptOutcome: undefined,
 		liveResult: undefined,
 		terminalResult: undefined,
