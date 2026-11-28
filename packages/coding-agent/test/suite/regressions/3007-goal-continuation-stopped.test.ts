@@ -59,6 +59,7 @@ async function fixture() {
 		consecutiveLengthRecoveries: 0,
 		recentNormalizedOutputHashes: [],
 		toollessContinuationStreak: 0,
+		idleReplyStreak: 0,
 		continuationPending: false,
 		lastTurnStuckOnContextOverflow: false,
 	};
@@ -103,6 +104,7 @@ describe("senpi#3007 goal stop decisions", () => {
 		await queueGoalContinuation(f.pi, f.ctx, stopped, {
 			continuationPending: false,
 			markContinuationPending: () => {},
+			idleReplyStreak: 0,
 		});
 		expect(f.harness.sent).toEqual([]);
 		expect(goalLiveElapsedSeconds(stopped, 110_000, 900_000)).toBe(17);

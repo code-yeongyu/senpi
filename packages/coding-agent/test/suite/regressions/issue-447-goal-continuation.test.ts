@@ -58,11 +58,34 @@ async function createActiveGoal(
 async function runContinuationTurn(
 	harness: ReturnType<typeof createGoalHarness>,
 	ctx: ExtensionContext,
-	message: AgentMessage,
+	message: AgentMessage | readonly AgentMessage[],
 	willRetry?: boolean,
 ): Promise<void> {
+	const messages = "role" in message ? [message] : [...message];
 	await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
-	await runGoalHandlers(harness.handlers, "agent_end", { type: "agent_end", messages: [message], willRetry }, ctx);
+	await runGoalHandlers(harness.handlers, "agent_end", { type: "agent_end", messages, willRetry }, ctx);
+}
+
+function editStepMessages(turn: number): AgentMessage[] {
+	const final = cleanAssistantStopWithText(`completed distinct step ${turn}`);
+	if (final.role !== "assistant") throw new Error("Expected an assistant message");
+	const toolCallId = `issue-447-edit-${turn}`;
+	return [
+		{
+			...final,
+			content: [{ type: "toolCall", id: toolCallId, name: "edit", arguments: { path: `src/step-${turn}.ts` } }],
+			stopReason: "toolUse",
+		},
+		{
+			role: "toolResult",
+			toolCallId,
+			toolName: "edit",
+			content: [{ type: "text", text: `Edited src/step-${turn}.ts` }],
+			isError: false,
+			timestamp: final.timestamp,
+		},
+		final,
+	];
 }
 
 function continuationEntries(count: number): SessionEntry[] {
@@ -104,7 +127,7 @@ describe("issue #447: goal continuation guardrails", () => {
 
 		for (let turn = 1; turn <= 50; turn++) {
 			const promptsBeforeTurn = harness.sent.length;
-			await runContinuationTurn(harness, ctx, cleanAssistantStopWithText(`completed distinct step ${turn}`));
+			await runContinuationTurn(harness, ctx, editStepMessages(turn));
 
 			// agent_start consumes the previous hidden follow-up. At most one new follow-up
 			// may be pending after the clean end, even while the goal remains active.
