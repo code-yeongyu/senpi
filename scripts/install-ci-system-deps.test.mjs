@@ -11,6 +11,18 @@ import { parse } from "yaml";
 const installer = fileURLToPath(new URL("./install-ci-system-deps.sh", import.meta.url));
 const action = parse(readFileSync(new URL("../.github/actions/install-ci-system-deps/action.yml", import.meta.url), "utf8"));
 
+test("release provisioning bounds mirror and package-lock waits on every release path", () => {
+	const workflow = parse(readFileSync(new URL("../.github/workflows/publish-npm.yml", import.meta.url), "utf8"));
+	for (const job of ["release", "forced-rest", "forced-shard"]) {
+		const step = workflow.jobs[job].steps.find(({ name }) => name === "Provision ripgrep and fd");
+		assert.ok(step, job);
+		assert.ok(step["timeout-minutes"] > 0 && step["timeout-minutes"] <= 5, `${job}: provisioning deadline`);
+		for (const option of ["Acquire::Retries", "Acquire::http::Timeout", "Acquire::https::Timeout", "DPkg::Lock::Timeout"]) {
+			assert.match(step.run, new RegExp(`${option}=\\d+`), `${job}: ${option}`);
+		}
+	}
+});
+
 const prelude = `#!${process.execPath}
 const fs = require("node:fs");
 const path = require("node:path");
