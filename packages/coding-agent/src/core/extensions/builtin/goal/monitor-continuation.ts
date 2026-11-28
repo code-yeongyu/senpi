@@ -106,6 +106,8 @@ export class MonitorAwareGoalContinuation {
 	#ctx: ExtensionContext | undefined;
 	#goal: Goal | null = null;
 	#timer: ReturnType<typeof setTimeout> | undefined;
+	#deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+	#timerGeneration = 0;
 	#scheduledContinuationKind: DelayedContinuationKind | undefined;
 	#armedDrainFire = false;
 	#channelStateUnsubscribers: Array<() => void> = [];
@@ -203,6 +205,9 @@ export class MonitorAwareGoalContinuation {
 
 	async afterAgentEnd(options: AgentEndOptions): Promise<Goal | null> {
 		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
+		if (this.#scheduledContinuationKind !== undefined && this.#scheduledContinuationKind !== "monitor") {
+			this.#cancelTimer();
+		}
 		this.#providerRetryAttempts = 0;
 		this.#limitWait = false;
 		this.#limitWakes = 0;
@@ -315,6 +320,15 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	async afterAgentSettled(fallbackExhausted?: { resumeAt?: number }): Promise<Goal | null | undefined> {
+		const kind = this.#scheduledContinuationKind;
+		if (
+			kind !== undefined &&
+			this.#scheduledDueAtMs !== undefined &&
+			this.#scheduledDueAtMs <= Date.now() &&
+			this.#directInputHolds.size === 0
+		) {
+			await this.#continueIfEligible(kind, this.#armedDrainFire);
+		}
 		const pendingSystem = this.#pendingSystemRecovery;
 		const pendingProvider = this.#pendingProviderRecovery;
 		this.#pendingSystemRecovery = undefined;
@@ -445,8 +459,7 @@ export class MonitorAwareGoalContinuation {
 			totalMs: this.#scheduledDelayMs ?? GOAL_USER_GRACE_DELAY_MS,
 			drainFire: false,
 		};
-		clearTimeout(this.#timer);
-		this.#timer = undefined;
+		this.#clearArmedTimers();
 		this.#scheduledDueAtMs = undefined;
 		this.#waitTicker?.stop();
 	}
@@ -471,6 +484,12 @@ export class MonitorAwareGoalContinuation {
 		this.#cancelTimer();
 		this.#pendingProviderRecovery = undefined;
 		this.#endedTurnWasUserInitiated = true;
+		this.#resetContinuationState();
+	}
+
+	/** Cancel parked work before asynchronous user-abort accounting can yield. */
+	cancelWait(): void {
+		this.#cancelTimer();
 		this.#resetContinuationState();
 	}
 
@@ -579,6 +598,8 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	#armTimer(kind: DelayedContinuationKind, delayMs: number, totalMs: number, drainFire = false): void {
+		this.#clearArmedTimers();
+		const generation = this.#timerGeneration;
 		this.#scheduledDueAtMs = Date.now() + delayMs;
 		this.#armedDrainFire = drainFire;
 		const ctx = this.#ctx;
@@ -590,21 +611,42 @@ export class MonitorAwareGoalContinuation {
 				channelCounts: this.#wakeSourceSnapshot(),
 			});
 		}
-		this.#timer = setTimeout(() => {
-			void this.#continueIfEligible(kind, drainFire).catch((error: unknown) => {
-				// Runs from a bare setTimeout: anything thrown here escapes as an
-				// uncaughtException and kills the session. A retired ctx cannot be
-				// notified, and its own staleness is the expected cause of this
-				// rejection after a session replacement, so drop it quietly.
-				if (isStaleExtensionContextError(error) || !this.#ctxHasUI()) return;
-				const message = error instanceof Error ? error.message : String(error);
-				this.#ctx?.ui.notify(`Goal continuation delivery failed: ${message}`, "error");
-			});
-		}, delayMs);
+		let running = false;
+		const fire = () => {
+			if (generation !== this.#timerGeneration || running) return;
+			running = true;
+			void this.#continueIfEligible(kind, drainFire)
+				.catch((error: unknown) => {
+					if (generation === this.#timerGeneration) this.#cancelTimer();
+					// Runs from a bare setTimeout: anything thrown here escapes as an
+					// uncaughtException and kills the session. A retired ctx cannot be
+					// notified, and its own staleness is the expected cause of this
+					// rejection after a session replacement, so drop it quietly.
+					if (isStaleExtensionContextError(error) || !this.#ctxHasUI()) return;
+					const message = error instanceof Error ? error.message : String(error);
+					this.#ctx?.ui.notify(`Goal continuation delivery failed: ${message}`, "error");
+				})
+				.finally(() => {
+					running = false;
+				});
+		};
+		this.#timer = setTimeout(fire, delayMs);
+		// Independently armed: losing the primary callback must not lose the wait's deadline (#4050).
+		// A busy session retains its due work for agent_settled instead of scheduling over an active turn.
+		this.#deadlineTimer = setTimeout(fire, delayMs + 1_000);
 	}
 
 	async #continueIfEligible(kind: DelayedContinuationKind, drainFire = false): Promise<void> {
-		this.#timer = undefined;
+		const ctx = this.#ctx;
+		const goal = this.#goal;
+		if (ctx === undefined || goal?.status !== "active") {
+			this.#cancelTimer();
+			return;
+		}
+		// This callback can race the end of a turn. Do not consume its only recovery state on a decline:
+		// the independent deadline retries once, and agent_settled retries as soon as the run is idle.
+		if (!ctx.isIdle() || ctx.hasPendingMessages() || this.#directInputHolds.size > 0) return;
+		this.#clearArmedTimers();
 		this.#scheduledDueAtMs = undefined;
 		this.#scheduledContinuationKind = undefined;
 		this.#publish(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: false, kind });
@@ -625,9 +667,6 @@ export class MonitorAwareGoalContinuation {
 		this.#scheduledCache = undefined;
 		this.#scheduledDelayMs = undefined;
 		this.#scheduledCacheWarmIteration = undefined;
-		const ctx = this.#ctx;
-		const goal = this.#goal;
-		if (ctx === undefined || goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
 		if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined) return;
 		if (kind === "monitor" && this.#activeWakeSourceCount() === 0 && !drainFire) return;
 		const admission = await this.#admitAndQueue(
@@ -889,8 +928,7 @@ export class MonitorAwareGoalContinuation {
 			};
 			return;
 		}
-		if (this.#timer !== undefined) clearTimeout(this.#timer);
-		this.#timer = undefined;
+		this.#clearArmedTimers();
 		this.#scheduledDueAtMs = undefined;
 		this.#waitTicker?.stop();
 		this.#armTimer("monitor", 1_000, 1_000, true);
@@ -945,13 +983,20 @@ export class MonitorAwareGoalContinuation {
 		if (this.#heldTimer !== undefined) return { fired: false, reason: "held" };
 		const kind = this.#scheduledContinuationKind;
 		if (this.#timer === undefined || kind === undefined) return { fired: false, reason: "not_armed" };
-		clearTimeout(this.#timer);
 		await this.#continueIfEligible(kind, this.#armedDrainFire);
 		return { fired: true, kind };
 	}
 
 	#publish(name: string, data: unknown): void {
 		publishGoalContinuationEvent(this.#pi, name, data);
+	}
+
+	#clearArmedTimers(): void {
+		this.#timerGeneration += 1;
+		if (this.#timer !== undefined) clearTimeout(this.#timer);
+		if (this.#deadlineTimer !== undefined) clearTimeout(this.#deadlineTimer);
+		this.#timer = undefined;
+		this.#deadlineTimer = undefined;
 	}
 
 	#cancelTimer(): void {
@@ -962,8 +1007,7 @@ export class MonitorAwareGoalContinuation {
 		this.#scheduledDelayMs = undefined;
 		this.#scheduledCacheWarmIteration = undefined;
 		this.#heldTimer = undefined;
-		if (this.#timer !== undefined) clearTimeout(this.#timer);
-		this.#timer = undefined;
+		this.#clearArmedTimers();
 		this.#scheduledContinuationKind = undefined;
 		if (kind !== undefined) this.#publish(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: false, kind });
 		this.#waitTicker?.stop();

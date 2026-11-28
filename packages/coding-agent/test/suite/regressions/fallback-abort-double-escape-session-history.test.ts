@@ -44,6 +44,7 @@ type EscapeFixture = {
 	session: Harness["session"];
 	isBashMode: boolean;
 	lastEscapeTime: number;
+	extensionIdleEscapeHandlers: Set<() => boolean>;
 	settingsManager: { getDoubleEscapeAction: () => "tree" };
 	showTreeSelector: ReturnType<typeof vi.fn>;
 	showUserMessageSelector: ReturnType<typeof vi.fn>;
@@ -96,6 +97,7 @@ describe("fallback abort leaves double-Escape session history usable", () => {
 			session: harness.session,
 			isBashMode: false,
 			lastEscapeTime: 0,
+			extensionIdleEscapeHandlers: new Set(),
 			settingsManager: { getDoubleEscapeAction: () => "tree" },
 			showTreeSelector: vi.fn(),
 			showUserMessageSelector: vi.fn(),

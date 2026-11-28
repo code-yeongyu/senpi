@@ -37,6 +37,7 @@ import { collectTurnEndLivenessInput, reportTurnEndLiveness } from "./turn-end-l
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
+import { registerGoalWaitInterrupt } from "./wait-interrupt.ts";
 import { GOAL_WAIT_STATUS_KEY, GoalWaitTicker } from "./wait-ticker.ts";
 
 const RESUME_GOAL_CHOICE = "Resume goal";
@@ -63,6 +64,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let completedThisTurnGoalId: string | null = null;
 	let continuationPending = false;
 	let activeContext: ExtensionContext | undefined;
+	let unsubscribeWaitInterrupt: (() => void) | undefined;
 	let lastAgentEnd: AgentEndEvent | undefined;
 	let lastTodoOutcome: TodoOwedOutcome | undefined;
 	let retireLifecycleCollector: (() => void) | undefined;
@@ -161,6 +163,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		ctx.ui.setStatus("todo-waiting", undefined);
 		activeContext = ctx;
 		monitorContinuation.start(ctx);
+		unsubscribeWaitInterrupt?.();
+		unsubscribeWaitInterrupt = registerGoalWaitInterrupt(ctx, monitorContinuation, onUserAbort);
 		retireLifecycleCollector?.();
 		retireLifecycleCollector = registerGoalLifecycleCollector(
 			ctx.sessionManager,
@@ -406,6 +410,11 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_abort", async (_event, ctx) => {
+		await onUserAbort(ctx);
+	});
+
+	async function onUserAbort(ctx: ExtensionContext): Promise<void> {
+		monitorContinuation.cancelWait();
 		continuationPending = false;
 		const goal = await readGoal(goalStoreRef(ctx));
 		if (goal?.status !== "active") return;
@@ -415,11 +424,13 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			clearAgentGoalAccounting();
 			refreshGoalUiBestEffort(ctx, stopped);
 		}
-	});
+	}
 
 	pi.on("session_shutdown", async (event, ctx) => {
 		retireLifecycleCollector?.();
 		activeContext = undefined;
+		unsubscribeWaitInterrupt?.();
+		unsubscribeWaitInterrupt = undefined;
 		unsubscribeGoalStoreChanged();
 		if (agentGoalAccounting !== null) {
 			await accountCurrentAgentTurn(ctx, "active");

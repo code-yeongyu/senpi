@@ -170,6 +170,7 @@ export async function makeGoalContext(
 			state.goalBackstopMaxSeconds ?? GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS / 1000,
 		ui: {
 			notify: (message: string) => notices.push(message),
+			onTerminalInput: () => () => {},
 			select: async () => undefined,
 			setStatus: state.status?.setStatus ?? (() => {}),
 		},
