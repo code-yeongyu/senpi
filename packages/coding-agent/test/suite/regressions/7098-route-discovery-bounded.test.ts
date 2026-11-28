@@ -2,15 +2,11 @@
 // predecessor which sessions it still holds. The predecessor exiting in the middle of that question is the normal
 // end of a drain, and a stalled predecessor never answers it. Neither may turn the successor's own roster read into
 // a failure or a hang: the predecessor's sessions are simply not listed through a route that answer would have made.
+import { pbkdf2 } from "node:crypto";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PREDECESSOR_DISCOVERY_TIMEOUT_MS } from "../../../src/modes/rpc/predecessor-discovery.ts";
-import {
-	advanceUntil,
-	type Cleanups,
-	fakePredecessor,
-	successorWithPredecessorClaim,
-} from "../rpc-predecessor-route-support.ts";
+import { type Cleanups, fakePredecessor, successorWithPredecessorClaim } from "../rpc-predecessor-route-support.ts";
 
 const cleanups: Cleanups = [];
 afterEach(async () => {
@@ -50,24 +46,48 @@ it.skipIf(process.platform === "win32")(
 	},
 );
 
-it.skipIf(process.platform === "win32")(
-	"a predecessor that never answers bounds list_sessions by the discovery deadline",
-	async () => {
+/** Keeps every libuv pool thread busy, as a loaded host does: the listing's file reads after the deadline queue behind it. */
+function occupyThreadPool(): Promise<void> {
+	const threads = Number(process.env.UV_THREADPOOL_SIZE) || 4;
+	const jobs = Array.from(
+		{ length: threads * 4 },
+		() =>
+			new Promise<void>((resolve, reject) =>
+				pbkdf2("senpi", "7098", 100_000, 64, "sha512", (error) => (error ? reject(error) : resolve())),
+			),
+	);
+	return Promise.all(jobs).then(() => undefined);
+}
+
+describe.skipIf(process.platform === "win32")("a predecessor that never answers", () => {
+	it.each([
+		["a quick host", false],
+		["a host whose file reads are slow", true],
+	] as const)("bounds list_sessions by the discovery deadline, on %s", async (_host, slow) => {
 		const host = await successorListingOwnSession();
 		const asked = Promise.withResolvers<void>();
-		await fakePredecessor(cleanups, host, { list_sessions: () => asked.resolve() });
+		const gaveUp = Promise.withResolvers<void>();
+		await fakePredecessor(cleanups, host, {
+			list_sessions: (stream) => {
+				stream.once("close", () => gaveUp.resolve());
+				asked.resolve();
+			},
+		});
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
 		const listing = host.list();
+		// The request is written and its deadline armed in the same tick, so the deadline is pending once it arrives.
 		await asked.promise;
+		const busy = slow ? occupyThreadPool() : Promise.resolve();
+		vi.advanceTimersByTime(PREDECESSOR_DISCOVERY_TIMEOUT_MS);
 
-		expect(
-			await advanceUntil(listing, PREDECESSOR_DISCOVERY_TIMEOUT_MS, 100),
-			"list_sessions did not answer once the discovery deadline passed",
-		).toBe(true);
+		// At its deadline the successor stops waiting and closes the predecessor's connection. What the listing still reads
+		// after that is ordinary file I/O: it is awaited, never raced against a fixed number of event-loop turns.
+		await gaveUp.promise;
 		expect(await listing).toMatchObject({
 			success: true,
 			data: { sessions: [{ sessionPath: join(host.root, "own.jsonl") }] },
 		});
-	},
-);
+		await busy;
+	});
+});
