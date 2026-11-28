@@ -115,6 +115,7 @@ import type {
 	ProjectTrustEventResult,
 	ProviderConfig,
 	ProviderRequestPreparation,
+	RefreshToolsHandler,
 	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
@@ -807,6 +808,8 @@ export class ExtensionRunner {
 	 */
 	bindSessionlessFacts(facts: {
 		readonly getAllTools: GetAllToolsHandler;
+		/** Runs when an extension registers a tool after the runtime was built, so its registry takes the tool in. */
+		readonly refreshTools?: RefreshToolsHandler;
 		readonly getLoadedHookSources?: ExtensionContextActions["getLoadedHookSources"];
 		/** The loop facts of the loop-hook call in progress on a hand (S33), if any. */
 		readonly loopHookCall?: () => LoopHookCallFacts | undefined;
@@ -829,6 +832,7 @@ export class ExtensionRunner {
 		readonly promptSurfaceOf?: (toolCallId: string) => PromptSurface | undefined;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
+		if (facts.refreshTools !== undefined) this.runtime.refreshTools = facts.refreshTools;
 		if (facts.isModelIssuedToolCall !== undefined) this.isModelIssuedToolCallFn = facts.isModelIssuedToolCall;
 		if (facts.promptSurfaceOf !== undefined) this.promptSurfaceOfFn = facts.promptSurfaceOf;
 		this.loopHookCallFn = facts.loopHookCall;
