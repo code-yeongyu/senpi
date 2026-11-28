@@ -1,3 +1,21 @@
+## 2026-11-26 - OSC 7577 Program Resume encoder (senpi#7493)
+
+### What changed
+
+- `packages/tui/src/index.ts` exports `encodeProgramResume`, `isProgramResumeToken` and the `ProgramResumeReport` type from the new fork-only `program-resume.ts`. The encoder builds `OSC 7577 ; pid=…:time=…:(argv=<b64,…>[:cwd=<b64>] | clear=1):mac=<sha256(body + ":" + token)> ST` per revision 0.5, and returns `undefined` for a malformed token or a command the terminal would reject (empty, a program starting with `-`, a relative program path, control characters, a relative cwd, more than 64 elements, or a sequence over 2048 bytes).
+
+### Why
+
+- The TUI package already owns the other terminal OSC encoders (title, OSC 9;4 progress, OSC 7501 program status).
+
+### Why an extension could not handle it
+
+- It is a renderer-library export consumed by interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: one export line next to the `program-status.ts` export.
+
 ## 2026-11-03 - Copy original Markdown from fullscreen drag selections (senpi#5617)
 
 ### What changed

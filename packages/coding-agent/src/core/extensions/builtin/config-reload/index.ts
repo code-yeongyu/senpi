@@ -25,6 +25,7 @@ import {
 	matchesConfigWatchFilter,
 } from "./protocol.ts";
 import { ReloadVetoDeferral } from "./reload-deferral.ts";
+import { queueReload, RELOAD_SLOT_TIMEOUT_MS } from "./reload-queue.ts";
 import {
 	excludeRoutineOnlySettingsChanges,
 	isSettingsPath,
@@ -172,6 +173,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	let started = false;
 	const watcherClosures: Array<Promise<PromiseSettledResult<void>[]>> = [];
 	let reloadInFlight = false;
+	let reloadScheduled = false;
 	let deferredNoticeShown = false;
 	let unavailableReloadLogged = false;
 	let compactionRecheck: ReturnType<typeof setTimeout> | undefined;
@@ -371,6 +373,24 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	};
 
 	const flushPending = async (): Promise<void> => {
+		if (reloadScheduled || reloadInFlight || pending.size === 0) return;
+		reloadScheduled = true;
+		await queueReload(
+			async () => {
+				try {
+					await reloadPending();
+				} catch (error) {
+					logger.error("watcher_error", { path: "reload", message: errorMessage(error) });
+				} finally {
+					reloadScheduled = false;
+				}
+			},
+			options.clock ?? defaultClock,
+			() => logger.warn("reload_slot_released", { afterMs: RELOAD_SLOT_TIMEOUT_MS }),
+		);
+	};
+
+	const reloadPending = async (): Promise<void> => {
 		const ctx = currentContext;
 		if (!ctx || pending.size === 0 || reloadInFlight) return;
 		if (!ctx.isIdle() || ctx.hasPendingMessages()) return;

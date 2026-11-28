@@ -39,15 +39,18 @@ import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-pa
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
-import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
+import { foreignAgentDirRefusal, localForeignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { handoffUnregisteredHost } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal } from "./host-identity-refusal.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
 import { startupEnvelope } from "./host-startup-policy.ts";
 import { startSuccessor } from "./host-successor.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
+import type { RpcEndpointAuthErrorCode } from "./rpc-auth-proof.ts";
 
 const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
 
@@ -123,7 +126,9 @@ export type HandoffRefusal =
 	/** The successor never answered on the public socket; it was stopped and nothing was replaced. */
 	| "successor_unavailable"
 	/** The successor's engine is older than the running host's and the caller did not allow a downgrade. */
-	| "older_engine";
+	| "older_engine"
+	/** The host answered but could not be proven from the caller's key root; nothing was asked of it (omo#15197). */
+	| RpcEndpointAuthErrorCode;
 
 export type HandoffResult =
 	| {
@@ -146,7 +151,12 @@ export type HandoffResult =
  * a downgrade: a successor whose engine is older than the running host's is refused unless the caller
  * says `allowDowngrade` (senpi#7018), so no caller can hand a newer host down by accident.
  */
-export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
+export function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
+	// Its probes prove the target's hosts from the root they publish under, as ensureHost does (omo#15197).
+	return withRpcKeyRoot(rpcKeyRoot({}, options.agentDir || undefined), () => handoffHostInKeyRoot(options));
+}
+
+async function handoffHostInKeyRoot(options: HandoffHostOptions): Promise<HandoffResult> {
 	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
 	// W: the same bound an ensure waits, covering one compliant holder H (senpi#4602).
 	const release = await acquireHostEnsureLock(options.socket, startupEnvelope(childStalledStopMaxMs()).lockWait);
@@ -167,7 +177,11 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 	// Created before the agent-dir guard on purpose: realpath needs the caller's dir to exist, so a refused
 	// foreign caller may leave an empty daemon dir under its own agent dir (harmless).
 	await createDaemonDirectories(paths);
-	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
+	const local = await localForeignAgentDirRefusal(options.socket, options.agentDir);
+	if (local) return local;
+	const host = await probeOrIdentityRefusal(() => probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS));
+	if (isIdentityRefusal(host))
+		return { action: "refuse", reason: host.refused, upgradeable: false, detail: host.detail };
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };

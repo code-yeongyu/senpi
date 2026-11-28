@@ -173,13 +173,6 @@
 		},
 		{
 			"file": "src/core/session-holders.ts",
-			"api": "readFileSync",
-			"symbol": "activeMover",
-			"count": 1,
-			"note": "session move lock (~100 bytes), read once when a runtime opens or switches to a session (senpi#2184)"
-		},
-		{
-			"file": "src/core/session-holders.ts",
 			"api": "writeFileSync",
 			"symbol": "publishHolderRecord",
 			"count": 1,

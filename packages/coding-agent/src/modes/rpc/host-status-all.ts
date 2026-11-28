@@ -30,6 +30,7 @@ import { withHostUnits } from "./host-unit-placement.ts";
 import { judgeStaleEngine, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { type HostStatusReport, probeHostStatus } from "./host-status.ts";
 import { type HostSessionRow, readClaimRows } from "./host-status-rows.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 
 /** Who serves a `tui` endpoint: the terminal process (as recorded) and the session it holds, when it answered. */
 export interface TuiEndpointOwner {
@@ -75,7 +76,12 @@ interface StatusAllOptions {
  * budget, so hung hosts cost about one budget per STATUS_ALL_MAX_IN_FLIGHT rather than one each; rows
  * keep the enumeration order (sorted by directory name).
  */
-export async function readAllHostStatus(options: StatusAllOptions): Promise<readonly HostEndpointStatus[]> {
+/** Its probes prove each endpoint's host from the agent dir's key root, as ensureHost does (omo#15197). */
+export function readAllHostStatus(options: StatusAllOptions): Promise<readonly HostEndpointStatus[]> {
+	return withRpcKeyRoot(rpcKeyRoot({}, options.agentDir), () => readAllHostStatusInKeyRoot(options));
+}
+
+async function readAllHostStatusInKeyRoot(options: StatusAllOptions): Promise<readonly HostEndpointStatus[]> {
 	const endpoints = await listHostEndpoints(options.agentDir);
 	const read = options._test?.readEndpoint ?? ((endpoint: HostEndpointEntry) => endpointStatus(endpoint, options));
 	const rows: HostEndpointStatus[] = new Array(endpoints.length);
@@ -103,9 +109,10 @@ async function endpointStatus(endpoint: HostEndpointEntry, options: StatusAllOpt
 		{ socket: endpoint.socket, agentDir: options.agentDir, includeWorkers: options.includeWorkers },
 		{ prune: false, timeoutMs: endpointProbeTimeoutMs(endpoint.endpoint_kind, options.timeoutMs) },
 	);
+	// A host that answered but could not be proven is alive, never `dead`; it named no instance anyone could trust.
 	const verdict = await judgeEndpointLiveness(
 		paths,
-		answered === undefined ? undefined : (answered.instanceId ?? null),
+		report.refusal !== null ? null : answered === undefined ? undefined : (answered.instanceId ?? null),
 	);
 	const owner = endpoint.endpoint_kind === "tui" ? tuiOwner(report, listing) : null;
 	const stale =
@@ -143,6 +150,7 @@ async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, 
 	const current = generations.find((generation) => generation.current);
 	return {
 		reachable: false,
+		refusal: null,
 		lifecycle: null,
 		pid: null,
 		processStartTime: null,

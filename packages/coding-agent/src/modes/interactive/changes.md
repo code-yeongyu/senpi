@@ -1,3 +1,75 @@
+## 2026-11-26 - OSC 7577 Program Resume reports (senpi#7493)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a new `programResumeToken` option creates a `ProgramResumeReporter` (new fork-only `program-resume-reporter.ts`) when stdout is a TTY. `syncProgramResume()` runs after every session rebind (startup, new, resume, fork), on assistant `message_end` and on `agent_end`, so the terminal's record follows the session once its file is written; the SIGCONT handler re-reports with a fresh time; an interactive quit in `shutdown()` sends `clear=1` before `stop()`. Signal shutdowns (SIGHUP/SIGTERM) and dead-terminal exits send nothing.
+
+### Why
+
+- A terminal that implements the OSC 7577 Program Resume Protocol (rev 0.5) can bring the agent session back after the terminal restarts, with the command `[APP_COMMAND, "--session", <absolute session file>]` and the session cwd. The protocol forbids clearing on SIGHUP/SIGTERM, because that is when the record is needed.
+
+### Why an extension could not handle it
+
+- The report must be written to the TUI's own terminal at session rebind, on SIGCONT and at the quit/signal split of `shutdown()`, none of which the extension API exposes; the token also has to be taken before any extension or tool child starts.
+
+### Expected merge conflict zones
+
+- LOW: `InteractiveModeOptions`, the `rebindCurrentSession()` tail, the `message_end`/`agent_end` cases, the `handleCtrlZ()` SIGCONT handler and the interactive-quit branch of `shutdown()` each gain one line.
+
+## 2026-11-25 - The attached terminal answers for its own telemetry (senpi#7446)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/attach.ts`, `run-attached-tui.ts`: `--attach` sends the terminal user's own install-telemetry setting as its `attach_session.telemetry` answer.
+
+### Why
+
+- An attach without an answer is `unanswered`, which would turn a session's telemetry off for as long as its own user looks at it.
+
+### Why an extension could not handle it
+
+- The attach request is built by the attached terminal client before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `attach_session` request in `attach.ts`.
+
+## 2026-11-25 - Config selector writes through shared resource overrides (senpi#7450)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/config-selector.ts`: the global toggle and the project-local inherit/load/unload override logic moved to `src/core/resource-overrides/`; the component delegates to it. Rendering and key handling are unchanged.
+
+### Why
+
+- `engine.config.setResource` writes the same settings the TUI's space press writes, so both go through one implementation (senpi#7450).
+
+### Why an extension could not handle it
+
+- The config selector is the built-in `config` command's TUI.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `ResourceList` toggle and override methods, now delegations.
+
+## 2026-11-25 - The control endpoint's input receipt names the engine-turn cap (senpi#7138)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: a `held` disposition carries `engineTurnCap` when the cap stopped the delivery's turn.
+
+### Why
+
+- The receipt otherwise reads `held` with nothing naming why (senpi#7138).
+
+### Why an extension could not handle it
+
+- The receipt is built by the engine's control endpoint command.
+
+### Expected merge conflict zones
+
+- LOW: the `admitted` helper in the input command.
+
 ## 2026-11-24 - A model switch from the picker no longer replays the transcript (senpi#7411)
 
 ### What changed

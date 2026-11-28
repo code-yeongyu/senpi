@@ -9,6 +9,7 @@ const holders = new WeakMap<MachineOps, ReturnType<typeof createInProcessHolderL
 defineMachineOpsConformance(
 	{ describe, it: (name, fn, timeoutMs) => it(name, fn, timeoutMs) },
 	{
+		inProcess: true,
 		create(stateDir) {
 			const holder = createInProcessHolderLink();
 			const ops = createLocalMachineOps({ stateDir, holder });
