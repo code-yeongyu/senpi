@@ -3342,6 +3342,8 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 | `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
 
+An `unloaded` answer to `children: "detach"` also carries `detached`: the ids of the child session rows on this host (in any lifecycle state) that name this session as parent or root, read in the step that claims the close, so it names exactly the children the unload left running; `[]` when there were none. Without `children: "detach"` the answer has no `detached` key, so "asked, none" and "not asked" stay distinct. With `effectId` the effect receipt and a same-id replay carry the same `detached`.
+
 With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays (a refusal with its `pending.deliveries`). Capability: `unload_session`; `deliveries` and `pending.deliveries`: `unload_refuse_deliveries`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
 
 ##### Graceful close (`graceful: true`)

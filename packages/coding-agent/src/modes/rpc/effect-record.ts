@@ -68,6 +68,8 @@ export const rpcEffectRecordSchema = z.object({
 	dropped: z.object({ deliveries: z.array(z.string()) }).optional(),
 	// A refused unload's unwritten deliveries (senpi#7004), so a replay names them as the live refusal did.
 	pending: z.object({ deliveries: z.array(z.string()) }).optional(),
+	// The child sessions an unload with `children: "detach"` left running (senpi#7480), so a replay names them too.
+	detached: z.array(z.string()).optional(),
 	by: actorSchema,
 	acceptedAt: z.string(),
 	updatedAt: z.string(),
@@ -89,6 +91,8 @@ export interface EffectStatus {
 	readonly dropped?: { readonly deliveries: readonly string[] };
 	/** A refused unload's admitted deliveries not yet written (`unload_session` `pending`). */
 	readonly pending?: { readonly deliveries: readonly string[] };
+	/** The child sessions an unload left running (`unload_session` `detached`). */
+	readonly detached?: readonly string[];
 	readonly by?: EffectActor;
 	readonly acceptedAt?: string;
 	readonly updatedAt?: string;

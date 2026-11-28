@@ -220,6 +220,7 @@ export class EffectLedger {
 			readonly answer?: QueuedChangeAnswer;
 			readonly dropped?: RpcEffectRecord["dropped"];
 			readonly pending?: RpcEffectRecord["pending"];
+			readonly detached?: RpcEffectRecord["detached"];
 		} = {},
 	): EffectStatus {
 		const current = this.records.get(effectId);
