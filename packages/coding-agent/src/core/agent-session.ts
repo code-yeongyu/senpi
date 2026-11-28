@@ -3633,7 +3633,11 @@ export class AgentSession {
 		// Releasing frees memory only for strings the store already spilled to its blob
 		// backing: a resident string is shared with the store, so tokenizing it hands
 		// back nothing while costing every settled-time reader a re-materialization.
-		if ((this.sessionManager.getResidentStoreStats().evictedCount ?? 0) > 0) {
+		const stats = this.sessionManager.getResidentStoreStats();
+		// A reopened file's long strings stay on disk (senpi#3968): views that read them
+		// back hold the only resident copies, so they go at idle like spilled ones.
+		if ((stats.pagedCount ?? 0) > 0) this.sessionManager.dropMaterializedCaches();
+		if ((stats.evictedCount ?? 0) > 0) {
 			// Settling idle: release the memoized materialized session views. Materialized
 			// entries pin the full persisted strings, so keeping the views between turns
 			// holds the whole session text in resident memory while nothing runs.

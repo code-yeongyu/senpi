@@ -33,6 +33,50 @@ export function parseSessionEntryLine(line: string): FileEntry | null {
 	}
 }
 
+/**
+ * Keeps a just-parsed entry resident in a smaller form, reading the rest back from its line's byte range on demand
+ * (senpi#3968). A load hands it every parsed line in file order.
+ */
+export interface SessionEntryPager {
+	/** `text` is the entry's line as read, so a paged string's own byte range inside it can be recorded. */
+	page(entry: FileEntry, offset: number, length: number, text?: string): FileEntry;
+	/** The string a resident token id stands for, read back from the file; undefined when the file no longer holds it. */
+	read(id: string): string | undefined;
+	/** How many strings the load left on disk. */
+	readonly count: number;
+	/** Reads that had to parse a page's whole line instead of decoding the string's own bytes (senpi#3968). */
+	readonly wholeLineReads: number;
+}
+
+/** The pager a load ran its entries through, keyed by the entries it returned (like the file identities). */
+export const loadedPages = new WeakMap<readonly FileEntry[], SessionEntryPager>();
+
+/**
+ * The byte range of each line a `SessionLineSplitter` returns for the same chunks. A newline byte never sits inside a
+ * UTF-8 sequence and always decodes to one "\n", so raw newlines mark the decoded lines exactly.
+ */
+export class LineByteRanges {
+	private start = 0;
+	private seen = 0;
+
+	/** Start and length of every line `chunk` completes, flattened in order. */
+	push(chunk: Buffer): number[] {
+		const bounds: number[] = [];
+		for (let at = chunk.indexOf(10); at !== -1; at = chunk.indexOf(10, at + 1)) {
+			const end = this.seen + at;
+			bounds.push(this.start, end - this.start);
+			this.start = end + 1;
+		}
+		this.seen += chunk.length;
+		return bounds;
+	}
+
+	/** The final line's range, after the last newline. */
+	finish(): [number, number] {
+		return [this.start, this.seen - this.start];
+	}
+}
+
 export class SessionLineSplitter {
 	private readonly decoder = new StringDecoder("utf8");
 	private pending = "";
@@ -57,10 +101,17 @@ export class SessionLineSplitter {
 }
 
 /** A parsed line becomes an entry; a capturing load also feeds its line to the content fingerprint (RULING-72). */
-function countEntry(entries: FileEntry[], line: string, content: BaseContentHash | undefined): void {
+function countEntry(
+	entries: FileEntry[],
+	line: string,
+	content: BaseContentHash | undefined,
+	pager?: SessionEntryPager,
+	offset = 0,
+	length = 0,
+): void {
 	const entry = parseSessionEntryLine(line);
 	if (!entry) return;
-	entries.push(entry);
+	entries.push(pager ? pager.page(entry, offset, length, line) : entry);
 	content?.line(line);
 }
 
@@ -72,8 +123,13 @@ function acceptSessionEntries(entries: FileEntry[]): FileEntry[] {
 }
 
 /** Exported for testing */
-export function loadEntriesFromFile(filePath: string, captureIdentity = false): FileEntry[] {
-	return acceptSessionEntries(readRawEntriesFromFile(filePath, captureIdentity));
+export function loadEntriesFromFile(filePath: string, captureIdentity = false, pager?: SessionEntryPager): FileEntry[] {
+	return notePages(acceptSessionEntries(readRawEntriesFromFile(filePath, captureIdentity, pager)), pager);
+}
+
+function notePages(entries: FileEntry[], pager: SessionEntryPager | undefined): FileEntry[] {
+	if (pager && entries.length > 0) loadedPages.set(entries, pager);
+	return entries;
 }
 
 /** What `forkFrom` found in its source: the entries, whether the file had a header, and why it cannot be forked. */
@@ -108,12 +164,13 @@ export function readForkSource(filePath: string): ForkSource {
 	return { kind: "not-a-session" };
 }
 
-function readRawEntriesFromFile(filePath: string, captureIdentity = false): FileEntry[] {
+function readRawEntriesFromFile(filePath: string, captureIdentity = false, pager?: SessionEntryPager): FileEntry[] {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
 	const entries: FileEntry[] = [];
 	const splitter = new SessionLineSplitter();
+	const ranges = pager ? new LineByteRanges() : undefined;
 	const content = captureIdentity ? new BaseContentHash() : undefined;
 	const fd = openSync(resolvedFilePath, "r");
 	try {
@@ -121,9 +178,13 @@ function readRawEntriesFromFile(filePath: string, captureIdentity = false): File
 		while (true) {
 			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
 			if (bytesRead === 0) break;
-			for (const line of splitter.push(buffer.subarray(0, bytesRead))) countEntry(entries, line, content);
+			const chunk = buffer.subarray(0, bytesRead);
+			const bounds = ranges?.push(chunk);
+			for (const [index, line] of splitter.push(chunk).entries())
+				countEntry(entries, line, content, pager, bounds?.[2 * index], bounds?.[2 * index + 1]);
 		}
-		countEntry(entries, splitter.finish(), content);
+		const [lastOffset, lastLength] = ranges?.finish() ?? [0, 0];
+		countEntry(entries, splitter.finish(), content, pager, lastOffset, lastLength);
 	} finally {
 		if (captureIdentity) loadedFileIdentities.set(entries, captureAndCloseFileIdentity(fd, resolvedFilePath));
 		else closeSync(fd);
@@ -140,12 +201,14 @@ export async function loadEntriesFromFileAsync(
 	filePath: string,
 	slicer: EventLoopSlicer = new EventLoopSlicer(),
 	captureIdentity = false,
+	pager?: SessionEntryPager,
 ): Promise<FileEntry[]> {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
 	const entries: FileEntry[] = [];
 	const splitter = new SessionLineSplitter();
+	const ranges = pager ? new LineByteRanges() : undefined;
 	const content = captureIdentity ? new BaseContentHash() : undefined;
 	const handle = await open(resolvedFilePath, "r");
 	try {
@@ -153,12 +216,15 @@ export async function loadEntriesFromFileAsync(
 		while (true) {
 			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
 			if (bytesRead === 0) break;
-			for (const line of splitter.push(buffer.subarray(0, bytesRead))) {
-				countEntry(entries, line, content);
+			const chunk = buffer.subarray(0, bytesRead);
+			const bounds = ranges?.push(chunk);
+			for (const [index, line] of splitter.push(chunk).entries()) {
+				countEntry(entries, line, content, pager, bounds?.[2 * index], bounds?.[2 * index + 1]);
 				if (slicer.due) await slicer.yield();
 			}
 		}
-		countEntry(entries, splitter.finish(), content);
+		const [lastOffset, lastLength] = ranges?.finish() ?? [0, 0];
+		countEntry(entries, splitter.finish(), content, pager, lastOffset, lastLength);
 		if (content) loadedContentFingerprints.set(entries, content.digest());
 	} finally {
 		if (captureIdentity) {
@@ -168,7 +234,7 @@ export async function loadEntriesFromFileAsync(
 		}
 		await handle.close();
 	}
-	return acceptSessionEntries(entries);
+	return notePages(acceptSessionEntries(entries), pager);
 }
 
 /** A torn final line was set aside, or could not be (the copy was refused) and must be set aside before the next append. */

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { SessionEntryPager } from "./session-entry-file.ts";
 import { transformJson } from "./session-resident-json.ts";
 import { ResidentSizeAccounting, type ResidentStoreSize } from "./session-resident-store-size.ts";
 
@@ -13,6 +14,10 @@ export interface ResidentStoreStats {
 	blobBytes: number;
 	evictedCount?: number;
 	evictedBytes?: number;
+	/** Strings the opened file's load left on disk (senpi#3968); views that materialized them hold the only copies. */
+	pagedCount?: number;
+	/** Page reads that re-parsed a whole line: each builds a transient copy of the entry beside the string it returns. */
+	pageWholeLineReads?: number;
 }
 
 export interface ResidentStringStoreOptions {
@@ -32,6 +37,8 @@ export class ResidentStringStore {
 	private readonly accounting = new ResidentSizeAccounting();
 	private readonly maxBytes: number;
 	private blobsDir?: () => string | undefined;
+	// The opened file's pages (senpi#3968): tokens a load left in the entries, read back from the file by range.
+	private pages: SessionEntryPager | undefined;
 
 	constructor(options: ResidentStringStoreOptions = {}) {
 		this.maxBytes = options.maxBytes ?? DEFAULT_RESIDENT_STRING_BUDGET_BYTES;
@@ -42,7 +49,13 @@ export class ResidentStringStore {
 		this.blobsDir = options.blobsDir;
 	}
 
+	/** Resolves the page tokens of the entries a paged load returned; a new load or `clear()` replaces it. */
+	adoptPages(pages: SessionEntryPager | undefined): void {
+		this.pages = pages;
+	}
+
 	clear(): void {
+		this.pages = undefined;
 		this.strings.clear();
 		this.accounting.reset();
 		const dir = this.blobsDir?.();
@@ -73,7 +86,14 @@ export class ResidentStringStore {
 	}
 
 	stats(): ResidentStoreStats {
-		return { blobCount: this.strings.size, ...this.accounting.stats() };
+		const pagedCount = this.pages?.count ?? 0;
+		const pageWholeLineReads = this.pages?.wholeLineReads ?? 0;
+		return {
+			blobCount: this.strings.size,
+			...this.accounting.stats(),
+			...(pagedCount > 0 ? { pagedCount } : {}),
+			...(pageWholeLineReads > 0 ? { pageWholeLineReads } : {}),
+		};
 	}
 
 	/** Strings held in memory and their summed UTF-8 length, kept as strings come and go (no serialization). */
@@ -177,6 +197,9 @@ export class ResidentStringStore {
 		}
 
 		const id = text.slice(RESIDENT_STRING_PREFIX.length);
+		// A page is read back like a blob: transient, never re-entering the resident cache.
+		const paged = this.pages?.read(id);
+		if (paged !== undefined) return paged;
 		const resident = this.strings.get(id);
 		if (resident !== undefined) {
 			// Map insertion order is the eviction order; a read refreshes recency.
