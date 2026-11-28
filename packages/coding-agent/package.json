@@ -122,15 +122,18 @@
 		}
 	},
 	"files": [
-		"dist",
+		"dist/bundle",
+		"dist/**/*.d.ts",
 		"!dist/**/*.map",
 		"!dist/experimental",
 		"!dist/cli/experimental",
-		"!dist/**/*.js",
-		"!dist/senpi",
-		"dist/bundle",
+		"dist/modes/interactive/theme/*.json",
+		"dist/modes/interactive/assets/*.png",
+		"dist/core/export-html/template.html",
+		"dist/core/export-html/template.css",
 		"dist/core/export-html/template.js",
 		"dist/core/export-html/vendor",
+		"dist/core/extensions/builtin/imagegen/skill/SKILL.md",
 		"docs",
 		"!docs/images",
 		"!docs/engine-socket/fixtures",
@@ -172,7 +175,8 @@
 		"@code-yeongyu/senpi-machine-ops": "^2026.11.28-1",
 		"@earendil-works/pi-pty": "^2026.11.28-1",
 		"@modelcontextprotocol/sdk": "1.32.1",
-		"zod": "4.6.7"
+		"zod": "4.6.7",
+		"undici": "8.12.4"
 	},
 	"overrides": {
 		"protobufjs": "7.6.5",
@@ -208,7 +212,6 @@
 		"signal-exit": "3.0.7",
 		"turndown": "7.2.4",
 		"typescript": "7.0.2",
-		"undici": "8.12.4",
 		"vitest": "5.0.1",
 		"yaml": "2.9.1"
 	},
