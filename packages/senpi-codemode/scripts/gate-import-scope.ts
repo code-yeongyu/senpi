@@ -24,21 +24,33 @@ async function virtualRoots(target: string) {
 	const directory = resolve(target, "../coding-agent/src/core/extensions");
 	const specifiers = new Set<string>();
 	const roots = new Set<string>();
-	for (const name of ["loader.ts", "virtual-modules.ts"]) {
-		const path = resolve(directory, name);
+	// A table entry is `key: binding` (an imported module namespace) or `...table`, a table another module exports
+	// under that name (senpi#7657: SENPI_SUBPATH_MODULES), read the same way.
+	async function readTable(path: string, table: string, name: string): Promise<boolean> {
 		const ast = parse(await readFile(path, "utf8"), { sourceType: "module", plugins: ["typescript"] });
 		const imports = new Map<string, string>();
 		for (const statement of ast.program.body) {
 			if (statement.type !== "ImportDeclaration") continue;
 			for (const binding of statement.specifiers) imports.set(binding.local.name, statement.source.value);
 		}
+		let found = false;
 		for (const statement of ast.program.body) {
 			const declaration = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
 			if (declaration?.type !== "VariableDeclaration") continue;
 			for (const variable of declaration.declarations) {
-				if (variable.id.type !== "Identifier" || variable.id.name !== "VIRTUAL_MODULES") continue;
+				if (variable.id.type !== "Identifier" || variable.id.name !== table) continue;
+				found = true;
 				if (variable.init?.type !== "ObjectExpression") throw new GateInputError(`virtual module table: ${name}`);
 				for (const property of variable.init.properties) {
+					if (property.type === "SpreadElement" && property.argument.type === "Identifier") {
+						const source = imports.get(property.argument.name);
+						if (source === undefined || !source.startsWith("."))
+							throw new GateInputError(`virtual module spread: ${name}`);
+						const spread = resolve(dirname(path), source);
+						if (!(await readTable(spread, property.argument.name, `${name} -> ${source}`)))
+							throw new GateInputError(`virtual module spread table: ${name}`);
+						continue;
+					}
 					if (property.type !== "ObjectProperty" || property.value.type !== "Identifier")
 						throw new GateInputError(`virtual module binding: ${name}`);
 					const key = property.key.type === "StringLiteral" ? property.key.value
@@ -64,7 +76,9 @@ async function virtualRoots(target: string) {
 				}
 			}
 		}
+		return found;
 	}
+	for (const name of ["loader.ts", "virtual-modules.ts"]) await readTable(resolve(directory, name), "VIRTUAL_MODULES", name);
 	if (specifiers.size === 0) throw new GateInputError("empty virtual module tables");
 	return { specifiers, roots };
 }

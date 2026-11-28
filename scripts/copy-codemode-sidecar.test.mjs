@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import ts from "@typescript/typescript6";
 
@@ -51,21 +51,40 @@ function addPackage(root, manifest) {
 }
 
 function hostPackageRoots() {
-	const loader = ts.createSourceFile("loader.ts", readFileSync(
-		resolve("packages/coding-agent/src/core/extensions/loader.ts"), "utf8",
-	), ts.ScriptTarget.Latest, true);
 	const roots = new Set();
-	function visit(node) {
-		if (ts.isVariableDeclaration(node) && node.name.getText(loader) === "VIRTUAL_MODULES") {
-			assert.ok(node.initializer && ts.isObjectLiteralExpression(node.initializer));
-			for (const property of node.initializer.properties) {
-				const specifier = property.name.text;
-				roots.add(specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/"));
-			}
+	// Independently of the copier's own parse: follow `...TABLE` spreads into the module the table is imported from.
+	function readTable(path, table) {
+		const file = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
+		const imports = new Map();
+		for (const statement of file.statements) {
+			if (!ts.isImportDeclaration(statement) || !statement.importClause?.namedBindings) continue;
+			if (!ts.isNamedImports(statement.importClause.namedBindings)) continue;
+			for (const element of statement.importClause.namedBindings.elements)
+				imports.set(element.name.text, statement.moduleSpecifier.text);
 		}
-		ts.forEachChild(node, visit);
+		let found = false;
+		function visit(node) {
+			if (ts.isVariableDeclaration(node) && node.name.getText(file) === table) {
+				found = true;
+				assert.ok(node.initializer && ts.isObjectLiteralExpression(node.initializer));
+				for (const property of node.initializer.properties) {
+					if (ts.isSpreadAssignment(property)) {
+						const spread = property.expression.getText(file);
+						const from = imports.get(spread);
+						assert.ok(from?.startsWith("."), `${table} spreads ${spread}, imported from a relative module`);
+						readTable(resolve(dirname(path), from), spread);
+						continue;
+					}
+					const specifier = property.name.text;
+					roots.add(specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/"));
+				}
+			}
+			ts.forEachChild(node, visit);
+		}
+		visit(file);
+		assert.ok(found, `${table} in ${path}`);
 	}
-	visit(loader);
+	readTable(resolve("packages/coding-agent/src/core/extensions/loader.ts"), "VIRTUAL_MODULES");
 	assert.ok(roots.size > 0);
 	return roots;
 }
