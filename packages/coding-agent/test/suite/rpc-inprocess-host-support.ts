@@ -56,6 +56,8 @@ export interface FakeTurn {
 	readonly pendingDeliveries: string[];
 	/** How many times the host held this session's automatic turns (`holdAutomaticTurns`). */
 	readonly automaticTurnHolds: number;
+	/** A wake source (background terminal job, monitor, detached cell) reports `count` live items; 0 ends it. */
+	setWakeSource(source: string, count: number): void;
 }
 
 /** What the rig's binding reports beyond command handling. */
@@ -107,6 +109,7 @@ export function inProcessRuntimeFactory(): {
 		const state = { isStreaming: false, aborted: false, automaticTurnHolds: 0 };
 		let bash: { end: (cancelled: boolean) => void } | undefined;
 		const pendingDeliveries: string[] = [];
+		const wakeSources = new Map<string, number>();
 		const bashMessage = (cancelled: boolean) => ({
 			role: "bashExecution" as const,
 			command: "sleep",
@@ -141,6 +144,10 @@ export function inProcessRuntimeFactory(): {
 			pendingDeliveries,
 			get automaticTurnHolds() {
 				return state.automaticTurnHolds;
+			},
+			setWakeSource: (source, count) => {
+				if (count > 0) wakeSources.set(source, count);
+				else wakeSources.delete(source);
 			},
 		});
 		return {
@@ -184,8 +191,11 @@ export function inProcessRuntimeFactory(): {
 						isBashRunning: bash !== undefined,
 						isCompacting: false,
 						hasSessionWork: false,
-						hasActiveWakeSource: false,
+						hasActiveWakeSource: wakeSources.size > 0,
 					};
+				},
+				get activeWakeSources(): readonly string[] {
+					return [...wakeSources.keys()];
 				},
 				get isSessionBusy(): boolean {
 					return isSessionBusySnapshot(this.activitySnapshot);

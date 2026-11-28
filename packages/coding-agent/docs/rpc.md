@@ -3939,16 +3939,20 @@ no longer lists it and the handle answers `unknown_session`.
 - It hands over only a QUIET session: no agent run, no `prompt` still in preflight (its command already answered,
   its run not started), no queued user steer/follow-up (`queued`: still owed a turn even after the stream it was
   aimed at ended), no admitted delivery not yet written, no bash, compaction or barrier-held session work
-  (the fields the handoff park judges by), and no other request for that session in flight on any connection.
+  (the fields the handoff park judges by), no live background work (a wake source with live items: a background
+  terminal job, a monitor, a detached eval cell; the teardown would end it), and no other request for that session in
+  flight on any connection.
   Otherwise it is refused, changing nothing: `turn_active` when a turn is running or about to start (`busy`
   contains `turn`, `prompt`, `queued` or `delivery`), `session_busy` for other work (`bash`, `compaction`, `session_work`,
-  `activity`, `request`); `errorData { attachments, busy: [...] }` names every signal. The refused work runs to
+  `background`, `activity`, `request`); `errorData { attachments, busy: [...] }` names every signal, and a refusal
+  for `background` also carries `errorData.background`, the wake sources a release would end. The refused work runs to
   its end on the host, which keeps the path.
 - With `interrupt: true` a busy session first has its queues emptied, then its run and any bash aborted (a turn
   that a pending prompt starts meanwhile is aborted too), and external admission closed; the release waits up to
   10 s for the run to go idle, for the other requests and prompts to settle - the cancelled bash is recorded then,
   before the release - and checks again. Still busy answers the same refusal with `errorData.interrupted: true`
-  and `errorData.dropped`; otherwise the entry records `interrupted: true`. Every refusal after the interrupt
+  and `errorData.dropped`; otherwise the entry records `interrupted: true`. Live background work is not aborted first: the teardown ends it,
+  and the answer's `ended: { background: [...] }` and the entry's `ended_background` name the wake sources it ended. Every refusal after the interrupt
   (still busy, `attached` because a client attached while it waited, `unknown_session`, `session_closing`)
   reopens admission on the session the host keeps and carries `interrupted: true` and `dropped` in `errorData`,
   since the queues were already emptied.

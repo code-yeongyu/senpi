@@ -237,3 +237,47 @@ describe("release_session refuses a session that is not quiet", () => {
 		expect(await release(rig, sessionId)).toMatchObject({ success: true });
 	});
 });
+
+describe("release_session and live background work (senpi#6499)", () => {
+	const idleHandler = () => async () => {};
+
+	it("refuses a quiet release while a background terminal job is live, changing nothing", async () => {
+		const { rig, sessionId, sessionPath, turn } = await quietSession("background", idleHandler);
+		await using _rig = rig;
+		turn().setWakeSource("terminal-background-sessions", 1);
+		const before = entryKinds(sessionPath);
+
+		expect(await release(rig, sessionId)).toMatchObject({
+			success: false,
+			error: "session_busy",
+			errorData: { attachments: 0, busy: ["background"], background: ["terminal-background-sessions"] },
+		});
+		expect(entryKinds(sessionPath)).toEqual(before);
+	});
+
+	it("with interrupt, releases and names the background work it ended in the answer and the entry", async () => {
+		const { rig, sessionId, sessionPath, turn } = await quietSession("background-interrupt", idleHandler);
+		await using _rig = rig;
+		turn().setWakeSource("terminal-monitors", 2);
+
+		expect(await release(rig, sessionId, true)).toMatchObject({
+			success: true,
+			data: { released: true, ended: { background: ["terminal-monitors"] } },
+		});
+		const sealed = SessionManager.open(sessionPath)
+			.getEntries()
+			.find((entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE);
+		expect(sealed).toMatchObject({ data: { interrupted: true, ended_background: ["terminal-monitors"] } });
+	});
+
+	it("releases quietly, ending nothing, once the background work is over", async () => {
+		const { rig, sessionId, turn } = await quietSession("background-over", idleHandler);
+		await using _rig = rig;
+		turn().setWakeSource("terminal-background-sessions", 1);
+		turn().setWakeSource("terminal-background-sessions", 0);
+
+		const answer = await release(rig, sessionId);
+		expect(answer).toMatchObject({ success: true, data: { released: true } });
+		expect((answer.data as Record<string, unknown>).ended).toBeUndefined();
+	});
+});
