@@ -28,6 +28,7 @@ const SESSION_TOOLS = [
 	"create_goal",
 	"update_goal",
 	"get_goal",
+	"stop_session",
 	"tool_search",
 	"schedule_wakeup",
 	"schedule_prompt",

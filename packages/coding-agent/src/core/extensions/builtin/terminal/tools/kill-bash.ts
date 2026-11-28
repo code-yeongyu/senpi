@@ -1,6 +1,7 @@
 import { type Static, Type } from "typebox";
 import { removeMonitorStateDir, terminalStateDir } from "../monitor-state-dir.ts";
 import { TERMINAL_KILL_TOOL } from "../shared.ts";
+import { stopAllTerminalWork } from "../stop-all.ts";
 import {
 	errorResult,
 	resolveTerminalId,
@@ -31,15 +32,7 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 				if (terminalDir !== undefined && monitorId !== undefined)
 					await removeMonitorStateDir(terminalDir, monitorId);
 			};
-			if (input.all) {
-				const terminalCount = ctx.manager.size;
-				const monitorIds = (ctx.monitorRegistry?.snapshot() ?? []).map((entry) => entry.monitorId);
-				const fileCount = (await ctx.monitorRegistry?.stopAllFiles()) ?? 0;
-				const rpcCount = ctx.monitorRegistry?.stopAllRpc() ?? 0;
-				await ctx.manager.teardown();
-				for (const monitorId of monitorIds) await dropStateDir(monitorId);
-				return textResult(`Killed ${terminalCount + fileCount + rpcCount} session(s).`);
-			}
+			if (input.all) return textResult(`Killed ${(await stopAllTerminalWork(ctx)).killed} session(s).`);
 			if (!input.bash_id) return errorResult("Provide `bash_id` or set `all:true`.");
 			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);
 			const monitorId = input.bash_id.startsWith("mon_") ? input.bash_id : ctx.manager.monitorIdOf?.(sessionId);

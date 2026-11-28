@@ -630,6 +630,11 @@ export interface ExtensionContext {
 	 * Outside a turn nothing is recorded. The returned release drops the job once it ended on its own.
 	 */
 	registerRunBackgroundJob?(job: RunBackgroundJob): () => void;
+	/**
+	 * Stop everything the session owns for good (oh-my-openagent#14390): emits `session_stop` to every extension and
+	 * returns each owner's report. Safe to call with nothing armed.
+	 */
+	stopSession?(requestedBy: SessionStopEvent["requestedBy"]): Promise<SessionStopReport>;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -1674,6 +1679,49 @@ export interface SessionMoveImportEvent {
 	signal: AbortSignal;
 }
 
+/**
+ * Fired by a full stop of the session (`/stop all` or the `stop_session` tool, oh-my-openagent#14390). Stop every piece
+ * of work this extension owns for the session for good, so none of it continues, wakes the session, or comes back on
+ * the next open, and return what was stopped and what could not be. Each handler runs under the `session_shutdown`
+ * handler budget; one that throws or is still running at its hard cap is reported as failed and the stop moves on.
+ * A stop with nothing armed must succeed and report nothing.
+ */
+export interface SessionStopEvent {
+	type: "session_stop";
+	/** Who asked for the stop: a person (`/stop all`) or the model (`stop_session`). */
+	requestedBy: "user" | "agent";
+	/** Aborted when the host stops waiting on this handler (the `session_shutdown` handler budget's hard cap). */
+	signal: AbortSignal;
+}
+
+/** One piece of work a `session_stop` handler ended; `kind` names its class (`goal`, `monitor`, `child`, ...). */
+export interface SessionStopItem {
+	kind: string;
+	id: string;
+	/** A short human name for the stop's report (a goal objective, a monitor description). */
+	label?: string;
+}
+
+export interface SessionStopFailedItem extends SessionStopItem {
+	reason: string;
+}
+
+/** A `session_stop` handler's answer; return undefined when the extension owns nothing a stop ends. */
+export interface SessionStopResult {
+	stopped: readonly SessionStopItem[];
+	failed: readonly SessionStopFailedItem[];
+}
+
+/** One extension's part of a stop: its answer, or the failure the host recorded when it threw or ran past its cap. */
+export interface SessionStopOwnerReport extends SessionStopResult {
+	extensionPath: string;
+}
+
+/** Everything a stop ended, per owning extension, in handler order. */
+export interface SessionStopReport {
+	owners: readonly SessionStopOwnerReport[];
+}
+
 /** Fired on the old extension runner when a reload or session replacement rebuilds the runner and one or more extensions are absent from it. */
 export interface SessionExtensionsRemovedEvent {
 	type: "session_extensions_removed";
@@ -1730,6 +1778,7 @@ export type SessionEvent =
 	| SessionExtensionsRemovedEvent
 	| SessionMoveExportEvent
 	| SessionMoveImportEvent
+	| SessionStopEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent;
 
@@ -2838,6 +2887,11 @@ export interface ExtensionAPI {
 	on(
 		event: "session_move_import",
 		handler: ExtensionHandler<SessionMoveImportEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_stop",
+		handler: ExtensionHandler<SessionStopEvent, SessionStopResult | undefined>,
 		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(

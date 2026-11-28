@@ -27,7 +27,7 @@ import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
 import { queueGoalContinuation, readTrailingGoalContinuations } from "./session-start-continuation.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { interruptedRunHeld, markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
-import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
+import { accountGoalUsage, clearGoal, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
@@ -128,6 +128,19 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			void queueGoalContinuationForCurrentSession(extensionApi, commandCtx, goal);
 		},
 		refreshGoalUi,
+	});
+
+	// A full stop (oh-my-openagent#14390) clears the goal rather than pausing it, and cancels any continuation already
+	// scheduled, so nothing resumes the work now or after a reopen.
+	pi.on("session_stop", async (_event, ctx) => {
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal === null) return undefined;
+		await accountCurrentAgentTurn(ctx, "active");
+		await clearGoal(goalStoreRef(ctx));
+		clearAgentGoalAccounting();
+		monitorContinuation.syncGoal(null);
+		refreshGoalUiBestEffort(ctx, null);
+		return { stopped: [{ kind: "goal", id: goal.id, label: goal.objective }], failed: [] };
 	});
 
 	const unsubscribeGoalStoreChanged =

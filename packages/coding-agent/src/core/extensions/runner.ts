@@ -61,6 +61,7 @@ import { activeKernelToolInvoker, activeKernelTools, type ExtensionKernelTools }
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { emitReportedToolResult, type ReportedToolResult } from "./reported-tool-result.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
+import { runSessionStopHandlers } from "./session-stop-emit.ts";
 import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
 import { isPresentationOnly } from "./ui-presentation.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
@@ -133,6 +134,8 @@ import type {
 	SessionBeforeTreeResult,
 	SessionBoundaryDraft,
 	SessionShutdownEvent,
+	SessionStopEvent,
+	SessionStopReport,
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolResultEvent,
@@ -1890,6 +1893,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.registerRunBackgroundJobFn?.(job) ?? (() => {});
 			},
+			stopSession: (requestedBy) => {
+				runner.assertActive();
+				return runner.emitSessionStop(requestedBy);
+			},
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();
@@ -2402,6 +2409,24 @@ export class ExtensionRunner {
 		const failures = await runSessionMoveHandlers(event.type, calls, this.resolveSessionShutdownBudget().handler);
 		for (const failure of failures) this.emitError({ ...failure, event: event.type });
 		return failures;
+	}
+
+	/**
+	 * A full stop of the session (oh-my-openagent#14390): every `session_stop` handler runs under the `session_shutdown`
+	 * handler budget, and one that fails or runs past it is reported under `failed` instead of holding the stop.
+	 */
+	async emitSessionStop(requestedBy: SessionStopEvent["requestedBy"]): Promise<SessionStopReport> {
+		const calls = flattenHandlers(this.extensions, "session_stop").map(({ path, handler }) => ({
+			extensionPath: path,
+			call: (signal: AbortSignal) =>
+				handler({ type: "session_stop", requestedBy, signal } satisfies SessionStopEvent, this.createContext(path)),
+		}));
+		const report = await runSessionStopHandlers(calls, this.resolveSessionShutdownBudget().handler);
+		for (const owner of report.owners)
+			for (const failure of owner.failed)
+				if (failure.kind === "extension")
+					this.emitError({ extensionPath: owner.extensionPath, event: "session_stop", error: failure.reason });
+		return report;
 	}
 
 	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {

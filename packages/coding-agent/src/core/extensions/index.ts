@@ -196,6 +196,12 @@ export type {
 	SessionParkedEvent,
 	SessionResumedEvent,
 	SessionShutdownEvent,
+	SessionStopEvent,
+	SessionStopFailedItem,
+	SessionStopItem,
+	SessionStopOwnerReport,
+	SessionStopReport,
+	SessionStopResult,
 	// Events - Session
 	SessionStartEvent,
 	SessionTreeEvent,

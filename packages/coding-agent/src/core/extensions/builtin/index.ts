@@ -6,6 +6,7 @@ import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
 import askUserExtension from "./ask-user/index.ts";
 import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
+import stopExtension from "./stop/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
 import chatReplyScrubExtension from "./chat-reply-scrub/index.ts";
 import compactionExtension from "./compaction/index.ts";
@@ -133,6 +134,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },
+	// One stop for everything the session owns (oh-my-openagent#14390); owners answer `session_stop`, so order is not load-bearing.
+	{ id: "stop", factory: stopExtension },
 	{ id: "loop", factory: loopExtension },
 	// Durable counterpart of `loop`: writes job files a separate `senpi schedule run` fires later.
 	{ id: "schedule", factory: scheduleExtension },

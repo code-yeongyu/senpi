@@ -45,6 +45,7 @@ export const MOVED_PATH_TOOL_CLASSES: Readonly<Record<string, MovedPathToolClass
 	create_goal: { kind: "none" },
 	update_goal: { kind: "none" },
 	get_goal: { kind: "none" },
+	stop_session: { kind: "none" },
 	schedule_wakeup: { kind: "none" },
 	schedule_prompt: { kind: "none" },
 	show_html_page: { kind: "none" },
