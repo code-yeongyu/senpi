@@ -57,11 +57,12 @@ export function beginLegacyMcpOperation(client: Client, origin: McpRequestOrigin
 	};
 }
 export function legacyMcpOperation(client: Client) {
-	const operations = legacyOperations.get(client);
-	if (operations && operations.size > 1) return "ambiguous";
-	if (operations?.size !== 1) return undefined;
-	const operation = operations.values().next().value;
-	return operation && !operation.signal.aborted && operation.origin.isCurrent() ? operation : undefined;
+	// Only live operations can own a form: a finished or stale one awaiting removal is not a second origin (senpi#4245).
+	const live = [...(legacyOperations.get(client) ?? [])].filter(
+		(operation) => !operation.signal.aborted && operation.origin.isCurrent(),
+	);
+	if (live.length > 1) return "ambiguous";
+	return live[0];
 }
 
 // Tool calls of a binding that serves several execution scopes, by physical client (brain/hand S16c). Kept apart
