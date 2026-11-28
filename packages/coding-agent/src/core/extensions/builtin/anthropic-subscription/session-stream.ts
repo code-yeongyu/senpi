@@ -30,6 +30,7 @@ import {
 	buildDeltaPromptBlocks,
 	configFingerprint,
 	sentHashesForEntry,
+	sentHashPrefixDigest,
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
@@ -289,6 +290,7 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		model: input.model.id,
 		pinnedAccount: input.pinnedAccount,
 		...(preferredAccount === undefined ? {} : { preferredAccount }),
+		turnKey: sentHashPrefixDigest(sentMessageHashes(sentMessages(input.context))),
 		buildOptions: input.buildOptions,
 		contextTokens: input.contextTokens,
 		outputReserveTokens: input.outputReserveTokens,
