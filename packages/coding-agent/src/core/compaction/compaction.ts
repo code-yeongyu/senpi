@@ -530,6 +530,8 @@ function computeEstimateTokens(message: AgentMessage): number {
 					chars += block.thinking.length;
 				} else if (block.type === "toolCall") {
 					chars += block.name.length + weightedChars(JSON.stringify(block.arguments));
+				} else if (block.type === "providerNative") {
+					chars += block.subtype.length + (JSON.stringify(block.raw)?.length ?? 0);
 				}
 			}
 			return Math.ceil(chars / 4);

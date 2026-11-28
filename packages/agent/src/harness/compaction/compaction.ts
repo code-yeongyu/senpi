@@ -303,6 +303,8 @@ export function estimateTokens(message: AgentMessage): number {
 					chars += block.thinking.length;
 				} else if (block.type === "toolCall") {
 					chars += block.name.length + safeJsonStringify(block.arguments).length;
+				} else if (block.type === "providerNative") {
+					chars += block.subtype.length + safeJsonStringify(block.raw).length;
 				}
 			}
 			return Math.ceil(chars / 4);

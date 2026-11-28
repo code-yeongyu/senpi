@@ -5,6 +5,7 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { transformMessages } from "../src/api/transform-messages.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Api, Model, ToolCall } from "../src/types.ts";
+import { estimateContextTokens } from "../src/utils/estimate.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
@@ -110,6 +111,74 @@ function createResponseModelSseResponse(model: string, contentBlock: ResponseCon
 }
 
 describe("Anthropic raw SSE parsing", () => {
+	it.each(["message", "fallback_message", "missing"] as const)(
+		"separates native search billing from the context of the next request (%s)",
+		async (iterationType) => {
+			const model = getModel("anthropic", "claude-opus-5-5");
+			const user = { role: "user" as const, content: "Search for the sample", timestamp: 1 };
+			const searchText = "sample ".repeat(20_000);
+			const sample = {
+				type: "message",
+				input_tokens: 2,
+				cache_read_input_tokens: 470_000,
+				cache_creation_input_tokens: 4_000,
+				output_tokens: 300,
+			};
+			const blocks = [
+				{ type: "server_tool_use", name: "web_search", id: "s1", input: { query: "sample" } },
+				{
+					type: "web_search_tool_result",
+					tool_use_id: "s1",
+					content: [{ type: "web_search_result", title: searchText }],
+				},
+				{ type: "server_tool_use", name: "web_search", id: "s2", input: { query: "more" } },
+				{ type: "web_search_tool_result", tool_use_id: "s2", content: [] },
+			];
+			const wire = [
+				{ type: "message_start", message: { id: "msg_search", usage: sample } },
+				...blocks.flatMap((content_block, index) => [
+					{ type: "content_block_start", index, content_block },
+					{ type: "content_block_stop", index },
+				]),
+				{
+					type: "message_delta",
+					delta: { stop_reason: "end_turn" },
+					usage: {
+						input_tokens: 6,
+						cache_read_input_tokens: 1_426_000,
+						cache_creation_input_tokens: 12_000,
+						output_tokens: 900,
+						iterations:
+							iterationType === "missing"
+								? null
+								: [
+										sample,
+										sample,
+										{ ...sample, type: iterationType, cache_read_input_tokens: 486_000 },
+										{ ...sample, type: "compaction", cache_read_input_tokens: 0 },
+									],
+					},
+				},
+				{ type: "message_stop" },
+			];
+			const result = await streamAnthropic(model, normalizeContext({ messages: [user] }), {
+				client: createFakeAnthropicClient(
+					createSseResponse(wire.map((data) => ({ event: data.type, data: JSON.stringify(data) }))),
+				),
+			}).result();
+			expect(result.stopReason).toBe("stop");
+			expect(result.usage.totalTokens).toBe(1_438_906);
+			const context = estimateContextTokens([user, result]);
+			if (iterationType === "missing") {
+				expect(context.lastUsageIndex).toBeNull();
+				expect(context.tokens).toBeGreaterThanOrEqual(searchText.length / 4);
+				expect(context.tokens).toBeLessThan(model.contextWindow);
+			} else {
+				expect(context.tokens).toBe(490_302);
+			}
+		},
+	);
+
 	it("forwards parsed provider stream events in order", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 		const providerEvents: unknown[] = [];
