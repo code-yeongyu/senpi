@@ -1,13 +1,14 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { EventLoopSlicer } from "../../src/core/event-loop-slicer.ts";
 import {
 	emitActivationMarker,
 	LEGACY_TOOL_SEARCH_ACTIVATION_MARKER,
 } from "../../src/core/extensions/builtin/tool-search/engine/marker.ts";
+import { activationMarkers } from "../../src/core/extensions/builtin/tool-search/activation-history.ts";
 import { mayHoldActivationMarker } from "../../src/core/extensions/builtin/tool-search/engine/marker-candidates.ts";
 import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import type { ToolInfo } from "../../src/core/extensions/types.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
 
 const v2Marker = emitActivationMarker([
 	{ name: "weather_forecast", registrationId: "/workspace/extensions/weather-tools.ts\0weather_forecast" },
@@ -69,31 +70,26 @@ describe("activation marker candidates (senpi#3518)", () => {
 		}
 	});
 
-	it("restores the same tools as the synchronous scan while yielding between messages", async () => {
-		const history = [
-			...Array.from({ length: 500 }, (_, index) => ({ role: "user", content: `message ${index}` })),
-			{ role: "toolResult", content: [{ type: "text", text: v2Marker }] },
-		];
+	// senpi#7600: the session's fold holds parsed promotions; replay restores from it what the synchronous scan restores.
+	it("replays a session's promotions like the synchronous scan, once per generation, holding each promotion once", () => {
+		const history = SessionManager.inMemory("/workspace");
+		history.appendMessage({ role: "user", content: "no promotion here", timestamp: 1 });
+		history.appendMessage({ role: "user", content: `${v2Marker} and again ${v2Marker}`, timestamp: 2 });
+		history.appendMessage({ role: "user", content: [{ type: "text", text: v2Marker }], timestamp: 3 });
 		const expected = weatherService();
-		expect(expected.service.maybeRehydrateFromHistory(history)).toEqual(["weather_forecast"]);
+		expect(expected.service.maybeRehydrateFromHistory(history.getEntries())).toEqual(["weather_forecast"]);
 
-		let now = 0;
-		const slicer = new EventLoopSlicer({ clock: () => now++ });
-		let turns = 0;
-		let running = true;
-		const tick = (): void => {
-			if (!running) return;
-			turns++;
-			setImmediate(tick);
-		};
-		setImmediate(tick);
-		const sliced = weatherService();
-		const restored = await sliced.service.maybeRehydrateFromHistoryInSlices(history, slicer);
-		running = false;
-
-		expect(restored).toEqual(["weather_forecast"]);
-		expect(sliced.active).toEqual(expected.active);
-		expect(turns).toBeGreaterThanOrEqual(50);
-		expect(await sliced.service.maybeRehydrateFromHistoryInSlices(history, new EventLoopSlicer())).toEqual([]);
+		const replay = weatherService();
+		expect(replay.service.maybeRehydrateFromSessionHistory(history)).toEqual(["weather_forecast"]);
+		expect(replay.active).toEqual(expected.active);
+		expect(replay.service.maybeRehydrateFromSessionHistory(history)).toEqual([]);
+		expect([...history.reduceHistory(activationMarkers).values()]).toEqual([
+			{
+				version: 2,
+				activations: [
+					{ name: "weather_forecast", registrationId: "/workspace/extensions/weather-tools.ts\0weather_forecast" },
+				],
+			},
+		]);
 	});
 });

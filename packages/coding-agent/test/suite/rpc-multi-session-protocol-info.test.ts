@@ -53,6 +53,7 @@ describe("multi-session RPC protocol info", () => {
 					"user_activity",
 					"session_model_scope", // senpi#5933: set_model honours scope "session".
 					"session_held",
+					"session_row_hold", // senpi#7583: a listed session row carries its engine hold.
 					"resume_session",
 					"attended",
 					"observe_reads",
@@ -95,6 +96,7 @@ describe("multi-session RPC protocol info", () => {
 					"host_tools", // senpi#5045: sessions attach show_html_page through the SDK, so an app may serve it.
 					"session_env",
 					"retry_fallback_profile",
+					"session_persona",
 					"telemetry_consent", // senpi#7446: each session's telemetry follows its own callers' answers.
 					"permission_preset_accept_edits",
 					"permission_preset_auto",

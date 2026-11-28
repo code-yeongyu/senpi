@@ -5779,6 +5779,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/core/extensions/builtin/tool-search/activation-history.ts#activationMarkers": {
+			"class": "constant",
+			"reason": "immutable reducer definition; the session manager owns its per-history marker list"
+		},
 		"packages/coding-agent/src/core/extensions/builtin/tool-search/engine/bm25.ts#DEFAULT_BM25_PRECISION": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -6526,9 +6530,21 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_ENTRY_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-bookkeeping.ts#LIFECYCLE_BOOKKEEPING_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/lifecycle-delivery.ts#lifecycleDeliveryEntries": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/lifecycle-history.ts#foldedSlots": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
 		"packages/coding-agent/src/core/lifecycle-history.ts#lifecycleHistory": {
 			"class": "constant",
@@ -6982,10 +6998,6 @@
 		"packages/coding-agent/src/core/session-manager.ts#DEFERRED_FILE_LOAD": {
 			"class": "constant",
 			"reason": "unique sentinel symbol, never mutated; compared only by code of the same copy"
-		},
-		"packages/coding-agent/src/core/session-manager.ts#LIFECYCLE_ENTRY_TYPES": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
 		},
 		"packages/coding-agent/src/core/session-manager.ts#SETUP_ENTRY_TYPES": {
 			"class": "constant",
@@ -9190,6 +9202,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#SessionPersona": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-fields.ts#TelemetryConsent": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
@@ -10007,6 +10023,10 @@
 		"packages/machine-ops/src/files/mutation-queue.ts#fileMutationQueue": {
 			"class": "realm-registry",
 			"reason": "file-mutation-queue/v1: any copy's edit, write, patch or remote-hand operation on one file must queue, and the stuck-holder diagnostics see every copy (design 3.2, 3.3)"
+		},
+		"packages/machine-ops/src/files/privacy-protected.ts#DARWIN_PROTECTED_FOLDERS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/machine-ops/src/files/realpath-without-open.ts#MISSING_PATH_CODES": {
 			"class": "constant",
@@ -11797,6 +11817,14 @@
 		"packages/senpi-codemode/src/bridge/reserved.ts#SCOPE_MONITOR_OP": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#ownClaims": {
+			"class": "per-copy-safe",
+			"reason": "the session start claims this copy took and their refresh timers; the claim files themselves coordinate processes"
+		},
+		"packages/coding-agent/src/core/session-start-claim.ts#UNPROVEN_CLAIM_STALE_MS": {
+			"class": "constant",
+			"reason": "numeric constant computed from another constant at load; never written"
 		}
 	}
 }

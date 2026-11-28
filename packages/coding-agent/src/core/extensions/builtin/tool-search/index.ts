@@ -1,5 +1,4 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
 import { AnthropicNativeToolSearchAdapter, isMcpNativeToolSearchEnabled } from "./native-search.ts";
 import {
@@ -26,11 +25,11 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 			service.getCatalog();
 		});
 
-		pi.on("session_start", async (_event, ctx) => {
+		pi.on("session_start", (_event, ctx) => {
 			dropFirstUseBoot();
 			bootedContexts.add(ctx.sessionManager ?? runtimeKey);
 			service.beginSession();
-			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
+			service.maybeRehydrateFromSessionHistory(ctx.sessionManager);
 		});
 		pi.on(
 			"context",
