@@ -430,7 +430,6 @@ import {
 	describeUsageLimitMessage,
 	usageLimitScope,
 } from "./retry-fallback/usage-limit.ts";
-import { queuedUsageHold } from "./retry-fallback/queued-usage-hold.ts";
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
@@ -4683,7 +4682,7 @@ export class AgentSession {
 				!userAborted &&
 				this.agent.hasQueuedMessages()
 			) {
-				const hold = queuedUsageHold(this._retryFallback, this._pendingModelSwitch?.model ?? this.model);
+				const hold = await this._queuedInputUsageHold();
 				if (hold) {
 					await this._rejectQueuedInputsForUsageHold(hold);
 					retryContinuationBlocked = true;
@@ -6538,71 +6537,7 @@ export class AgentSession {
 		// Turn boundary: restore the primary model if the fallback cooldown expired.
 		if (!this.isStreaming) {
 			try {
-				await this._maybeRestoreFallbackPrimary();
-				const model = this.model;
-				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
-				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
-				// A pooled provider is out only when no account can serve: one account's billing or limit is that
-				// account's, and the pool's own block already routes around it (senpi#5590).
-				const pool =
-					model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
-						? await this._pooledAccountHealth(model.provider, model.id)
-						: undefined;
-				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
-				// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
-				if (
-					model?.provider === "anthropic-subscription" &&
-					!this._pendingModelSwitch &&
-					this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
-					attributionOf(options) === "user"
-				)
-					claudeRecheckProvider = model.provider;
-				// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
-				// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
-				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
-				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
-					if (attributionOf(options) === "user") await refreshSubscriptionUsage(model.provider);
-					this._retryFallback.releaseAccountHoldShownServable(
-						model.provider,
-						await this._usageOfSelectableAccounts(model.provider),
-					);
-				}
-				if (
-					model &&
-					!this._pendingModelSwitch &&
-					claudeRecheckProvider !== model.provider &&
-					this._retryFallback.isProviderSpent(model.provider) &&
-					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
-				) {
-					this._retryFallback.resetTurn();
-					this._fallbackTurnFailures = [];
-					const errorMessage = this._retryFallback.accountError(model.provider);
-					// Routing around a remembered failure did not observe another provider failure.
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
-						throw new AccountUsageLimitError(
-							model.provider,
-							errorMessage,
-							this._retryFallback.accountResetAt(model.provider),
-							this._retryFallback.widenedFamiliesOf(model.provider),
-							pool?.accountsOut,
-						);
-					}
-				}
-				// A family held by a weekly limit that named no family binds automated turns the same way, so a loop
-				// moves to another family or stops instead of hammering the held one (senpi#5596, senpi#3131).
-				const heldFamily =
-					this.model && !this._pendingModelSwitch && attributionOf(options) !== "user"
-						? this._retryFallback.heldFamily(this.model)
-						: undefined;
-				if (this.model && heldFamily) {
-					this._retryFallback.resetTurn();
-					this._fallbackTurnFailures = [];
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage: heldFamily.errorMessage }, false))) {
-						throw new AccountUsageLimitError(this.model.provider, heldFamily.errorMessage, undefined, [
-							heldFamily.family,
-						]);
-					}
-				}
+				claudeRecheckProvider = await this._guardAccountHolds(attributionOf(options));
 			} catch (error) {
 				releaseStart(false);
 				throw error;
@@ -9340,28 +9275,124 @@ export class AgentSession {
 			return ticket === undefined ? [] : [ticket];
 		});
 		this._releaseQueuedDeliveries(tickets, "cleared");
+		// A hold refusal settles the sender with the typed error and drops the admission, so a redelivery is admitted again.
 		this._settleRemovedCarriers(removed, failure);
-		if (failure) for (const message of removed) this.externalAdmission.observeRefused(message, failure.message);
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 	}
 
+	/**
+	 * The #3131 hold that binds an automatic turn for the queued input, after the guard released what usage shows
+	 * servable and walked the fallback chain; `undefined` when a route can serve it (the guard may have switched to it).
+	 */
+	private async _queuedInputUsageHold(): Promise<AccountUsageLimitError | undefined> {
+		try {
+			await this._guardAccountHolds("agent");
+			return undefined;
+		} catch (error) {
+			if (error instanceof AccountUsageLimitError) return error;
+			throw error;
+		}
+	}
+
+	/**
+	 * Under a #3131 hold, input a sender waits on (an RPC input with a client id, a peer delivery) fails with the typed
+	 * hold error instead of staying parked on an idle session. A person's TUI input stays queued and visible: they see
+	 * the error and decide. Inputs snapshotted once, so input arriving during the refusal is not refused with them.
+	 */
 	private async _rejectQueuedInputsForUsageHold(error: AccountUsageLimitError): Promise<void> {
-		const rejected = new Set<string>();
-		for (;;) {
-			const queued = this.getQueuedInputs().filter((input) => !rejected.has(input.queuedId));
-			if (queued.length === 0) break;
-			for (const input of queued) rejected.add(input.queuedId);
+		const waited = this.getQueuedInputs().filter((input) => input.clientMessageId !== undefined);
+		try {
 			await this._pendingInputs.rejectBeforeDispatch(
-				queued.flatMap((input) => (input.clientMessageId === undefined ? [] : [input.clientMessageId])),
+				waited.flatMap((input) => (input.clientMessageId === undefined ? [] : [input.clientMessageId])),
 				{ type: "reject_before_dispatch", reason: error.message, code: error.code },
 				() => {
-					for (const input of queued) this._changeQueuedInput(input.queuedId, undefined, undefined);
+					for (const input of waited) this._changeQueuedInput(input.queuedId, undefined, undefined);
 				},
 			);
+		} catch (journalError) {
+			// The inputs stay queued, as before this refusal; the run still settles.
+			this._sessionLogger.warn("pending_input_hold_refusal_unrecorded", {
+				error: journalError instanceof Error ? journalError.message : String(journalError),
+			});
 		}
 		this._takeQueuedDeliveries(error);
 		this._emit({ type: "continuation_error", errorMessage: error.message });
+	}
+
+	/**
+	 * The account-hold guard at a turn boundary (senpi#3131): releases holds a pooled account or newer usage shows
+	 * servable, routes a spent provider or held family to its fallback, and throws `AccountUsageLimitError` when no
+	 * route can serve. Answers the provider whose hold defers to the Claude pool (senpi#6727).
+	 */
+	private async _guardAccountHolds(attribution: InputAttribution): Promise<string | undefined> {
+		let claudeRecheckProvider: string | undefined;
+		await this._maybeRestoreFallbackPrimary();
+		const model = this.model;
+		// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
+		// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+		// A pooled provider is out only when no account can serve: one account's billing or limit is that
+		// account's, and the pool's own block already routes around it (senpi#5590).
+		const pool =
+			model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
+				? await this._pooledAccountHealth(model.provider, model.id)
+				: undefined;
+		if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
+		// Defer this hold to the Claude pool only if the person's input is ultimately admitted (senpi#6727).
+		if (
+			model?.provider === "anthropic-subscription" &&
+			!this._pendingModelSwitch &&
+			this._modelRuntime.getRegisteredProviderConfig(model.provider)?.ownsAccountSelection === true &&
+			attribution === "user"
+		)
+			claudeRecheckProvider = model.provider;
+		// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
+		// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
+		// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
+		if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+			if (attribution === "user") await refreshSubscriptionUsage(model.provider);
+			this._retryFallback.releaseAccountHoldShownServable(
+				model.provider,
+				await this._usageOfSelectableAccounts(model.provider),
+			);
+		}
+		if (
+			model &&
+			!this._pendingModelSwitch &&
+			claudeRecheckProvider !== model.provider &&
+			this._retryFallback.isProviderSpent(model.provider) &&
+			!(attribution === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
+		) {
+			this._retryFallback.resetTurn();
+			this._fallbackTurnFailures = [];
+			const errorMessage = this._retryFallback.accountError(model.provider);
+			// Routing around a remembered failure did not observe another provider failure.
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
+				throw new AccountUsageLimitError(
+					model.provider,
+					errorMessage,
+					this._retryFallback.accountResetAt(model.provider),
+					this._retryFallback.widenedFamiliesOf(model.provider),
+					pool?.accountsOut,
+				);
+			}
+		}
+		// A family held by a weekly limit that named no family binds automated turns the same way, so a loop
+		// moves to another family or stops instead of hammering the held one (senpi#5596, senpi#3131).
+		const heldFamily =
+			this.model && !this._pendingModelSwitch && attribution !== "user"
+				? this._retryFallback.heldFamily(this.model)
+				: undefined;
+		if (this.model && heldFamily) {
+			this._retryFallback.resetTurn();
+			this._fallbackTurnFailures = [];
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage: heldFamily.errorMessage }, false))) {
+				throw new AccountUsageLimitError(this.model.provider, heldFamily.errorMessage, undefined, [
+					heldFamily.family,
+				]);
+			}
+		}
+		return claudeRecheckProvider;
 	}
 
 	/**

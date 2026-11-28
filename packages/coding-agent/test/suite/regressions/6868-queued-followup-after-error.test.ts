@@ -110,4 +110,58 @@ describe("#6868 follow-ups queued during a failed turn", () => {
 			harness.cleanup();
 		}
 	});
+
+	// senpi#6868 review: under a #3131 hold only input a sender waits on is refused, and a refused peer delivery is not
+	// booked as a session-file refusal (which made its redelivery answer `already_admitted`).
+	it.each([
+		{ name: "a refused peer delivery leaves no failed admission, so its sender can redeliver it", input: "peer" },
+		{ name: "a person's follow-up without a client id stays queued", input: "person" },
+	] as const)("under an account hold, $name", async ({ input }) => {
+		const harness = await createHarness({
+			persistSession: true,
+			settings: { retry: { enabled: false }, compaction: { enabled: false } },
+			fallbackNow: () => 0,
+		});
+		const { session } = harness;
+		const requested = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		harness.setResponses([
+			async () => {
+				requested.resolve();
+				await release.promise;
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: ACCOUNT_LIMIT });
+			},
+			fauxAssistantMessage("must not be requested"),
+		]);
+
+		const first = session.prompt("first request");
+		try {
+			await requested.promise;
+			if (input === "peer") {
+				expect(
+					session.externalAdmission.admit({ delivery_id: "peer-1", text: FOLLOW_UP, deliverAs: "followUp" }),
+				).toMatchObject({ kind: "queued" });
+			} else {
+				await session.prompt(FOLLOW_UP, { streamingBehavior: "followUp" });
+			}
+			expect(session.agent.hasQueuedMessages()).toBe(true);
+
+			release.resolve();
+			await first;
+			await session.waitForIdle();
+			await session.waitForSettledSessionWork();
+
+			expect(harness.faux.getCallLog()).toHaveLength(1);
+			if (input === "peer") {
+				expect(session.agent.hasQueuedMessages()).toBe(false);
+				expect(session.externalAdmission.list()).toEqual({ pending: [], emitted: [] });
+			} else {
+				expect(session.getFollowUpMessages()).toEqual([FOLLOW_UP]);
+			}
+		} finally {
+			release.resolve();
+			await first;
+			harness.cleanup();
+		}
+	});
 });
