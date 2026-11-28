@@ -14,25 +14,28 @@ const packageJson = JSON.parse(
 ) as CodingAgentPackageJson;
 
 describe("package distribution entrypoints", () => {
-	test("uses the bundle for executables and modular output for libraries", () => {
+	// One copy of the code per install (senpi#7660): executables, the root entry and every library subpath load the
+	// bundle; the per-file tree is a build input that ships only its declarations.
+	test("serves executables and every library entry from the bundle", () => {
 		expect(packageJson.bin.pi).toBe("dist/bundle/cli.js");
 		expect(packageJson.bin.senpi).toBe("dist/bundle/cli.js");
-		expect(packageJson.main).toBe("./dist/index.js");
-		expect(packageJson.exports["."].import).toBe("./dist/index.js");
-		expect(packageJson.exports["./client"].import).toBe("./dist/client/index.js");
-		expect(packageJson.exports["./rpc-entry"].import).toBe("./dist/rpc-entry.js");
+		expect(packageJson.main).toBe("./dist/bundle/index.js");
+		expect(packageJson.exports["."].import).toBe("./dist/bundle/index.js");
+		expect(packageJson.exports["./client"].import).toBe("./dist/bundle/client.js");
+		expect(packageJson.exports["./rpc-entry"].import).toBe("./dist/bundle/rpc-entry.js");
 	});
 
 	// An embedding program that rewrites argv or env before importing the CLI imports this first, so the
 	// OSC 7577 hand-off re-execs the launch it was given rather than the rewritten one (senpi#7493).
 	test("publishes the OSC 7577 hand-off as its own side-effect entry", () => {
-		expect(packageJson.exports["./program-resume-startup"]?.import).toBe("./dist/program-resume-startup.js");
+		expect(packageJson.exports["./program-resume-startup"]?.import).toBe("./dist/bundle/program-resume-startup.js");
 	});
 
-	// A manifest path that names nothing the build emits ships a broken entry: each export must come from a source file
-	// the build compiles (tsconfig.build.json: rootDir ./src, outDir ./dist, test and experimental paths excluded), with
-	// its types beside it, inside what `files` ships. A renamed or moved source fails here, not at an embedder's import.
-	test("every export is built from a compiled source file and ships with its types", () => {
+	// A manifest path that names nothing the build emits ships a broken entry: each export's declaration must come from a
+	// source file the build compiles (tsconfig.build.json: rootDir ./src, outDir ./dist, test and experimental paths
+	// excluded), and its `import` must be the bundle entry scripts/bundle-entry-points.mjs builds from that module. A
+	// renamed or moved source fails here, not at an embedder's import.
+	test("every export is a bundle entry built from a compiled source file, with its types", () => {
 		// The paths the build leaves out, as tsconfig.build.json names them (directory entries under src/ only; its
 		// node_modules, dist and *.test.ts entries never name an export's source).
 		const buildConfig = JSON.parse(readFileSync(new URL("../tsconfig.build.json", import.meta.url), "utf8")) as {
@@ -50,8 +53,12 @@ describe("package distribution entrypoints", () => {
 				});
 				continue;
 			}
-			const module = /^\.\/dist\/(.+)\.js$/.exec(entry.import)?.[1];
-			expect({ name, built: module !== undefined }).toEqual({ name, built: true });
+			expect({ name, import: entry.import }).toEqual({
+				name,
+				import: `./dist/bundle/${name === "." ? "index" : name.slice(2)}.js`,
+			});
+			const module = /^\.\/dist\/(.+)\.d\.ts$/.exec(entry.types ?? "")?.[1];
+			expect({ name, typed: module !== undefined }).toEqual({ name, typed: true });
 			const source = `src/${module}.ts`;
 			expect({ name, source, exists: existsSync(new URL(`../${source}`, import.meta.url)) }).toEqual({
 				name,
@@ -62,8 +69,6 @@ describe("package distribution entrypoints", () => {
 				name,
 				excluded: false,
 			});
-			if (entry.types !== undefined)
-				expect({ name, types: entry.types }).toEqual({ name, types: `./dist/${module}.d.ts` });
 		}
 		expect(packageJson.files).toContain("dist");
 	});

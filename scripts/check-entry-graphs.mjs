@@ -143,7 +143,13 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 			failures += 1;
 			continue;
 		}
-		const target = typeof declared === "string" ? declared : declared.import;
+		// An export served from a bundle names its compiled module through its declaration (scripts/bundle-entry-points.mjs).
+		const target =
+			typeof declared === "string"
+				? declared
+				: declared.import?.startsWith("./dist/bundle/")
+					? declared.types.replace(/\.d\.ts$/, ".js")
+					: declared.import;
 		for (const [name, distPath] of expand(pkgDir, entry, target)) {
 			const source = sourceFor(pkgDir, distPath);
 			if (!source) {

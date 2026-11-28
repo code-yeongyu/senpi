@@ -2,10 +2,18 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /**
- * One entry of the main split build per `exports` subpath of the coding-agent manifest whose `import` condition names a
- * compiled module, named for the subpath (`.` is `index`) and built from that module. Sharing one split build gives
- * every subpath the same module instances as `cli.js`. A data export of a file the bundle itself writes
- * (`./runtime-manifest.json`) has no `import` condition and no entry.
+ * The compiled module an `exports` entry is built from: its `types` declaration's `.js` sibling. Its `import` condition
+ * names the bundle's output for it (`./dist/bundle/<name>.js`), which the bundle build writes, so it cannot be the input.
+ */
+export function compiledModuleOf(conditions) {
+	return conditions.types.replace(/\.d\.ts$/, ".js");
+}
+
+/**
+ * One entry of the main split build per `exports` subpath of the coding-agent manifest whose `import` condition is a
+ * module, named for the subpath (`.` is `index`, matching `./dist/bundle/<name>.js`) and built from its compiled module.
+ * Sharing one split build gives every subpath the same module instances as `cli.js`. A data export of a file the bundle
+ * itself writes (`./runtime-manifest.json`) has no `import` condition and no entry.
  */
 export function exportEntryPoints({ codingAgentDistDir }) {
 	const codingAgentDir = dirname(codingAgentDistDir);
@@ -15,7 +23,7 @@ export function exportEntryPoints({ codingAgentDistDir }) {
 			.filter(([, conditions]) => conditions.import?.endsWith(".js"))
 			.map(([subpath, conditions]) => [
 				subpath === "." ? "index" : subpath.slice(2),
-				join(codingAgentDir, conditions.import),
+				join(codingAgentDir, compiledModuleOf(conditions)),
 			]),
 	);
 }

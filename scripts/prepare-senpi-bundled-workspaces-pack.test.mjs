@@ -19,7 +19,7 @@ const VENDORED_FILES = [
 
 function packedFiles(extraPaths = [], prefix = "package/") {
 	return {
-		files: ["package.json", "dist/cli.js", "dist/bundle/cli.js", ...VENDORED_FILES, ...extraPaths].map((path) => ({
+		files: ["package.json", "dist/cli.d.ts", "dist/bundle/cli.js", ...VENDORED_FILES, ...extraPaths].map((path) => ({
 			path: `${prefix}${path}`,
 		})),
 	};
@@ -149,6 +149,35 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			);
 		});
 	}
+
+	// Release contract (senpi#7660): the package's JavaScript is the bundle; the per-file tree ships only declarations.
+	it("rejects a tarball that ships the per-file JavaScript tree, but not the HTML export's text assets", () => {
+		// Given
+		const assets = ["dist/core/export-html/template.js", "dist/core/export-html/vendor/marked.min.js"];
+
+		// When / Then
+		assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(packedFiles(assets), stagedManifest()));
+		assert.throws(
+			() => assertSenpiPackedWorkspaceFiles(packedFiles([...assets, "dist/cli.js"]), stagedManifest()),
+			/must not ship the per-file JavaScript tree \(found 1, e\.g\. dist\/cli\.js\)/,
+		);
+	});
+
+	it("rejects a tarball missing a file its exports map names", () => {
+		// Given
+		const manifest = stagedManifest({
+			exports: { ".": { types: "./dist/index.d.ts", import: "./dist/bundle/index.js" } },
+		});
+
+		// When / Then
+		assert.throws(
+			() => assertSenpiPackedWorkspaceFiles(packedFiles(["dist/index.d.ts"]), manifest),
+			/missing exported files: dist\/bundle\/index\.js$/,
+		);
+		assert.doesNotThrow(() =>
+			assertSenpiPackedWorkspaceFiles(packedFiles(["dist/index.d.ts", "dist/bundle/index.js"]), manifest),
+		);
+	});
 
 	it("rejects a tarball missing a vendored client or protocol file", () => {
 		// Given
