@@ -90,10 +90,21 @@ const ModelEntry = Type.Object({
 	serviceTier: Opt(Type.Unknown()),
 });
 export const ModelEntries = Type.Array(ModelEntry, { maxItems: RPC_INBOUND_LIMITS.listItems });
+export const TelemetryConsent = literals("granted", "declined", "unanswered");
+export const TelemetryDeclaration = Type.Object({ consent: TelemetryConsent }, { additionalProperties: false });
 export const RetryFallback = Type.Object({
 	modelFallback: Bool,
 	fallbackChains: Type.Record(Id, Type.Immutable(Strings), { maxProperties: RPC_INBOUND_LIMITS.recordKeys }),
 });
+/** `open_session.persona`; `sessionPersonaError` (`core/session-persona.ts`) holds the prompt and list caps. */
+export const SessionPersona = Type.Object(
+	{
+		appendSystemPrompt: OptStr,
+		tools: Opt(Type.Immutable(Strings)),
+		excludeTools: Opt(Type.Immutable(Strings)),
+	},
+	{ additionalProperties: false },
+);
 export const QuestionAnswers = Type.Record(
 	Id,
 	Type.Object({

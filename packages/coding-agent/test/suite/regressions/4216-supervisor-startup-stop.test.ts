@@ -50,6 +50,7 @@ it.each(["completed", "failed"])("joins %s startup writes before removing the ge
 		publicSocketOwned: false,
 		publicSocketIdentity: undefined,
 		endpointReplaced: false,
+		childGone: false,
 	};
 	const child = new ChildProcess();
 	const activity = new SupervisorActivity({
@@ -71,6 +72,8 @@ it.each(["completed", "failed"])("joins %s startup writes before removing the ge
 			server: createServer(),
 			internalDir: undefined,
 			child,
+			// The stand-in has no OS process to prove; shutdown still reaches its signal seam through a vouched identity (senpi#7525).
+			identity: { pid: child.pid, presence: async () => "ours" as const },
 			activity,
 			drain: new SupervisorDrain(child, () => state.shuttingDown),
 			admission: new HostAdmission({

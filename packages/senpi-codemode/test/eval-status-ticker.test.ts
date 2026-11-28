@@ -44,6 +44,22 @@ describe("EvalStatusTicker", () => {
 		expect(labels).toEqual(["↗ py · long running cell (0s)", "↗ py · long running cell (1s)"]);
 	});
 
+	it("with the ticker off, renders on every cell-set change but never ticks the elapsed label", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(T0);
+		const labels: Array<string | undefined> = [];
+		const ticker = new EvalStatusTicker({ render: (status) => labels.push(status) });
+
+		ticker.sync([entry("cell-1", "long running cell")], false);
+		vi.advanceTimersByTime(5_000);
+		expect(labels).toEqual(["↗ py · long running cell (0s)"]);
+		expect(ticker.running).toBe(false);
+
+		ticker.sync([entry("cell-1", "long running cell"), entry("cell-2", "second")], false);
+		ticker.sync([], false);
+		expect(labels).toEqual(["↗ py · long running cell (0s)", "↗ eval 2: long running cell, second (5s)", undefined]);
+	});
+
 	it("does not re-render while the formatted label is unchanged", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(T0);

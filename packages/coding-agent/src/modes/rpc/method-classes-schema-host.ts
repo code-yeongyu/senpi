@@ -19,8 +19,11 @@ import {
 	SessionContext,
 	SessionEnv,
 	SessionKind,
+	SessionPersona,
 	Str,
 	Strings,
+	TelemetryConsent,
+	TelemetryDeclaration,
 	ThinkingLevel,
 } from "./method-classes-schema-fields.ts";
 import { MOVE_INLINE_MAX_BYTES, MOVE_INLINE_MAX_FILES } from "./session-move-wire.ts";
@@ -57,7 +60,9 @@ const openProperties = {
 	promptSurface: Opt(literals("terminal", "app", "chat")),
 	browserEngine: Opt(literals("connected", "builtin", "none")),
 	retryFallback: Opt(RetryFallback),
+	persona: Opt(SessionPersona),
 	env: Opt(SessionEnv),
+	telemetry: Opt(TelemetryDeclaration),
 };
 
 /** One file of a move's inline bundle (senpi#6267); its bytes are bounded by the cap on the whole bundle. */
@@ -74,10 +79,10 @@ export const HOST_RECORD_SCHEMAS = {
 		auth: Opt(Type.Object({ client_nonce: Id })),
 		observe: OptBool,
 	}),
-	open_session: command("open_session", openProperties),
+	open_session: command("open_session", { ...openProperties, reopenRetired: Opt(Type.Literal(true)) }),
 	claim_session: command("claim_session", { ...openProperties, cwd: PathStr }),
 	park_session: command("park_session", { cwd: PathStr, kind: Opt(SessionKind), context: Opt(SessionContext) }),
-	close_session: command("close_session", { sessionId: Id }),
+	close_session: command("close_session", { sessionId: Id, retire: OptBool }),
 	move_session: Type.Union([
 		move({ op: Type.Literal("prepare"), moveId: Id, cwd: OptPath, repository: Opt(RepositoryIdentity) }),
 		move({ op: Type.Literal("cancel"), moveId: Id }),
@@ -159,7 +164,9 @@ export const HOST_RECORD_SCHEMAS = {
 		retry: Opt(Type.Literal(true)),
 		takeover: Opt(Type.Literal(true)),
 		holder: OptId,
+		telemetry: Opt(TelemetryDeclaration),
 	}),
+	set_telemetry_consent: command("set_telemetry_consent", { sessionId: Id, consent: TelemetryConsent }),
 	release_attachment: command("release_attachment", { sessionId: Id }),
 	list_hands: command("list_hands", { sessionId: OptId }),
 	select_hand: command("select_hand", { sessionId: Id, device: Type.Union([Id, Type.Null()]) }),

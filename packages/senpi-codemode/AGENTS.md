@@ -19,6 +19,7 @@ src/bridges/                     Host adapters for agent(), output(), structured
 src/output/                      OutputSink, truncation metadata, artifact-path handling
 src/completion/                  Host completion bridge
 src/timeouts/                    Bridge and idle-timeout ownership
+src/written-files/               Files a cell wrote without write/edit: workspace scan, write hooks, result block
 scripts/qa-*.ts                  Direct kernel, extension, and renderer QA drivers
 test/                            Vitest contracts and the omp parity ledger
 ```
@@ -58,6 +59,7 @@ test/                            Vitest contracts and the omp parity ledger
 | Agent/output task composition | `src/bridges/` |
 | Kernel runtimes, subprocess lifecycle | `src/kernels/` (see `src/kernels/AGENTS.md`) |
 | Output sink and artifacts | `src/output/`, `src/tool/cell-handler.ts` |
+| Files a cell wrote, write hooks | `src/written-files/` (`source-file.ts` defines a source file) |
 | Status and TUI/HTML rendering | `src/tool/status-events.ts`, `src/tool/render.ts` |
 | Tests and port coverage | `test/`, `test/PARITY.md` (see `test/AGENTS.md`) |
 | Real-surface QA | `scripts/qa-*.ts` |

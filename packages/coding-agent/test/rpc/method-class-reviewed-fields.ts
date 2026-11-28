@@ -215,13 +215,19 @@ export const REVIEWED_FIELDS = {
 			"kind",
 			"modelId",
 			"permissionPreset",
+			// `persona` (omo#13057) is prompt text and tool names that only narrow the session this open creates (the caller
+			// could open it with every tool): no path, credential or process, class unchanged. Its text is never read as a file.
+			"persona",
 			"promptSurface",
 			"provider",
+			"reopenRetired",
 			"retain_on_disconnect",
 			"retry",
 			"retryFallback",
 			"sessionPath",
 			"spawnedBy",
+			// `telemetry` (senpi#7446) is the caller's own consent answer: no path, credential or process, class unchanged.
+			"telemetry",
 			"thinkingLevel",
 			"type",
 		],
@@ -231,7 +237,8 @@ export const REVIEWED_FIELDS = {
 	},
 	fork: { fields: ["admissionId", "entryId", "id", "position", "sessionId", "type"] },
 	clone: { fields: ["admissionId", "id", "sessionId", "type"] },
-	close_session: { fields: ["admissionId", "id", "sessionId", "type"] },
+	// `retire` (senpi#7577) only narrows what may reopen the session the caller is already closing: class unchanged.
+	close_session: { fields: ["admissionId", "id", "retire", "sessionId", "type"] },
 	unload_session: {
 		// `deliveries` (senpi#7004) only chooses whether a busy session's unwritten deliveries refuse the unload: no path,
 		// credential or process, so the class stays `thread`. `graceful` and `waitMs` (oh-my-openagent#14313) only choose to
@@ -252,6 +259,7 @@ export const REVIEWED_FIELDS = {
 		],
 	},
 	set_session_context: { fields: ["admissionId", "id", "patch", "sessionId", "type"] },
+	set_telemetry_consent: { fields: ["admissionId", "consent", "id", "sessionId", "type"] },
 	attach_session: {
 		fields: [
 			"admissionId",
@@ -262,6 +270,7 @@ export const REVIEWED_FIELDS = {
 			"retry",
 			"sessionId",
 			"takeover",
+			"telemetry",
 			"type",
 		],
 	},

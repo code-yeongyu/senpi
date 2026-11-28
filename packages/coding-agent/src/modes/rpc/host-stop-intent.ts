@@ -38,6 +38,15 @@ export const STOP_INTENT_MAX_AGE_MS = 120_000;
 /** Shared with callers so they never kill a supervisor while it is reaping its child. */
 export const CHILD_STOP_TIMEOUT_MS = 5_000;
 export const CHILD_KILL_EXIT_TIMEOUT_MS = 30_000;
+/** How often a Linux supervisor re-checks that its host child is still its own live process (`/proc`, spawns nothing). */
+export const CHILD_LIVENESS_RECHECK_MS = 15_000;
+/** The same re-check off Linux, where each one spawns a `ps`: once a minute. */
+export const CHILD_LIVENESS_RECHECK_PS_MS = 60_000;
+
+/** The re-check cadence on `platform`; the supervisor and its tests both read it here. */
+export function childLivenessRecheckMs(platform: NodeJS.Platform = process.platform): number {
+	return platform === "linux" ? CHILD_LIVENESS_RECHECK_MS : CHILD_LIVENESS_RECHECK_PS_MS;
+}
 
 const SENDER_KINDS: ReadonlySet<string> = new Set(["ensure", "supervisor", "stop", "successor", "handoff"]);
 

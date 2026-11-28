@@ -210,6 +210,7 @@ export type {
 	// Events - Tool
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolCallReadyEvent,
 	// Tools
 	ToolDefinition,
 	// Events - Tool Execution

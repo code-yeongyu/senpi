@@ -111,7 +111,7 @@ function handRuntime(
 		const { session } = runtime;
 		const sessionId = session.sessionId;
 		runtimes.set(sessionId, runtime);
-		selection.restore(sessionId, session);
+		selection.restore(sessionId, session, input.launchProfile?.persona !== undefined);
 		// A session that ends releases its link to the hand; a later runtime of the same id starts clean.
 		const dispose = session.dispose.bind(session);
 		session.dispose = () => {

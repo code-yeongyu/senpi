@@ -1,12 +1,15 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
+import type { SessionPersona } from "../../core/session-persona.ts";
 
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 
 import type { SessionKind } from "../../core/extensions/types.ts";
+
+import type { TelemetryConsent, TelemetryDeclaration } from "../../core/telemetry-consent.ts";
 
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse } from "./rpc-question-types.ts";
@@ -124,6 +127,17 @@ type RpcCommandBody =
 			 */
 			retryFallback?: SessionRetryFallbackProfile;
 			/**
+			 * The instructions and tool policy THIS session runs with (e.g. a task child's agent): `appendSystemPrompt` is
+			 * literal text appended to its system prompt, `tools` the only tools it may have (empty = none),
+			 * `excludeTools` tools it never has. It narrows the host's own flags and never widens them, follows the
+			 * session through a successor's reopen, and an attach naming a different one is refused with
+			 * `session_path_in_use` (`persona_mismatch`). Requires the host capability `session_persona`; a malformed
+			 * value is refused with `invalid_launch_profile`.
+			 */
+			persona?: SessionPersona;
+			/** Explicitly reopen the retired identity. Ordinary opens never consume retirement. */
+			reopenRetired?: true;
+			/**
 			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
 			 * one session after the daemon's own allowlist, never merged into the host process or carried to
 			 * a successor generation, never seen by another session. Names must be on the host's
@@ -133,8 +147,27 @@ type RpcCommandBody =
 			 * the session's existing env. Requires the host capability `session_env`.
 			 */
 			env?: Record<string, string>;
+			/**
+			 * This caller's live telemetry answer for the session (senpi#7446). Telemetry attributed to the session is
+			 * collected and delivered only while the host permits it AND every caller of the session answered
+			 * `granted`; an open without this field answers `unanswered`, so an older peer never grants. An open that
+			 * attaches to an existing session adds this caller's answer to it. Change it later with
+			 * `set_telemetry_consent`. Requires the host capability `telemetry_consent`; any other value is refused
+			 * with `invalid_launch_profile`.
+			 */
+			telemetry?: TelemetryDeclaration;
 	  }
-	| { id?: string; type: "close_session"; sessionId: string }
+	| {
+			id?: string;
+			type: "close_session";
+			sessionId: string;
+			/**
+			 * Also retire the session when this close is its final one: no restore and no plain `open_session` reopens it
+			 * until an `open_session` with `reopenRetired: true`. Default false: a closed session reopens from its file.
+			 * A session with no transcript file has nothing to retire and closes as usual. Requires `session_retirement`.
+			 */
+			retire?: boolean;
+	  }
 	| RpcMoveSessionCommand
 	| {
 			id?: string;
@@ -281,6 +314,19 @@ type RpcCommandBody =
 	  }
 	| {
 			id?: string;
+			/**
+			 * Change THIS connection's telemetry answer for a session it is attached to (senpi#7446), without
+			 * restarting the host or the session: `granted`, `declined` or `unanswered`. On a session a caller opened
+			 * the answer also stays with the session after the connection leaves, so a revocation outlives it.
+			 * Refused with `session_not_attached` from a connection that is not attached. Requires the host
+			 * capability `telemetry_consent`.
+			 */
+			type: "set_telemetry_consent";
+			sessionId: string;
+			consent: TelemetryConsent;
+	  }
+	| {
+			id?: string;
 			type: "warm";
 			/**
 			 * Load what the next `open_session` with these inputs needs - the extension module graph and
@@ -304,7 +350,7 @@ export type RpcCommand = (
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  }
-	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd" | "reopenRetired"> & {
 			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
 			type: "claim_session";
 			cwd: string;

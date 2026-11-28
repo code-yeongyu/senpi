@@ -1,3 +1,134 @@
+## 2026-11-27 - Embedders can retire a closed session without opening it (senpi#7577)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` exports `retireSession` and `SessionRetirement`.
+
+### Why
+
+- A controller can close a session after its last host has exited.
+
+### Why an extension could not handle it
+
+- No extension is running when a session exists only on disk.
+
+### Expected merge conflict zones
+
+- LOW: the named exports in `packages/coding-agent/src/index.ts`.
+
+## 2026-11-27 - The CLI runtime factory applies a session's persona (senpi#7570, oh-my-openagent#13057)
+
+### What changed
+
+- `packages/coding-agent/src/modes/headless/hand-selection.ts` and `headless-host.ts`: a persona session never runs on a hand. `select` to a device is refused with `persona_not_supported_on_hand`, and `restore` of a hand the file recorded installs the unreachable placeholder, because a hand builds its runtime from the scope root alone and its nested calls would run excluded tools.
+- `packages/coding-agent/src/main.ts`: refuses `persona.tools` on a host that restricts its built-in tools by default without `--tools` (`persona_tools_unsupported`); the per-session `runtimeParsed` overlay narrows the host's tool flags with the launch profile's persona (`withSessionPersona`: allowlist intersection, denylist union, an empty allowlist means no tools), and the services get the persona's prompt as `appendSystemPromptText`.
+
+### Why
+
+- A multi-session host builds every session from its own argv; a session's persona is the only per-session tool policy, and it may only narrow what the host allows.
+
+### Why an extension could not handle it
+
+- The tool selection and the appended prompt are resolved in the runtime factory, before the session's extensions exist.
+
+### Expected merge conflict zones
+
+- LOW: the `runtimeParsed` spread and the `resourceLoaderOptions` block in `createCliRuntimeFactory`.
+
+## 2026-11-27 - A stdio RPC engine silent during startup names its last phase (senpi#7556)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: a single-session stdio RPC launch (`--mode rpc` without `--multi-session`) arms `armStartupStallNotice()` as the first step after the pre-main timing is recorded, and disarms it right before `runRpcMode()`. While startup is unfinished, it writes one stderr line every 10 s (`<app> rpc: startup has not finished after Ns; last completed phase: <phase> (Ms ago)`).
+- `packages/coding-agent/src/core/startup-stall-notice.ts` (new, fork-only): `armStartupStallNotice()` with an injectable clock (production: `performance.now()` and an unref'd `setTimeout`, so it never keeps a process alive), `isStdioRpcLaunch()`, and `RPC_STARTUP_STALL_DEADLINE_MS` (10 s, below the 15 s an editor's status probe waits).
+
+### Why
+
+- An editor that started `--mode rpc` from a launchd service saw 0 bytes on stdout and stderr until its 15 s `get_state` deadline. The process was never sampled while silent, so the step it waited on could not be named, and the same launch answers in 2-3 s on the current build. A silent startup now names the phase it last finished, so the next occurrence points at its cause instead of a guess.
+
+### Why an extension could not handle it
+
+- Extensions load in the middle of startup, after the phases this has to cover (argument parsing, migrations, session lookup), so only `main()` can arm the notice before those phases and disarm it once RPC mode takes over.
+
+### Expected merge conflict zones
+
+- LOW: the `main()` prologue right after `recordTiming("processStart->main", ...)` and the `appMode === "rpc"` dispatch right before `runRpcMode()`; the import block next to `./core/timings.ts`.
+
+## 2026-11-27 - The CLI relaunch keeps the rpc host supervisor's lifetime slot (senpi#7525)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: `reexecStdio()` carries the rpc host supervisor's lifetime slot (fd 3, declared by `SENPI_RPC_HOST_WATCH_FD=3` or `--owner-fd 3`) through every CLI relaunch, beside the presenter channel and the startup pipe, so the host that ends up serving holds the slot itself instead of leaving it with the launcher that waits on it.
+
+### Why
+
+- The supervisor's liveness watch (`packages/coding-agent/src/modes/rpc/changes.md`, same PR) reads that slot; before this, only a launch with a presenter channel kept fd 3, and a relaunched host lost it.
+
+### Why an extension could not handle it
+
+- The CLI relaunch runs before any extension loads.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts` `reexecStdio()`: upstream changes to the relaunch's inherited stdio list.
+
+## 2026-11-26 - Take the OSC 7577 token at startup (senpi#7493)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` and the compiled entry `packages/coding-agent/src/bun/cli.ts`: the first import of each is the new fork-only `program-resume-startup.ts`, which calls `handOffProgramResumeToken()` in the new tier-1 private-fd contract file `private-fd-token-handoff.ts`. Under Bun on darwin/linux, when `OSC7577_TOKEN` is set and no launcher handed the process a descriptor (no private-fd table, host startup pipe, host watch binding, `--owner-fd` or `--mcp-presenter-fd`), the process re-executes itself in place through libc `execve` (same pid, same argv minus an already-applied `--cwd`; a compiled binary drops its embedded `/$bunfs/` entry) with the token removed from its environment and written to a pipe. The new image learns the pipe from one argv element, `--senpi-osc7577-token-fd=<fd>`, right after the entry, removes it from `process.argv`, reads it only if it is a pipe, and puts the token back into `process.env` alone. It runs at most once per process; an embedding entry that runs code before loading the CLI calls `handOffProgramResumeToken()` as its own first statement.
+- `packages/coding-agent/src/main.ts`: right after the presenter-authority slot, `main()` awaits `takeProgramResumeToken()`, which removes `OSC7577_TOKEN` from `process.env` and, under Bun on darwin/linux, from the libc environment through `bun:ffi` `unsetenv`, and passes the token to `InteractiveMode` as `programResumeToken`.
+
+### Why
+
+- The protocol says a reporting program removes the token from every program it starts. Under Bun, neither `delete process.env.X` nor `unsetenv` reaches the startup environment Bun keeps: `Bun.spawn`/`spawnSync` without an `env` and every Worker's `process.env` copy from it, so an eval cell's `Bun.spawn` child received the token (review finding on #7494, reproduced). Only a process image whose startup environment never held the token is clean. The pipe is named in argv, not the environment, because the environment of the new image is again Bun's startup environment and every child would inherit the name. libc `execve` is used because Bun's `process.execve` closes every descriptor above 2, and launches that were handed descriptors are left alone because Bun marks inherited descriptors close-on-exec at startup, so the exec would drop them. The unsetenv stays for those launches, Windows and a failed exec.
+
+### Why an extension could not handle it
+
+- The exec has to happen before any other module of the process runs, and the token has to reach `InteractiveMode` construction; extensions load long after both.
+
+### Expected merge conflict zones
+
+- LOW: one import line at the top of `cli.ts` and of `bun/cli.ts`, one statement at the top of `main()` and one `InteractiveMode` option.
+
+## 2026-11-25 - Package, config and export commands render engine functions (senpi#7450)
+
+### What changed
+
+- `packages/coding-agent/src/package-manager-cli.ts`: `install`, `remove`, `list`, `update` of installed packages, `update --models` and `config` keep their argv parsing and printing but call the exported engine functions (`src/engine/packages.ts`, `models.ts`, `config.ts`) and render the answer. The settings setup moved to `src/engine/command-settings.ts`; the project-trust prompt and extensions stay with the CLI in `src/cli/command-trust.ts`, which passes the decision in. `update --all` updates the packages through the same core as `update --extensions`. The self-update path is unchanged.
+- `packages/coding-agent/src/main.ts`: `--export` calls `exportSessionHtml` from `src/engine/queries.ts` and prints the same lines.
+
+### Why
+
+- Each engine command the omo launcher forwards needs an exported, typed function that answers data or a typed refusal without printing or exiting, and the CLI must be a renderer over that same function (senpi#7450). Output and exit codes are pinned by goldens recorded before the change.
+
+### Why an extension could not handle it
+
+- These are the CLI's own built-in commands, dispatched before any extension loads.
+
+### Expected merge conflict zones
+
+- MEDIUM: `handlePackageCommand` and `handleConfigCommand` bodies in `package-manager-cli.ts`.
+- LOW: the `--export` block and one import in `main.ts`.
+
+## 2026-11-22 - Root exports for a reported tool result (senpi#7232)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports the types `ReportedToolResult`, `ReportedToolResultFailure` and `ReportedToolResultOutcome` from the package root, and `ToolCallReadyEvent` beside `ToolCallEvent`.
+
+### Why
+
+- They are the argument and the result of `ExtensionToolContext.reportToolResult()`, which extensions import from the package root like the rest of the tool-context API.
+
+### Why an extension could not handle it
+
+- The package root is the public import surface; an extension cannot add an export to it.
+
+### Expected merge conflict zones
+
+- LOW: one `export type { ... }` block next to the `lifecycle-api.ts` export.
+
 ## 2026-11-03 - Startup credential notices wait for the async load (senpi#5594)
 
 ### What changed

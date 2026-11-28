@@ -6,6 +6,7 @@ import { isHandoffBusy } from "./handoff-activity.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
 import type { WorkerSnapshot } from "./session-worker-protocol.ts";
+import { liveRowHold } from "./session-status-source.ts";
 
 /** The worker isolate's whole-state snapshot of its one session, built only when a message carries it. */
 export function workerSnapshot(entry: RpcSessionEntry | undefined): WorkerSnapshot {
@@ -16,7 +17,9 @@ export function workerSnapshot(entry: RpcSessionEntry | undefined): WorkerSnapsh
 	// still alive in this isolate, plus the session the runtime currently writes.
 	const live = new Set(liveSessionWritePaths().map(canonicalSessionPath));
 	if (sessionPath) live.add(sessionPath);
+	const hold = liveRowHold(session);
 	return {
+		...(hold && { hold }),
 		state: buildRpcSessionState(session),
 		sessionPath,
 		liveSessionPaths: [...live],

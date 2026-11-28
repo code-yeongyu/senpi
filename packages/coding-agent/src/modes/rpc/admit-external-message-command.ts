@@ -11,6 +11,7 @@
  * runs first, and an id the transcript already holds is answered `already_admitted` after a restart too.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { MAX_HELD_PEER_DELIVERIES } from "../../core/engine-turn-hold-notices.ts";
 import { writtenDeliveryIds } from "../../core/external-admission.ts";
 import type { ConnectionOrigin, InputTurnMark } from "../../core/turn-origin.ts";
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
@@ -31,9 +32,13 @@ export type AdmitExternalMessageAnswer =
 	| { readonly ok: true; readonly data: RpcAdmitExternalMessageReply }
 	| { readonly ok: false; readonly refusal: ChainRefusal | { readonly message: string; readonly errorCode: string } };
 
-type AdmittingSession = Pick<AgentSession, "externalAdmission" | "sessionManager" | "settingsManager">;
+type AdmittingSession = Pick<
+	AgentSession,
+	"externalAdmission" | "sessionManager" | "settingsManager" | "heldPeerDeliveryCount"
+>;
 
 const SENDER_NOT_ALLOWED = "sender_not_allowed";
+const HELD_DELIVERIES_FULL = "held_deliveries_full";
 const DELEGATED_ORIGIN_UNKNOWN = "delegated_origin_unknown";
 const CANONICAL_TURN_ID = /^(0|[1-9]\d{0,15})$/;
 
@@ -85,6 +90,20 @@ export function admitExternalMessage(
 	const id = ledgerId(command.deliveryId, origin);
 	if (session.sessionManager.reduceHistory(writtenDeliveryIds).has(id))
 		return answer("already_admitted", admission.turnEpoch);
+	// Nothing is written past the cap, so the sender keeps the delivery; an id already admitted still answers so (senpi#7588).
+	const admitted = admission.list();
+	if (
+		session.heldPeerDeliveryCount >= MAX_HELD_PEER_DELIVERIES &&
+		!admitted.pending.includes(id) &&
+		!admitted.emitted.includes(id)
+	)
+		return {
+			ok: false,
+			refusal: {
+				message: `${HELD_DELIVERIES_FULL}: the session already holds ${MAX_HELD_PEER_DELIVERIES} peer deliveries while paused; resume it first`,
+				errorCode: HELD_DELIVERIES_FULL,
+			},
+		};
 	const expected = command.expectedTurnId;
 	if (expected !== undefined && !CANONICAL_TURN_ID.test(expected)) return answer("turn_conflict", admission.turnEpoch);
 	const displayText = command.displayText ?? (origin === undefined ? undefined : command.text);
@@ -104,6 +123,13 @@ export function admitExternalMessage(
 			turnMark: deliveryTurnMark(command, peer),
 		},
 	);
-	if (result.holds === undefined) return answer(result.kind, result.turn_epoch);
-	return { ok: true, data: { kind: result.kind, turnId: String(result.turn_epoch), holds: [...result.holds] } };
+	return {
+		ok: true,
+		data: {
+			kind: result.kind,
+			turnId: String(result.turn_epoch),
+			...(result.holds === undefined ? {} : { holds: [...result.holds] }),
+			...(result.engine_turn_cap === undefined ? {} : { engineTurnCap: result.engine_turn_cap }),
+		},
+	};
 }

@@ -1,3 +1,39 @@
+## 2026-11-27 - Publish the OSC 7577 hand-off entry for embedders (senpi#7537)
+
+### What changed
+
+- `packages/coding-agent/package.json`: adds the export `./program-resume-startup` (`./dist/program-resume-startup.js` and its `.d.ts`), the side-effect module that runs the OSC 7577 token hand-off (senpi#7494).
+
+### Why
+
+- The hand-off re-execs the process with its current argv. An embedding program that rewrites argv or the environment before it imports `dist/cli.js` would run that work twice. Importing this entry first, before anything else, keeps the re-exec at the launch the program was given.
+
+### Why an extension could not handle it
+
+- The hand-off has to run before any extension or the CLI loads, at the very start of the process; only a package export lets an embedding program import it first.
+
+### Expected merge conflict zones
+
+- LOW: the `exports` map in `packages/coding-agent/package.json` (one entry after `./private-fds`).
+
+## 2026-11-25 - Typed engine functions export (senpi#7450)
+
+### What changed
+
+- `packages/coding-agent/package.json`: a `./engine` entry in `exports` (`dist/engine/index.js` and its types), the entry the typed engine functions and `ENGINE_COMMANDS` ship from.
+
+### Why
+
+- The omo SDK needs an importable call for every engine command its launcher forwards as argv (oh-my-openagent#14943, slice E1a), so it never starts the CLI as a child for them.
+
+### Why an extension could not handle it
+
+- A package `exports` entry is package metadata; an extension cannot add one.
+
+### Expected merge conflict zones
+
+- LOW: the `exports` map, one added key.
+
 ## 2026-11-20 - `todo.firstTurnPlan` documents its per-preset default (#7110, senpi#7101)
 
 ### What changed

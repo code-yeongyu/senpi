@@ -1,4 +1,5 @@
 import { VERSION } from "../../config.ts";
+import { readSessionRetirement, RetirementFault } from "../../core/session-retirement.ts";
 import { sharedPathIdentityResolver } from "../../core/extensions/builtin/permission-system/path-identity-host.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { HAND_SELECTION_CAPABILITY } from "./custom-capability.ts";
@@ -59,10 +60,10 @@ export function answerSubscriptionLimits(
 	};
 }
 
-export function answerListSessions(
+export async function answerListSessions(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "list_sessions" }>,
-): RpcResponse {
+): Promise<RpcResponse> {
 	// Worker sessions are machine-driven work: a client sees them only by asking, and
 	// the opaque context blob travels only on that listing, never to every connection.
 	const rows = host.registry.list();
@@ -81,13 +82,37 @@ export function answerListSessions(
 		command.include_workers === true
 			? withMemory
 			: withMemory.filter((row) => row.kind !== "worker").map(({ context: _context, ...row }) => row);
+	const agentDir = host.registry.agentDir ?? host.defaults.agentDir;
+	let listed: typeof sessions;
+	try {
+		listed = await Promise.all(
+			sessions.map(async (row) => {
+				const retirement =
+					agentDir && row.sessionPath && row.durableSessionId
+						? await readSessionRetirement(agentDir, row.durableSessionId)
+						: undefined;
+				return retirement ? { ...row, retirement } : row;
+			}),
+		);
+	} catch (cause) {
+		if (!(cause instanceof RetirementFault)) throw cause;
+		return {
+			id: command.id,
+			type: "response",
+			command: command.type,
+			success: false,
+			error: cause.code,
+			errorCode: cause.code,
+			errorData: cause.detail,
+		};
+	}
 	return {
 		id: command.id,
 		type: "response",
 		command: "list_sessions",
 		success: true,
 		data: {
-			sessions,
+			sessions: listed,
 			// senpi#7020: a successor still taking over its predecessor's sessions lists only part of them so far.
 			...(host.inheritedHandover === undefined
 				? {}

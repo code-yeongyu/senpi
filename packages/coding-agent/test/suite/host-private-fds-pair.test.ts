@@ -328,8 +328,10 @@ describe("Windows private descriptor pairs (#4859)", () => {
 		const source = readFileSync(join(import.meta.dirname, "../../src/bun/cli.ts"), "utf8");
 		const imports = [...source.matchAll(/^import .*?["']([^"']+)["'];/gm)].map((match) => match[1]);
 		// The startup stub sits between them: it spawns nothing, and it must release its filler pipes before the
-		// table is adopted (senpi#4602).
-		expect(imports.slice(0, 3)).toEqual([
+		// table is adopted (senpi#4602). The OSC 7577 hand-off precedes all of them: its in-place exec keeps
+		// inherited descriptors and re-runs whatever was evaluated before it (senpi#7493).
+		expect(imports.slice(0, 4)).toEqual([
+			"../program-resume-startup.ts",
 			"./sandbox-env-setup.ts",
 			"../modes/rpc/host-startup-beacon.ts",
 			"../private-fds.ts",
@@ -339,7 +341,12 @@ describe("Windows private descriptor pairs (#4859)", () => {
 	it("releases inherited fillers before the npm entry adopts the private table (senpi#4602)", () => {
 		const source = readFileSync(join(import.meta.dirname, "../../src/cli.ts"), "utf8");
 		const imports = [...source.matchAll(/^import .*?["']([^"']+)["'];/gm)].map((match) => match[1]);
-		expect(imports.slice(0, 3)).toEqual(["./valid-cwd.ts", "./private-fd-startup-release.ts", "./private-fds.ts"]);
+		expect(imports.slice(0, 4)).toEqual([
+			"./valid-cwd.ts",
+			"./program-resume-startup.ts",
+			"./private-fd-startup-release.ts",
+			"./private-fds.ts",
+		]);
 	});
 });
 

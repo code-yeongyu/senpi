@@ -23,4 +23,5 @@ The package depends only on `node:*` builtins and `@earendil-works/pi-pty`.
 
 `@code-yeongyu/senpi-machine-ops/conformance` exports `defineMachineOpsConformance(runner, target)`. Pass your test
 runner's `describe`/`it` and a factory for the implementation under test; the suite asserts that it behaves like
-`createLocalMachineOps`.
+`createLocalMachineOps`. Set `inProcess: true` only when the implementation runs in the test process: the cases that
+change this process's environment (such as `HOME`) run only then.

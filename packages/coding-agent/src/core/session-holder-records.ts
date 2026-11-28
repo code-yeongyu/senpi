@@ -15,7 +15,7 @@ import type { SessionHolder } from "./session-hold-errors.ts";
 
 const HOLDER_RECORD = /^\d+\.json$/;
 
-function parseCwd(raw: string): string | undefined {
+export function parseCwd(raw: string): string | undefined {
 	const parsed: unknown = JSON.parse(raw);
 	if (typeof parsed !== "object" || parsed === null || !("cwd" in parsed)) return undefined;
 	return typeof parsed.cwd === "string" ? parsed.cwd : undefined;

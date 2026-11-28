@@ -3,18 +3,23 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { MachineOpError } from "../errors.ts";
 import type { GrepMatch, GrepResult } from "../types.ts";
+import { type ProtectedDirs, walkGuard } from "./privacy-protected.ts";
 
 const DEFAULT_LIMIT = 100;
 const MAX_LINE_CHARS = 500;
 const WALK_SKIP = new Set([".git", "node_modules"]);
 
-/** Regular-expression search of one file or a directory tree; symlinks are never followed. */
+/**
+ * Regular-expression search of one file or a directory tree; symlinks are never followed, and a protected folder below
+ * `root` is never entered.
+ */
 export async function localGrep(
 	root: string,
 	pattern: string,
 	limit: number | undefined,
 	readMaxBytes: number,
 	signal: AbortSignal,
+	protectedDirs: ProtectedDirs,
 ): Promise<GrepResult> {
 	let regex: RegExp;
 	try {
@@ -37,6 +42,7 @@ export async function localGrep(
 		}
 		files.push(root);
 	} else {
+		const guard = walkGuard(root, protectedDirs);
 		const pending = [root];
 		while (pending.length > 0) {
 			const dir = pending.shift() as string;
@@ -49,8 +55,9 @@ export async function localGrep(
 			for (const dirent of dirents) {
 				if (WALK_SKIP.has(dirent.name)) continue;
 				const full = path.join(dir, dirent.name);
-				if (dirent.isDirectory()) pending.push(full);
-				else if (dirent.isFile()) files.push(full);
+				if (dirent.isDirectory()) {
+					if (!guard.skips(full)) pending.push(full);
+				} else if (dirent.isFile()) files.push(full);
 			}
 		}
 	}

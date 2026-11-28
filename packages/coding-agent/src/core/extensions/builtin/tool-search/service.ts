@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import { extensionLoadKey } from "../../extension-load-key.ts";
-import type { ExtensionAPI, ToolInfo } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext, ToolInfo } from "../../types.ts";
 import {
 	type Bm25Result,
 	type Bm25SearchOptions,
@@ -11,8 +10,8 @@ import {
 	tokenizeToolText,
 } from "./engine/bm25.ts";
 import type { ToolSearchDocument, ToolSearchSource } from "./engine/document.ts";
-import { rehydrate } from "./engine/marker.ts";
-import { activationMarkerCandidates } from "./engine/marker-candidates.ts";
+import { activationMarkers } from "./activation-history.ts";
+import { parseActivationMarkers, type ParsedActivationMarker, restoreActivationMarkers } from "./engine/marker.ts";
 import { extensionDocument } from "./extension-document.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
 
@@ -26,6 +25,9 @@ export interface ToolSearchRuntime {
 	getActiveTools(): string[];
 	setActiveTools(names: readonly string[]): void;
 }
+
+type SessionHistory = Pick<ExtensionContext["sessionManager"], "getEntries"> &
+	Partial<Pick<ExtensionContext["sessionManager"], "reduceHistory">>;
 
 type RuntimeApi = Pick<ExtensionAPI, "getActiveTools" | "getAllTools" | "setActiveTools">;
 
@@ -208,25 +210,25 @@ export class ToolSearchService {
 		const catalog = this.getCatalog();
 		if (this.#historyScannedGeneration === this.#registryGeneration) return [];
 		this.#historyScannedGeneration = this.#registryGeneration;
-		return this.#rehydrate(messages, catalog);
+		return this.#rehydrate(parseActivationMarkers(messages), catalog);
 	}
 
 	/**
-	 * `maybeRehydrateFromHistory` for a whole session's entries: the candidate scan yields to the
-	 * event loop, so a large transcript does not hold a shared host while it opens (senpi#3518).
+	 * `maybeRehydrateFromHistory` for a whole session's history (senpi#7600). The session folds its history into the
+	 * promotions it holds and keeps them across extension generations, so a later replay reads only the entries appended
+	 * since instead of the whole file. A reader without the session's fold (a test double) folds its entries once.
 	 */
-	async maybeRehydrateFromHistoryInSlices(messages: readonly unknown[], slicer: EventLoopSlicer): Promise<string[]> {
-		this.getCatalog();
-		if (this.#historyScannedGeneration === this.#registryGeneration) return [];
-		const generation = this.#registryGeneration;
-		this.#historyScannedGeneration = generation;
-		const candidates = await activationMarkerCandidates(messages, slicer);
-		// A catalog change while scanning is replayed by the next context build against the new generation.
-		if (this.isDisposed || generation !== this.#registryGeneration) return [];
-		return this.#rehydrate(candidates, this.getCatalog());
+	maybeRehydrateFromSessionHistory(history: SessionHistory): string[] {
+		const catalog = this.getCatalog();
+		if (catalog.length === 0 || this.#historyScannedGeneration === this.#registryGeneration) return [];
+		this.#historyScannedGeneration = this.#registryGeneration;
+		const promotions =
+			history.reduceHistory?.(activationMarkers) ??
+			history.getEntries().reduce(activationMarkers.add, activationMarkers.initial());
+		return this.#rehydrate(promotions.values(), catalog);
 	}
 
-	#rehydrate(messages: readonly unknown[], catalog: ToolSearchDocument[]): string[] {
+	#rehydrate(markers: Iterable<ParsedActivationMarker>, catalog: ToolSearchDocument[]): string[] {
 		const docsByName = new Map(
 			catalog.map((doc) => [
 				doc.name,
@@ -238,7 +240,7 @@ export class ToolSearchService {
 				},
 			]),
 		);
-		const restored = rehydrate(messages, docsByName);
+		const restored = restoreActivationMarkers(markers, docsByName);
 		if (restored.length > 0) this.#activateNames(restored, catalog);
 		return restored;
 	}

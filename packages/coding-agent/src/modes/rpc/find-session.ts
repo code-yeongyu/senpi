@@ -16,6 +16,7 @@
  */
 import { open, readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { readSessionRetirement, RetirementFault, type SessionRetirement } from "../../core/session-retirement.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 
@@ -42,7 +43,14 @@ class FindSessionTooManyError extends Error {
  * with `open: false`. `open` is a hint; the id is what a caller checks.
  */
 export type FindSessionAnswer =
-	| { readonly found: { readonly sessionPath: string; readonly cwd: string; readonly open: boolean } }
+	| {
+			readonly found: {
+				readonly sessionPath: string;
+				readonly cwd: string;
+				readonly open: boolean;
+				readonly retirement?: SessionRetirement;
+			};
+	  }
 	| { readonly ambiguous: true }
 	| { readonly unknown: true };
 
@@ -160,11 +168,12 @@ export async function findSession(
 			"This host keeps no agent directory, so it holds no session files to look in.",
 		);
 	try {
-		return answer(
-			command.id,
-			await findSessionFile({ agentDir: port.agentDir, durableSessionId, hosted: port.hosted() }),
-		);
+		const result = await findSessionFile({ agentDir: port.agentDir, durableSessionId, hosted: port.hosted() });
+		if (!("found" in result)) return answer(command.id, result);
+		const retirement = await readSessionRetirement(port.agentDir, durableSessionId);
+		return answer(command.id, retirement ? { found: { ...result.found, retirement } } : result);
 	} catch (cause) {
+		if (cause instanceof RetirementFault) return refusal(command.id, cause.code, JSON.stringify(cause.detail));
 		if (cause instanceof FindSessionTooManyError)
 			return refusal(command.id, RPC_ERROR_FIND_SESSION_TOO_MANY, cause.message);
 		throw cause;

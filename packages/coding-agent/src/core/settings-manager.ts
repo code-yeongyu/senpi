@@ -69,6 +69,7 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import { executableSettingPathsIn, savedProjectTrusted, withoutSettingPaths } from "./project-executable-settings.ts";
 import { parseSettingsJson } from "./settings-json.ts";
 import { withoutOverride } from "./settings-overrides.ts";
 import { removeRetiredSettingsKeys, writeRawScopedSettings } from "./settings-retired-keys.ts";
@@ -813,6 +814,11 @@ export class SettingsManager {
 	private projectSettings: Settings;
 	private settings: Settings;
 	private projectTrusted: boolean;
+	/**
+	 * Set by `create()` without a trust decision: the project keys that name an executable follow the decision saved for
+	 * this folder on every read of the project file, not only the first (senpi#6362, #7635).
+	 */
+	private savedTrustFolder: { readonly cwd: string; readonly agentDir: string } | undefined;
 	/** CLI/SDK overrides (`applyOverrides`): never persisted, re-applied on every recompute. */
 	private runtimeOverrides: Settings = {};
 	private modifiedFields = new Set<keyof Settings>(); // Track global fields modified during session
@@ -858,7 +864,16 @@ export class SettingsManager {
 		options: SettingsManagerCreateOptions = {},
 	): SettingsManager {
 		const storage = new FileSettingsStorage(cwd, agentDir);
-		return SettingsManager.fromStorage(storage, options);
+		const manager = SettingsManager.fromStorage(storage, options);
+		// senpi#6362: settings that name an executable or a command line are honoured only from global settings or a
+		// trusted project. A reader that passes no trust decision gets the one the person saved for this folder, each
+		// time the project file is read (senpi#7635).
+		if (options.projectTrusted === undefined) {
+			manager.savedTrustFolder = { cwd, agentDir };
+			if (manager.dropUntrustedProjectKeys())
+				manager.settings = deepMergeSettings(manager.globalSettings, manager.projectSettings);
+		}
+		return manager;
 	}
 
 	/** Create a SettingsManager from an arbitrary storage backend */
@@ -902,11 +917,30 @@ export class SettingsManager {
 		return manager;
 	}
 
+	/**
+	 * Drops the project keys an untrusted project may not set and reports each as ignored (senpi#6362). Runs after every
+	 * read of the project file by a manager created without a trust decision (senpi#7635); true when it dropped any.
+	 */
+	private dropUntrustedProjectKeys(): boolean {
+		if (this.savedTrustFolder === undefined) return false;
+		const { cwd, agentDir } = this.savedTrustFolder;
+		const keys = executableSettingPathsIn(this.projectSettings);
+		if (keys.length === 0 || savedProjectTrusted(cwd, agentDir)) return false;
+		this.projectSettings = withoutSettingPaths(this.projectSettings, keys);
+		const path = getSettingsPath(cwd, agentDir, "project");
+		for (const key of keys)
+			this.errors.push(
+				toSettingsError("project", new Error(`project setting ${key} ignored: the project is not trusted`), path),
+			);
+		return true;
+	}
+
 	/** Create an in-memory SettingsManager (no file I/O) */
 	static inMemory(settings: Partial<Settings> = {}, options: SettingsManagerCreateOptions = {}): SettingsManager {
 		const storage = new InMemorySettingsStorage();
 		const initialSettings = SettingsManager.migrateSettings(structuredClone(settings) as Record<string, unknown>);
 		storage.withLock("global", () => JSON.stringify(initialSettings, null, 2));
+		// Supplied by the calling code, never read from a repository, so its project scope is the caller's to trust.
 		return SettingsManager.fromStorage(storage, options);
 	}
 
@@ -1308,6 +1342,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
+		this.dropUntrustedProjectKeys();
 		this.updateSettings(this.mergedSettings());
 	}
 
@@ -1333,6 +1368,7 @@ export class SettingsManager {
 		if (!projectLoad.error) {
 			this.projectSettings = projectLoad.settings;
 			this.projectSettingsLoadError = null;
+			this.dropUntrustedProjectKeys();
 		} else {
 			this.projectSettingsLoadError = projectLoad.error;
 			this.recordError("project", projectLoad.error);
