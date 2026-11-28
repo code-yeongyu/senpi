@@ -91,6 +91,14 @@ async function fixture(userReporter: boolean) {
 			),
 		);
 	}
+	// The reporter publishes the session's shared liveness watcher, which the host registers ahead of every builtin.
+	const { eventBus } = loaded;
+	if (!eventBus) throw new Error("extension load returned no event bus");
+	for (const builtin of builtinExtensions.filter(({ id }) => id === "session-liveness")) {
+		loaded.extensions.unshift(
+			await loadExtensionFromFactory(builtin.factory, dir, eventBus, loaded.runtime, `<builtin:${builtin.id}>`),
+		);
+	}
 	const harness = await createHarness({ resourceLoader: createTestResourceLoader({ extensionsResult: loaded }) });
 	cleanups.push(harness.cleanup);
 	await harness.session.bindExtensions({});

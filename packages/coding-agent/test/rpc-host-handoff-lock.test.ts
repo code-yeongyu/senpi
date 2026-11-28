@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { type EnsuredHost, ensureHost, hostEnsureLockTarget } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
-import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { acquireOwnershipSafeLock } from "../src/modes/rpc/ownership-safe-lock.ts";
 import {
 	endpointScratch,
@@ -20,6 +19,7 @@ import {
 	sweepEndpointScratches,
 	trackSupervisor,
 } from "./helpers/rpc-host-endpoint-scratch.ts";
+import { probeSandboxHost } from "./helpers/rpc-sandbox-host.ts";
 
 afterEach(sweepEndpointScratches, 180_000);
 
@@ -40,7 +40,7 @@ describe.skipIf(process.platform === "win32")("handoff under the endpoint's ensu
 	it("holds the lock while the successor comes up, so a racing ensure attaches to the successor", async () => {
 		const qa = endpointScratch("hol");
 		await realHost(qa, qa.legacy);
-		const predecessor = await probeHost({ socket: qa.legacy });
+		const predecessor = await probeSandboxHost(qa, { socket: qa.legacy });
 		let lockHeldInHandoff: boolean | undefined;
 		let racingEnsure: Promise<EnsuredHost> | undefined;
 		let instanceSeenByEnsure: string | undefined;
@@ -65,7 +65,7 @@ describe.skipIf(process.platform === "win32")("handoff under the endpoint's ensu
 							readinessTimeoutMs: 60_000,
 							launch: supervisorLaunch,
 							afterLockAcquired: async () => {
-								instanceSeenByEnsure = (await probeHost({ socket: qa.legacy }))?.instanceId;
+								instanceSeenByEnsure = (await probeSandboxHost(qa, { socket: qa.legacy }))?.instanceId;
 							},
 						},
 					});

@@ -6,6 +6,7 @@ import type { EventLoopSlicer } from "../../core/event-loop-slicer.ts";
 import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
 import type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
+import { frozenPersona } from "../../core/session-persona.ts";
 import type { ThreadSettledBy } from "../../core/session-settled.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
 import type { PreparableRuntimeFactory } from "./host-warm.ts";
@@ -191,8 +192,11 @@ export interface RpcSessionRow {
 	activity: "running" | "idle";
 	/** senpi#7025: the auto-retry wait a running session sleeps through; absent when it is not waiting. */
 	waiting?: RetryWait;
+	hold?: import("./session-row-hold.ts").SessionRowHold;
 	/** The session's current model; absent while unknown (an opening session). */
 	model?: { provider: string; id: string };
+	/** `none`: a memory-only session (senpi#7567), never the user's conversation; a session list leaves it out. */
+	persistence?: "none";
 }
 
 export interface OpenRpcSession {
@@ -211,6 +215,7 @@ export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSes
 		...(profile.creationModel ? { creationModel: Object.freeze({ ...profile.creationModel }) } : {}),
 		...(profile.sessionContext ? { sessionContext: Object.freeze({ ...profile.sessionContext }) } : {}),
 		...(profile.sessionEnv ? { sessionEnv: Object.freeze({ ...profile.sessionEnv }) } : {}),
+		...(profile.persona ? { persona: frozenPersona(profile.persona) } : {}),
 		...(profile.retryFallback
 			? {
 					retryFallback: Object.freeze({

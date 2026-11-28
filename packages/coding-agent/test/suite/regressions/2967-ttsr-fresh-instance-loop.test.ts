@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import ttsrExtension from "../../../src/core/extensions/builtin/ttsr/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
+import type { HistoryReducer } from "../../../src/core/session-history-reduce.ts";
+import type { SessionEntry } from "../../../src/core/session-manager.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 type Entry = Record<string, unknown>;
@@ -56,7 +58,12 @@ function context(cwd: string, entries: Entry[]): ExtensionContext {
 		hasUI: false,
 		abort: () => undefined,
 		ui: { notify: () => undefined },
-		sessionManager: { getEntries: () => entries },
+		sessionManager: {
+			getEntries: () => entries,
+			// The real session folds its whole history the same way, once per load (senpi#7607).
+			reduceHistory: <S>(reducer: HistoryReducer<S>) =>
+				entries.reduce((state, entry) => reducer.add(state, entry as unknown as SessionEntry), reducer.initial()),
+		},
 	} as unknown as ExtensionContext;
 }
 

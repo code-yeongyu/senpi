@@ -48,6 +48,7 @@ import { readPermissionPreset } from "./builtin/permission-system/preset-registr
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import { ownedBy, runOwnedBy } from "./extension-handle-ledger.ts";
+import { resolveGeneratedDefaultExtensionFactory } from "./generated-default-shim.ts";
 import { recordExtensionLoadKey } from "./extension-load-key.ts";
 import {
 	cachedExtensionFactory,
@@ -1424,5 +1425,8 @@ export async function discoverAndLoadExtensions(
 		addPaths([resolved]);
 	}
 
-	return loadExtensions(allPaths, resolvedCwd, eventBus);
+	return loadExtensions(allPaths, resolvedCwd, eventBus, undefined, {
+		factoryResolver: (_extensionPath, resolvedPath) =>
+			resolveGeneratedDefaultExtensionFactory(resolvedPath, resolvedAgentDir),
+	});
 }

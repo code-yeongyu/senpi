@@ -21,10 +21,12 @@ import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
 import { electPointer, type HostPointerState } from "./host-pointer-election.ts";
 import type { PathIdentityResolverStatus } from "./path-identity-status.ts";
 import { observeProtocolInfo, requestOnSocket } from "./host-probe.ts";
+import { isIdentityRefusal, probeOrIdentityRefusal } from "./host-identity-refusal.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
 import { type HostPathClaimRow, type HostSessionRow, parseSessionRows, readClaimRows } from "./host-status-rows.ts";
 import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
+import type { RpcEndpointAuthErrorCode } from "./rpc-auth-proof.ts";
 
 const STATUS_PROBE_TIMEOUT_MS = 10_000;
 
@@ -53,6 +55,8 @@ export type { HostPathClaimRow, HostSessionRow } from "./host-status-rows.ts";
 
 export interface HostStatusReport {
 	readonly reachable: boolean;
+	/** The host answered but could not be proven from the key root: nothing else was read from it (omo#15197). */
+	readonly refusal: { readonly code: RpcEndpointAuthErrorCode; readonly detail: string } | null;
 	readonly lifecycle: "ready" | "stopping" | null;
 	readonly socket: string;
 	readonly pid: number | null;
@@ -157,7 +161,9 @@ async function probeHostStatusInKeyRoot(
 	const includeWorkers = options.includeWorkers === true;
 	// Both reads observe: looking at a host must never be what keeps it from idling out.
 	const timeoutMs = read.timeoutMs ?? STATUS_PROBE_TIMEOUT_MS;
-	const host = await observeProtocolInfo(options.socket, timeoutMs);
+	const observed = await probeOrIdentityRefusal(() => observeProtocolInfo(options.socket, timeoutMs));
+	const refused = isIdentityRefusal(observed) ? observed : undefined;
+	const host = refused === undefined && !isIdentityRefusal(observed) ? observed : undefined;
 	// Reading the directory is also when it is cleaned: an operator asking what runs here must not
 	// be shown generations that ended, and the next reader must get the same answer.
 	if (prune) await pruneDeadGenerations(paths);
@@ -174,7 +180,8 @@ async function probeHostStatusInKeyRoot(
 			: await readSessionListing(options.socket, includeWorkers, timeoutMs);
 	const claims = await readClaimRows(paths, generations);
 	const report: HostStatusReport = {
-		reachable: host !== undefined,
+		reachable: host !== undefined || refused !== undefined,
+		refusal: refused === undefined ? null : { code: refused.refused, detail: refused.detail },
 		lifecycle: host?.lifecycle ?? null,
 		socket: options.socket,
 		pid: current?.pid ?? null,

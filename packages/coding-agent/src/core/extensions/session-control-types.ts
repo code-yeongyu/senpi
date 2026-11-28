@@ -10,6 +10,7 @@
  */
 
 import type { HoldKind } from "../engine-turn-hold.ts";
+import type { EngineTurnCap } from "../engine-turn-limit.ts";
 import type { RelocationRequest, RelocationRequestResult, RelocationTargetsResult } from "../session-relocation.ts";
 
 export type {
@@ -43,6 +44,17 @@ export interface SessionControlWakeEvent {
 	readonly reasons: readonly SessionControlWakeReason[];
 	/** Deliveries a `wake` command named; absent for every other edge. */
 	readonly delivery_ids?: readonly string[];
+}
+
+/**
+ * A delivery another session sent was admitted into this session's runtime (started, queued, steered or held), emitted
+ * at admission, before any turn takes it. Once per delivery id; never for a refused delivery. It carries only the
+ * delivery's id and the text the model will read.
+ */
+export interface ExternalMessageAdmittedEvent {
+	readonly type: "external_message_admitted";
+	readonly delivery_id: string;
+	readonly text: string;
 }
 
 export type ExternalDeliverAs = "steer" | "followUp";
@@ -92,7 +104,9 @@ export interface AdmitExternalMessageInput {
  * - `held_draft`       input the user submitted has not reached the runtime yet: nothing was enqueued; retry on the
  *                      next edge. A draft still in the composer never holds a delivery (senpi#7043)
  * - `held`             idle under a hold a peer cannot release (a person's Stop, an interrupted run, a parent's run
- *                      hold; `holds` names them): kept as a held notice, it starts once released (senpi#6490)
+ *                      hold; `holds` names them): kept as a held notice, it starts once released (senpi#6490). Or
+ *                      stopped by the engine-turn cap (`engine_turn_cap` names it): recorded without a turn, it is
+ *                      answered by the turn that a person's message or Resume starts (senpi#7138)
  * - `already_admitted` this runtime already holds or already wrote this `delivery_id`
  */
 export type ExternalAdmissionKind =
@@ -109,6 +123,8 @@ export interface ExternalAdmissionResult {
 	readonly turn_epoch: number;
 	/** `held` only: the kinds of the holds that keep the delivery. */
 	readonly holds?: readonly HoldKind[];
+	/** `held` only: the engine-turn cap that stopped the delivery's turn. */
+	readonly engine_turn_cap?: EngineTurnCap;
 }
 
 /** Why admission is held: `draft` is input the user submitted that the runtime has not taken yet. */
@@ -175,6 +191,11 @@ export interface SessionControlActions {
 	/** POSIX interactive sessions only; anything else answers `unsupported` and registers nothing. */
 	registerControlEndpoint(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration>;
 	admissionGate(): SessionAdmissionGate;
+	/**
+	 * Throws once a host started handing the session over, and throws an error whose `code` is `held_deliveries_full`
+	 * while the session holds `MAX_HELD_PEER_DELIVERIES` peer deliveries: either way nothing is written and the delivery
+	 * stays with the caller (senpi#7628).
+	 */
 	admitExternalMessage(input: AdmitExternalMessageInput): ExternalAdmissionResult;
 	listAdmittedDeliveries(): AdmittedDeliveries;
 	/** Writes the session header now, so the session id is durable before anything exposes it. */
@@ -199,8 +220,13 @@ export interface SessionControlDeliveryDetails {
 	readonly display_text?: string;
 	/** Engine-stamped: the remote device the admitting connection speaks for. */
 	readonly remote_origin?: SessionControlRemoteOrigin;
-	/** Engine-stamped: the thread-chain hop count the delivery was admitted at. */
+	/** Engine-stamped: the thread-chain hop count the delivery was admitted at; a folded turn's highest hop. */
 	readonly chain_count?: number;
+	/**
+	 * Engine-written on a turn that carried several held deliveries of one speaker: the ones after `delivery_id`, in
+	 * admission order. The entry settles all of them (senpi#7628).
+	 */
+	readonly folded_delivery_ids?: readonly string[];
 }
 
 /** The engine-stamped remote device a delivery's `details` names, when it names a well-formed one. */

@@ -37,6 +37,7 @@ const STATUS_FIELDS = [
 	"pointer",
 	"processStartTime",
 	"reachable",
+	"refusal",
 	"rss_mb",
 	"runtimeBuildId",
 	"session_rows",

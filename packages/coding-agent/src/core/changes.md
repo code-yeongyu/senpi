@@ -1,3 +1,247 @@
+## 2026-11-28 - The saved-trust rule for executable settings holds on every read of the project file (senpi#7635)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`:
+  - `SettingsManager.create` without a trust decision records the folder on the manager.
+  - `dropUntrustedProjectKeys` uses that record, so it runs after every read of the project file: at creation, in `reload()`, and when `setProjectTrusted(true)` reads the file again.
+  - Each dropped key is reported as ignored, as at creation. A trust decision saved later is honoured on the next read.
+
+### Why
+
+- The drop ran only in `create()`, so `reload()` and `setProjectTrusted(true)` read an untrusted project's executable keys back (post-merge audit of #7595). The default managers of `createAgentSessionServices` and `createAgentSession` are reloaded during startup.
+
+### Why an extension could not handle it
+
+- The project scope is loaded and reloaded inside the core settings manager that every reader shares.
+
+### Expected merge conflict zones
+
+- MEDIUM: `settings-manager.ts` `create`, `dropUntrustedProjectKeys`, `setProjectTrusted` and `reload`.
+
+## 2026-11-28 - Lifecycle bookkeeping leaves the resident mirror at a compaction (senpi#7596)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_trimMirrorAfterCompaction` no longer keeps lifecycle bookkeeping entries (`isLifecycleBookkeeping` in the new `core/lifecycle-bookkeeping.ts`: `session-lifecycle`, `work-custody`, `child-lifecycle`, `interrupted-run`) from before the kept window. `core/session-loaded-tail.ts` applies the same rule when a compacted file is reopened, and `core/lifecycle-history.ts` folds the journal to the records restoration reads. `LIFECYCLE_ENTRY_TYPES` moves from this file to `core/lifecycle-bookkeeping.ts`, which `core/lifecycle-edit-leaf.ts` now reads too, so the entry types are listed once.
+
+### Why
+
+- A long-lived session writes more bookkeeping than conversation: in four measured session files it was 42-59% of the bytes. The mirror trimmed only messages, so those entries stayed resident and on every branch walk for the life of the session, and compaction did not bound memory.
+
+### Why an extension could not handle it
+
+- The resident mirror and its trim are private to `SessionManager`. An extension reads entries only through it and cannot change what it keeps.
+
+### Expected merge conflict zones
+
+- LOW: the `retained` expression in `_trimMirrorAfterCompaction` and one import line.
+
+## 2026-11-28 - Generated default extension shims are presence markers (#7597)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` keeps an existing generated shim while it targets a regular builtin module of the same name, and resolves default-extension factories through `extensions/generated-default-shim.ts`: every generated shim that names a default's builtin loads this process's in-process factory, in whatever agent dir the loader is given and whichever installation the URL points to. A shim whose target is gone still takes the dead-target repair; a user-authored file of the same name is still loaded as the user's file.
+- `packages/coding-agent/src/core/generated-shim-banner.ts` recognizes the complete first-line sentence across brands and parses the single generated re-export.
+
+### Why
+
+- Distinct installations generate distinct absolute URLs for the same builtin. Replacing a live target on startup changed the shared file every time the other installation seeded it, and importing a kept foreign shim would run the other installation's builtin and its module graph.
+
+### Why an extension could not handle it
+
+- Resource seeding writes the shared file, and the loader resolves its factory, before extensions load.
+
+### Expected merge conflict zones
+
+- `DefaultResourceLoader.ensureGlobalDefaultExtensions`, `buildGlobalDefaultExtensionLoadOptions`, dead-target repair and generated shim recognition.
+
+## 2026-11-27 - Settings that name an executable need a trusted project (senpi#6362)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`:
+  - Project trust defaults to false.
+  - `SettingsManager.create` without a trust decision uses the decision the person saved for the folder.
+  - `fromStorage`, the constructor and the project loaders default to not trusted.
+  - `inMemory` keeps its caller-supplied project scope trusted.
+  - An untrusted project's executable-naming keys are reported as ignored.
+- `packages/coding-agent/src/core/project-executable-settings.ts`: new. It holds the one list of executable-naming keys, the saved-trust lookup, and the path of the trust file.
+
+### Why
+
+- Settings that name an executable or a command line were honoured from any project, trusted or not.
+
+### Why an extension could not handle it
+
+- The trust default and the layered merge live in the core settings manager, which every reader shares.
+
+### Expected merge conflict zones
+
+- MEDIUM: `settings-manager.ts` `create` / `fromStorage` and the constructor's `projectTrusted` default.
+
+## 2026-11-27 - Preserve each held peer delivery when a session resumes (senpi#7588)
+
+### What changed
+
+- `engine-turn-hold-notices.ts` keeps each admitted peer message as its own notice item, both when first recorded and when reconstructed from the session file. Ordinary wakes of a single source still coalesce. A log that already holds one delivery twice replays it as one item whose consumption settles both notices, and the held count counts distinct deliveries.
+- `external-admission.ts` `writtenDeliveryIds` also reads the delivery ids held `session-notice` entries carry, so a resend of a held id after a restart answers `already_admitted`.
+- `admit-external-message-command.ts` refuses a new delivery with `held_deliveries_full` once the session holds `MAX_HELD_PEER_DELIVERIES` (64) distinct peer deliveries, writing nothing.
+- `engine-turn-release.ts` folds each run of held peer deliveries from one sender under one origin mark into one message (`held-peer-batch.ts`), so an unattended resume opens one turn for them; `turn-origin.ts` gains `sameInputTurnMark`; `agent-session.ts` and `engine-turn-hold.ts` expose the distinct held peer delivery count.
+
+### Why
+
+- Three distinct peer messages held during an interrupted run produced three notice records, but the resumed provider received only the third message. The other two payloads had been replaced in memory before all three notice IDs were consumed.
+
+### Why an extension could not handle it
+
+- The engine reconstructs the ledger and assembles the resume input before the provider receives it; a sender sees only its own admission receipt.
+
+### Review follow-up (FIX_FIRST at 5b471fe471)
+
+- Keeping every held message exposed a duplicate the old merge hid: after a restart the ledger is empty and only `custom_message` entries answered for written ids, so a resend of a held id was held a second time. Keeping every message also made the count unbounded and gave an unattended resume one turn per delivery. A refusal keeps the delivery with its sender; dropping the oldest would lose a message silently, the defect this change fixes. One turn has one origin, so only deliveries sharing sender and origin mark share a turn.
+
+### Expected merge conflict zones
+
+- LOW: `EngineTurnHoldNotices.remember`/`forget`/`messages`, `writtenDeliveryIds`, the admit command's refusal list, and the `EngineTurnRelease` loop. No change to notice text or resume authorization.
+
+## 2026-11-27 - A session's own persona narrows its runtime (senpi#7570, oh-my-openagent#13057)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.persona` holds a session's own instructions and tool policy (`open_session.persona`); a session replace keeps it with the rest of the profile.
+- `packages/coding-agent/src/core/resource-loader.ts`: `ResourceLoaderOptions.appendSystemPromptText` appends literal text after the resolved `appendSystemPrompt` sources; unlike them it is never read as a file path.
+
+### Why
+
+- A task daemon session needs the instructions and tool limits a per-process child gets from `--append-system-prompt` / `--tools` / `--exclude-tools`; without them an agent's denied tool was callable in a daemon-hosted child (oh-my-openagent#13057). The prompt text comes from a client over the wire, so it must stay text even when it names an existing file.
+
+### Why an extension could not handle it
+
+- The tool set and the appended system prompt are fixed when the runtime is built from the launch profile, before any extension of the session loads.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionLaunchProfile` field list (one field after `retryFallback`); the append-prompt resolution in `DefaultResourceLoader.reload` (one `.concat`).
+
+## 2026-11-27 - time() records the last completed startup phase without PI_TIMING (senpi#7556)
+
+### What changed
+
+- `packages/coding-agent/src/core/timings.ts`: `time()` records the phase it closes as `lastTimedPhase()` (`TimedPhase`: `label`, `atMs` on the `performance.now()` clock; non-`main` namespaces are prefixed `<namespace>:`) whether or not `PI_TIMING=1`. Collection and printing of the timing table stay gated on `PI_TIMING`.
+
+### Why
+
+- The RPC startup stall notice (senpi#7556) names the last completed phase from these existing marks instead of keeping a second phase list in step with `main()`.
+
+### Why an extension could not handle it
+
+- The marks are internal to startup and run before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the top of `time()` and the declarations right after `timingNamespaces`.
+
+## 2026-11-27 - The Cursor exec bridge answers a tool_result replacement (senpi#7563)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `emitExecBridgeToolResult` returns the `tool_result` chain's answer (`AfterToolCallResult | undefined`) from `_emitAfterToolCallHooks` instead of discarding it. That answer also carries the image normalization `_emitAfterToolCallHooks` applies with no extension involved, so images in a Cursor exec frame's result are now resized under the model's input limits, as on the agent loop.
+- `packages/coding-agent/src/core/cursor-exec-bridge.ts`: `CursorExecBridgeOptions.emitToolResult` is typed to return that answer, and the bridge's `afterToolCall` hands it to the prepared host, whose after-hook merge (`finalizeBody`, the agent loop's `finalizeExecutedToolCall` merge) applies it to the frame's result.
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts`: `CursorExecBridgeSession.emitExecBridgeToolResult` returns the answer and the session adapter passes it through.
+
+### Why
+
+- An extension that replaced a result (the oh-my-openagent memory guard, when a second memory identity appears while a recursive listing or search runs, omo#12466) changed what the model saw on the agent loop but not on the Cursor exec path: the frame answered with the tool's own output.
+
+### Why an extension could not handle it
+
+- The extension already returns the replacement; the engine dropped it between the session's hook chain and the exec frame, which no extension can reach.
+
+### Expected merge conflict zones
+
+- LOW: `emitExecBridgeToolResult` in `agent-session.ts` (its return type and the `return` before `_emitAfterToolCallHooks`), and the `afterToolCall` of `executeTool` in `cursor-exec-bridge.ts`.
+
+## 2026-11-26 - An internal builtin loads with the builtins that require it (senpi#1146)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: builtin selection moves to `core/builtin-extension-selection.ts` (`selectActiveBuiltinIds`). A registry builtin marked `internal` is never matched against `enabledBuiltinExtensions` / `disabledBuiltinExtensions`; the final extension set gets it at assembly (`placeRequiredInternalBuiltins`, in both the plain and the project-trust branch of `loadFinalExtensionSet`) exactly when a builtin in that set, selected by settings or by a `builtin:<name>` path, lists it in `requires`; it is loaded once and placed right after the leading run of builtins the registry lists before it (the guards and policy; loop-guard keeps the first veto), ahead of every other extension in the set (a later builtin, a bundled, inline or path extension), any of which may publish liveness at session start.
+
+### Why
+
+- The session liveness watcher (`session-liveness`) is an internal dependency of the herdr pane report and the todo widget. A builtin allowlist written before it existed, or a denylist naming it, dropped it, leaving the pane report at its initial state and the todo widget drawing every item active.
+
+### Why an extension could not handle it
+
+- Which builtins load is decided by the resource loader before any extension runs; an extension cannot make another builtin load past the user's builtin selection.
+
+### Expected merge conflict zones
+
+- LOW: `getActiveBuiltinExtensionIds` (now a call into `builtin-extension-selection.ts`), the two final-assembly branches of `loadFinalExtensionSet`, and the new `placeRequiredInternalBuiltins`.
+
+## 2026-11-25 - Session telemetry is decided per caller on a shared host (senpi#7446)
+
+### What changed
+
+- `packages/coding-agent/src/core/telemetry-consent.ts` (new): the one rule. Effective permission = the host's own setting permits AND every caller of the session granted. `SessionTelemetryCallers` holds a session's standing answer and each attached caller's live answer and answers a `TelemetryCallersVerdict` per use: `events` needs every caller's grant, `attribution` is removed only by a decline. `openingCallersVerdict` gives a new session its opener's verdict.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSession.setTelemetryCallers`, `telemetryPermitted()` (events) and `attributionPermitted()` (headers), read at each use; the extension context reads it through `getTelemetryPermitted`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `AgentSessionLaunchProfile.telemetryConsent` (the wire opener's answer); the runtime applies the callers' permit to its session and to every replacement, and takes live changes through `setTelemetryCallers`.
+- `packages/coding-agent/src/core/provider-attribution.ts`, `packages/coding-agent/src/core/sdk.ts`: provider attribution headers (app identity only) read `AgentSession.attributionPermitted()` per request: the host's install-telemetry setting still decides for an unanswered caller, and any caller's decline or revoke removes them.
+
+### Why
+
+- A host process is shared: Desktop and CLI callers attach to the same engine. With policy taken from the host process alone, Desktop could neither grant telemetry on a host it started disabled nor keep its own requests out of an enabled CLI host, and a process-wide switch would change independent CLI sessions.
+
+### Why an extension could not handle it
+
+- The callers of a session are known only to the host's router, and provider attribution is applied inside the session's stream function; an extension sees neither.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` around `setBrowserEngine` and the extension context actions; `sdk.ts` at `mergeProviderAttributionHeaders`; `agent-session-runtime.ts` constructor and `apply`.
+
+## 2026-11-25 - A peer delivery the engine-turn cap stops is answered held with the cap, and Resume continues a capped session (senpi#7138)
+
+### What changed
+
+- `packages/coding-agent/src/core/engine-turn-limit.ts`: `EngineTurnCap` (`{ reason, count }`, the `engine-paused` reason and count) and `engineTurnCapOf(stop)`, the mapping `_stopEngineTurn` inlined before.
+- `packages/coding-agent/src/core/agent-session.ts`: `_engineTurnStopNow(released)` is the one computation of the bound a new engine turn would meet; `_stopEngineTurn` uses it, as do the new `engineTurnCap` getter (the cap pausing automatic turns now) and `_peerDeliveryCap()` (the cap a peer delivery's turn would meet, outside the resume window when the delivery releases an unattended hold, exactly as `_stopEngineTurn` counts it). The external admission port gains `cappedBy`. `_resumeOnce` answers `not_paused` only when no cap applies either: a capped session with nothing held resumes with one turn (`_resumeAfterStop(onQueued, "engine_turn_cap")`), answering `engineTurnCap`; `mode: "release"` answers `resumed: false, reason: "engine_turn_cap"`. `ResumeSessionAnswer` gains the reason and `engineTurnCap`.
+- `packages/coding-agent/src/core/external-admission.ts`: an idle start with no hold that `cappedBy()` names is answered `{ kind: "held", engine_turn_cap }` instead of `started`; it still goes to `start`, which records the message without a turn. Its pending lane is `capped`, not `start`: it is not busy and no later delivery joins it as the turn it opens (senpi#7478 joins pending starts), and `answeredCapped(message)` tells the runtime the answer was decided.
+- `packages/coding-agent/src/core/agent-session.ts` (review): a delivery `answeredCapped` neither waits for session work nor parks behind a compaction and is always recorded as refused, so a cap that stops applying before its start runs cannot turn the `held` answer into a turn. A resume a peer asks for (`unlessStopped`) answers `engine_turn_cap` like `release`, since only a person lifts the cap. `engineTurnCap` is undefined while a run is active: the cap stops only the turn after the last allowed one.
+- `packages/coding-agent/src/core/stop-resume-directive.ts`: `ResumeCause` adds `engine_turn_cap`, whose hidden directive says automatic turns were paused; as a `session-resumed` message without `resumeCause: "interrupted"` it resets the engine-turn count. `packages/coding-agent/src/core/run-resume-turn.ts` takes `ResumeCause`.
+
+### Why
+
+- The admission answered `started` from the busy and hold checks alone, and the cap was applied later inside `_deliverCustomMessage`, so a delivery behind `cap-per-resume-window` was answered `started` with no provider call; the cap is not a hold, so `paused` stayed false and `resume_session` answered `not_paused` (senpi#7138).
+
+### Why an extension could not handle it
+
+- The admission answer, the engine-turn bound and Resume all live in the session runtime's own delivery and resume paths; an extension sees none of them before they are decided.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_resumeOnce` (the `not_paused` guard, the release branch, the capped resume), `_stopEngineTurn` and the `externalAdmission` port literal.
+- LOW: `external-admission.ts` idle start branch; `engine-turn-limit.ts` after `EngineTurnStop`; `stop-resume-directive.ts` head of `stopResumeDirective`.
+
+## 2026-11-23 - A call with no tool_call handler still fires tool_call_ready (senpi#7232)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `preflightToolCall()` builds the `tool_call` event once; with no `tool_call` handler registered it returns `runner.emitToolCallReady(event, signal)` instead of `undefined`, so `tool_call_ready` observers see every call about to run, and an abort during their wait blocks the call.
+
+### Why
+
+- Codemode holds a model `write` or `edit` call's file from `tool_call_ready`, the point the final path is known; a session with no `tool_call` handler skipped the dispatch and with it the event.
+
+### Why an extension could not handle it
+
+- Whether the `tool_call` dispatch runs is decided here, before any extension is asked.
+
+### Expected merge conflict zones
+
+- LOW: the no-handler branch at the end of `preflightToolCall()` (the event moved above it, one return changed).
+
 ## 2026-11-24 - Conditional logout through the runtime stores (senpi#7406)
 
 ### What changed

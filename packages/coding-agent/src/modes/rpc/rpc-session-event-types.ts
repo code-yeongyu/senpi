@@ -168,6 +168,8 @@ export type RpcSessionClosedReason =
 	| "handoff_parked"
 	| "session_dir_removed"
 	| "released"
+	/** A memory-only session (`persistence: "none"`) ended by a handoff: nothing reopens it, open a new one (senpi#7567). */
+	| "not_persisted"
 	| "error";
 
 /** Terminal record of a closed routing handle. `reason` is absent on older hosts and older records. */

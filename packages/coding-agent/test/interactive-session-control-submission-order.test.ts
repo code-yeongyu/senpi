@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionFactory, SessionControlWakeEvent } from "../src/core/extensions/types.ts";
-import { deliveryIdOf } from "../src/core/external-admission.ts";
+import { deliveryIdOf } from "../src/core/delivery-ids.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { TuiSessionControlHost } from "../src/modes/interactive/session-control-host.ts";
 import type { TuiControlContext } from "../src/modes/interactive/session-control-lifecycle.ts";

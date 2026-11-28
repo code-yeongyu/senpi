@@ -1,3 +1,5 @@
+import { sessionPersonaError } from "../../core/session-persona.ts";
+import { sessionPersistenceError } from "../../core/session-persistence.ts";
 import { isSpawnedBy } from "../../core/session-spawned-by.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 
@@ -92,6 +94,11 @@ export function validatedOpenProfile(
 	const retryFallbackError = sessionRetryFallbackError(command.retryFallback);
 	if (retryFallbackError)
 		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
+	const personaError = sessionPersonaError(command.persona);
+	if (personaError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${personaError}`);
+	const persistenceError = ephemeralOpenError(command);
+	if (persistenceError)
+		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${persistenceError}`);
 	const telemetryError = sessionTelemetryError(command.telemetry);
 	if (telemetryError)
 		return error(command.id, "open_session", RPC_ERROR_INVALID_TELEMETRY_CONSENT, { reason: telemetryError });
@@ -128,10 +135,24 @@ export function validatedOpenProfile(
 		...(command.promptSurface !== undefined ? { promptSurface: command.promptSurface } : {}),
 		...(command.browserEngine !== undefined ? { browserEngine: command.browserEngine } : {}),
 		...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
+		...(command.persona !== undefined ? { persona: command.persona } : {}),
+		...(command.persistence === "none" ? { persistence: "none" as const } : {}),
 		...(sessionEnv !== undefined ? { sessionEnv } : {}),
 		// Every wire open has a caller, so its silence is an answer: an older peer never grants (senpi#7446).
 		telemetryConsent: command.telemetry?.consent ?? "unanswered",
 	};
+}
+
+/**
+ * A memory-only session names no file and does not outlive its connections: a `sessionPath` would be written, and a
+ * retained session is recorded for a restart to reopen from its file (senpi#7567).
+ */
+function ephemeralOpenError(command: Extract<RpcCommand, { type: "open_session" }>): string | undefined {
+	const invalid = sessionPersistenceError(command.persistence);
+	if (invalid !== undefined || command.persistence !== "none") return invalid;
+	if (command.sessionPath !== undefined) return `persistence "none" takes no sessionPath.`;
+	if (command.retain_on_disconnect === true) return `persistence "none" cannot be combined with retain_on_disconnect.`;
+	return undefined;
 }
 
 /**

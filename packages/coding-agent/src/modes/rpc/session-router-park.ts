@@ -105,6 +105,10 @@ async function claimReady(
 		command.env !== undefined ||
 		command.auto_title !== undefined ||
 		command.retryFallback !== undefined ||
+		// A parked session was built without the caller's persona; it is never handed out as one (omo#13057).
+		command.persona !== undefined ||
+		// Claiming a park persists it; a memory-only session is always built fresh (senpi#7567).
+		command.persistence === "none" ||
 		(owner !== undefined && host.writer.compactSelection(owner)?.selected)
 	)
 		return miss();

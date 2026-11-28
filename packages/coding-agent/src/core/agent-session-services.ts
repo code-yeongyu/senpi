@@ -233,9 +233,13 @@ export async function createAgentSessionServices(
 	// it just composed. A runtime shared across a host's sessions already holds
 	// every provider earlier opens refreshed, so this open recomposes only what
 	// it added - an unscoped refresh there rebuilt every provider on every open,
-	// serialized on the one instance (senpi#1844).
+	// serialized on the one instance (senpi#1844). A models.json edited while the
+	// host had no open session (so no config-reload watcher saw it) is read here,
+	// and only then is every provider rebuilt (senpi#7645).
 	if (options.modelRuntime === undefined) {
 		await modelRuntime.refresh({ allowNetwork: false });
+	} else if (await modelRuntime.refreshIfConfigChanged({ allowNetwork: false })) {
+		// The full rebuild composed this open's registrations too.
 	} else if (registeredProviders.size > 0) {
 		await modelRuntime.refresh({ allowNetwork: false, providers: [...registeredProviders] });
 	}

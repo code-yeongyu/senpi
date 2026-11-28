@@ -19,6 +19,7 @@ export type ConfigReloadLogEvent =
 	| "reload_requested"
 	| "reload_deferred"
 	| "reload_completed"
+	| "reload_slot_released"
 	| "reload_loop_stopped"
 	| "validation_rejected"
 	| "registration_rejected"
@@ -36,6 +37,7 @@ export interface ConfigReloadLogDetails {
 	reload_requested: { reason: string; paths: readonly string[] };
 	reload_deferred: { reason: string };
 	reload_completed: { durationMs: number };
+	reload_slot_released: { afterMs: number };
 	reload_loop_stopped: { paths: readonly string[]; reloads: number };
 	validation_rejected: { registrationId: string; errorCount: number };
 	registration_rejected: { registrationId: string; errorCount: number };

@@ -312,6 +312,7 @@ Configuration is loaded in this order:
     "maxColumns": 768
   },
   "statusEvents": true,
+  "statusTicker": true,
   "memory": {
     "gcWatermarkMb": 256,
     "noticeMb": 1024,
@@ -336,6 +337,7 @@ Configuration is loaded in this order:
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
 | `outputSink.maxColumns` | `768` | Maximum columns per printed output line; `0` disables column clamping. A cell's return value is never column-clamped (the byte and line budgets still apply). |
 | `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
+| `statusTicker` | `true` | Refreshes a detached cell's footer status once per second so its elapsed label advances. `false` keeps the footer status (shown when a cell detaches, updated when the set of detached cells changes, cleared when the last one settles) but stops the per-second refresh, so no status update depends on how long a cell runs. Independent of `statusEvents`. |
 | `memory.gcWatermarkMb` | `256` | JavaScript kernel: a finished cell whose heap reached this size and grew runs a full collection before its result; whenever at least this much stays live, an idle full collection runs about a second after the cell, so dropped globals return their memory without a reset. Python kernel: a finished cell whose process footprint reached this size and grew runs `gc.collect()` (plus glibc `malloc_trim(0)` on Linux) before its result, and while at least this much stays live the next cells collect too (at most 1/20 of the time), so `del rows` returns its memory. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_GC_WATERMARK_MB`. |
 | `memory.noticeMb` | `1024` | When live memory (JS heap or Python footprint after a collection; Ruby and Julia interpreter footprint read by the host after each cell) reaches this size (first time, or 25% more than at the last notice), the result gets one bracketed notice naming the largest globals and how to drop them (`rows = undefined`, `del rows`, `rows = nil`, `rows = nothing`), plus `details.memory`. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_NOTICE_MB`. |
 | `memory.ceilingMb` | a quarter of physical memory, 2048-8192 | Every kernel (JS heap and Python footprint after a collection; Ruby and Julia interpreter footprint read by the host after each result, without a globals list): when live memory reaches this size, the result says so and the kernel restarts once no cell is running or queued on it; the next result says it was restarted (`details.memory.recycled`). `0` disables. Env override: `SENPI_CODEMODE_MEMORY_CEILING_MB`. Non-zero memory thresholds must satisfy watermark <= notice <= ceiling, otherwise all three use their defaults. |

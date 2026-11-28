@@ -28,6 +28,8 @@ import { assertSessionCwdExists } from "./session-cwd.ts";
 import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
 import { holdSessionFile, type SessionHold } from "./session-holders.ts";
 import { SessionManager } from "./session-manager.ts";
+import type { SessionPersona } from "./session-persona.ts";
+import { assertSessionPersistable, type SessionPersistence } from "./session-persistence.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
@@ -78,6 +80,10 @@ export interface AgentSessionLaunchProfile {
 	 * another session on the host or the user's settings. Absent means the host's settings decide.
 	 */
 	retryFallback?: SessionRetryFallbackProfile;
+	/** Per-session instructions and tool policy (`open_session.persona`); they narrow the host's own flags. */
+	persona?: SessionPersona;
+	/** `none` (`open_session.persistence`, senpi#7567): memory only; no switch, import or persist ever gives it a file. */
+	persistence?: SessionPersistence;
 	/**
 	 * Per-session caller env (`open_session.env`, senpi#4381): the variables THIS session's tool
 	 * subprocesses see on top of the process environment. Never the host's own, never another session's.
@@ -218,6 +224,7 @@ export class AgentSessionRuntime {
 
 	/** A speculative host session becomes durable only when a caller claims its already-built runtime. */
 	async persistSession(): Promise<void> {
+		assertSessionPersistable(this._launchProfile, "be persisted");
 		await this.session.sessionManager.enablePersistence();
 		// A labelled session built before it had a file holds its refusal in memory; the claim waits until it is on disk.
 		if (refusesApprovals(this._launchProfile?.sessionContext)) await recordOpenerRefusal(this.session.sessionManager);
@@ -567,6 +574,7 @@ export class AgentSessionRuntime {
 			projectTrustContextFactory?: (cwd: string) => ProjectTrustContext;
 		},
 	): Promise<{ cancelled: boolean }> {
+		assertSessionPersistable(this._launchProfile, "switch to a session file");
 		resetTimings("switch");
 		const beforeResult = await this.emitBeforeSwitch("resume", sessionPath);
 		if (beforeResult.cancelled) {
@@ -748,6 +756,7 @@ export class AgentSessionRuntime {
 	 * @throws {MissingSessionCwdError} When the imported session cwd cannot be resolved and no override is provided.
 	 */
 	async importFromJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
+		assertSessionPersistable(this._launchProfile, "import a session file");
 		const resolvedPath = resolvePath(inputPath);
 		if (!existsSync(resolvedPath)) {
 			throw new SessionImportFileNotFoundError(resolvedPath);
