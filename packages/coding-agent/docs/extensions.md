@@ -2700,6 +2700,8 @@ pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current 
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
+Pass `{ respectDefaultTools: true }` as the second argument to keep newly activated built-in tools within the current `defaultTools` selection. This applies only when the session uses `defaultTools`; explicit tool flags still take precedence, and tools that are already active stay eligible.
+
 ### pi.armToolBarrier(spec) / pi.releaseToolBarrier(id)
 
 Hold the workspace-changing tools of a turn until you are ready, for example while you capture a checkpoint of the workspace. `pi.armToolBarrier({ id, deadlineMs })` arms the session's tool barrier; while it is armed, every tool not declared `workspaceEffect: "read"` waits before it runs. Armed while the session is idle (for example from `before_agent_start`), it belongs to the next turn. It opens on `pi.releaseToolBarrier(id)` (which returns `false`, a no-op, when no barrier with that id is armed), when its turn ends, or after `deadlineMs` (1..600000), which emits the `tool_barrier_expired` session event. Stop ends the wait. `id` is 1-256 characters; arming again replaces the id and ceiling while calls already waiting keep waiting.

@@ -5794,11 +5794,22 @@ export class AgentSession {
 		);
 	}
 
-	setActiveToolsByName(toolNames: string[]): void {
+	setActiveToolsByName(toolNames: string[], options?: { respectDefaultTools?: boolean }): void {
 		const armed = armedEvalOnlyToolNames(this._evalOnlyToolNames, this._toolRegistry);
 		this._publishEvalOnlyToolHints();
+		const defaultToolNames =
+			options?.respectDefaultTools && this._usesDefaultTools ? this.settingsManager.getDefaultTools() : undefined;
+		const previousToolNames = new Set(this.getActiveToolNames());
+		const requested = defaultToolNames
+			? toolNames.filter(
+					(name) =>
+						previousToolNames.has(name) ||
+						defaultToolNames.includes(name) ||
+						this._isNonBuiltinTool(name),
+				)
+			: toolNames;
 		const { active: validToolNames, withheld } = directActiveToolNames(
-			toolNames,
+			requested,
 			{ definitions: this._toolDefinitions, toolRegistry: this._toolRegistry },
 			armed,
 		);
@@ -5808,12 +5819,11 @@ export class AgentSession {
 			this._withheldEvalOnlyToolNames.clear();
 		}
 		// Remember the unfiltered request so a later disarm can restore withheld eval-only tools.
-		this._requestedActiveToolNames = [...new Set([...toolNames, ...this._withheldEvalOnlyToolNames])];
+		this._requestedActiveToolNames = [...new Set([...requested, ...this._withheldEvalOnlyToolNames])];
 		const tools = validToolNames.flatMap((name) => this._toolRegistry.get(name) ?? []);
 		const activeToolNamesChanged =
 			validToolNames.length !== this.agent.state.tools.length ||
 			validToolNames.some((name, index) => name !== this.agent.state.tools[index]?.name);
-		const previousToolNames = new Set(this.agent.state.tools.map((tool) => tool.name));
 		this.agent.state.tools = tools;
 		for (const name of validToolNames) {
 			if (!this._declaredToolNames.includes(name)) this._declaredToolNames.push(name);
@@ -12770,7 +12780,7 @@ export class AgentSession {
 				getActiveTools: () => this.getActiveToolNames(),
 				getAllTools: () => this.getAllTools(),
 				getSettings: () => this.settingsManager.getSettings(),
-				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
+				setActiveTools: (toolNames, options) => this.setActiveToolsByName(toolNames, options),
 				refreshTools: () => this._refreshToolRegistry(),
 				registerRemovedToolHint: (name, hint) => {
 					this.agent.removedToolHints[name] = hint;
@@ -13051,19 +13061,20 @@ export class AgentSession {
 		return isBuiltinExtensionPath(path);
 	}
 
+	private _isNonBuiltinTool(name: string): boolean {
+		const entry = this._toolDefinitions.get(name);
+		return (
+			entry !== undefined &&
+			!this._isBuiltinExtensionPath(entry.sourceInfo.path) &&
+			entry.sourceInfo.source !== "builtin"
+		);
+	}
+
 	private _enforceConfiguredDefaultTools(): void {
 		const defaultToolNames = this._defaultToolNames;
 		if (defaultToolNames === undefined) return;
 		this.setActiveToolsByName(
-			this.getActiveToolNames().filter((name) => {
-				if (defaultToolNames.has(name)) return true;
-				const entry = this._toolDefinitions.get(name);
-				return (
-					entry !== undefined &&
-					!this._isBuiltinExtensionPath(entry.sourceInfo.path) &&
-					entry.sourceInfo.source !== "builtin"
-				);
-			}),
+			this.getActiveToolNames().filter((name) => defaultToolNames.has(name) || this._isNonBuiltinTool(name)),
 		);
 	}
 

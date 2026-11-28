@@ -20,6 +20,7 @@ import { evaluate } from "../../src/core/extensions/builtin/permission-system/ev
 import permissionSystemExtension from "../../src/core/extensions/builtin/permission-system/index.ts";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
 import type { ToolDefinition, ToolRenderContext } from "../../src/core/extensions/types.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
 import { initTheme, theme } from "../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../src/utils/ansi.ts";
 import type { Harness } from "./harness.ts";
@@ -30,13 +31,15 @@ type ApplyPatchUpdate = Parameters<NonNullable<Parameters<ApplyPatchTool["execut
 
 type StubModel = { api: string; id: string };
 
-/** Drive the real extension factory against a minimal pi stub (no session needed). */
+/** Drive the real extension factory against a minimal pi stub. */
 function createExtensionStub(initialActiveTools: string[]) {
+	const sessionManager = SessionManager.inMemory();
 	const registeredTools = new Map<string, { name: string }>();
 	for (const toolName of initialActiveTools) registeredTools.set(toolName, { name: toolName });
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
 	let activeToolNames = [...initialActiveTools];
 	gptApplyPatchExtension({
+		appendEntry: sessionManager.appendCustomEntry.bind(sessionManager),
 		registerTool(tool: { name: string }) {
 			registeredTools.set(tool.name, tool);
 		},
@@ -52,7 +55,7 @@ function createExtensionStub(initialActiveTools: string[]) {
 	const invoke = async (event: string, model: StubModel | undefined) => {
 		const handler = handlers.get(event);
 		if (!handler) throw new Error(`extension did not register a ${event} handler`);
-		await handler({ model }, { model });
+		await handler({ model }, { model, sessionManager });
 	};
 	return {
 		activeTools: () => [...activeToolNames],

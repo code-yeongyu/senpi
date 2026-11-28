@@ -880,9 +880,9 @@ function createExtensionAPI(
 			return runtime.getSettings();
 		},
 
-		setActiveTools(toolNames: string[]): void {
+		setActiveTools(toolNames, options): void {
 			assertActive();
-			runtime.setActiveTools(toolNames);
+			runtime.setActiveTools(toolNames, options);
 		},
 
 		getCommands() {

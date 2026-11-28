@@ -24,7 +24,7 @@ export type ApplyPatchWireMode = "freeform" | "json" | "none";
 export type ApplyPatchToolVariant = Exclude<ApplyPatchWireMode, "none">;
 
 export type ApplyPatchToolsetState = {
-	/** Exactly the edit-family tools this extension removed at the last non-GPT to GPT transition. */
+	/** Exactly the edit-family tools replaced by the current GPT swap. */
 	removedEditToolNames: string[];
 };
 
@@ -151,7 +151,10 @@ export type ApplyPatchToolDefinition = ToolDefinition<
 	ApplyPatchRenderState
 >;
 
-export type ApplyPatchExtensionAPI = Pick<ExtensionAPI, "on" | "getActiveTools" | "getAllTools" | "setActiveTools"> & {
+export type ApplyPatchExtensionAPI = Pick<
+	ExtensionAPI,
+	"on" | "appendEntry" | "getActiveTools" | "getAllTools" | "setActiveTools"
+> & {
 	registerTool: (tool: ApplyPatchToolDefinition) => void;
 	registerLazyToolActivator?: ExtensionAPI["registerLazyToolActivator"];
 };
