@@ -34,8 +34,7 @@ export interface RpcAdmitExternalMessageCommand {
 }
 
 export interface RpcAdmitExternalMessageReply {
-	/** A full held set is never a reply kind: it is answered as the `held_deliveries_full` error. */
-	kind: Exclude<ExternalAdmissionKind, "held_deliveries_full">;
+	kind: ExternalAdmissionKind;
 	/** The session's turn when the delivery was admitted, in `get_state.currentTurnId`'s form. */
 	turnId: string;
 	/** `held` only: the kinds of the holds that keep the delivery until a person releases them (senpi#6490). */

@@ -3,9 +3,13 @@ import { afterEach, expect, it } from "vitest";
 import type { AgentSession } from "../../../src/core/agent-session.ts";
 import { MAX_HELD_PEER_DELIVERIES } from "../../../src/core/engine-turn-hold-notices.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
+import { ControlAttachments } from "../../../src/modes/interactive/session-control-attach.ts";
+import { runTuiRpcCommand } from "../../../src/modes/interactive/session-control-rpc-commands.ts";
+import type { ControlConnection } from "../../../src/modes/interactive/session-control-server.ts";
 import { admitExternalMessage } from "../../../src/modes/rpc/admit-external-message-command.ts";
 import type { RpcAdmitExternalMessageCommand } from "../../../src/modes/rpc/admit-external-message-wire.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
+import { makeSink } from "../rpc-connection-harness.ts";
 
 // senpi#7588 review: every held peer delivery is kept, so the number a paused session holds is bounded. Past the cap the
 // delivery is refused with a typed answer and nothing is written: the sender keeps it. senpi#7628: the count is the real
@@ -82,7 +86,8 @@ it("counts the real held set, a delivery recorded twice once, and refuses the ne
 });
 
 // An inbox drain admits what it finds in one pass: every delivery of the burst is held and counted before any of their
-// notices is written, so the cap holds for a burst too.
+// notices is written, so the cap holds for a burst too. The call throws past the cap, as it does once admission is
+// closed: a drain that knows only the kinds that admit keeps the delivery instead of reading a new kind as admitted.
 it("refuses an extension's admission past the cap too, in one burst, writing nothing", async () => {
 	let pi: ExtensionAPI | undefined;
 	const fixture = await stopped([
@@ -94,12 +99,43 @@ it("refuses an extension's admission past the cap too, in one burst, writing not
 	const admit = (n: number) =>
 		pi?.session.admitExternalMessage({ delivery_id: `ext-${n}`, text: `peer text ${n}`, deliverAs: "followUp" });
 	const written = heldNoticesWritten(fixture.session, MAX_HELD_PEER_DELIVERIES);
-	const kinds = Array.from({ length: MAX_HELD_PEER_DELIVERIES + 1 }, (_, index) => admit(index + 1)?.kind);
+	const kinds = Array.from({ length: MAX_HELD_PEER_DELIVERIES }, (_, index) => admit(index + 1)?.kind);
+	let refused: unknown;
+	try {
+		admit(MAX_HELD_PEER_DELIVERIES + 1);
+	} catch (error) {
+		refused = error;
+	}
 
-	expect(kinds).toEqual([...Array(MAX_HELD_PEER_DELIVERIES).fill("held"), "held_deliveries_full"]);
+	expect(kinds).toEqual(Array(MAX_HELD_PEER_DELIVERIES).fill("held"));
+	expect(refused).toMatchObject({ code: "held_deliveries_full" });
 	await written;
 	expect(fixture.session.pausedNoticeCount).toBe(MAX_HELD_PEER_DELIVERIES);
 	expect(fixture.session.heldPeerDeliveryCount).toBe(MAX_HELD_PEER_DELIVERIES);
 	expect(fixture.session.externalAdmission.list().pending).not.toContain(`ext-${MAX_HELD_PEER_DELIVERIES + 1}`);
 	expect(admit(1)?.kind).toBe("already_admitted");
+});
+
+it("refuses a terminal's input past the cap with the same code, writing nothing", async () => {
+	const fixture = await stopped();
+	const written = heldNoticesWritten(fixture.session, MAX_HELD_PEER_DELIVERIES);
+	for (let n = 1; n <= MAX_HELD_PEER_DELIVERIES; n++)
+		expect(admitExternalMessage(fixture.session, record(n), LOCAL)).toMatchObject({
+			ok: true,
+			data: { kind: "held" },
+		});
+	await written;
+	const attachments = new ControlAttachments(fixture.session, () => 0);
+	const connection: ControlConnection = { id: 1, transport: makeSink().sink, send: () => {} };
+
+	const answer = await runTuiRpcCommand({ instanceId: "tui", session: fixture.session, attachments }, connection, {
+		type: "follow_up",
+		message: "typed on a terminal",
+		clientMessageId: "terminal-1",
+		id: "t-1",
+	});
+
+	expect(answer).toMatchObject({ success: false, errorCode: "held_deliveries_full" });
+	expect(fixture.session.pausedNoticeCount).toBe(MAX_HELD_PEER_DELIVERIES);
+	expect(fixture.session.externalAdmission.list().pending).not.toContain("terminal-1");
 });

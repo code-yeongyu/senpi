@@ -33,6 +33,18 @@ import { type InputTurnMark, markInputTurnOrigin } from "./turn-origin.ts";
 
 export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
 
+/**
+ * The session already holds `MAX_HELD_PEER_DELIVERIES`: nothing was written and the delivery stays with its sender
+ * (senpi#7628). The engine's own entry points answer it; it is not an `ExternalAdmissionKind`, so an extension's call
+ * throws it instead (`session-control-actions.ts`).
+ */
+export interface HeldDeliveriesFull {
+	readonly kind: "held_deliveries_full";
+	readonly turn_epoch: number;
+}
+
+export type ExternalAdmissionAnswer = ExternalAdmissionResult | HeldDeliveriesFull;
+
 export interface ExternalAdmissionPort {
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
 	readonly isBusy: () => boolean;
@@ -172,7 +184,7 @@ export class ExternalAdmission {
 			: { can_admit: false, hold_reason: editor.hold_reason, ...base };
 	}
 
-	admit(input: AdmitExternalMessageInput, stamp: DeliveryStamp = {}): ExternalAdmissionResult {
+	admit(input: AdmitExternalMessageInput, stamp: DeliveryStamp = {}): ExternalAdmissionAnswer {
 		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;

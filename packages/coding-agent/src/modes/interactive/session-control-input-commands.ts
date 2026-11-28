@@ -94,6 +94,11 @@ export function admitInput(
 		expected_turn_id: expected,
 		whenIdle: whenIdle === "start" ? "start" : "queue",
 	});
+	if (result.kind === "held_deliveries_full")
+		return refusal(id, command.type, "held_deliveries_full", {
+			reason: `the session already holds ${MAX_HELD_PEER_DELIVERIES} peer deliveries while paused, so nothing was delivered`,
+			action: "send it again once the session is resumed",
+		});
 	const identity = clientMessageId === undefined ? {} : { clientMessageId };
 	const admitted = (disposition: TerminalInputReceipt["disposition"]): object => {
 		const holds = {
@@ -129,11 +134,6 @@ export function admitInput(
 			return refusal(id, command.type, "turn_conflict", {
 				reason: `the turn moved on (now ${result.turn_epoch}); this steer named an earlier one`,
 				action: "read get_state's turn_epoch and send it again",
-			});
-		case "held_deliveries_full":
-			return refusal(id, command.type, "held_deliveries_full", {
-				reason: `the session already holds ${MAX_HELD_PEER_DELIVERIES} peer deliveries while paused, so nothing was delivered`,
-				action: "send it again once the session is resumed",
 			});
 	}
 }
