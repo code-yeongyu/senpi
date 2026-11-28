@@ -5,6 +5,7 @@
  */
 
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
+import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 
 export type LoginMethod = "oauth" | "api_key";
 
@@ -39,6 +40,34 @@ export function describeLoginFailure(error: unknown, providerName: string, metho
 		level: "error",
 		message: `${failed}: ${message}${/[.!?]$/.test(message) ? "" : "."} Run /login to try again.`,
 	};
+}
+
+/**
+ * The verdict shown after `/login` saved an API key (senpi#2725). The key stays saved whatever the verdict, so a
+ * provider outage never costs the user their key, but a key the provider refuses is named as refused now instead of
+ * surfacing on some later request.
+ */
+export function describeApiKeyVerification(verification: ApiKeyVerification, providerName: string): LoginFailureNotice {
+	if (verification.ok) return { level: "status", message: `${providerName} accepted the API key.` };
+	const status = verification.status === undefined ? "" : ` (${verification.status})`;
+	switch (verification.reason) {
+		case "rejected":
+			return {
+				level: "error",
+				message: `The API key was rejected by ${providerName}${status}. It is saved; run /login to replace it.`,
+			};
+		case "unreachable":
+			return {
+				level: "status",
+				message: `Couldn't verify the API key with ${providerName}${status}; it is saved anyway.`,
+			};
+		case "unsupported":
+		case "unknown-provider":
+			return {
+				level: "status",
+				message: `The API key for ${providerName} is saved but not verified: ${providerName} offers no key check.`,
+			};
+	}
 }
 
 function errorMessage(error: unknown): string {
