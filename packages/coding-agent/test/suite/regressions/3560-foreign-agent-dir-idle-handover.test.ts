@@ -6,7 +6,8 @@
 import { mkdirSync, realpathSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { runHostRequest } from "../../../src/modes/rpc/host-runner.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
 import { signalGeneration, stopHost } from "../../../src/modes/rpc/host-stop.ts";
@@ -129,6 +130,30 @@ describe.skipIf(process.platform === "win32")("an idle handover asked by another
 				lifecycle: null,
 			});
 		} finally {
+			if (saved === undefined) delete process.env.SENPI_RPC_KEY_ROOT;
+			else process.env.SENPI_RPC_KEY_ROOT = saved;
+		}
+		await expectStillServing(host);
+	});
+
+	// senpi#7623: a generation that does not advertise the drain request file is asked by signal, and that path proves
+	// the host first. With no key record for its launch under the key root, the drain is refused typed and unsent.
+	it("refuses a signal drain for a host it cannot prove, sending no signal", async () => {
+		const host = await rig("ih-fd");
+		const emptyRoot = foreignAgentDir(host);
+		const target = { socket: host.qa.socket, agentDir: host.qa.agentDir };
+		await rm(generationPaths(createHostDaemonPaths(target), host.instanceId).drainWatchFile);
+		const kill = vi.spyOn(process, "kill");
+		const saved = process.env.SENPI_RPC_KEY_ROOT;
+		process.env.SENPI_RPC_KEY_ROOT = emptyRoot;
+		try {
+			expect(await stopHost({ ...target, drain: true })).toMatchObject({
+				action: "refuse",
+				reason: "host_identity_unproven",
+			});
+			expect(kill.mock.calls.filter(([, signal]) => signal === "SIGUSR1")).toEqual([]);
+		} finally {
+			kill.mockRestore();
 			if (saved === undefined) delete process.env.SENPI_RPC_KEY_ROOT;
 			else process.env.SENPI_RPC_KEY_ROOT = saved;
 		}
